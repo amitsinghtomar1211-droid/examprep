@@ -1236,7 +1236,7 @@ function showApiStatus(m,t){document.getElementById('apiStatus').innerHTML=`<spa
 
 // ==================== TABS ====================
 const PAGE_TITLES={'library':'📚 Library','savedFacts':'📌 Saved Facts','exams':'🎯 Exam Profiles','quiz':'❓ Quiz','quizvault':'🗄️ Quiz Vault','history':'📜 History','smartnotes':'🧠 Smart Notes','stats':'📊 Stats','settings':'⚙️ Settings'};
-function showPage(p,el){
+function showPage(p,el,_skipHistory){
   document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
   document.getElementById('page-'+p).classList.add('active');
@@ -1254,6 +1254,7 @@ function showPage(p,el){
     if(area)area.innerHTML=showInstallOption();
   }
   if(window.innerWidth<=768){document.getElementById('sidebar').classList.remove('open');document.getElementById('sidebarOverlay').classList.remove('show');}
+  if(!_skipHistory){history.pushState({type:'page',page:p},'');}
 }
 
 // ==================== EXAM SWITCHER ====================
@@ -4201,109 +4202,66 @@ function injectManifest(){
 }
 
 // ==================== ANDROID BACK NAVIGATION ====================
-// Yeh system Android back button ko native app jaisa banata hai
-
-let _navStack = []; // Navigation history stack
-
-// Jab bhi page change ho, history mein push karo
-function pushNavState(type, data = {}) {
-  history.pushState({ type, ...data }, '');
-}
-
-// showPage ko wrap karo taaki har page change history mein jaye
-const _origShowPage = showPage;
-function showPage(p, el) {
-  _origShowPage(p, el);
-  pushNavState('page', { page: p });
-  _navStack.push({ type: 'page', page: p });
-}
-
-// closeModal ko wrap karo
-const _origCloseModal = closeModal;
-function closeModal(id) {
-  _origCloseModal(id);
-  // popState already handle karega, yahan kuch extra nahi
-}
-
-// Android back button handler
-window.addEventListener('popstate', function(e) {
-  const state = e.state;
-
-  // ---- 1. Notes Editor Modal khula hai ----
-  if (document.getElementById('notesEditorOverlay')?.classList.contains('show')) {
-    if (_editorState.modified) {
-      if (confirm('Unsaved changes hain! Bina save kiye band karna hai?')) {
-        document.getElementById('notesEditorOverlay').classList.remove('show');
+window.addEventListener('popstate', function(e){
+  // 1. Notes Editor khula hai
+  const ne = document.getElementById('notesEditorOverlay');
+  if(ne && ne.classList.contains('show')){
+    if(typeof _editorState !== 'undefined' && _editorState.modified){
+      if(confirm('Unsaved changes hain! Bina save kiye band karna hai?')){
+        ne.classList.remove('show');
         _editorState.modified = false;
       } else {
-        // Wapas push karo taaki back cancel ho
-        history.pushState(state, '');
+        history.pushState(e.state,'');
       }
     } else {
-      document.getElementById('notesEditorOverlay').classList.remove('show');
+      ne.classList.remove('show');
     }
     return;
   }
 
-  // ---- 2. Koi bhi Modal khula hai ----
+  // 2. Koi bhi modal khula hai
   const openModal = document.querySelector('.modal-overlay.show');
-  if (openModal) {
+  if(openModal){
     openModal.classList.remove('show');
     return;
   }
 
-  // ---- 3. AI Chat panel khula hai ----
-  if (document.getElementById('aiChatOverlay')?.classList.contains('show')) {
-    closeAiChat();
+  // 3. AI Chat khula hai
+  const aiChat = document.getElementById('aiChatOverlay');
+  if(aiChat && aiChat.classList.contains('show')){
+    if(typeof closeAiChat === 'function') closeAiChat();
     return;
   }
 
-  // ---- 4. Sidebar mobile mein khula hai ----
-  if (document.getElementById('sidebar')?.classList.contains('open')) {
-    document.getElementById('sidebar').classList.remove('open');
-    document.getElementById('sidebarOverlay')?.classList.remove('show');
+  // 4. Sidebar mobile mein khula hai
+  const sidebar = document.getElementById('sidebar');
+  if(sidebar && sidebar.classList.contains('open')){
+    sidebar.classList.remove('open');
+    const so = document.getElementById('sidebarOverlay');
+    if(so) so.classList.remove('show');
     return;
   }
 
-  // ---- 5. Page navigation — Library pe wapas jao ----
-  if (state && state.type === 'page') {
-    // Pichhle page pe jaana
-    const prevPage = state.page;
-    if (prevPage) {
-      const navEl = document.querySelector(`[data-page="${prevPage}"]`);
-      _origShowPage(prevPage, navEl);
-      return;
-    }
-  }
-
-  // ---- 6. Agar koi history nahi — Library pe jao ya app minimize ----
+  // 5. Agar current page Library nahi hai — Library pe wapas jao
   const currentActive = document.querySelector('.page.active');
-  const currentId = currentActive?.id?.replace('page-', '');
-  if (currentId && currentId !== 'library') {
-    // Library pe wapas jao
+  const currentId = currentActive ? currentActive.id.replace('page-','') : '';
+  if(currentId && currentId !== 'library'){
     const libEl = document.querySelector('[data-page="library"]');
-    _origShowPage('library', libEl);
-    history.pushState({ type: 'page', page: 'library' }, '');
-    showToast('📚 Library pe wapas aaye', 'success');
+    showPage('library', libEl, true);
     return;
   }
 
-  // ---- 7. Bilkul root pe hain — app minimize hoga (default Android behaviour) ----
-  // Kuch nahi karo — system handle karega
+  // 6. Library pe hain — app minimize (Android default)
+  // Kuch nahi karo, system handle karega
 });
-
-// App start hone pe initial state push karo
-function initBackNav() {
-  // Initial state — Library
-  history.replaceState({ type: 'page', page: 'library' }, '');
-}
 
 // ==================== START ====================
 injectManifest();
 registerSW();
 initPWA();
 init();
-initBackNav();
+// Initial history state set karo
+history.replaceState({type:'page',page:'library'},'');
 </script>
 </body>
 </html>
