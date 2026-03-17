@@ -367,6 +367,9 @@ textarea:focus{border-color:var(--accent);background:var(--surface);}
 /* OFFLINE INDICATOR */
 .offline-bar{position:fixed;top:0;left:0;right:0;z-index:9999;background:#c62828;color:#fff;text-align:center;font-size:0.78rem;font-weight:700;padding:6px;display:none;animation:fadeIn 0.3s;}
 .offline-bar.show{display:block;}
+/* History progress mini bar */
+.hist-progress-bar{background:var(--bg2);height:4px;border-radius:10px;overflow:hidden;margin-bottom:5px;}
+.hist-progress-fill{height:100%;border-radius:10px;transition:width 0.3s;}
 
 /* ===== NOTES EDITOR MODAL ===== */
 .notes-editor-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:500;display:none;align-items:flex-start;justify-content:center;padding:10px;}
@@ -775,7 +778,54 @@ textarea:focus{border-color:var(--accent);background:var(--surface);}
 
     <!-- ===== HISTORY ===== -->
     <div id="page-history" class="page">
-      <div class="page-header"><div><div class="page-title">📜 Quiz History</div><div class="page-subtitle">Saari quizzes ka record + Re-Attempt</div></div></div>
+      <div class="page-header">
+        <div><div class="page-title">📜 Quiz History</div><div class="page-subtitle">Saari quizzes ka record + Re-Attempt</div></div>
+      </div>
+      <!-- History Filters Card -->
+      <div class="card" style="margin-bottom:12px;">
+        <div class="card-title">🔍 Filter &amp; Sort</div>
+        <div class="card-grid">
+          <div class="field-group">
+            <label class="field-label">📗 Subject:</label>
+            <select class="inp" id="histFilterSubject" onchange="onHistFilterSubjectChange()">
+              <option value="all">Saare Subjects</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label class="field-label">📘 Section:</label>
+            <select class="inp" id="histFilterSection" onchange="onHistFilterSectionChange()">
+              <option value="all">Saare Sections</option>
+            </select>
+          </div>
+        </div>
+        <div class="card-grid">
+          <div class="field-group">
+            <label class="field-label">📙 Topic:</label>
+            <select class="inp" id="histFilterTopic" onchange="renderHistory()">
+              <option value="all">Saare Topics</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label class="field-label">📅 Date Order:</label>
+            <select class="inp" id="histFilterDate" onchange="renderHistory()">
+              <option value="new">Naya pehle (New → Old)</option>
+              <option value="old">Purana pehle (Old → New)</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">📊 Progress Sort:</label>
+          <select class="inp" id="histFilterProgress" onchange="renderHistory()">
+            <option value="none">Koi sort nahi</option>
+            <option value="weak">Weak pehle (Kam % → Zyada %)</option>
+            <option value="strong">Strong pehle (Zyada % → Kam %)</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:6px;">
+          <button class="btn btn-outline btn-sm" onclick="resetHistFilters()">🔄 Reset Filters</button>
+          <span id="histFilterCount" style="font-size:0.76rem;color:var(--text2);align-self:center;font-weight:600;"></span>
+        </div>
+      </div>
       <div class="card"><div id="historyList"></div></div>
     </div>
 
@@ -1055,6 +1105,28 @@ textarea:focus{border-color:var(--accent);background:var(--surface);}
         <button class="btn btn-outline btn-sm" onclick="closeNotesEditor()">Cancel</button>
         <button class="btn btn-green btn-sm" id="saveNoteBtn" onclick="saveEditedNote()" style="display:none;">💾 Save Karo</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- AI NOTE ADD MODAL -->
+<div class="modal-overlay" id="aiNoteAddModal">
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-title">📝 Notes mein Add Karo</div>
+    <div id="aiNoteAddTopicName" style="font-size:0.78rem;color:var(--text2);margin-bottom:10px;font-weight:600;"></div>
+    <div class="field-group">
+      <label class="field-label">✏️ Text edit karo (jo add hoga):</label>
+      <textarea id="aiNoteAddText" rows="5" placeholder="AI response yahan edit karo..."></textarea>
+    </div>
+    <div class="field-group">
+      <label class="field-label">📄 Kahan add karna hai:</label>
+      <select class="inp" id="aiNoteAddTarget">
+        <option value="new">➕ Naya note banao</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('aiNoteAddModal')">Cancel</button>
+      <button class="btn btn-green btn-sm" onclick="confirmAddAiNote()">✅ Add Karo</button>
     </div>
   </div>
 </div>
@@ -2902,21 +2974,97 @@ function toggleVaultWrong(quizId, qIdx, qKey, btn){
 
 // ==================== HISTORY ====================
 function updateHistBadge(){const b=document.getElementById('histBadge');if(S.quizHistory.length){b.style.display='inline';b.textContent=S.quizHistory.length;}else b.style.display='none';}
+
+function initHistFilters(){
+  const ss=document.getElementById('histFilterSubject');
+  if(!ss)return;
+  const prev=ss.value;
+  ss.innerHTML='<option value="all">Saare Subjects</option>';
+  S.subjects.forEach(s=>{ss.innerHTML+=`<option value="${s.id}">${s.name}</option>`;});
+  if(prev)ss.value=prev;
+  onHistFilterSubjectChange(true);
+}
+
+function onHistFilterSubjectChange(skipRender){
+  const sid=document.getElementById('histFilterSubject')?.value||'all';
+  const sel=document.getElementById('histFilterSection');
+  if(!sel)return;
+  sel.innerHTML='<option value="all">Saare Sections</option>';
+  if(sid!=='all'){const s=getSubj(parseInt(sid));if(s)s.sections.forEach(sec=>{sel.innerHTML+=`<option value="${sec.id}">${sec.name}</option>`;});}
+  onHistFilterSectionChange(skipRender);
+}
+
+function onHistFilterSectionChange(skipRender){
+  const sid=document.getElementById('histFilterSubject')?.value||'all';
+  const secid=document.getElementById('histFilterSection')?.value||'all';
+  const sel=document.getElementById('histFilterTopic');
+  if(!sel)return;
+  sel.innerHTML='<option value="all">Saare Topics</option>';
+  if(sid!=='all'&&secid!=='all'){const sec=getSec(parseInt(sid),parseInt(secid));if(sec)sec.topics.forEach(t=>{sel.innerHTML+=`<option value="${t.id}">${t.name}</option>`;});}
+  if(!skipRender)renderHistory();
+}
+
+function resetHistFilters(){
+  const ids=['histFilterSubject','histFilterSection','histFilterTopic','histFilterDate','histFilterProgress'];
+  ids.forEach(id=>{const el=document.getElementById(id);if(el)el.value=id==='histFilterDate'?'new':id==='histFilterProgress'?'none':'all';});
+  onHistFilterSubjectChange(true);
+  renderHistory();
+  showToast('Filters reset ho gaye','success');
+}
+
 function renderHistory(){
   const el=document.getElementById('historyList');
   if(!S.quizHistory.length){el.innerHTML='<div class="empty"><div class="empty-icon">📜</div><p>Koi history nahi. Quiz do!</p></div>';return;}
-  el.innerHTML=S.quizHistory.map(h=>`<div class="hist-item">
+
+  // Init filters if needed
+  initHistFilters();
+
+  const sid=document.getElementById('histFilterSubject')?.value||'all';
+  const secid=document.getElementById('histFilterSection')?.value||'all';
+  const tid=document.getElementById('histFilterTopic')?.value||'all';
+  const dateOrder=document.getElementById('histFilterDate')?.value||'new';
+  const progressSort=document.getElementById('histFilterProgress')?.value||'none';
+
+  // Filter
+  let list=S.quizHistory.filter(h=>{
+    if(tid!=='all') return h.tid==tid;
+    if(secid!=='all') return h.secid==secid;
+    if(sid!=='all') return h.sid==sid;
+    return true;
+  });
+
+  // Date sort (default quizHistory is already newest first)
+  if(dateOrder==='old') list=[...list].reverse();
+
+  // Progress sort (overrides date sort)
+  if(progressSort==='weak') list=[...list].sort((a,b)=>a.pct-b.pct);
+  else if(progressSort==='strong') list=[...list].sort((a,b)=>b.pct-a.pct);
+
+  const countEl=document.getElementById('histFilterCount');
+  if(countEl)countEl.textContent=`${list.length} / ${S.quizHistory.length} quizzes`;
+
+  if(!list.length){el.innerHTML='<div class="empty"><div class="empty-icon">🔍</div><p>Is filter ke liye koi quiz nahi.</p></div>';return;}
+
+  el.innerHTML=list.map(h=>{
+    const galat=h.questions.filter(q=>!q.isCorrect).length;
+    const doubtful=h.questions.filter(q=>q.isDoubtful).length;
+    const barColor=h.pct>=70?'var(--green)':h.pct>=40?'var(--accent2)':'var(--red)';
+    return `<div class="hist-item">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;" onclick="showDetail('${h.id}')">
       <span style="font-weight:800;font-size:0.84rem;">📁 ${h.label}</span>
-      <span class="badge ${h.pct>=60?'badge-green':'badge-red'}">${h.score}/${h.total} -- ${h.pct}%</span>
+      <span class="badge ${h.pct>=60?'badge-green':'badge-red'}">${h.score}/${h.total} · ${h.pct}%</span>
     </div>
-    <div style="font-size:0.71rem;color:var(--text2);margin-bottom:5px;" onclick="showDetail('${h.id}')">${h.date} ${h.time||''} · <span class="badge ${h.examId?'badge-blue':'badge-orange'}">${h.examName}</span> · ${h.questions.filter(q=>!q.isCorrect).length} galat${h.questions.filter(q=>q.isDoubtful).length?' · 🤔 '+h.questions.filter(q=>q.isDoubtful).length+' doubtful':''}</div>
+    <div style="background:var(--bg2);height:4px;border-radius:10px;overflow:hidden;margin-bottom:5px;">
+      <div style="width:${h.pct}%;height:100%;background:${barColor};border-radius:10px;"></div>
+    </div>
+    <div style="font-size:0.71rem;color:var(--text2);margin-bottom:5px;" onclick="showDetail('${h.id}')">${h.date} ${h.time||''} · <span class="badge ${h.examId?'badge-blue':'badge-orange'}">${h.examName}</span> · ${galat} galat${doubtful?' · 🤔 '+doubtful+' doubtful':''}</div>
     <div class="btn-row">
       <button class="btn btn-xs btn-primary" onclick="reAttemptQuiz('${h.id}')">🔄 Re-Attempt</button>
       <button class="btn btn-xs btn-outline" onclick="showDetail('${h.id}')">📋 Detail</button>
       <button class="btn btn-xs btn-danger" onclick="deleteQuizHistory('${h.id}')">🗑️ Delete</button>
     </div>
-  </div>`).join('');
+  </div>`;
+  }).join('');
 }
 function showDetail(qid){
   const h=S.quizHistory.find(x=>x.id===qid); if(!h)return;
@@ -3651,15 +3799,130 @@ function addChatMsg(role,text,id=null,showSave=false){
   if(id)div.id=id;
   div.innerHTML=text.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');
   if(showSave&&role==='bot'){
-    const btn=document.createElement('button');
-    btn.className='ai-save-to-fact';
-    btn.textContent='📌 Library mein save karo';
-    btn.onclick=()=>openSaveFactModal(_aiChatContext?.tid||null,text.substring(0,600));
+    const actRow=document.createElement('div');
+    actRow.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;';
+
+    // Save to Library/Facts button (always)
+    const saveBtn=document.createElement('button');
+    saveBtn.className='ai-save-to-fact';
+    saveBtn.textContent='📌 Library mein save karo';
+    saveBtn.onclick=()=>openSaveFactModal(_aiChatContext?.tid||null,text.substring(0,600));
+    actRow.appendChild(saveBtn);
+
+    // "Explanation mein add karo" — only for question context
+    if(_aiChatContext&&_aiChatContext.type==='question'){
+      const expBtn=document.createElement('button');
+      expBtn.style.cssText='padding:5px 10px;border-radius:8px;border:1.5px solid rgba(21,101,192,0.3);background:rgba(21,101,192,0.08);color:var(--accent);font-size:0.74rem;font-weight:700;cursor:pointer;font-family:inherit;';
+      expBtn.textContent='💡 Explanation mein add karo';
+      expBtn.onclick=()=>addToQuestionExplanation(text);
+      actRow.appendChild(expBtn);
+    }
+
+    // "Notes mein add karo" — only when topic context hai
+    if(_aiChatContext&&_aiChatContext.tid){
+      const notesBtn=document.createElement('button');
+      notesBtn.style.cssText='padding:5px 10px;border-radius:8px;border:1.5px solid rgba(46,125,50,0.3);background:rgba(46,125,50,0.08);color:var(--green);font-size:0.74rem;font-weight:700;cursor:pointer;font-family:inherit;';
+      notesBtn.textContent='📝 Notes mein add karo';
+      notesBtn.onclick=()=>addAiResponseToNotes(text);
+      actRow.appendChild(notesBtn);
+    }
+
     div.appendChild(document.createElement('br'));
-    div.appendChild(btn);
+    div.appendChild(actRow);
   }
   msgs.appendChild(div);
   msgs.scrollTop=msgs.scrollHeight;
+}
+
+// AI response ko question explanation mein add karo
+function addToQuestionExplanation(aiText){
+  if(!_aiChatContext||_aiChatContext.type!=='question'){showToast('Question context nahi hai!','error');return;}
+  const cleanText=aiText.replace(/<[^>]*>/g,'').replace(/\n/g,' ').trim().substring(0,300);
+  // Current question context update karo
+  _aiChatContext.explanation=(_aiChatContext.explanation||'')+' | AI: '+cleanText;
+  // History mein bhi update karo agar matching question mile
+  let found=false;
+  S.quizHistory.forEach(h=>{
+    h.questions.forEach(q=>{
+      if(q.question===_aiChatContext.question){
+        q.explanation=(q.explanation||'')+' | 💡AI: '+cleanText;
+        found=true;
+      }
+    });
+  });
+  if(found){save();showToast('Explanation mein add ho gaya! 💡','success');}
+  else{showToast('Explanation update ho gaya (current session mein) 💡','success');}
+}
+
+// AI response ko topic notes mein add karo
+function addAiResponseToNotes(aiText){
+  if(!_aiChatContext||!_aiChatContext.tid){showToast('Topic context nahi hai!','error');return;}
+  const cleanText=aiText.replace(/<[^>]*>/g,'').trim();
+  // Show a small modal to confirm and pick which note or add as new
+  const tid=_aiChatContext.tid;
+  const sid=_aiChatContext.sid;
+  const secid=_aiChatContext.secid;
+  // Find topic
+  let foundSubj=null,foundSec=null,foundTopic=null;
+  S.subjects.forEach(subj=>{
+    subj.sections.forEach(sec=>{
+      sec.topics.forEach(t=>{
+        if(t.id==tid){foundSubj=subj;foundSec=sec;foundTopic=t;}
+      });
+    });
+  });
+  if(!foundTopic){showToast('Topic nahi mila!','error');return;}
+
+  // Show note add modal
+  _pendingAiNote={text:cleanText,topic:foundTopic,subj:foundSubj,sec:foundSec};
+  document.getElementById('aiNoteAddText').value=cleanText;
+  document.getElementById('aiNoteAddTopicName').textContent=`📙 ${foundSubj.name} › ${foundSec.name} › ${foundTopic.name}`;
+
+  // Populate existing notes dropdown
+  const sel=document.getElementById('aiNoteAddTarget');
+  sel.innerHTML='<option value="new">➕ Naya note banao (AI Note)</option>';
+  foundTopic.notes.forEach((n,i)=>{
+    sel.innerHTML+=`<option value="${i}">📄 ${n.name} mein add karo</option>`;
+  });
+  document.getElementById('aiNoteAddModal').classList.add('show');
+}
+
+let _pendingAiNote=null;
+
+function confirmAddAiNote(){
+  if(!_pendingAiNote)return;
+  const {text,topic,subj,sec}=_pendingAiNote;
+  const sel=document.getElementById('aiNoteAddTarget');
+  const target=sel.value;
+  const editedText=document.getElementById('aiNoteAddText').value.trim();
+  if(!editedText){showToast('Text empty hai!','error');return;}
+
+  if(target==='new'){
+    // New note banana hai
+    const today=new Date().toLocaleDateString('hi-IN');
+    topic.notes.push({
+      id:Date.now(),
+      name:'🤖 AI Note - '+today,
+      content:editedText,
+      addedAt:today,
+      wordCount:editedText.split(/\s+/).length,
+      editorHighlights:[]
+    });
+    showToast('Naya AI Note add ho gaya! 📝','success');
+  } else {
+    // Existing note mein append karo
+    const idx=parseInt(target);
+    const n=topic.notes[idx];
+    if(n){
+      n.content=n.content+'\n\n--- 🤖 AI Addition ---\n'+editedText;
+      n.wordCount=n.content.split(/\s+/).length;
+      showToast(`"${n.name}" mein add ho gaya! 📝`,'success');
+    }
+  }
+  save();
+  renderLibraryTree();
+  closeModal('aiNoteAddModal');
+  _pendingAiNote=null;
 }
 
 // ==================== NOTES EDITOR ====================
@@ -4202,57 +4465,130 @@ function injectManifest(){
 }
 
 // ==================== ANDROID BACK NAVIGATION ====================
-window.addEventListener('popstate', function(e){
-  // 1. Notes Editor khula hai
-  const ne = document.getElementById('notesEditorOverlay');
-  if(ne && ne.classList.contains('show')){
-    if(typeof _editorState !== 'undefined' && _editorState.modified){
-      if(confirm('Unsaved changes hain! Bina save kiye band karna hai?')){
-        ne.classList.remove('show');
+// Yeh system Android back button ko native app jaisa banata hai
+
+let _navStack = []; // Navigation history stack
+
+// Jab bhi page change ho, history mein push karo
+function pushNavState(type, data = {}) {
+  history.pushState({ type, ...data }, '');
+}
+
+// showPage ko wrap karo taaki har page change history mein jaye
+const _origShowPage = showPage;
+function showPage(p, el) {
+  _origShowPage(p, el);
+  pushNavState('page', { page: p });
+  _navStack.push({ type: 'page', page: p });
+}
+
+// closeModal ko wrap karo
+const _origCloseModal = closeModal;
+function closeModal(id) {
+  _origCloseModal(id);
+  // popState already handle karega, yahan kuch extra nahi
+}
+
+// Android back button handler
+window.addEventListener('popstate', function(e) {
+  const state = e.state;
+
+  // ---- 1. Notes Editor Modal khula hai ----
+  if (document.getElementById('notesEditorOverlay')?.classList.contains('show')) {
+    if (_editorState.modified) {
+      if (confirm('Unsaved changes hain! Bina save kiye band karna hai?')) {
+        document.getElementById('notesEditorOverlay').classList.remove('show');
         _editorState.modified = false;
       } else {
-        history.pushState(e.state,'');
+        // Wapas push karo taaki back cancel ho
+        history.pushState(state, '');
       }
     } else {
-      ne.classList.remove('show');
+      document.getElementById('notesEditorOverlay').classList.remove('show');
     }
     return;
   }
 
-  // 2. Koi bhi modal khula hai
+  // ---- 2. Koi bhi Modal khula hai ----
   const openModal = document.querySelector('.modal-overlay.show');
-  if(openModal){
+  if (openModal) {
     openModal.classList.remove('show');
     return;
   }
 
-  // 3. AI Chat khula hai
-  const aiChat = document.getElementById('aiChatOverlay');
-  if(aiChat && aiChat.classList.contains('show')){
-    if(typeof closeAiChat === 'function') closeAiChat();
+  // ---- 3. AI Chat panel khula hai ----
+  if (document.getElementById('aiChatOverlay')?.classList.contains('show')) {
+    closeAiChat();
     return;
   }
 
-  // 4. Sidebar mobile mein khula hai
-  const sidebar = document.getElementById('sidebar');
-  if(sidebar && sidebar.classList.contains('open')){
-    sidebar.classList.remove('open');
-    const so = document.getElementById('sidebarOverlay');
-    if(so) so.classList.remove('show');
+  // ---- 4. Sidebar mobile mein khula hai ----
+  if (document.getElementById('sidebar')?.classList.contains('open')) {
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sidebarOverlay')?.classList.remove('show');
     return;
   }
 
-  // 5. Agar current page Library nahi hai — Library pe wapas jao
+  // ---- 5. Page navigation — Library pe wapas jao ----
+  if (state && state.type === 'page') {
+    // Pichhle page pe jaana
+    const prevPage = state.page;
+    if (prevPage) {
+      const navEl = document.querySelector(`[data-page="${prevPage}"]`);
+      _origShowPage(prevPage, navEl);
+      return;
+    }
+  }
+
+  // ---- 6. Agar koi history nahi — Library pe jao ya app minimize ----
   const currentActive = document.querySelector('.page.active');
-  const currentId = currentActive ? currentActive.id.replace('page-','') : '';
-  if(currentId && currentId !== 'library'){
+  const currentId = currentActive?.id?.replace('page-', '');
+  if (currentId && currentId !== 'library') {
+    // Library pe wapas jao
     const libEl = document.querySelector('[data-page="library"]');
-    showPage('library', libEl, true);
+    _origShowPage('library', libEl);
+    history.pushState({ type: 'page', page: 'library' }, '');
+    showToast('📚 Library pe wapas aaye', 'success');
     return;
   }
 
-  // 6. Library pe hain — app minimize (Android default)
-  // Kuch nahi karo, system handle karega
+  // ---- 7. Bilkul root pe hain — app minimize hoga (default Android behaviour) ----
+  // Kuch nahi karo — system handle karega
+});
+
+// App start hone pe initial state push karo
+function initBackNav() {
+  // Initial state — Library
+  history.replaceState({ type: 'page', page: 'library' }, '');
+}
+
+// ==================== ANDROID BACK NAVIGATION ====================
+window.addEventListener('popstate',function(e){
+  const ne=document.getElementById('notesEditorOverlay');
+  if(ne&&ne.classList.contains('show')){
+    if(typeof _editorState!=='undefined'&&_editorState.modified){
+      if(confirm('Unsaved changes hain! Bina save kiye band karna hai?')){ne.classList.remove('show');_editorState.modified=false;}
+      else history.pushState(e.state,'');
+    }else ne.classList.remove('show');
+    return;
+  }
+  const openModal=document.querySelector('.modal-overlay.show');
+  if(openModal){openModal.classList.remove('show');return;}
+  const aiChat=document.getElementById('aiChatOverlay');
+  if(aiChat&&aiChat.classList.contains('show')){closeAiChat();return;}
+  const sidebar=document.getElementById('sidebar');
+  if(sidebar&&sidebar.classList.contains('open')){
+    sidebar.classList.remove('open');
+    const so=document.getElementById('sidebarOverlay');if(so)so.classList.remove('show');
+    return;
+  }
+  const currentActive=document.querySelector('.page.active');
+  const currentId=currentActive?currentActive.id.replace('page-',''):'';
+  if(currentId&&currentId!=='library'){
+    const libEl=document.querySelector('[data-page="library"]');
+    showPage('library',libEl,true);
+    return;
+  }
 });
 
 // ==================== START ====================
@@ -4260,7 +4596,6 @@ injectManifest();
 registerSW();
 initPWA();
 init();
-// Initial history state set karo
 history.replaceState({type:'page',page:'library'},'');
 </script>
 </body>
