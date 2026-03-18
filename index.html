@@ -3705,26 +3705,49 @@ Restore karna hai?`)) {
         });
       });
       
-      save();
-      
-      // If Firebase logged in, sync to cloud too
-      if(_currentUser && _db) {
-        saveToFirebase().then(()=>{
-          showToast('Data restore + cloud sync ho gaya! ✅☁️', 'success');
-        });
-      } else {
-        showToast('Data restore ho gaya! ✅ (' + subjectCount + ' subjects, ' + topicCount + ' topics)', 'success');
-      }
+      // Save to localStorage directly (avoid Firebase loop)
+      try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
       
       // Close login screen if open
       const ls = document.getElementById('loginScreen');
       if(ls) ls.style.display = 'none';
       
-      // Re-initialize UI
-      init();
-      
       // Close any open modals
       document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('show'));
+      
+      // Re-initialize UI (without triggering Firebase sync)
+      if(S.apiKey){
+        const ak = document.getElementById('apiKey');
+        const ak2 = document.getElementById('apiKey2');
+        const dot = document.getElementById('apiDot');
+        if(ak) ak.value = S.apiKey;
+        if(ak2) ak2.value = S.apiKey;
+        if(dot) dot.className = 'api-dot ok';
+      }
+      renderExamSwitcher();
+      renderLibrarySelects();
+      renderLibraryTree();
+      renderExamsList();
+      updateQuizSelects();
+      renderStats();
+      updateModePill();
+      updateHistBadge();
+      updateSavedBadge();
+      updateVaultBadge();
+      checkPausedQuiz();
+      
+      // After UI load, sync to Firebase (if logged in)
+      setTimeout(() => {
+        if(_currentUser && _db) {
+          saveToFirebase().then(()=>{
+            showToast('Restore + Cloud Sync ho gaya! ✅☁️ (' + subjectCount + ' subjects)', 'success');
+          }).catch(()=>{
+            showToast('Restore ho gaya! ✅ (' + subjectCount + ' subjects, ' + topicCount + ' topics)', 'success');
+          });
+        } else {
+          showToast('Data restore ho gaya! ✅ (' + subjectCount + ' subjects, ' + topicCount + ' topics)', 'success');
+        }
+      }, 500);
       
     } catch(err) {
       showToast('File padhne mein error: ' + err.message, 'error');
