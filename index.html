@@ -3635,41 +3635,102 @@ function restoreData(event) {
   const reader = new FileReader();
   reader.onload = function(e) {
     try {
-      const backup = JSON.parse(e.target.result);
+      const text = e.target.result;
+      let backup = JSON.parse(text);
       
-      // Validate backup structure
-      if(!backup.data || !backup.data.subjects) {
-        throw new Error('Invalid backup file');
+      // Handle multiple backup formats
+      let restoreData = null;
+      
+      // Format 1: {version, date, data: {...}} — new format
+      if(backup.data && backup.data.subjects) {
+        restoreData = backup.data;
+      }
+      // Format 2: Direct S object — old format
+      else if(backup.subjects) {
+        restoreData = backup;
+      }
+      // Format 3: {data: subjects:[]} with subjects at top
+      else if(backup.data && Array.isArray(backup.data)) {
+        restoreData = {subjects: backup.data};
       }
       
-      // Confirm restore
-      if(confirm('Saara current data overwrite ho jayega! Continue karein?')) {
-        // Restore data
-        S = backup.data;
-        
-        // Ensure arrays exist
-        S.subjects.forEach(s=>{
-          s.sections.forEach(sec=>{
-            sec.topics.forEach(t=>{
-              if(!t.highlights) t.highlights=[];
-              if(!t.savedFacts) t.savedFacts=[];
+      if(!restoreData || !Array.isArray(restoreData.subjects)) {
+        showToast('Backup file invalid hai ya format galat hai! ❌', 'error');
+        console.error('Invalid structure:', Object.keys(backup));
+        event.target.value = '';
+        return;
+      }
+      
+      const subjectCount = restoreData.subjects.length;
+      const topicCount = restoreData.subjects.reduce((a,s) => 
+        a + s.sections.reduce((b,sec) => b + sec.topics.length, 0), 0);
+      
+      if(!confirm(`Backup mein ${subjectCount} subjects aur ${topicCount} topics hain.
+
+Saara current data replace ho jayega!
+
+Restore karna hai?`)) {
+        event.target.value = '';
+        return;
+      }
+      
+      // Restore all fields
+      S.subjects = restoreData.subjects || [];
+      S.exams = restoreData.exams || [];
+      S.activeExamId = restoreData.activeExamId || '';
+      S.quizHistory = restoreData.quizHistory || [];
+      S.stats = restoreData.stats || {total:0,correct:0,wrong:0,topicStats:{}};
+      S.questionVault = restoreData.questionVault || [];
+      S.savedQuestions = restoreData.savedQuestions || [];
+      S.wrongedQuestions = restoreData.wrongedQuestions || [];
+      S.reportedQuestions = restoreData.reportedQuestions || [];
+      S.pausedQuiz = restoreData.pausedQuiz || null;
+      // Keep current device's API key if restoreData doesn't have one
+      if(restoreData.apiKey) S.apiKey = restoreData.apiKey;
+      if(restoreData.model) S.model = restoreData.model;
+      
+      // Ensure all arrays exist
+      S.subjects.forEach(s=>{
+        s.sections.forEach(sec=>{
+          sec.topics.forEach(t=>{
+            if(!t.highlights) t.highlights=[];
+            if(!t.savedFacts) t.savedFacts=[];
+            if(!t.wrongBank) t.wrongBank=[];
+            if(!t.newPoints) t.newPoints=[];
+            if(!t.notes) t.notes=[];
+            t.notes.forEach(n=>{
+              if(!n.editorHighlights) n.editorHighlights=[];
             });
           });
         });
-        
-        save();
-        init(); // Re-initialize everything
-        showToast('Data restore ho gaya! ✅', 'success');
-        
-        // Close any open modals
-        document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('show'));
+      });
+      
+      save();
+      
+      // If Firebase logged in, sync to cloud too
+      if(_currentUser && _db) {
+        saveToFirebase().then(()=>{
+          showToast('Data restore + cloud sync ho gaya! ✅☁️', 'success');
+        });
+      } else {
+        showToast('Data restore ho gaya! ✅ (' + subjectCount + ' subjects, ' + topicCount + ' topics)', 'success');
       }
+      
+      // Close login screen if open
+      const ls = document.getElementById('loginScreen');
+      if(ls) ls.style.display = 'none';
+      
+      // Re-initialize UI
+      init();
+      
+      // Close any open modals
+      document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('show'));
+      
     } catch(err) {
-      showToast('Invalid backup file! ❌', 'error');
-      console.error(err);
+      showToast('File padhne mein error: ' + err.message, 'error');
+      console.error('Restore error:', err);
     }
     
-    // Clear file input
     event.target.value = '';
   };
   reader.readAsText(file);
