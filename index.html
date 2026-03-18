@@ -536,6 +536,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .editor-status.unsaved{color:var(--accent2);}
 /* Unified Editable Area */
 .ne-editable{font-size:17px;line-height:1.85;color:var(--text);word-break:break-word;white-space:pre-wrap;cursor:text;-webkit-user-select:text;user-select:text;}
+.ne-editable.hl-mode-active{-webkit-user-select:none !important;user-select:none !important;cursor:crosshair;}
+/* Custom highlight selection overlay */
+.ne-hl-selection{background:rgba(255,235,59,0.4);position:absolute;pointer-events:none;border-radius:3px;}
 /* Magnifier for text selection */
 .ne-magnifier{position:fixed;width:160px;height:60px;background:#fff;border:2px solid var(--accent);border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.25);pointer-events:none;z-index:9999;overflow:hidden;display:none;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:var(--accent);padding:6px 10px;text-align:center;line-height:1.3;}
 .ne-magnifier.show{display:flex;}
@@ -1398,9 +1401,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
         class="ne-editable"
         contenteditable="false"
         spellcheck="true"
-        onmouseup="onReadMouseUp()"
-        ontouchend="onReadMouseUp()"
+        onmouseup="onNEMouseUp(event)"
+        ontouchstart="onNETouchStart(event)"
         ontouchmove="onNETouchMove(event)"
+        ontouchend="onNETouchEnd(event)"
         oninput="onNEInput()"
         onkeydown="onNEKeydown(event)"
         style="outline:none;min-height:100%;padding:4px 2px;">
@@ -4783,26 +4787,17 @@ let _hlCurrentMode = 'highlight';
 function setHlMode(mode) {
   _hlCurrentMode = mode;
   const hlBtn = document.getElementById('hlToggleBtn');
-  const erBtn = document.getElementById('hlEraserBtn');
-  const modal = document.getElementById('notesEditorModalEl');
+  const area = document.getElementById('noteEditableArea');
   const status = document.getElementById('editorStatus');
 
   if(mode === 'highlight') {
-    if(hlBtn) { hlBtn.classList.add('highlight-active'); }
-    if(erBtn) { erBtn.classList.remove('active'); }
-    if(modal) modal.classList.remove('hl-eraser-mode');
-    if(status) status.textContent = '🖊️ Highlight — text select karo';
-  } else if(mode === 'eraser') {
-    if(hlBtn) { hlBtn.classList.remove('highlight-active'); }
-    if(erBtn) { erBtn.classList.add('active'); erBtn.style.background='rgba(198,40,40,0.15)'; erBtn.style.borderColor='var(--red)'; erBtn.style.color='var(--red)'; }
-    if(modal) modal.classList.add('hl-eraser-mode');
-    if(status) status.textContent = '🧹 Eraser — highlight pe tap karo mitane ke liye';
-    // Attach eraser to existing marks
-    neAttachEraserToMarks();
+    if(hlBtn) { hlBtn.classList.add('highlight-active'); hlBtn.textContent = '🖊️ Highlight ON'; }
+    // user-select none - Android toolbar bypass
+    if(area) area.classList.add('hl-mode-active');
+    if(status) status.textContent = '🖊️ Text drag karo → highlight hoga';
   } else {
-    if(hlBtn) hlBtn.classList.remove('highlight-active');
-    if(erBtn) { erBtn.classList.remove('active'); erBtn.style.background=''; erBtn.style.borderColor=''; erBtn.style.color=''; }
-    if(modal) modal.classList.remove('hl-eraser-mode');
+    if(hlBtn) { hlBtn.classList.remove('highlight-active'); hlBtn.textContent = '🖊️ Highlight'; }
+    if(area) area.classList.remove('hl-mode-active');
     if(status) status.textContent = '👁️ Read Mode';
   }
 }
@@ -4810,128 +4805,227 @@ function setHlMode(mode) {
 function neAttachEraserToMarks() {
   const area = document.getElementById('noteEditableArea');
   area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(mark => {
-    // Remove old listener first
-    const newMark = mark.cloneNode(true);
-    mark.parentNode.replaceChild(newMark, mark);
-    
-    newMark.style.cursor = 'pointer';
-    newMark.title = 'Tap karke unhighlight karo';
-    
-    newMark.addEventListener('pointerdown', function(e) {
-      // Dono modes mein - highlight ya eraser - tap se unhighlight hoga
-      e.preventDefault();
-      e.stopPropagation();
-      const txt = this.textContent;
-      const hlid = this.getAttribute('data-hlid');
-      const parent = this.parentNode;
-      const textNode = document.createTextNode(txt);
-      parent.replaceChild(textNode, this);
-      parent.normalize();
-      // Update highlights store
-      _editorState.highlights = _editorState.highlights.filter(h => 
-        h.id !== hlid && h.text !== txt
-      );
-      markModified();
-      showToast('Highlight hata diya ✅', 'success');
-    });
+    // Skip if already has listener
+    if(mark.getAttribute('data-listener')) return;
+    mark.setAttribute('data-listener', '1');
+    mark.style.cursor = 'pointer';
+    mark.title = 'Tap = Unhighlight';
+    neAttachUnhighlightToMark(mark);
   });
 }
 
-function onReadMouseUp() {
-  // Hide magnifier
+// ============ CUSTOM TOUCH HIGHLIGHT SYSTEM ============
+// Android toolbar bypass: user-select none + manual word detection
+
+let _touchStartNode = null;
+let _touchStartOffset = 0;
+let _touchSelecting = false;
+let _touchSelectedText = '';
+
+function getNodeAndOffsetFromPoint(x, y) {
+  // Get text node and offset at given screen coordinates
+  let node = null, offset = 0;
+  if(document.caretPositionFromPoint) {
+    const pos = document.caretPositionFromPoint(x, y);
+    if(pos) { node = pos.offsetNode; offset = pos.offset; }
+  } else if(document.caretRangeFromPoint) {
+    const range = document.caretRangeFromPoint(x, y);
+    if(range) { node = range.startContainer; offset = range.startOffset; }
+  }
+  return { node, offset };
+}
+
+function getWordAtPoint(x, y) {
+  const { node, offset } = getNodeAndOffsetFromPoint(x, y);
+  if(!node || node.nodeType !== Node.TEXT_NODE) return null;
+  const text = node.textContent;
+  // Find word boundaries
+  let start = offset, end = offset;
+  while(start > 0 && !/\s/.test(text[start-1])) start--;
+  while(end < text.length && !/\s/.test(text[end])) end++;
+  if(start === end) return null;
+  return { node, start, end, word: text.slice(start, end) };
+}
+
+function getRangeFromPoints(x1, y1, x2, y2) {
+  const p1 = getNodeAndOffsetFromPoint(x1, y1);
+  const p2 = getNodeAndOffsetFromPoint(x2, y2);
+  if(!p1.node || !p2.node) return null;
+  try {
+    const range = document.createRange();
+    // Ensure start <= end
+    const cmp = p1.node.compareDocumentPosition(p2.node);
+    if(cmp & Node.DOCUMENT_POSITION_FOLLOWING ||
+       (cmp === 0 && p1.offset <= p2.offset)) {
+      range.setStart(p1.node, p1.offset);
+      range.setEnd(p2.node, p2.offset);
+    } else {
+      range.setStart(p2.node, p2.offset);
+      range.setEnd(p1.node, p1.offset);
+    }
+    return range;
+  } catch(e) { return null; }
+}
+
+// Mouse (desktop) - simple approach
+function onNEMouseUp(e) {
   hideMagnifier();
-
-  // Eraser mode mein mouseup se kuch nahi karo
-  if(_hlCurrentMode === 'eraser') return;
-  // Highlight mode off ho to bhi nahi
   if(_hlCurrentMode !== 'highlight') return;
-
   const sel = window.getSelection();
-  if(!sel || sel.isCollapsed) { return; }
+  if(!sel || sel.isCollapsed) return;
   const text = sel.toString().trim();
-  if(text.length < 1) { sel.removeAllRanges(); return; }
-
+  if(text.length < 2) { sel.removeAllRanges(); return; }
   const area = document.getElementById('noteEditableArea');
   if(!sel.anchorNode || !area.contains(sel.anchorNode)) { sel.removeAllRanges(); return; }
+  applyHighlightFromSelection(sel);
+}
 
-  const color = _editorState.hlColor;
-  const cls = color === 'pink' ? 'user-hl-pink' : color === 'green' ? 'user-hl-green' : 'user-hl';
+// Touch start
+let _ts = {x:0, y:0, time:0};
+function onNETouchStart(e) {
+  if(_hlCurrentMode !== 'highlight') return;
+  const t = e.touches[0];
+  _ts = {x: t.clientX, y: t.clientY, time: Date.now()};
+  _touchSelecting = false;
+  _touchSelectedText = '';
+  hideMagnifier();
+}
 
+// Touch move - show magnifier with selected text
+function onNETouchMove(e) {
+  if(_hlCurrentMode !== 'highlight') return;
+  const t = e.touches[0];
+  const dx = t.clientX - _ts.x;
+  const dy = t.clientY - _ts.y;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+
+  if(dist > 8) {
+    _touchSelecting = true;
+    e.preventDefault(); // Prevent scroll while selecting
+
+    // Get text between start and current position
+    const range = getRangeFromPoints(_ts.x, _ts.y, t.clientX, t.clientY);
+    if(range) {
+      const selected = range.toString().trim();
+      _touchSelectedText = selected;
+      if(selected.length > 0) {
+        showMagnifier(t.clientX, t.clientY, selected);
+      }
+    }
+  }
+}
+
+// Touch end - apply highlight
+function onNETouchEnd(e) {
+  hideMagnifier();
+  if(_hlCurrentMode !== 'highlight') return;
+
+  if(!_touchSelecting) {
+    // Short tap - check if on a mark (unhighlight)
+    return;
+  }
+
+  _touchSelecting = false;
+  const text = _touchSelectedText.trim();
+  if(text.length < 1) return;
+
+  // Apply highlight using the custom range
+  const t = e.changedTouches[0];
+  const range = getRangeFromPoints(_ts.x, _ts.y, t.clientX, t.clientY);
+  if(!range || range.collapsed) {
+    _touchSelectedText = '';
+    return;
+  }
+
+  applyHighlightFromRange(range, text);
+  _touchSelectedText = '';
+}
+
+// Apply highlight from browser Selection object
+function applyHighlightFromSelection(sel) {
   try {
     const range = sel.getRangeAt(0);
+    const text = sel.toString().trim();
+    sel.removeAllRanges();
+    applyHighlightFromRange(range, text);
+  } catch(e) {
+    showToast('Select karne mein problem', 'error');
+  }
+}
+
+// Core: wrap range in mark element
+function applyHighlightFromRange(range, text) {
+  const color = _editorState.hlColor;
+  const cls = color === 'pink' ? 'user-hl-pink' : color === 'green' ? 'user-hl-green' : 'user-hl';
+  const uid = 'hl_' + Date.now();
+
+  try {
+    // Check range is inside noteEditableArea
+    const area = document.getElementById('noteEditableArea');
+    if(!area.contains(range.commonAncestorContainer)) return;
+
     const mark = document.createElement('mark');
     mark.className = cls;
-    // Click to remove (non-eraser mode)
-    mark.addEventListener('pointerdown', function(e) {
-      if(_hlCurrentMode === 'eraser') {
-        e.preventDefault();
-        e.stopPropagation();
-        const txt = this.textContent;
-        const parent = this.parentNode;
-        parent.replaceChild(document.createTextNode(txt), this);
-        parent.normalize();
-        _editorState.highlights = _editorState.highlights.filter(h => h.text !== txt);
-        markModified();
-        showToast('Highlight mita diya 🧹', 'success');
-      }
-    });
-    range.surroundContents(mark);
-    sel.removeAllRanges();
-
-    // Save to highlights store
-    const uid = 'hl_' + Date.now();
     mark.setAttribute('data-hlid', uid);
     mark.style.cursor = 'pointer';
-    mark.title = 'Tap karke unhighlight karo';
-    // Attach unhighlight listener to new mark
-    mark.addEventListener('pointerdown', function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      const txt = this.textContent;
-      const hid = this.getAttribute('data-hlid');
-      const parent = this.parentNode;
-      parent.replaceChild(document.createTextNode(txt), this);
-      parent.normalize();
-      _editorState.highlights = _editorState.highlights.filter(h => h.id !== hid && h.text !== txt);
-      markModified();
-      showToast('Highlight hata diya ✅', 'success');
-    });
+    mark.title = 'Tap = Unhighlight';
+    range.surroundContents(mark);
+
+    // Attach unhighlight on tap
+    neAttachUnhighlightToMark(mark);
+
     _editorState.highlights.push({ id: uid, text, color });
     markModified();
     showToast('Highlight ho gaya! 🖊️', 'success');
   } catch(e) {
-    sel.removeAllRanges();
-    showToast('Ek paragraph mein se select karo', 'error');
+    // Range spans multiple nodes - use extractContents approach
+    try {
+      const frag = range.extractContents();
+      const mark = document.createElement('mark');
+      mark.className = cls;
+      mark.setAttribute('data-hlid', uid);
+      mark.style.cursor = 'pointer';
+      mark.appendChild(frag);
+      neAttachUnhighlightToMark(mark);
+      range.insertNode(mark);
+      _editorState.highlights.push({ id: uid, text: mark.textContent, color });
+      markModified();
+      showToast('Highlight ho gaya! 🖊️', 'success');
+    } catch(e2) {
+      showToast('Thoda alag text select karo', 'error');
+    }
   }
 }
 
-// Magnifier functionality
-let _magTimer = null;
+// Attach unhighlight listener to a mark element
+function neAttachUnhighlightToMark(mark) {
+  mark.addEventListener('pointerdown', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const txt = this.textContent;
+    const hid = this.getAttribute('data-hlid');
+    const parent = this.parentNode;
+    parent.replaceChild(document.createTextNode(txt), this);
+    parent.normalize();
+    _editorState.highlights = _editorState.highlights.filter(h => h.id !== hid && h.text !== txt);
+    markModified();
+    showToast('Highlight hata diya ✅', 'success');
+  });
+}
+
+// Magnifier
 function showMagnifier(x, y, text) {
   const mag = document.getElementById('neMagnifier');
   if(!mag) return;
-  mag.textContent = text.length > 20 ? '...' + text.slice(-20) : text;
+  const display = text.length > 25 ? text.slice(0,25) + '...' : text;
+  mag.textContent = '"' + display + '"';
   mag.classList.add('show');
-  // Position above finger
   mag.style.left = Math.max(10, Math.min(window.innerWidth - 170, x - 80)) + 'px';
-  mag.style.top = Math.max(10, y - 80) + 'px';
+  mag.style.top = Math.max(10, y - 90) + 'px';
 }
 function hideMagnifier() {
   const mag = document.getElementById('neMagnifier');
   if(mag) mag.classList.remove('show');
-}
-
-// Touch events for magnifier
-function onNETouchMove(e) {
-  if(_hlCurrentMode !== 'highlight') return;
-  const touch = e.touches[0];
-  const sel = window.getSelection();
-  if(sel && !sel.isCollapsed) {
-    const selected = sel.toString();
-    if(selected.length > 0) {
-      showMagnifier(touch.clientX, touch.clientY, selected);
-    }
-  }
 }
 
 function toggleHighlightMode() {
