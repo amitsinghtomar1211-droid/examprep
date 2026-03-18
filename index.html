@@ -1353,7 +1353,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
       </div>
     </div>
 
-    <!-- TOOLBAR ROW 1: Highlight + Edit toggle -->
+    <!-- TOOLBAR ROW 1: Highlight + Eraser + Edit -->
     <div class="notes-editor-toolbar" style="flex-shrink:0;gap:5px;flex-wrap:wrap;" id="mainToolbar">
       <!-- Highlight colors -->
       <div class="hl-color-row">
@@ -1361,11 +1361,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
         <div class="hl-dot hl-dot-pink" id="hlDotPink" onclick="selectHlColor('pink')" title="Pink"></div>
         <div class="hl-dot hl-dot-green" id="hlDotGreen" onclick="selectHlColor('green')" title="Green"></div>
       </div>
-      <button class="toolbar-btn" id="hlToggleBtn" onclick="toggleHlMode()">🖊️ Highlight OFF</button>
-      <span style="font-size:0.72rem;color:var(--text2);align-self:center;">• tap to remove</span>
+      <button class="toolbar-btn" id="hlToggleBtn" onclick="toggleHlMode()">🖊️ Highlight</button>
+      <button class="toolbar-btn" id="hlEraserBtn" onclick="toggleEraserMode()">🧹 Eraser</button>
       <div style="width:1px;height:18px;background:var(--border);"></div>
-      <!-- Edit mode toggle -->
-      <button class="toolbar-btn" id="editToggleBtn" onclick="neToggleEdit()">✏️ Edit Mode</button>
+      <button class="toolbar-btn" id="editToggleBtn" onclick="neToggleEdit()">✏️ Edit</button>
       <button class="toolbar-btn" onclick="copyEditorContent()">📋 Copy</button>
     </div>
 
@@ -4540,13 +4539,15 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
 
   neLoadContent(n.content, false);
   neSetEditMode(false);
-  setHlMode('highlight'); // Default highlight mode ON
+  setHlMode('highlight'); // Default highlight mode ON at open
   neSetTheme(_neState.theme, true);
   document.getElementById('noteEditableArea').style.fontSize = _neState.fontSize + 'px';
   document.getElementById('neFontLabel').textContent = _neState.fontSize;
   document.getElementById('unsavedDot').style.display = 'none';
   document.getElementById('saveNoteBtn').style.display = 'none';
   document.getElementById('editorStatus').textContent = '🖊️ Highlight Mode — text select karo';
+  // Reset eraser toggle state visually
+  _eraserModeOn = false;
   document.getElementById('modeTabEdit') && (document.getElementById('modeTabEdit').style.display = '');
   document.getElementById('notesEditorOverlay').removeAttribute('data-viewer');
   document.getElementById('notesEditorOverlay').classList.add('show');
@@ -4555,20 +4556,62 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
 }
 
 function closeNotesEditor() {
+  // Agar unsaved changes hain to popup dikhao
   if(_editorState.modified) {
-    // Unsaved changes hain - auto save karke band karo
-    saveEditedNote();
-    // saveEditedNote sets modified = false, then we close
-    setTimeout(() => {
-      neSetEditMode(false);
-      document.getElementById('notesEditorOverlay').classList.remove('show');
-      document.body.style.overflow = '';
-    }, 100);
-    return;
+    // Custom confirm dialog
+    showUnsavedPopup(
+      () => {
+        // "Haan Save Karo" - save karke band karo
+        saveEditedNote();
+        _doCloseEditor();
+      },
+      () => {
+        // "Bina Save Ke Band Karo" - changes discard karo
+        _editorState.modified = false;
+        _doCloseEditor();
+      }
+    );
+    return; // Band mat karo abhi - popup ka wait karo
   }
+  _doCloseEditor();
+}
+
+function _doCloseEditor() {
   neSetEditMode(false);
-  document.getElementById('notesEditorOverlay').classList.remove('show');
+  setHlMode('off');
+  hideMagnifier();
+  const overlay = document.getElementById('notesEditorOverlay');
+  if(overlay) overlay.classList.remove('show');
   document.body.style.overflow = '';
+}
+
+function showUnsavedPopup(onSave, onDiscard) {
+  // Remove purana popup agar hai
+  const old = document.getElementById('unsavedPopupOverlay');
+  if(old) old.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'unsavedPopupOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:16px;padding:24px;max-width:340px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.2);text-align:center;">
+      <div style="font-size:2rem;margin-bottom:10px;">⚠️</div>
+      <div style="font-size:1rem;font-weight:800;color:var(--text);margin-bottom:8px;">Unsaved Changes!</div>
+      <div style="font-size:0.82rem;color:var(--text2);line-height:1.6;margin-bottom:20px;">Aapne notes mein changes kiye hain jo save nahi hue.<br>Kya aap save karke bahar jaana chahte hain?</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <button id="unsavedSaveBtn" style="padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--green),#388e3c);color:#fff;font-weight:800;font-size:0.88rem;cursor:pointer;font-family:inherit;">💾 Haan, Save Karke Jao</button>
+        <button id="unsavedDiscardBtn" style="padding:11px;border-radius:10px;border:1.5px solid rgba(198,40,40,0.3);background:rgba(198,40,40,0.07);color:var(--red);font-weight:700;font-size:0.84rem;cursor:pointer;font-family:inherit;">🗑️ Nahi, Bina Save Ke Jao</button>
+        <button id="unsavedCancelBtn" style="padding:11px;border-radius:10px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font-weight:700;font-size:0.84rem;cursor:pointer;font-family:inherit;">↩️ Wapas Jao (Editing Jari Rakho)</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  document.getElementById('unsavedSaveBtn').onclick = () => { overlay.remove(); onSave(); };
+  document.getElementById('unsavedDiscardBtn').onclick = () => { overlay.remove(); onDiscard(); };
+  document.getElementById('unsavedCancelBtn').onclick = () => { overlay.remove(); }; // Sirf popup band karo, editor khula rahe
 }
 
 // Load content into the editable area
@@ -4744,12 +4787,15 @@ function openSpecialEditor(type, sid, secid, tid) {
   if(!t) return;
   let text = '';
   let title = '';
+  let savedHTML = null;
   if(type === 'finalnotes') {
     text = (t.finalNotes || '').replace(/%%NEW%%([\s\S]*?)%%DATE%%.*?%%ENDNEW%%/g,'$1').replace(/%%HIGHLIGHT%%([\s\S]*?)%%ENDHIGHLIGHT%%/g,'$1');
     title = '⭐ Final Notes';
+    savedHTML = t.finalNotesHTML || null; // saved highlights ke saath
   } else if(type === 'smartnotes') {
     text = t.smartNotesAI || '';
     title = '🧠 Smart Notes';
+    savedHTML = t.smartNotesHTML || null; // saved highlights ke saath
   }
   _editorState.sid = sid;
   _editorState.secid = secid;
@@ -4760,18 +4806,20 @@ function openSpecialEditor(type, sid, secid, tid) {
   _editorState.hlMode = true;
   _editorState.hlColor = 'yellow';
   _editorState.highlights = [];
+  _editorState.richHTML = savedHTML; // richHTML set karo taaki neLoadContent use kare
   _undoStack = [];
   _redoStack = [];
   document.getElementById('notesEditorTitle').textContent = title;
   document.getElementById('notesEditorMeta').textContent = t.name;
   neLoadContent(text, false);
   neSetEditMode(false);
+  setHlMode('highlight'); // Default highlight ON
   neSetTheme(_neState.theme, true);
   document.getElementById('noteEditableArea').style.fontSize = _neState.fontSize + 'px';
   document.getElementById('neFontLabel').textContent = _neState.fontSize;
   document.getElementById('unsavedDot').style.display = 'none';
   document.getElementById('saveNoteBtn').style.display = 'none';
-  document.getElementById('editorStatus').textContent = '👁️ Read Mode';
+  document.getElementById('editorStatus').textContent = '🖊️ Highlight Mode — text select karo';
   document.getElementById('notesEditorOverlay').removeAttribute('data-viewer');
   document.getElementById('notesEditorOverlay').classList.add('show');
   document.body.style.overflow = 'hidden';
@@ -4821,20 +4869,48 @@ function neRedo() {
 let _hlCurrentMode = 'highlight';
 
 function setHlMode(mode) {
+  // mode: 'highlight' | 'eraser' | 'off'
   _hlCurrentMode = mode;
-  const hlBtn = document.getElementById('hlToggleBtn');
-  const area = document.getElementById('noteEditableArea');
-  const status = document.getElementById('editorStatus');
+  const hlBtn   = document.getElementById('hlToggleBtn');
+  const erBtn   = document.getElementById('hlEraserBtn');
+  const area    = document.getElementById('noteEditableArea');
+  const status  = document.getElementById('editorStatus');
+
+  // Reset both buttons first
+  if(hlBtn) { hlBtn.classList.remove('highlight-active'); hlBtn.textContent = '🖊️ Highlight'; }
+  if(erBtn) {
+    erBtn.classList.remove('highlight-active');
+    erBtn.textContent = '🧹 Eraser';
+    erBtn.style.background=''; erBtn.style.color=''; erBtn.style.borderColor='';
+  }
+  if(area)  area.classList.remove('hl-mode-active');
+  // Update cursor on all marks based on mode
+  if(area) {
+    area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(mark => {
+      mark.style.cursor = (mode === 'eraser') ? 'cell' : 'default';
+      mark.title = (mode === 'eraser') ? '🧹 Tap karo to unhighlight' : '';
+    });
+  }
 
   if(mode === 'highlight') {
     if(hlBtn) { hlBtn.classList.add('highlight-active'); hlBtn.textContent = '🖊️ Highlight ON'; }
-    if(area) area.classList.add('hl-mode-active');
+    if(area)  area.classList.add('hl-mode-active');
     if(status) status.textContent = '🖊️ Highlight ON — text drag karo';
+    _eraserModeOn = false;
+  } else if(mode === 'eraser') {
+    if(erBtn) {
+      erBtn.classList.add('highlight-active');
+      erBtn.textContent = '🧹 Eraser ON ✓';
+      erBtn.style.background = 'rgba(198,40,40,0.12)';
+      erBtn.style.color = 'var(--red)';
+      erBtn.style.borderColor = 'var(--red)';
+    }
+    if(status) status.textContent = '🧹 Eraser ON — highlighted text pe tap karo to remove';
+    _eraserModeOn = true;
   } else {
-    if(hlBtn) { hlBtn.classList.remove('highlight-active'); hlBtn.textContent = '🖊️ Highlight OFF'; }
-    if(area) area.classList.remove('hl-mode-active');
-    if(status) status.textContent = '👁️ Read — scroll/read mode';
+    if(status) status.textContent = '👁️ Read Mode';
     hideMagnifier();
+    _eraserModeOn = false;
   }
 }
 
@@ -4843,14 +4919,25 @@ function toggleHlMode() {
   else setHlMode('highlight');
 }
 
+// Highlight eraser ON/OFF toggle state
+let _eraserModeOn = false;
+
+function toggleEraserMode() {
+  _eraserModeOn = !_eraserModeOn;
+  if(_eraserModeOn) {
+    setHlMode('eraser');
+  } else {
+    // Eraser off karo - wapas highlight mode ya off
+    setHlMode(_hlCurrentMode === 'eraser' ? 'highlight' : _hlCurrentMode);
+  }
+}
+
 function neAttachEraserToMarks() {
   const area = document.getElementById('noteEditableArea');
   area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(mark => {
-    // Skip if already has listener
-    if(mark.getAttribute('data-listener')) return;
-    mark.setAttribute('data-listener', '1');
-    mark.style.cursor = 'pointer';
-    mark.title = 'Tap = Unhighlight';
+    // Always re-attach (ensures undo/redo ke baad bhi listener sahi ho)
+    mark.style.cursor = (_hlCurrentMode === 'eraser') ? 'cell' : 'default';
+    mark.title = (_hlCurrentMode === 'eraser') ? '🧹 Tap karo to unhighlight' : 'Eraser ON karo to remove';
     neAttachUnhighlightToMark(mark);
   });
 }
@@ -5041,18 +5128,27 @@ function applyHighlightFromRange(range, text) {
 
 // Attach unhighlight listener to a mark element
 function neAttachUnhighlightToMark(mark) {
-  mark.addEventListener('pointerdown', function(e) {
+  // Remove purana listener agar pehle se hai (re-attach safe karne ke liye)
+  if(mark._unhighlightFn) {
+    mark.removeEventListener('pointerdown', mark._unhighlightFn);
+  }
+  mark._unhighlightFn = function(e) {
+    // ONLY work when eraser mode is ON
+    if(_hlCurrentMode !== 'eraser') return;
     e.preventDefault();
     e.stopPropagation();
-    neSaveSnapshot(); // Save for undo
+    // Pehle snapshot save karo — taaki undo karne par highlight wapas aa jaye
+    neSaveSnapshot();
+    const txt = this.textContent;
     const hid = this.getAttribute('data-hlid');
     const parent = this.parentNode;
     parent.replaceChild(document.createTextNode(txt), this);
     parent.normalize();
-    _editorState.highlights = _editorState.highlights.filter(h => h.id !== hid && h.text !== txt);
+    _editorState.highlights = _editorState.highlights.filter(h => h.id !== hid);
     markModified();
-    showToast('Highlight hata diya ✅', 'success');
-  });
+    showToast('Highlight hata diya 🧹', 'success');
+  };
+  mark.addEventListener('pointerdown', mark._unhighlightFn);
 }
 
 // Magnifier
@@ -5123,10 +5219,11 @@ function saveEditedNote() {
     t.finalNotes = plainText;
     t.finalNotesAt = new Date().toLocaleDateString('hi-IN');
     if(!t.finalNotesHTML) t.finalNotesHTML = '';
-    t.finalNotesHTML = richHTML;
+    t.finalNotesHTML = richHTML; // highlights bhi save honge
   } else if(isSpecial === 'smartnotes') {
     t.smartNotesAI = plainText;
     t.smartNotesAt = new Date().toLocaleDateString('hi-IN');
+    t.smartNotesHTML = richHTML; // highlights bhi save honge
   } else {
     const n = t.notes[_editorState.noteIdx];
     if(!n) return;
@@ -5148,32 +5245,73 @@ function saveEditedNote() {
   }
 
   save();
-  _editorState.modified = false;  // Mark as saved - band karne pe popup nahi aayega
-  neSetEditMode(false);
+  _editorState.modified = false;
 
-  // Save button ko "Saved ✅" dikhaao
+  // Save button feedback
   const saveBtn = document.getElementById('saveNoteBtn');
   if(saveBtn) {
     saveBtn.textContent = '✅ Saved!';
     saveBtn.style.background = 'var(--green)';
     saveBtn.disabled = true;
-    // 2 second baad hide karo
     setTimeout(() => {
       saveBtn.style.display = 'none';
       saveBtn.textContent = '💾 Save';
       saveBtn.style.background = '';
       saveBtn.disabled = false;
-    }, 2000);
+    }, 1500);
   }
-  document.getElementById('unsavedDot').style.display = 'none';
-  document.getElementById('editorStatus').textContent = '✅ Save Ho Gaya!';
+  const dot = document.getElementById('unsavedDot');
+  if(dot) dot.style.display = 'none';
+  const status = document.getElementById('editorStatus');
+  if(status) status.textContent = '✅ Save Ho Gaya!';
+
   renderLibraryTree();
-  showToast('Save ho gaya! ✅', 'success');
+
+  // Save success popup dikhao
+  showSaveSuccessPopup();
 
   const tvModal = document.getElementById('topicViewModal');
   if(tvModal && tvModal.classList.contains('show')) {
     viewTopic(_editorState.sid, _editorState.secid, _editorState.tid);
   }
+}
+
+function showSaveSuccessPopup() {
+  // Remove purana agar hai
+  const old = document.getElementById('saveSuccessPopup');
+  if(old) old.remove();
+
+  const popup = document.createElement('div');
+  popup.id = 'saveSuccessPopup';
+  popup.style.cssText = `
+    position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.8);
+    background:var(--surface);border:2px solid var(--green);border-radius:16px;
+    padding:24px 28px;z-index:9998;text-align:center;
+    box-shadow:0 8px 40px rgba(0,0,0,0.18);
+    opacity:0;transition:all 0.25s cubic-bezier(0.34,1.56,0.64,1);
+    max-width:280px;width:90%;
+  `;
+  popup.innerHTML = `
+    <div style="font-size:2.2rem;margin-bottom:8px;">✅</div>
+    <div style="font-size:1rem;font-weight:800;color:var(--green);margin-bottom:4px;">Notes Save Ho Gaye!</div>
+    <div style="font-size:0.78rem;color:var(--text2);line-height:1.5;">Aapke changes safely save ho gaye hain.<br>Aap inhe dobara edit karke phir se save kar sakte hain.</div>
+  `;
+  document.body.appendChild(popup);
+
+  // Animate in
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      popup.style.opacity = '1';
+      popup.style.transform = 'translate(-50%,-50%) scale(1)';
+    });
+  });
+
+  // Auto hide after 2 seconds
+  setTimeout(() => {
+    popup.style.opacity = '0';
+    popup.style.transform = 'translate(-50%,-50%) scale(0.8)';
+    setTimeout(() => popup.remove(), 300);
+  }, 2000);
 }
 
 // ---- Viewer mode (read-only, no edit tab) ----
@@ -5807,10 +5945,10 @@ window.addEventListener('popstate',function(e){
   if(ne&&ne.classList.contains('show')){
     if(typeof _editorState!=='undefined'&&_editorState.modified){
       saveEditedNote();
-      setTimeout(()=>{ne.classList.remove('show');document.body.style.overflow='';},150);
-    } else {
-      ne.classList.remove('show');document.body.style.overflow='';
     }
+    neSetEditMode(false); setHlMode('off'); hideMagnifier();
+    ne.classList.remove('show'); document.body.style.overflow='';
+    return;
   }
   const openModal=document.querySelector('.modal-overlay.show');
   if(openModal){openModal.classList.remove('show');return;}
