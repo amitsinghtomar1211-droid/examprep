@@ -4556,62 +4556,111 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
 }
 
 function closeNotesEditor() {
-  // Agar unsaved changes hain to popup dikhao
   if(_editorState.modified) {
-    // Custom confirm dialog
-    showUnsavedPopup(
-      () => {
-        // "Haan Save Karo" - save karke band karo
-        saveEditedNote();
-        _doCloseEditor();
-      },
-      () => {
-        // "Bina Save Ke Band Karo" - changes discard karo
-        _editorState.modified = false;
-        _doCloseEditor();
-      }
-    );
-    return; // Band mat karo abhi - popup ka wait karo
+    showUnsavedPopup();
+    return;
   }
-  _doCloseEditor();
+  _forceCloseEditor();
 }
 
-function _doCloseEditor() {
+function _forceCloseEditor() {
   neSetEditMode(false);
   setHlMode('off');
   hideMagnifier();
+  _editorState.modified = false;
   const overlay = document.getElementById('notesEditorOverlay');
-  if(overlay) overlay.classList.remove('show');
+  if(overlay) {
+    overlay.classList.remove('show');
+    overlay.style.display = 'none';
+    setTimeout(function(){ overlay.style.display = ''; }, 80);
+  }
   document.body.style.overflow = '';
 }
 
-function showUnsavedPopup(onSave, onDiscard) {
-  // Remove purana popup agar hai
-  const old = document.getElementById('unsavedPopupOverlay');
+function showUnsavedPopup() {
+  var old = document.getElementById('unsavedPopupOverlay');
   if(old) old.remove();
 
-  const overlay = document.createElement('div');
+  var overlay = document.createElement('div');
   overlay.id = 'unsavedPopupOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;';
 
-  overlay.innerHTML = `
-    <div style="background:var(--surface);border-radius:16px;padding:24px;max-width:340px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,0.2);text-align:center;">
-      <div style="font-size:2rem;margin-bottom:10px;">⚠️</div>
-      <div style="font-size:1rem;font-weight:800;color:var(--text);margin-bottom:8px;">Unsaved Changes!</div>
-      <div style="font-size:0.82rem;color:var(--text2);line-height:1.6;margin-bottom:20px;">Aapne notes mein changes kiye hain jo save nahi hue.<br>Kya aap save karke bahar jaana chahte hain?</div>
-      <div style="display:flex;flex-direction:column;gap:8px;">
-        <button id="unsavedSaveBtn" style="padding:11px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--green),#388e3c);color:#fff;font-weight:800;font-size:0.88rem;cursor:pointer;font-family:inherit;">💾 Haan, Save Karke Jao</button>
-        <button id="unsavedDiscardBtn" style="padding:11px;border-radius:10px;border:1.5px solid rgba(198,40,40,0.3);background:rgba(198,40,40,0.07);color:var(--red);font-weight:700;font-size:0.84rem;cursor:pointer;font-family:inherit;">🗑️ Nahi, Bina Save Ke Jao</button>
-        <button id="unsavedCancelBtn" style="padding:11px;border-radius:10px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font-weight:700;font-size:0.84rem;cursor:pointer;font-family:inherit;">↩️ Wapas Jao (Editing Jari Rakho)</button>
-      </div>
-    </div>
-  `;
+  overlay.innerHTML = '<div style="background:#fff;border-radius:18px;padding:26px 22px;max-width:320px;width:100%;box-shadow:0 10px 50px rgba(0,0,0,0.25);text-align:center;font-family:inherit;">'
+    + '<div style="font-size:2.4rem;margin-bottom:10px;">⚠️</div>'
+    + '<div style="font-size:1rem;font-weight:800;color:#0d1b2a;margin-bottom:8px;">Unsaved Changes Hain!</div>'
+    + '<div style="font-size:0.82rem;color:#37526d;line-height:1.7;margin-bottom:22px;">Notes mein changes hain jo save nahi hue. Kya karna chahte hain?</div>'
+    + '<div style="display:flex;flex-direction:column;gap:10px;">'
+    + '<button id="uspSaveExit" style="padding:13px;border-radius:11px;border:none;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;font-weight:800;font-size:0.9rem;cursor:pointer;font-family:inherit;">💾 Save Karke Bahar Jao</button>'
+    + '<button id="uspDiscardExit" style="padding:13px;border-radius:11px;border:1.5px solid rgba(198,40,40,0.35);background:rgba(198,40,40,0.07);color:#c62828;font-weight:700;font-size:0.86rem;cursor:pointer;font-family:inherit;">🗑️ Bina Save Ke Bahar Jao</button>'
+    + '<button id="uspCancel" style="padding:13px;border-radius:11px;border:1.5px solid #bdd5ea;background:transparent;color:#37526d;font-weight:700;font-size:0.86rem;cursor:pointer;font-family:inherit;">✏️ Wapas Editing Pe Jao</button>'
+    + '</div></div>';
 
   document.body.appendChild(overlay);
 
-  document.getElementById('unsavedSaveBtn').onclick = () => { overlay.remove(); onSave(); };
-  document.getElementById('unsavedDiscardBtn').onclick = () => { overlay.remove(); onDiscard(); };
-  document.getElementById('unsavedCancelBtn').onclick = () => { overlay.remove(); }; // Sirf popup band karo, editor khula rahe
+  document.getElementById('uspSaveExit').onclick = function() {
+    overlay.remove();
+    _saveAndClose();
+  };
+
+  document.getElementById('uspDiscardExit').onclick = function() {
+    overlay.remove();
+    _forceCloseEditor();
+  };
+
+  document.getElementById('uspCancel').onclick = function() {
+    overlay.remove();
+  };
+}
+
+function _doSaveNoteData() {
+  var t = getTop(_editorState.sid, _editorState.secid, _editorState.tid);
+  if(!t) return false;
+  var isSpecial = _editorState.specialType;
+  var plainText = neGetPlainText();
+  var richHTML = neGetHTML();
+  if(!plainText.trim()) return false;
+
+  if(isSpecial === 'finalnotes') {
+    t.finalNotes = plainText;
+    t.finalNotesAt = new Date().toLocaleDateString('hi-IN');
+    t.finalNotesHTML = richHTML;
+  } else if(isSpecial === 'smartnotes') {
+    t.smartNotesAI = plainText;
+    t.smartNotesAt = new Date().toLocaleDateString('hi-IN');
+    t.smartNotesHTML = richHTML;
+  } else {
+    var n = t.notes[_editorState.noteIdx];
+    if(!n) return false;
+    n.content = plainText;
+    n.wordCount = plainText.trim().split(/\s+/).length;
+    n.lastEditedAt = new Date().toLocaleDateString('hi-IN');
+    _editorState.highlights = [];
+    var area = document.getElementById('noteEditableArea');
+    area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(function(mark) {
+      var cls = mark.className;
+      var color = cls.includes('pink') ? 'pink' : cls.includes('green') ? 'green' : 'yellow';
+      var uid = mark.getAttribute('data-hlid') || ('hl_' + Date.now() + Math.random());
+      mark.setAttribute('data-hlid', uid);
+      _editorState.highlights.push({ id: uid, text: mark.textContent, color: color });
+    });
+    n.editorHighlights = _editorState.highlights.slice();
+    n.editorRichHTML = area.innerHTML;
+  }
+  return true;
+}
+
+function _saveAndClose() {
+  var ok = _doSaveNoteData();
+  if(!ok) { _forceCloseEditor(); return; }
+  save();
+  _editorState.modified = false;
+  renderLibraryTree();
+  var tvModal = document.getElementById('topicViewModal');
+  if(tvModal && tvModal.classList.contains('show')) {
+    viewTopic(_editorState.sid, _editorState.secid, _editorState.tid);
+  }
+  _forceCloseEditor();
+  setTimeout(function(){ showSaveSuccessPopup(); }, 150);
 }
 
 // Load content into the editable area
@@ -5204,73 +5253,34 @@ function copyEditorContent() {
 }
 
 function saveEditedNote() {
-  const t = getTop(_editorState.sid, _editorState.secid, _editorState.tid);
-  if(!t) return;
-
-  const isSpecial = _editorState.specialType;
-
-  // Get content - plain text for storage
-  const plainText = neGetPlainText();
-  const richHTML = neGetHTML();
-
-  if(!plainText.trim()) { showToast('Notes empty nahi ho sakta!', 'error'); return; }
-
-  if(isSpecial === 'finalnotes') {
-    t.finalNotes = plainText;
-    t.finalNotesAt = new Date().toLocaleDateString('hi-IN');
-    if(!t.finalNotesHTML) t.finalNotesHTML = '';
-    t.finalNotesHTML = richHTML; // highlights bhi save honge
-  } else if(isSpecial === 'smartnotes') {
-    t.smartNotesAI = plainText;
-    t.smartNotesAt = new Date().toLocaleDateString('hi-IN');
-    t.smartNotesHTML = richHTML; // highlights bhi save honge
-  } else {
-    const n = t.notes[_editorState.noteIdx];
-    if(!n) return;
-    n.content = plainText;
-    n.wordCount = plainText.trim().split(/\s+/).length;
-    n.lastEditedAt = new Date().toLocaleDateString('hi-IN');
-    // Save highlights and richHTML (with mark tags preserved)
-    _editorState.highlights = [];
-    const area = document.getElementById('noteEditableArea');
-    area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(mark => {
-      const cls = mark.className;
-      const color = cls.includes('pink') ? 'pink' : cls.includes('green') ? 'green' : 'yellow';
-      const uid = mark.getAttribute('data-hlid') || ('hl_' + Date.now() + Math.random());
-      mark.setAttribute('data-hlid', uid);
-      _editorState.highlights.push({ id: uid, text: mark.textContent, color });
-    });
-    n.editorHighlights = _editorState.highlights.slice();
-    n.editorRichHTML = area.innerHTML; // Save rich HTML with highlight marks
-  }
+  // Yeh sirf Save button ke liye — editor band nahi hoga
+  var ok = _doSaveNoteData();
+  if(!ok) { showToast('Save nahi ho saka!', 'error'); return; }
 
   save();
   _editorState.modified = false;
 
-  // Save button feedback
-  const saveBtn = document.getElementById('saveNoteBtn');
+  var saveBtn = document.getElementById('saveNoteBtn');
   if(saveBtn) {
     saveBtn.textContent = '✅ Saved!';
     saveBtn.style.background = 'var(--green)';
     saveBtn.disabled = true;
-    setTimeout(() => {
+    setTimeout(function() {
       saveBtn.style.display = 'none';
       saveBtn.textContent = '💾 Save';
       saveBtn.style.background = '';
       saveBtn.disabled = false;
-    }, 1500);
+    }, 1800);
   }
-  const dot = document.getElementById('unsavedDot');
+  var dot = document.getElementById('unsavedDot');
   if(dot) dot.style.display = 'none';
-  const status = document.getElementById('editorStatus');
-  if(status) status.textContent = '✅ Save Ho Gaya!';
+  var status = document.getElementById('editorStatus');
+  if(status) status.textContent = '✅ Save Ho Gaya! — Aap editing jari rakh sakte hain';
 
   renderLibraryTree();
+  showSaveSuccessPopup(); // Success popup dikhao
 
-  // Save success popup dikhao
-  showSaveSuccessPopup();
-
-  const tvModal = document.getElementById('topicViewModal');
+  var tvModal = document.getElementById('topicViewModal');
   if(tvModal && tvModal.classList.contains('show')) {
     viewTopic(_editorState.sid, _editorState.secid, _editorState.tid);
   }
