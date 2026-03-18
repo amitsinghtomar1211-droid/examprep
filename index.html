@@ -5602,6 +5602,14 @@ function initFirebase(){
     }
     _auth = firebase.auth();
     _db = firebase.firestore();
+    // Offline persistence enable karo - network nahi ho tab bhi kaam kare
+    _db.enablePersistence({synchronizeTabs:true}).catch(err=>{
+      if(err.code === 'failed-precondition') {
+        // Multiple tabs open - ignore
+      } else if(err.code === 'unimplemented') {
+        // Browser support nahi - ignore
+      }
+    });
     _fbReady = true;
 
     // Auth state listener
@@ -5818,10 +5826,23 @@ async function loadFromFirebase(){
   try{
     const uid = _currentUser.uid;
     const doc = await _db.collection('users').doc(uid).get();
+
+    const localSubjectCount = S.subjects ? S.subjects.length : 0;
+    const localTopicCount = S.subjects ? S.subjects.reduce((a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0),0) : 0;
+
     if(doc.exists){
       const d = doc.data();
-      if(d.subjects && d.subjects.length > 0){
-        // Firebase data se load karo
+      const cloudSubjectCount = d.subjects ? d.subjects.length : 0;
+      const cloudTopicCount = d.subjects ? d.subjects.reduce((a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0),0) : 0;
+
+      // Smart decision: load woh jo zyada data hai
+      // Agar local mein restore hua data hai (zyada topics) toh cloud pe save karo
+      if(cloudTopicCount === 0 || localTopicCount > cloudTopicCount) {
+        // Local data zyada hai — cloud pe upload karo
+        await saveToFirebase();
+        showToast('Local data cloud pe sync ho gaya! ☁️ (' + localTopicCount + ' topics)', 'success');
+      } else if(cloudTopicCount > 0) {
+        // Cloud data load karo
         S.subjects = d.subjects || [];
         S.exams = d.exams || [];
         S.activeExamId = d.activeExamId || '';
@@ -5833,35 +5854,39 @@ async function loadFromFirebase(){
         S.reportedQuestions = d.reportedQuestions || [];
         S.pausedQuiz = d.pausedQuiz || null;
         S.model = d.model || 'llama-3.1-8b-instant';
-        // Migrate old data
+        // Migrate
         S.subjects.forEach(sub=>sub.sections.forEach(sec=>sec.topics.forEach(t=>{
           if(!t.highlights) t.highlights=[];
           if(!t.savedFacts) t.savedFacts=[];
+          if(!t.notes) t.notes=[];
           t.notes.forEach(n=>{ if(!n.editorHighlights) n.editorHighlights=[]; });
         })));
-        // Save to localStorage also
-        save();
+        try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
         // Refresh UI
         renderExamSwitcher(); renderLibrarySelects(); renderLibraryTree();
         renderExamsList(); updateQuizSelects(); renderStats(); updateModePill();
         updateHistBadge(); updateSavedBadge(); updateVaultBadge();
         checkPausedQuiz();
-        showToast('Cloud se data load ho gaya! ☁️','success');
-      } else {
-        // Naya user — local data Firebase pe upload karo
-        await saveToFirebase();
-        showToast('Data cloud pe save ho gaya! ☁️','success');
+        showToast('Cloud se data load ho gaya! ☁️ (' + cloudTopicCount + ' topics)', 'success');
       }
     } else {
-      // Pehli baar login — local data upload karo
-      await saveToFirebase();
-      showToast('Data cloud pe save ho gaya! ☁️','success');
+      // Pehli baar — local data cloud pe upload karo
+      if(localTopicCount > 0) {
+        await saveToFirebase();
+        showToast('Data cloud pe save ho gaya! ☁️', 'success');
+      }
     }
     setSyncStatus('synced');
   }catch(e){
     console.error('Firebase load error:', e);
     setSyncStatus('error');
-    showToast('Sync error: '+e.message,'error');
+    // Offline error silently handle karo
+    if(e.message && e.message.includes('offline')) {
+      showToast('Offline hai — local data use ho raha hai', 'success');
+      setSyncStatus('synced');
+    } else {
+      showToast('Sync error: ' + e.message, 'error');
+    }
   }
 }
 
