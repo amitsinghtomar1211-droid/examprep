@@ -536,6 +536,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .editor-status.unsaved{color:var(--accent2);}
 /* Unified Editable Area */
 .ne-editable{font-size:17px;line-height:1.85;color:var(--text);word-break:break-word;white-space:pre-wrap;cursor:text;-webkit-user-select:text;user-select:text;}
+/* Magnifier for text selection */
+.ne-magnifier{position:fixed;width:160px;height:60px;background:#fff;border:2px solid var(--accent);border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.25);pointer-events:none;z-index:9999;overflow:hidden;display:none;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:var(--accent);padding:6px 10px;text-align:center;line-height:1.3;}
+.ne-magnifier.show{display:flex;}
+/* Eraser cursor */
+.hl-eraser-mode .ne-editable mark{cursor:cell;}
+.hl-eraser-mode .ne-editable mark:hover{opacity:0.5;outline:2px dashed var(--red);}
 .ne-editable[contenteditable="true"]{background:var(--surface2);border-radius:8px;padding:10px 12px;cursor:text;}
 .ne-editable[contenteditable="false"]{cursor:text;}
 .ne-editable b,.ne-editable strong{font-weight:800;color:var(--accent);}
@@ -1352,8 +1358,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
         <div class="hl-dot hl-dot-pink" id="hlDotPink" onclick="selectHlColor('pink')" title="Pink"></div>
         <div class="hl-dot hl-dot-green" id="hlDotGreen" onclick="selectHlColor('green')" title="Green"></div>
       </div>
-      <button class="toolbar-btn highlight-active" id="hlToggleBtn" onclick="toggleHighlightMode()">🖊️ Highlight</button>
-      <button class="toolbar-btn" onclick="clearAllHighlightsInEditor()" style="color:var(--red);">🗑️ HL Clear</button>
+      <button class="toolbar-btn highlight-active" id="hlToggleBtn" onclick="setHlMode('highlight')">🖊️ Highlight</button>
+      <span style="font-size:0.72rem;color:var(--text2);align-self:center;">• tap to remove</span>
       <div style="width:1px;height:18px;background:var(--border);"></div>
       <!-- Edit mode toggle -->
       <button class="toolbar-btn" id="editToggleBtn" onclick="neToggleEdit()">✏️ Edit Mode</button>
@@ -1394,6 +1400,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
         spellcheck="true"
         onmouseup="onReadMouseUp()"
         ontouchend="onReadMouseUp()"
+        ontouchmove="onNETouchMove(event)"
         oninput="onNEInput()"
         onkeydown="onNEKeydown(event)"
         style="outline:none;min-height:100%;padding:4px 2px;">
@@ -1589,6 +1596,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
     <span id="rdProgressPct">0% padha</span>
   </div>
 </div>
+
+<!-- TEXT MAGNIFIER -->
+<div class="ne-magnifier" id="neMagnifier"></div>
 
 <!-- OFFLINE BAR -->
 <div class="offline-bar" id="offlineBar">📵 Aap offline hain — App cached data se kaam kar raha hai</div>
@@ -4512,7 +4522,7 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   _editorState.modified = false;
   _editorState.hlMode = true;
   _editorState.hlColor = 'yellow';
-  _editorState.highlights = (n.editorHighlights || []).slice();
+  _editorState.highlights = (n.editorHighlights || []).map(h => ({...h})); // Deep copy
   _undoStack = [];
   _redoStack = [];
 
@@ -4522,12 +4532,13 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
 
   neLoadContent(n.content, false);
   neSetEditMode(false);
+  setHlMode('highlight'); // Default highlight mode ON
   neSetTheme(_neState.theme, true);
   document.getElementById('noteEditableArea').style.fontSize = _neState.fontSize + 'px';
   document.getElementById('neFontLabel').textContent = _neState.fontSize;
   document.getElementById('unsavedDot').style.display = 'none';
   document.getElementById('saveNoteBtn').style.display = 'none';
-  document.getElementById('editorStatus').textContent = '👁️ Read Mode';
+  document.getElementById('editorStatus').textContent = '🖊️ Highlight Mode — text select karo';
   document.getElementById('modeTabEdit') && (document.getElementById('modeTabEdit').style.display = '');
   document.getElementById('notesEditorOverlay').removeAttribute('data-viewer');
   document.getElementById('notesEditorOverlay').classList.add('show');
@@ -4537,9 +4548,16 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
 
 function closeNotesEditor() {
   if(_editorState.modified) {
-    if(!confirm('Unsaved changes hain! Bina save kiye band karna hai?')) return;
+    // Unsaved changes hain - auto save karke band karo
+    saveEditedNote();
+    // saveEditedNote sets modified = false, then we close
+    setTimeout(() => {
+      neSetEditMode(false);
+      document.getElementById('notesEditorOverlay').classList.remove('show');
+      document.body.style.overflow = '';
+    }, 100);
+    return;
   }
-  // If in edit mode, turn it off
   neSetEditMode(false);
   document.getElementById('notesEditorOverlay').classList.remove('show');
   document.body.style.overflow = '';
@@ -4551,22 +4569,27 @@ function neLoadContent(text, isHtml) {
   if(isHtml) {
     area.innerHTML = text;
   } else {
-    // Plain text - escape and convert to HTML preserving structure
+    // Plain text - escape and convert to HTML
     const escaped = text
       .replace(/&/g,'&amp;')
       .replace(/</g,'&lt;')
       .replace(/>/g,'&gt;');
-    // Apply saved highlights
+    // Apply saved highlights properly (with unique IDs)
     let html = escaped;
-    (_editorState.highlights || []).forEach(hl => {
-      if(!hl.text) return;
+    const hlsToApply = (_editorState.highlights || []).slice();
+    hlsToApply.forEach(hl => {
+      if(!hl.text || !hl.color) return;
       const cls = hl.color === 'pink' ? 'user-hl-pink' : hl.color === 'green' ? 'user-hl-green' : 'user-hl';
       const esc2 = hl.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      html = html.split(esc2).join('<mark class="' + cls + '">' + esc2 + '</mark>');
+      const uid = hl.id || ('hl_' + Date.now() + Math.random());
+      // Only replace first occurrence to avoid double-highlight
+      html = html.replace(esc2, '<mark class="' + cls + '" data-hlid="' + uid + '">' + esc2 + '</mark>');
     });
     // Convert newlines
     html = html.replace(/\n/g, '<br>');
     area.innerHTML = html;
+    // Attach eraser listeners to restored marks
+    setTimeout(() => neAttachEraserToMarks(), 50);
   }
   updateNEWordCount();
 }
@@ -4754,72 +4777,177 @@ function neRedo() {
 }
 
 // Highlight - text select se
+// hl mode: 'highlight' | 'eraser' | 'none'
+let _hlCurrentMode = 'highlight';
+
+function setHlMode(mode) {
+  _hlCurrentMode = mode;
+  const hlBtn = document.getElementById('hlToggleBtn');
+  const erBtn = document.getElementById('hlEraserBtn');
+  const modal = document.getElementById('notesEditorModalEl');
+  const status = document.getElementById('editorStatus');
+
+  if(mode === 'highlight') {
+    if(hlBtn) { hlBtn.classList.add('highlight-active'); }
+    if(erBtn) { erBtn.classList.remove('active'); }
+    if(modal) modal.classList.remove('hl-eraser-mode');
+    if(status) status.textContent = '🖊️ Highlight — text select karo';
+  } else if(mode === 'eraser') {
+    if(hlBtn) { hlBtn.classList.remove('highlight-active'); }
+    if(erBtn) { erBtn.classList.add('active'); erBtn.style.background='rgba(198,40,40,0.15)'; erBtn.style.borderColor='var(--red)'; erBtn.style.color='var(--red)'; }
+    if(modal) modal.classList.add('hl-eraser-mode');
+    if(status) status.textContent = '🧹 Eraser — highlight pe tap karo mitane ke liye';
+    // Attach eraser to existing marks
+    neAttachEraserToMarks();
+  } else {
+    if(hlBtn) hlBtn.classList.remove('highlight-active');
+    if(erBtn) { erBtn.classList.remove('active'); erBtn.style.background=''; erBtn.style.borderColor=''; erBtn.style.color=''; }
+    if(modal) modal.classList.remove('hl-eraser-mode');
+    if(status) status.textContent = '👁️ Read Mode';
+  }
+}
+
+function neAttachEraserToMarks() {
+  const area = document.getElementById('noteEditableArea');
+  area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(mark => {
+    // Remove old listener first
+    const newMark = mark.cloneNode(true);
+    mark.parentNode.replaceChild(newMark, mark);
+    
+    newMark.style.cursor = 'pointer';
+    newMark.title = 'Tap karke unhighlight karo';
+    
+    newMark.addEventListener('pointerdown', function(e) {
+      // Dono modes mein - highlight ya eraser - tap se unhighlight hoga
+      e.preventDefault();
+      e.stopPropagation();
+      const txt = this.textContent;
+      const hlid = this.getAttribute('data-hlid');
+      const parent = this.parentNode;
+      const textNode = document.createTextNode(txt);
+      parent.replaceChild(textNode, this);
+      parent.normalize();
+      // Update highlights store
+      _editorState.highlights = _editorState.highlights.filter(h => 
+        h.id !== hlid && h.text !== txt
+      );
+      markModified();
+      showToast('Highlight hata diya ✅', 'success');
+    });
+  });
+}
+
 function onReadMouseUp() {
-  if(!_editorState.hlMode) return;
+  // Hide magnifier
+  hideMagnifier();
+
+  // Eraser mode mein mouseup se kuch nahi karo
+  if(_hlCurrentMode === 'eraser') return;
+  // Highlight mode off ho to bhi nahi
+  if(_hlCurrentMode !== 'highlight') return;
+
   const sel = window.getSelection();
-  if(!sel || sel.isCollapsed) return;
+  if(!sel || sel.isCollapsed) { return; }
   const text = sel.toString().trim();
   if(text.length < 1) { sel.removeAllRanges(); return; }
 
   const area = document.getElementById('noteEditableArea');
-  if(!area.contains(sel.anchorNode)) { sel.removeAllRanges(); return; }
+  if(!sel.anchorNode || !area.contains(sel.anchorNode)) { sel.removeAllRanges(); return; }
 
   const color = _editorState.hlColor;
   const cls = color === 'pink' ? 'user-hl-pink' : color === 'green' ? 'user-hl-green' : 'user-hl';
 
-  // Wrap selection in mark tag
   try {
     const range = sel.getRangeAt(0);
     const mark = document.createElement('mark');
     mark.className = cls;
-    mark.addEventListener('click', function(e) {
-      e.stopPropagation();
-      this.replaceWith(document.createTextNode(this.textContent));
-      // Update highlights store
-      _editorState.highlights = _editorState.highlights.filter(h => h.text !== text);
-      markModified();
-      showToast('Highlight hata diya', 'success');
+    // Click to remove (non-eraser mode)
+    mark.addEventListener('pointerdown', function(e) {
+      if(_hlCurrentMode === 'eraser') {
+        e.preventDefault();
+        e.stopPropagation();
+        const txt = this.textContent;
+        const parent = this.parentNode;
+        parent.replaceChild(document.createTextNode(txt), this);
+        parent.normalize();
+        _editorState.highlights = _editorState.highlights.filter(h => h.text !== txt);
+        markModified();
+        showToast('Highlight mita diya 🧹', 'success');
+      }
     });
     range.surroundContents(mark);
     sel.removeAllRanges();
 
     // Save to highlights store
-    const exists = _editorState.highlights.find(h => h.text === text);
-    if(!exists) {
-      _editorState.highlights.push({ text, color });
-    }
+    const uid = 'hl_' + Date.now();
+    mark.setAttribute('data-hlid', uid);
+    mark.style.cursor = 'pointer';
+    mark.title = 'Tap karke unhighlight karo';
+    // Attach unhighlight listener to new mark
+    mark.addEventListener('pointerdown', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const txt = this.textContent;
+      const hid = this.getAttribute('data-hlid');
+      const parent = this.parentNode;
+      parent.replaceChild(document.createTextNode(txt), this);
+      parent.normalize();
+      _editorState.highlights = _editorState.highlights.filter(h => h.id !== hid && h.text !== txt);
+      markModified();
+      showToast('Highlight hata diya ✅', 'success');
+    });
+    _editorState.highlights.push({ id: uid, text, color });
     markModified();
     showToast('Highlight ho gaya! 🖊️', 'success');
   } catch(e) {
-    // Selection spans multiple elements - use simpler approach
     sel.removeAllRanges();
-    showToast('Sirf ek paragraph ka text select karo', 'error');
+    showToast('Ek paragraph mein se select karo', 'error');
   }
 }
 
+// Magnifier functionality
+let _magTimer = null;
+function showMagnifier(x, y, text) {
+  const mag = document.getElementById('neMagnifier');
+  if(!mag) return;
+  mag.textContent = text.length > 20 ? '...' + text.slice(-20) : text;
+  mag.classList.add('show');
+  // Position above finger
+  mag.style.left = Math.max(10, Math.min(window.innerWidth - 170, x - 80)) + 'px';
+  mag.style.top = Math.max(10, y - 80) + 'px';
+}
+function hideMagnifier() {
+  const mag = document.getElementById('neMagnifier');
+  if(mag) mag.classList.remove('show');
+}
+
+// Touch events for magnifier
+function onNETouchMove(e) {
+  if(_hlCurrentMode !== 'highlight') return;
+  const touch = e.touches[0];
+  const sel = window.getSelection();
+  if(sel && !sel.isCollapsed) {
+    const selected = sel.toString();
+    if(selected.length > 0) {
+      showMagnifier(touch.clientX, touch.clientY, selected);
+    }
+  }
+}
+
+function toggleHighlightMode() {
+  // Legacy - ab setHlMode use hota hai
+  if(_hlCurrentMode === 'highlight') setHlMode('none');
+  else setHlMode('highlight');
+}
+
 function clearAllHighlightsInEditor() {
-  if(!confirm('Saare highlights hata dein?')) return;
+  // Legacy function - kept for compatibility
   const area = document.getElementById('noteEditableArea');
   area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(mark => {
     mark.replaceWith(document.createTextNode(mark.textContent));
   });
   _editorState.highlights = [];
   markModified();
-  showToast('Saare highlights hata diye', 'success');
-}
-
-function toggleHighlightMode() {
-  _editorState.hlMode = !_editorState.hlMode;
-  const btn = document.getElementById('hlToggleBtn');
-  if(_editorState.hlMode) {
-    btn.textContent = '🖊️ Highlight';
-    btn.classList.add('highlight-active');
-    document.getElementById('editorStatus').textContent = '🖊️ Highlight Mode — text select karo';
-  } else {
-    btn.textContent = '🖊️ Highlight OFF';
-    btn.classList.remove('highlight-active');
-    document.getElementById('editorStatus').textContent = '👁️ Read Mode';
-  }
 }
 
 function selectHlColor(color) {
@@ -4869,22 +4997,38 @@ function saveEditedNote() {
     n.content = plainText;
     n.wordCount = plainText.trim().split(/\s+/).length;
     n.lastEditedAt = new Date().toLocaleDateString('hi-IN');
-    // Save highlights
+    // Save highlights with proper data
     _editorState.highlights = [];
     const area = document.getElementById('noteEditableArea');
-    area.querySelectorAll('mark').forEach(mark => {
+    area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(mark => {
       const cls = mark.className;
       const color = cls.includes('pink') ? 'pink' : cls.includes('green') ? 'green' : 'yellow';
-      _editorState.highlights.push({ text: mark.textContent, color });
+      const uid = mark.getAttribute('data-hlid') || ('hl_' + Date.now() + Math.random());
+      mark.setAttribute('data-hlid', uid);
+      _editorState.highlights.push({ id: uid, text: mark.textContent, color });
     });
     n.editorHighlights = _editorState.highlights.slice();
   }
 
   save();
-  _editorState.modified = false;
+  _editorState.modified = false;  // Mark as saved - band karne pe popup nahi aayega
   neSetEditMode(false);
+
+  // Save button ko "Saved ✅" dikhaao
+  const saveBtn = document.getElementById('saveNoteBtn');
+  if(saveBtn) {
+    saveBtn.textContent = '✅ Saved!';
+    saveBtn.style.background = 'var(--green)';
+    saveBtn.disabled = true;
+    // 2 second baad hide karo
+    setTimeout(() => {
+      saveBtn.style.display = 'none';
+      saveBtn.textContent = '💾 Save';
+      saveBtn.style.background = '';
+      saveBtn.disabled = false;
+    }, 2000);
+  }
   document.getElementById('unsavedDot').style.display = 'none';
-  document.getElementById('saveNoteBtn').style.display = 'none';
   document.getElementById('editorStatus').textContent = '✅ Save Ho Gaya!';
   renderLibraryTree();
   showToast('Save ho gaya! ✅', 'success');
@@ -5526,11 +5670,11 @@ window.addEventListener('popstate',function(e){
   const ne=document.getElementById('notesEditorOverlay');
   if(ne&&ne.classList.contains('show')){
     if(typeof _editorState!=='undefined'&&_editorState.modified){
-      if(confirm('Unsaved changes hain! Bina save kiye band karna hai?')){
-        ne.classList.remove('show');_editorState.modified=false;
-      } else {history.pushState(e.state,'');}
-    } else {ne.classList.remove('show');}
-    return;
+      saveEditedNote();
+      setTimeout(()=>{ne.classList.remove('show');document.body.style.overflow='';},150);
+    } else {
+      ne.classList.remove('show');document.body.style.overflow='';
+    }
   }
   const openModal=document.querySelector('.modal-overlay.show');
   if(openModal){openModal.classList.remove('show');return;}
