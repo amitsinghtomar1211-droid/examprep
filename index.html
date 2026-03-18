@@ -1693,8 +1693,13 @@ function load(){
         sec.topics.forEach(t=>{
           if(!t.highlights) t.highlights=[];
           if(!t.savedFacts) t.savedFacts=[];
+          // Ensure finalNotesHTML and smartNotesHTML are preserved
+          if(t.finalNotesHTML === undefined) t.finalNotesHTML = null;
+          if(t.smartNotesHTML === undefined) t.smartNotesHTML = null;
           t.notes.forEach(n=>{
             if(!n.editorHighlights) n.editorHighlights=[];
+            // Ensure editorRichHTML is preserved on load (critical for highlight persistence)
+            if(n.editorRichHTML === undefined) n.editorRichHTML = null;
           });
         });
       });
@@ -4590,10 +4595,12 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
 }
 
 function closeNotesEditor() {
+  // Agar koi changes hue hain to popup dikhao
   if(_editorState.modified) {
     showUnsavedPopup();
     return;
   }
+  // Koi changes nahi - seedha band karo
   _forceCloseEditor();
 }
 
@@ -4619,6 +4626,7 @@ function _forceCloseEditor() {
 }
 
 function showUnsavedPopup() {
+  // Remove purana popup agar hai
   var old = document.getElementById('unsavedPopupOverlay');
   if(old) old.remove();
 
@@ -4626,30 +4634,39 @@ function showUnsavedPopup() {
   overlay.id = 'unsavedPopupOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;';
 
-  overlay.innerHTML = '<div style="background:#fff;border-radius:18px;padding:26px 22px;max-width:320px;width:100%;box-shadow:0 10px 50px rgba(0,0,0,0.25);text-align:center;font-family:inherit;">'
+  overlay.innerHTML = '<div style="background:#fff;border-radius:18px;padding:26px 22px;max-width:340px;width:100%;box-shadow:0 10px 50px rgba(0,0,0,0.25);text-align:center;font-family:inherit;">'
     + '<div style="font-size:2.4rem;margin-bottom:10px;">⚠️</div>'
     + '<div style="font-size:1rem;font-weight:800;color:#0d1b2a;margin-bottom:8px;">Unsaved Changes Hain!</div>'
-    + '<div style="font-size:0.82rem;color:#37526d;line-height:1.7;margin-bottom:22px;">Notes mein changes hain jo save nahi hue. Kya karna chahte hain?</div>'
+    + '<div style="font-size:0.82rem;color:#37526d;line-height:1.7;margin-bottom:22px;">Notes mein kuch changes hain jo save nahi hue hain.<br>Kya karna chahte hain?</div>'
     + '<div style="display:flex;flex-direction:column;gap:10px;">'
     + '<button id="uspSaveExit" style="padding:13px;border-radius:11px;border:none;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;font-weight:800;font-size:0.9rem;cursor:pointer;font-family:inherit;">💾 Save Karke Bahar Jao</button>'
-    + '<button id="uspDiscardExit" style="padding:13px;border-radius:11px;border:1.5px solid rgba(198,40,40,0.35);background:rgba(198,40,40,0.07);color:#c62828;font-weight:700;font-size:0.86rem;cursor:pointer;font-family:inherit;">🗑️ Bina Save Ke Bahar Jao</button>'
-    + '<button id="uspCancel" style="padding:13px;border-radius:11px;border:1.5px solid #bdd5ea;background:transparent;color:#37526d;font-weight:700;font-size:0.86rem;cursor:pointer;font-family:inherit;">✏️ Wapas Editing Pe Jao</button>'
+    + '<button id="uspDiscardExit" style="padding:13px;border-radius:11px;border:1.5px solid rgba(198,40,40,0.35);background:rgba(198,40,40,0.07);color:#c62828;font-weight:700;font-size:0.86rem;cursor:pointer;font-family:inherit;">🗑️ Bina Save Ke Bahar Jao (Changes Kho Jayenge)</button>'
+    + '<button id="uspCancel" style="padding:13px;border-radius:11px;border:1.5px solid #bdd5ea;background:transparent;color:#37526d;font-weight:700;font-size:0.86rem;cursor:pointer;font-family:inherit;">✏️ Editing Continue Karo</button>'
     + '</div></div>';
 
   document.body.appendChild(overlay);
 
+  // "Save karke bahar jao" — save karo aur editor band karo
   document.getElementById('uspSaveExit').onclick = function() {
     overlay.remove();
-    _saveAndClose();
+    _saveAndClose(); // Save + close in one step
   };
 
+  // "Bina save ke bahar jao" — changes discard karo, original content restore karo, band karo
   document.getElementById('uspDiscardExit').onclick = function() {
     overlay.remove();
+    // Changes discard karo — modified flag reset karo aur band karo
+    _editorState.modified = false;
     _forceCloseEditor();
+    showToast('Changes discard kar diye gaye', 'success');
   };
 
+  // "Editing continue karo" — popup band karo, editor pe wapas jao
   document.getElementById('uspCancel').onclick = function() {
     overlay.remove();
+    // Editor pe focus wapas do
+    var area = document.getElementById('noteEditableArea');
+    if(area && area.contentEditable === 'true') area.focus();
   };
 }
 
@@ -4659,33 +4676,34 @@ function _doSaveNoteData() {
   var isSpecial = _editorState.specialType;
   var plainText = neGetPlainText();
   var richHTML = neGetHTML();
-  if(!plainText.trim()) return false;
-
+  // Allow saving even if plainText is empty (user may have cleared all text intentionally)
+  // Only block if both topic and note context are missing
   if(isSpecial === 'finalnotes') {
     t.finalNotes = plainText;
     t.finalNotesAt = new Date().toLocaleDateString('hi-IN');
-    t.finalNotesHTML = richHTML;
+    t.finalNotesHTML = richHTML; // Save full HTML including highlights
   } else if(isSpecial === 'smartnotes') {
     t.smartNotesAI = plainText;
     t.smartNotesAt = new Date().toLocaleDateString('hi-IN');
-    t.smartNotesHTML = richHTML;
+    t.smartNotesHTML = richHTML; // Save full HTML including highlights
   } else {
     var n = t.notes[_editorState.noteIdx];
     if(!n) return false;
     n.content = plainText;
-    n.wordCount = plainText.trim().split(/\s+/).length;
+    n.wordCount = plainText.trim() ? plainText.trim().split(/\s+/).length : 0;
     n.lastEditedAt = new Date().toLocaleDateString('hi-IN');
+    // Collect current highlights from DOM
     _editorState.highlights = [];
     var area = document.getElementById('noteEditableArea');
     area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(function(mark) {
       var cls = mark.className;
       var color = cls.includes('pink') ? 'pink' : cls.includes('green') ? 'green' : 'yellow';
-      var uid = mark.getAttribute('data-hlid') || ('hl_' + Date.now() + Math.random());
+      var uid = mark.getAttribute('data-hlid') || ('hl_' + Date.now() + '_' + Math.random().toString(36).slice(2));
       mark.setAttribute('data-hlid', uid);
       _editorState.highlights.push({ id: uid, text: mark.textContent, color: color });
     });
     n.editorHighlights = _editorState.highlights.slice();
-    n.editorRichHTML = area.innerHTML;
+    n.editorRichHTML = area.innerHTML; // Save complete HTML with all mark elements
   }
   return true;
 }
@@ -4696,12 +4714,14 @@ function _saveAndClose() {
   save();
   _editorState.modified = false;
   renderLibraryTree();
+  // Refresh topic view modal if open (so highlights show updated)
   var tvModal = document.getElementById('topicViewModal');
   if(tvModal && tvModal.classList.contains('show')) {
     viewTopic(_editorState.sid, _editorState.secid, _editorState.tid);
   }
   _forceCloseEditor();
-  setTimeout(function(){ showSaveSuccessPopup(); }, 150);
+  // Show success popup after editor closes
+  setTimeout(function(){ showSaveSuccessPopup(); }, 200);
 }
 
 // Load content into the editable area
@@ -4711,26 +4731,34 @@ function neLoadContent(text, isHtml) {
     area.innerHTML = text;
     setTimeout(() => neAttachEraserToMarks(), 50);
   } else {
-    // Check if richHTML is available (saved with highlights)
-    // This is passed via _editorState.richHTML if available
+    // Priority 1: Use saved richHTML (contains highlight marks) - most accurate
     if(_editorState.richHTML) {
       area.innerHTML = _editorState.richHTML;
       _editorState.richHTML = null;
+      // Re-populate highlights array from DOM (so eraser works correctly)
+      _editorState.highlights = [];
+      area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(function(mark) {
+        var cls = mark.className;
+        var color = cls.includes('pink') ? 'pink' : cls.includes('green') ? 'green' : 'yellow';
+        var uid = mark.getAttribute('data-hlid');
+        if(uid) _editorState.highlights.push({ id: uid, text: mark.textContent, color: color });
+      });
       setTimeout(() => neAttachEraserToMarks(), 50);
     } else {
-      // Plain text - escape and render
+      // Priority 2: Plain text with highlights applied from highlights array
       const escaped = text
         .replace(/&/g,'&amp;')
         .replace(/</g,'&lt;')
         .replace(/>/g,'&gt;');
       let html = escaped;
-      // Apply saved highlights
+      // Apply saved highlights if richHTML not available
       const hlsToApply = (_editorState.highlights || []).slice();
       hlsToApply.forEach(hl => {
         if(!hl.text || !hl.color) return;
         const cls = hl.color === 'pink' ? 'user-hl-pink' : hl.color === 'green' ? 'user-hl-green' : 'user-hl';
         const esc2 = hl.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        const uid = hl.id || ('hl_' + Date.now() + Math.random());
+        const uid = hl.id || ('hl_' + Date.now() + '_' + Math.random().toString(36).slice(2));
+        // Replace first occurrence only to avoid incorrect multi-replace
         html = html.replace(esc2, '<mark class="' + cls + '" data-hlid="' + uid + '">' + esc2 + '</mark>');
       });
       html = html.replace(/\n/g, '<br>');
@@ -5329,13 +5357,15 @@ function copyEditorContent() {
 }
 
 function saveEditedNote() {
-  // Yeh sirf Save button ke liye — editor band nahi hoga
+  // Save button ke liye — editor band NAHI hoga, sirf save hoga
+  // User editor page par hi rehega aur editing jari rakh sakta hai
   var ok = _doSaveNoteData();
-  if(!ok) { showToast('Save nahi ho saka!', 'error'); return; }
+  if(!ok) { showToast('Save nahi ho saka! Content check karo.', 'error'); return; }
 
-  save();
-  _editorState.modified = false;
+  save(); // localStorage + Firebase sync
+  _editorState.modified = false; // Modified flag reset karo
 
+  // Save button visual feedback
   var saveBtn = document.getElementById('saveNoteBtn');
   if(saveBtn) {
     saveBtn.textContent = '✅ Saved!';
@@ -5346,21 +5376,28 @@ function saveEditedNote() {
       saveBtn.textContent = '💾 Save';
       saveBtn.style.background = '';
       saveBtn.disabled = false;
-    }, 1800);
+    }, 2000);
   }
+
+  // Unsaved dots hide karo
   var dot = document.getElementById('unsavedDot');
   var dot2 = document.getElementById('unsavedDot2');
   if(dot) dot.style.display = 'none';
   if(dot2) dot2.style.display = 'none';
+
   neUpdateStatusBar('✅ Save Ho Gaya! — Editing jari rakh sakte hain');
 
+  // Library tree refresh karo (baad mein topic count update ho)
   renderLibraryTree();
-  showSaveSuccessPopup(); // Success popup dikhao
 
+  // Topic view modal refresh karo agar open hai
   var tvModal = document.getElementById('topicViewModal');
   if(tvModal && tvModal.classList.contains('show')) {
     viewTopic(_editorState.sid, _editorState.secid, _editorState.tid);
   }
+
+  // Success popup dikhao
+  showSaveSuccessPopup();
 }
 
 function showSaveSuccessPopup() {
@@ -6350,8 +6387,11 @@ async function saveToFirebase(){
   setSyncStatus('syncing');
   try{
     const uid = _currentUser.uid;
+    // Deep copy subjects to ensure editorRichHTML, finalNotesHTML, smartNotesHTML are included
+    // These fields store user's highlights and must be persisted to cloud
+    const subjectsToSave = JSON.parse(JSON.stringify(S.subjects || []));
     const data = {
-      subjects: S.subjects,
+      subjects: subjectsToSave,
       exams: S.exams,
       activeExamId: S.activeExamId,
       quizHistory: S.quizHistory.slice(0,60),
@@ -6405,7 +6445,19 @@ async function loadFromFirebase(){
         await saveToFirebase();
         showToast('Local data cloud pe sync ho gaya! ☁️ (' + localTopicCount + ' topics)', 'success');
       } else if(cloudTopicCount > 0) {
-        // Cloud data load karo
+        // Cloud data load karo — lekin editor data (richHTML, highlights) local se preserve karo
+        // Pehle local editor data backup karo (note ID -> editorRichHTML, editorHighlights map)
+        const localEditorData = {};
+        (S.subjects||[]).forEach(sub=>sub.sections.forEach(sec=>sec.topics.forEach(t=>{
+          // Final/Smart notes HTML bhi preserve karo
+          if(t.finalNotesHTML) localEditorData['fn_'+t.id] = t.finalNotesHTML;
+          if(t.smartNotesHTML) localEditorData['sn_'+t.id] = t.smartNotesHTML;
+          (t.notes||[]).forEach(n=>{
+            if(n.editorRichHTML) localEditorData['n_'+n.id] = { richHTML: n.editorRichHTML, highlights: n.editorHighlights||[] };
+          });
+        })));
+
+        // Cloud subjects load karo
         S.subjects = d.subjects || [];
         S.exams = d.exams || [];
         S.activeExamId = d.activeExamId || '';
@@ -6417,13 +6469,28 @@ async function loadFromFirebase(){
         S.reportedQuestions = d.reportedQuestions || [];
         S.pausedQuiz = d.pausedQuiz || null;
         S.model = d.model || 'llama-3.1-8b-instant';
-        // Migrate
+
+        // Migrate + local editor data wapas merge karo (refresh ke baad highlights nahi kho)
         S.subjects.forEach(sub=>sub.sections.forEach(sec=>sec.topics.forEach(t=>{
           if(!t.highlights) t.highlights=[];
           if(!t.savedFacts) t.savedFacts=[];
           if(!t.notes) t.notes=[];
-          t.notes.forEach(n=>{ if(!n.editorHighlights) n.editorHighlights=[]; });
+          // Restore finalNotes/smartNotes HTML from local backup if cloud doesn't have it
+          if(!t.finalNotesHTML && localEditorData['fn_'+t.id]) t.finalNotesHTML = localEditorData['fn_'+t.id];
+          if(!t.smartNotesHTML && localEditorData['sn_'+t.id]) t.smartNotesHTML = localEditorData['sn_'+t.id];
+          t.notes.forEach(n=>{
+            if(!n.editorHighlights) n.editorHighlights=[];
+            if(n.editorRichHTML === undefined) n.editorRichHTML = null;
+            // Restore local editor data — cloud se aaya data zyada purana ho sakta hai
+            const localND = localEditorData['n_'+n.id];
+            if(localND) {
+              // Local richHTML prefer karo (user ne jo last save kiya tha)
+              n.editorRichHTML = localND.richHTML;
+              n.editorHighlights = localND.highlights;
+            }
+          });
         })));
+
         try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
         // Refresh UI
         renderExamSwitcher(); renderLibrarySelects(); renderLibraryTree();
