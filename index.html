@@ -4570,19 +4570,21 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
 
   neLoadContent(n.content, false);
   neSetEditMode(false);
-  setHlMode('highlight'); // Default highlight mode ON at open
+  setHlMode('off'); // Default: highlight OFF
+  _eraserModeOn = false;
+  neResetToolbar();
   neSetTheme(_neState.theme, true);
   document.getElementById('noteEditableArea').style.fontSize = _neState.fontSize + 'px';
   document.getElementById('neFontLabel').textContent = _neState.fontSize;
   document.getElementById('unsavedDot').style.display = 'none';
+  var _dot2ne = document.getElementById('unsavedDot2');
+  if(_dot2ne) _dot2ne.style.display = 'none';
   document.getElementById('saveNoteBtn').style.display = 'none';
-  document.getElementById('editorStatus').textContent = '🖊️ Highlight Mode — text select karo';
-  // Reset eraser toggle state visually
-  _eraserModeOn = false;
-  document.getElementById('modeTabEdit') && (document.getElementById('modeTabEdit').style.display = '');
-  document.getElementById('notesEditorOverlay').removeAttribute('data-viewer');
-  neResetToolbar();
-  document.getElementById('notesEditorOverlay').classList.add('show');
+  neUpdateStatusBar('👁️ Read Mode — Highlight ya Edit button dabao');
+  var _neOv = document.getElementById('notesEditorOverlay');
+  _neOv.removeAttribute('data-viewer');
+  _neOv.style.display = '';
+  _neOv.classList.add('show');
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesEditor'}, '');
 }
@@ -4600,22 +4602,18 @@ function _forceCloseEditor() {
   setHlMode('off');
   hideMagnifier();
   _editorState.modified = false;
-  // Reset unsaved dots
   var dot = document.getElementById('unsavedDot');
   var dot2 = document.getElementById('unsavedDot2');
   if(dot) dot.style.display = 'none';
   if(dot2) dot2.style.display = 'none';
-  // Reset save button
   var saveBtn = document.getElementById('saveNoteBtn');
   if(saveBtn) { saveBtn.style.display = 'none'; saveBtn.textContent = '💾 Save'; saveBtn.style.background = ''; saveBtn.disabled = false; }
-  // Reset toolbar
   neResetToolbar();
-  // Close overlay
   var ov = document.getElementById('notesEditorOverlay');
   if(ov) {
     ov.classList.remove('show');
-    ov.style.cssText = 'display:none !important;';
-    setTimeout(function(){ ov.style.cssText = ''; }, 300);
+    // Inline style se bhi force karo - timeout nahi, permanent
+    ov.style.display = 'none';
   }
   document.body.style.overflow = '';
 }
@@ -4752,23 +4750,24 @@ function neSetEditMode(on) {
   const area = document.getElementById('noteEditableArea');
   const btn = document.getElementById('editToggleBtn');
   const toolbar = document.getElementById('formatToolbar');
-  const status = document.getElementById('editorStatus');
 
   if(on) {
     area.contentEditable = 'true';
     area.style.cursor = 'text';
     if(btn) { btn.textContent = '✅ Edit ON'; btn.classList.add('edit-active'); }
     if(toolbar) toolbar.style.display = 'flex';
-    status.textContent = '✏️ Edit Mode — likhna shuru karo';
+    neUpdateStatusBar('✏️ Edit Mode — likhna shuru karo');
     area.focus();
     _undoStack = [];
     _redoStack = [];
+    // Toolbar auto-open karo jab edit ON ho
+    if(typeof neOpenToolbar === 'function') neOpenToolbar();
   } else {
     area.contentEditable = 'false';
     area.style.cursor = 'text';
-    if(btn) { btn.textContent = '✏️ Edit Mode'; btn.classList.remove('edit-active'); }
+    if(btn) { btn.textContent = '✏️ Edit'; btn.classList.remove('edit-active'); }
     if(toolbar) toolbar.style.display = 'none';
-    status.textContent = '👁️ Read Mode — text select karke highlight karo';
+    neUpdateStatusBar('👁️ Read Mode — Highlight ya Edit button dabao');
   }
 }
 
@@ -4905,15 +4904,20 @@ function openSpecialEditor(type, sid, secid, tid) {
   document.getElementById('notesEditorMeta').textContent = t.name;
   neLoadContent(text, false);
   neSetEditMode(false);
-  setHlMode('highlight'); // Default highlight ON
+  setHlMode('off'); // Default: highlight OFF, user manually ON kare
+  neResetToolbar();
   neSetTheme(_neState.theme, true);
   document.getElementById('noteEditableArea').style.fontSize = _neState.fontSize + 'px';
   document.getElementById('neFontLabel').textContent = _neState.fontSize;
   document.getElementById('unsavedDot').style.display = 'none';
+  var _dot2se = document.getElementById('unsavedDot2');
+  if(_dot2se) _dot2se.style.display = 'none';
   document.getElementById('saveNoteBtn').style.display = 'none';
-  document.getElementById('editorStatus').textContent = '🖊️ Highlight Mode — text select karo';
-  document.getElementById('notesEditorOverlay').removeAttribute('data-viewer');
-  document.getElementById('notesEditorOverlay').classList.add('show');
+  neUpdateStatusBar('👁️ Read Mode — Highlight ya Edit button dabao');
+  var _seOv = document.getElementById('notesEditorOverlay');
+  _seOv.removeAttribute('data-viewer');
+  _seOv.style.display = '';
+  _seOv.classList.add('show');
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesEditor'}, '');
 }
@@ -4987,8 +4991,10 @@ function setHlMode(mode) {
   if(mode === 'highlight') {
     if(hlBtn) { hlBtn.classList.add('highlight-active'); hlBtn.textContent = '🖊️ Highlight ON'; }
     if(area)  area.classList.add('hl-mode-active');
-    if(status) status.textContent = '🖊️ Highlight ON — text drag karo';
+    neUpdateStatusBar('🖊️ Highlight ON — text drag karo');
     _eraserModeOn = false;
+    // Toolbar auto-open karo (jaise edit mode mein hota hai)
+    if(typeof neOpenToolbar === 'function') neOpenToolbar();
   } else if(mode === 'eraser') {
     if(erBtn) {
       erBtn.classList.add('highlight-active');
@@ -4997,12 +5003,15 @@ function setHlMode(mode) {
       erBtn.style.color = 'var(--red)';
       erBtn.style.borderColor = 'var(--red)';
     }
-    if(status) status.textContent = '🧹 Eraser ON — highlighted text pe tap karo to remove';
+    neUpdateStatusBar('🧹 Eraser ON — highlighted text pe tap karo');
     _eraserModeOn = true;
+    if(typeof neOpenToolbar === 'function') neOpenToolbar();
   } else {
-    if(status) status.textContent = '👁️ Read Mode';
+    neUpdateStatusBar('👁️ Read Mode — Highlight ya Edit button dabao');
     hideMagnifier();
     _eraserModeOn = false;
+    // Toolbar close karo jab sab off ho
+    if(typeof neCloseToolbar === 'function') neCloseToolbar();
   }
 }
 
@@ -5756,33 +5765,42 @@ function neUpdateProgress() {
 
 // ===== COLLAPSIBLE TOOLBAR =====
 var _toolbarOpen = false;
-function neToggleToolbar() {
-  _toolbarOpen = !_toolbarOpen;
+
+function neOpenToolbar() {
+  if(_toolbarOpen) return;
+  _toolbarOpen = true;
   var panel = document.getElementById('neToolbarPanel');
   var arrow = document.getElementById('neToolbarArrow');
   var bar   = document.getElementById('neToolbarToggleBar');
-  if(_toolbarOpen) {
-    panel.classList.remove('ne-toolbar-collapsed');
-    panel.classList.add('ne-toolbar-open');
-    if(arrow) { arrow.textContent = '▲ Tools'; arrow.style.color = 'var(--accent2)'; }
-    if(bar) bar.classList.add('tools-open');
-  } else {
-    panel.classList.add('ne-toolbar-collapsed');
-    panel.classList.remove('ne-toolbar-open');
-    if(arrow) { arrow.textContent = '▼ Tools'; arrow.style.color = 'var(--accent)'; }
-    if(bar) bar.classList.remove('tools-open');
-  }
+  if(panel) { panel.classList.remove('ne-toolbar-collapsed'); panel.classList.add('ne-toolbar-open'); }
+  if(arrow) { arrow.textContent = '▲ Tools'; arrow.style.color = 'var(--accent2)'; }
+  if(bar)   bar.classList.add('tools-open');
 }
 
-function neResetToolbar() {
-  // Toolbar collapse karo jab editor open ho
+function neCloseToolbar() {
+  if(!_toolbarOpen) return;
   _toolbarOpen = false;
   var panel = document.getElementById('neToolbarPanel');
   var arrow = document.getElementById('neToolbarArrow');
   var bar   = document.getElementById('neToolbarToggleBar');
   if(panel) { panel.classList.add('ne-toolbar-collapsed'); panel.classList.remove('ne-toolbar-open'); }
   if(arrow) { arrow.textContent = '▼ Tools'; arrow.style.color = 'var(--accent)'; }
-  if(bar) bar.classList.remove('tools-open');
+  if(bar)   bar.classList.remove('tools-open');
+}
+
+function neToggleToolbar() {
+  if(_toolbarOpen) neCloseToolbar();
+  else neOpenToolbar();
+}
+
+function neResetToolbar() {
+  _toolbarOpen = false;
+  var panel = document.getElementById('neToolbarPanel');
+  var arrow = document.getElementById('neToolbarArrow');
+  var bar   = document.getElementById('neToolbarToggleBar');
+  if(panel) { panel.classList.add('ne-toolbar-collapsed'); panel.classList.remove('ne-toolbar-open'); }
+  if(arrow) { arrow.textContent = '▼ Tools'; arrow.style.color = 'var(--accent)'; }
+  if(bar)   bar.classList.remove('tools-open');
 }
 
 // ==================== GROQ ====================
