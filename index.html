@@ -1361,7 +1361,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
         <div class="hl-dot hl-dot-pink" id="hlDotPink" onclick="selectHlColor('pink')" title="Pink"></div>
         <div class="hl-dot hl-dot-green" id="hlDotGreen" onclick="selectHlColor('green')" title="Green"></div>
       </div>
-      <button class="toolbar-btn highlight-active" id="hlToggleBtn" onclick="setHlMode('highlight')">🖊️ Highlight</button>
+      <button class="toolbar-btn" id="hlToggleBtn" onclick="toggleHlMode()">🖊️ Highlight OFF</button>
       <span style="font-size:0.72rem;color:var(--text2);align-self:center;">• tap to remove</span>
       <div style="width:1px;height:18px;background:var(--border);"></div>
       <!-- Edit mode toggle -->
@@ -4511,6 +4511,8 @@ let _editorState = {
 // Undo/Redo stacks
 let _undoStack = [];
 let _redoStack = [];
+let _htmlUndoStack = [];
+let _htmlRedoStack = [];
 
 function openNotesEditor(sid, secid, tid, noteIdx) {
   const t = getTop(sid, secid, tid);
@@ -4527,6 +4529,8 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   _editorState.hlMode = true;
   _editorState.hlColor = 'yellow';
   _editorState.highlights = (n.editorHighlights || []).map(h => ({...h})); // Deep copy
+  // Use richHTML if available (contains highlight markup)
+  _editorState.richHTML = n.editorRichHTML || null;
   _undoStack = [];
   _redoStack = [];
 
@@ -4572,30 +4576,40 @@ function neLoadContent(text, isHtml) {
   const area = document.getElementById('noteEditableArea');
   if(isHtml) {
     area.innerHTML = text;
-  } else {
-    // Plain text - escape and convert to HTML
-    const escaped = text
-      .replace(/&/g,'&amp;')
-      .replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;');
-    // Apply saved highlights properly (with unique IDs)
-    let html = escaped;
-    const hlsToApply = (_editorState.highlights || []).slice();
-    hlsToApply.forEach(hl => {
-      if(!hl.text || !hl.color) return;
-      const cls = hl.color === 'pink' ? 'user-hl-pink' : hl.color === 'green' ? 'user-hl-green' : 'user-hl';
-      const esc2 = hl.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const uid = hl.id || ('hl_' + Date.now() + Math.random());
-      // Only replace first occurrence to avoid double-highlight
-      html = html.replace(esc2, '<mark class="' + cls + '" data-hlid="' + uid + '">' + esc2 + '</mark>');
-    });
-    // Convert newlines
-    html = html.replace(/\n/g, '<br>');
-    area.innerHTML = html;
-    // Attach eraser listeners to restored marks
     setTimeout(() => neAttachEraserToMarks(), 50);
+  } else {
+    // Check if richHTML is available (saved with highlights)
+    // This is passed via _editorState.richHTML if available
+    if(_editorState.richHTML) {
+      area.innerHTML = _editorState.richHTML;
+      _editorState.richHTML = null;
+      setTimeout(() => neAttachEraserToMarks(), 50);
+    } else {
+      // Plain text - escape and render
+      const escaped = text
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;');
+      let html = escaped;
+      // Apply saved highlights
+      const hlsToApply = (_editorState.highlights || []).slice();
+      hlsToApply.forEach(hl => {
+        if(!hl.text || !hl.color) return;
+        const cls = hl.color === 'pink' ? 'user-hl-pink' : hl.color === 'green' ? 'user-hl-green' : 'user-hl';
+        const esc2 = hl.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const uid = hl.id || ('hl_' + Date.now() + Math.random());
+        html = html.replace(esc2, '<mark class="' + cls + '" data-hlid="' + uid + '">' + esc2 + '</mark>');
+      });
+      html = html.replace(/\n/g, '<br>');
+      area.innerHTML = html;
+      setTimeout(() => neAttachEraserToMarks(), 50);
+    }
   }
+  area.style.fontSize = _neState.fontSize + 'px';
   updateNEWordCount();
+  // Reset snapshot stacks on fresh load
+  _htmlUndoStack = [];
+  _htmlRedoStack = [];
 }
 
 // Toggle edit mode on/off
@@ -4657,6 +4671,7 @@ function neGetHTML() {
 
 // onInput for editable area
 function onNEInput() {
+  neSaveSnapshot(); // Save for undo before each input
   markModified();
   updateNEWordCount();
 }
@@ -4763,21 +4778,42 @@ function openSpecialEditor(type, sid, secid, tid) {
   history.pushState({type:'notesEditor'}, '');
 }
 
+function neSaveSnapshot() {
+  const area = document.getElementById('noteEditableArea');
+  if(!area) return;
+  _htmlUndoStack.push({
+    html: area.innerHTML,
+    highlights: JSON.parse(JSON.stringify(_editorState.highlights))
+  });
+  if(_htmlUndoStack.length > 40) _htmlUndoStack.shift();
+  _htmlRedoStack = [];
+}
+
 function neUndo() {
   const area = document.getElementById('noteEditableArea');
-  if(area.contentEditable === 'true') {
-    document.execCommand('undo');
-    markModified();
-  }
+  if(!area) return;
+  if(_htmlUndoStack.length === 0) { showToast('Kuch undo nahi hai', 'error'); return; }
+  _htmlRedoStack.push({ html: area.innerHTML, highlights: JSON.parse(JSON.stringify(_editorState.highlights)) });
+  const prev = _htmlUndoStack.pop();
+  area.innerHTML = prev.html;
+  _editorState.highlights = prev.highlights;
+  neAttachEraserToMarks();
+  markModified();
+  showToast('Undo ✅', 'success');
 }
 
 // Redo
 function neRedo() {
   const area = document.getElementById('noteEditableArea');
-  if(area.contentEditable === 'true') {
-    document.execCommand('redo');
-    markModified();
-  }
+  if(!area) return;
+  if(_htmlRedoStack.length === 0) { showToast('Kuch redo nahi hai', 'error'); return; }
+  _htmlUndoStack.push({ html: area.innerHTML, highlights: JSON.parse(JSON.stringify(_editorState.highlights)) });
+  const next = _htmlRedoStack.pop();
+  area.innerHTML = next.html;
+  _editorState.highlights = next.highlights;
+  neAttachEraserToMarks();
+  markModified();
+  showToast('Redo ✅', 'success');
 }
 
 // Highlight - text select se
@@ -4792,14 +4828,19 @@ function setHlMode(mode) {
 
   if(mode === 'highlight') {
     if(hlBtn) { hlBtn.classList.add('highlight-active'); hlBtn.textContent = '🖊️ Highlight ON'; }
-    // user-select none - Android toolbar bypass
     if(area) area.classList.add('hl-mode-active');
-    if(status) status.textContent = '🖊️ Text drag karo → highlight hoga';
+    if(status) status.textContent = '🖊️ Highlight ON — text drag karo';
   } else {
-    if(hlBtn) { hlBtn.classList.remove('highlight-active'); hlBtn.textContent = '🖊️ Highlight'; }
+    if(hlBtn) { hlBtn.classList.remove('highlight-active'); hlBtn.textContent = '🖊️ Highlight OFF'; }
     if(area) area.classList.remove('hl-mode-active');
-    if(status) status.textContent = '👁️ Read Mode';
+    if(status) status.textContent = '👁️ Read — scroll/read mode';
+    hideMagnifier();
   }
+}
+
+function toggleHlMode() {
+  if(_hlCurrentMode === 'highlight') setHlMode('off');
+  else setHlMode('highlight');
 }
 
 function neAttachEraserToMarks() {
@@ -4893,15 +4934,15 @@ function onNETouchStart(e) {
 
 // Touch move - show magnifier with selected text
 function onNETouchMove(e) {
-  if(_hlCurrentMode !== 'highlight') return;
+  if(_hlCurrentMode !== 'highlight') return; // Agar highlight OFF hai to scroll hone do
   const t = e.touches[0];
   const dx = t.clientX - _ts.x;
   const dy = t.clientY - _ts.y;
   const dist = Math.sqrt(dx*dx + dy*dy);
 
-  if(dist > 8) {
+  if(dist > 12) { // Slightly higher threshold - accidental highlight se bachao
     _touchSelecting = true;
-    e.preventDefault(); // Prevent scroll while selecting
+    e.preventDefault(); // Prevent scroll ONLY when actively selecting
 
     // Get text between start and current position
     const range = getRangeFromPoints(_ts.x, _ts.y, t.clientX, t.clientY);
@@ -4955,6 +4996,7 @@ function applyHighlightFromSelection(sel) {
 
 // Core: wrap range in mark element
 function applyHighlightFromRange(range, text) {
+  neSaveSnapshot(); // Save state before highlight for undo
   const color = _editorState.hlColor;
   const cls = color === 'pink' ? 'user-hl-pink' : color === 'green' ? 'user-hl-green' : 'user-hl';
   const uid = 'hl_' + Date.now();
@@ -5002,7 +5044,7 @@ function neAttachUnhighlightToMark(mark) {
   mark.addEventListener('pointerdown', function(e) {
     e.preventDefault();
     e.stopPropagation();
-    const txt = this.textContent;
+    neSaveSnapshot(); // Save for undo
     const hid = this.getAttribute('data-hlid');
     const parent = this.parentNode;
     parent.replaceChild(document.createTextNode(txt), this);
@@ -5091,7 +5133,7 @@ function saveEditedNote() {
     n.content = plainText;
     n.wordCount = plainText.trim().split(/\s+/).length;
     n.lastEditedAt = new Date().toLocaleDateString('hi-IN');
-    // Save highlights with proper data
+    // Save highlights and richHTML (with mark tags preserved)
     _editorState.highlights = [];
     const area = document.getElementById('noteEditableArea');
     area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(mark => {
@@ -5102,6 +5144,7 @@ function saveEditedNote() {
       _editorState.highlights.push({ id: uid, text: mark.textContent, color });
     });
     n.editorHighlights = _editorState.highlights.slice();
+    n.editorRichHTML = area.innerHTML; // Save rich HTML with highlight marks
   }
 
   save();
@@ -5472,13 +5515,12 @@ function openViewerModal(title, text) {
 
 // Font size change
 function neChangeFontSize(delta) {
-  _neState.fontSize = Math.min(30, Math.max(12, _neState.fontSize + delta));
+  _neState.fontSize = Math.min(32, Math.max(12, _neState.fontSize + delta));
   localStorage.setItem('neFontSize', _neState.fontSize);
   document.getElementById('neFontLabel').textContent = _neState.fontSize;
-  const readArea = document.getElementById('noteReadContent');
-  const editArea = document.getElementById('noteEditContent');
-  if(readArea) readArea.style.fontSize = _neState.fontSize + 'px';
-  if(editArea) editArea.style.fontSize = _neState.fontSize + 'px';
+  // Apply to the ACTUAL editable area (not old textarea)
+  const editableArea = document.getElementById('noteEditableArea');
+  if(editableArea) editableArea.style.fontSize = _neState.fontSize + 'px';
 }
 
 // Theme change for editor
