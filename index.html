@@ -4595,12 +4595,15 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
 }
 
 function closeNotesEditor() {
-  // Agar koi changes hue hain to popup dikhao
+  // Agar already closing chal raha hai to ignore (double-click prevention)
+  if(_editorClosing) return;
+
   if(_editorState.modified) {
+    // Changes hain — popup dikhao
     showUnsavedPopup();
     return;
   }
-  // Koi changes nahi - seedha band karo
+  // Koi changes nahi — seedha band karo
   _forceCloseEditor();
 }
 
@@ -4609,64 +4612,101 @@ function _forceCloseEditor() {
   setHlMode('off');
   hideMagnifier();
   _editorState.modified = false;
+
+  // UI cleanup
   var dot = document.getElementById('unsavedDot');
   var dot2 = document.getElementById('unsavedDot2');
   if(dot) dot.style.display = 'none';
   if(dot2) dot2.style.display = 'none';
   var saveBtn = document.getElementById('saveNoteBtn');
-  if(saveBtn) { saveBtn.style.display = 'none'; saveBtn.textContent = '💾 Save'; saveBtn.style.background = ''; saveBtn.disabled = false; }
+  if(saveBtn) {
+    saveBtn.style.display = 'none';
+    saveBtn.textContent = '💾 Save';
+    saveBtn.style.background = '';
+    saveBtn.disabled = false;
+  }
   neResetToolbar();
+
+  // Editor overlay band karo - ONLY via classList (inline style conflict avoid karo)
   var ov = document.getElementById('notesEditorOverlay');
   if(ov) {
     ov.classList.remove('show');
-    // Inline style se bhi force karo - timeout nahi, permanent
-    ov.style.display = 'none';
+    // Inline style reset karo taaki future opens work karein
+    ov.style.display = '';
   }
   document.body.style.overflow = '';
+  // Koi bhi pending unsaved popup bhi hatao
+  var popup = document.getElementById('unsavedPopupOverlay');
+  if(popup) popup.remove();
 }
 
+// Flag: double-close aur race condition rokne ke liye
+var _editorClosing = false;
+
 function showUnsavedPopup() {
-  // Remove purana popup agar hai
+  // Agar already closing chal raha hai to ignore
+  if(_editorClosing) return;
+
+  // Remove purana popup
   var old = document.getElementById('unsavedPopupOverlay');
   if(old) old.remove();
 
   var overlay = document.createElement('div');
   overlay.id = 'unsavedPopupOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;';
+  // z-index 99999 — editor (500) aur baaki sab se upar
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
 
-  overlay.innerHTML = '<div style="background:#fff;border-radius:18px;padding:26px 22px;max-width:340px;width:100%;box-shadow:0 10px 50px rgba(0,0,0,0.25);text-align:center;font-family:inherit;">'
+  overlay.innerHTML = '<div style="background:#fff;border-radius:18px;padding:26px 22px;max-width:340px;width:100%;box-shadow:0 10px 50px rgba(0,0,0,0.3);text-align:center;font-family:inherit;">'
     + '<div style="font-size:2.4rem;margin-bottom:10px;">⚠️</div>'
     + '<div style="font-size:1rem;font-weight:800;color:#0d1b2a;margin-bottom:8px;">Unsaved Changes Hain!</div>'
-    + '<div style="font-size:0.82rem;color:#37526d;line-height:1.7;margin-bottom:22px;">Notes mein kuch changes hain jo save nahi hue hain.<br>Kya karna chahte hain?</div>'
+    + '<div style="font-size:0.82rem;color:#37526d;line-height:1.7;margin-bottom:22px;">Notes mein changes hain jo save nahi hue.<br>Kya karna chahte hain?</div>'
     + '<div style="display:flex;flex-direction:column;gap:10px;">'
     + '<button id="uspSaveExit" style="padding:13px;border-radius:11px;border:none;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;font-weight:800;font-size:0.9rem;cursor:pointer;font-family:inherit;">💾 Save Karke Bahar Jao</button>'
-    + '<button id="uspDiscardExit" style="padding:13px;border-radius:11px;border:1.5px solid rgba(198,40,40,0.35);background:rgba(198,40,40,0.07);color:#c62828;font-weight:700;font-size:0.86rem;cursor:pointer;font-family:inherit;">🗑️ Bina Save Ke Bahar Jao (Changes Kho Jayenge)</button>'
-    + '<button id="uspCancel" style="padding:13px;border-radius:11px;border:1.5px solid #bdd5ea;background:transparent;color:#37526d;font-weight:700;font-size:0.86rem;cursor:pointer;font-family:inherit;">✏️ Editing Continue Karo</button>'
+    + '<button id="uspDiscardExit" style="padding:13px;border-radius:11px;border:1.5px solid rgba(198,40,40,0.35);background:rgba(198,40,40,0.07);color:#c62828;font-weight:700;font-size:0.86rem;cursor:pointer;font-family:inherit;">🗑️ Bina Save Ke Bahar Jao</button>'
+    + '<button id="uspCancel" style="padding:13px;border-radius:11px;border:1.5px solid #bdd5ea;background:transparent;color:#37526d;font-weight:700;font-size:0.86rem;cursor:pointer;font-family:inherit;">✏️ Continue Editing</button>'
     + '</div></div>';
 
   document.body.appendChild(overlay);
 
-  // "Save karke bahar jao" — save karo aur editor band karo
+  // BUTTON 1: Save + Close
   document.getElementById('uspSaveExit').onclick = function() {
+    if(_editorClosing) return;
+    _editorClosing = true;
     overlay.remove();
-    _saveAndClose(); // Save + close in one step
-  };
-
-  // "Bina save ke bahar jao" — changes discard karo, original content restore karo, band karo
-  document.getElementById('uspDiscardExit').onclick = function() {
-    overlay.remove();
-    // Changes discard karo — modified flag reset karo aur band karo
+    var ok = _doSaveNoteData();
+    if(ok) {
+      save();
+      renderLibraryTree();
+      var tvModal = document.getElementById('topicViewModal');
+      if(tvModal && tvModal.classList.contains('show')) {
+        viewTopic(_editorState.sid, _editorState.secid, _editorState.tid);
+      }
+      showToast('✅ Notes save ho gaye!', 'success');
+    }
     _editorState.modified = false;
     _forceCloseEditor();
-    showToast('Changes discard kar diye gaye', 'success');
+    _editorClosing = false;
+    if(ok) setTimeout(function(){ showSaveSuccessPopup(); }, 150);
   };
 
-  // "Editing continue karo" — popup band karo, editor pe wapas jao
+  // BUTTON 2: Discard + Close
+  document.getElementById('uspDiscardExit').onclick = function() {
+    if(_editorClosing) return;
+    _editorClosing = true;
+    overlay.remove();
+    _editorState.modified = false;
+    _forceCloseEditor();
+    _editorClosing = false;
+    showToast('Changes discard kar diye', 'success');
+  };
+
+  // BUTTON 3: Continue editing
   document.getElementById('uspCancel').onclick = function() {
     overlay.remove();
-    // Editor pe focus wapas do
     var area = document.getElementById('noteEditableArea');
-    if(area && area.contentEditable === 'true') area.focus();
+    if(area && area.contentEditable === 'true') {
+      setTimeout(function(){ area.focus(); }, 50);
+    }
   };
 }
 
@@ -4709,19 +4749,21 @@ function _doSaveNoteData() {
 }
 
 function _saveAndClose() {
+  if(_editorClosing) return;
+  _editorClosing = true;
   var ok = _doSaveNoteData();
-  if(!ok) { _forceCloseEditor(); return; }
-  save();
-  _editorState.modified = false;
-  renderLibraryTree();
-  // Refresh topic view modal if open (so highlights show updated)
-  var tvModal = document.getElementById('topicViewModal');
-  if(tvModal && tvModal.classList.contains('show')) {
-    viewTopic(_editorState.sid, _editorState.secid, _editorState.tid);
+  if(ok) {
+    save();
+    renderLibraryTree();
+    var tvModal = document.getElementById('topicViewModal');
+    if(tvModal && tvModal.classList.contains('show')) {
+      viewTopic(_editorState.sid, _editorState.secid, _editorState.tid);
+    }
   }
+  _editorState.modified = false;
   _forceCloseEditor();
-  // Show success popup after editor closes
-  setTimeout(function(){ showSaveSuccessPopup(); }, 200);
+  _editorClosing = false;
+  if(ok) setTimeout(function(){ showSaveSuccessPopup(); }, 150);
 }
 
 // Load content into the editable area
@@ -5357,19 +5399,21 @@ function copyEditorContent() {
 }
 
 function saveEditedNote() {
-  // Save button ke liye — editor band NAHI hoga, sirf save hoga
-  // User editor page par hi rehega aur editing jari rakh sakta hai
+  // Sirf Save button ke liye — editor page par REHNA hai, band NAHI karna
   var ok = _doSaveNoteData();
-  if(!ok) { showToast('Save nahi ho saka! Content check karo.', 'error'); return; }
+  if(!ok) {
+    showToast('Save nahi ho saka!', 'error');
+    return;
+  }
 
-  save(); // localStorage + Firebase sync
-  _editorState.modified = false; // Modified flag reset karo
+  save(); // localStorage mein save + Firebase sync trigger
+  _editorState.modified = false;
 
-  // Save button visual feedback
+  // Save button: "Saved!" dikhao, phir hide karo
   var saveBtn = document.getElementById('saveNoteBtn');
   if(saveBtn) {
     saveBtn.textContent = '✅ Saved!';
-    saveBtn.style.background = 'var(--green)';
+    saveBtn.style.background = 'linear-gradient(135deg,#2e7d32,#388e3c)';
     saveBtn.disabled = true;
     setTimeout(function() {
       saveBtn.style.display = 'none';
@@ -5379,24 +5423,20 @@ function saveEditedNote() {
     }, 2000);
   }
 
-  // Unsaved dots hide karo
+  // Unsaved dot hide karo
   var dot = document.getElementById('unsavedDot');
   var dot2 = document.getElementById('unsavedDot2');
   if(dot) dot.style.display = 'none';
   if(dot2) dot2.style.display = 'none';
 
-  neUpdateStatusBar('✅ Save Ho Gaya! — Editing jari rakh sakte hain');
-
-  // Library tree refresh karo (baad mein topic count update ho)
+  neUpdateStatusBar('✅ Save Ho Gaya! — Ab aur edit kar sakte hain');
   renderLibraryTree();
 
-  // Topic view modal refresh karo agar open hai
   var tvModal = document.getElementById('topicViewModal');
   if(tvModal && tvModal.classList.contains('show')) {
     viewTopic(_editorState.sid, _editorState.secid, _editorState.tid);
   }
 
-  // Success popup dikhao
   showSaveSuccessPopup();
 }
 
@@ -6108,10 +6148,13 @@ window.addEventListener('popstate',function(e){
   const ne=document.getElementById('notesEditorOverlay');
   if(ne&&ne.classList.contains('show')){
     if(typeof _editorState!=='undefined'&&_editorState.modified){
-      // Mobile back button - unsaved changes popup dikhao
-      history.pushState({type:'notesEditor'},''); // State wapas push karo
-      showUnsavedPopup();
+      // Mobile back button — state wapas push karo taaki back se bahar na jaaye
+      history.pushState({type:'notesEditor'},'');
+      // Popup dikhao (agar already nahi dikhaya hua)
+      var existingPopup = document.getElementById('unsavedPopupOverlay');
+      if(!existingPopup) showUnsavedPopup();
     } else {
+      _editorState.modified = false; // Safety
       _forceCloseEditor();
     }
     return;
@@ -6475,18 +6518,20 @@ async function loadFromFirebase(){
           if(!t.highlights) t.highlights=[];
           if(!t.savedFacts) t.savedFacts=[];
           if(!t.notes) t.notes=[];
-          // Restore finalNotes/smartNotes HTML from local backup if cloud doesn't have it
-          if(!t.finalNotesHTML && localEditorData['fn_'+t.id]) t.finalNotesHTML = localEditorData['fn_'+t.id];
-          if(!t.smartNotesHTML && localEditorData['sn_'+t.id]) t.smartNotesHTML = localEditorData['sn_'+t.id];
+          // Restore editor HTML from local backup
+          // LOCAL data always prefer karo — user ne jo last save kiya woh local mein fresh hai
+          if(localEditorData['fn_'+t.id]) t.finalNotesHTML = localEditorData['fn_'+t.id];
+          else if(!t.finalNotesHTML) t.finalNotesHTML = null;
+          if(localEditorData['sn_'+t.id]) t.smartNotesHTML = localEditorData['sn_'+t.id];
+          else if(!t.smartNotesHTML) t.smartNotesHTML = null;
           t.notes.forEach(n=>{
             if(!n.editorHighlights) n.editorHighlights=[];
             if(n.editorRichHTML === undefined) n.editorRichHTML = null;
-            // Restore local editor data — cloud se aaya data zyada purana ho sakta hai
+            // Local richHTML HAMESHA prefer karo — yeh user ka latest saved data hai
             const localND = localEditorData['n_'+n.id];
-            if(localND) {
-              // Local richHTML prefer karo (user ne jo last save kiya tha)
+            if(localND && localND.richHTML) {
               n.editorRichHTML = localND.richHTML;
-              n.editorHighlights = localND.highlights;
+              n.editorHighlights = localND.highlights || [];
             }
           });
         })));
