@@ -5113,6 +5113,13 @@ function onNEMouseUp(e) {
 let _ts = {x:0, y:0, time:0};
 function onNETouchStart(e) {
   if(_hlCurrentMode !== 'highlight') return;
+  // 2 ya zyada ungliyan = scroll, highlight nahi
+  if(e.touches.length > 1) {
+    _touchSelecting = false;
+    _touchSelectedText = '';
+    hideMagnifier();
+    return;
+  }
   const t = e.touches[0];
   _ts = {x: t.clientX, y: t.clientY, time: Date.now()};
   _touchSelecting = false;
@@ -5122,17 +5129,28 @@ function onNETouchStart(e) {
 
 // Touch move - show magnifier with selected text
 function onNETouchMove(e) {
-  if(_hlCurrentMode !== 'highlight') return; // Agar highlight OFF hai to scroll hone do
+  if(_hlCurrentMode !== 'highlight') return; // Highlight OFF = scroll hone do normally
+
+  // 2 ya zyada ungliyan = scroll hone do, highlight interrupt karo
+  if(e.touches.length > 1) {
+    if(_touchSelecting) {
+      // Jo selection chal rahi thi use cancel karo
+      _touchSelecting = false;
+      _touchSelectedText = '';
+      hideMagnifier();
+    }
+    return; // Scroll hone do
+  }
+
   const t = e.touches[0];
   const dx = t.clientX - _ts.x;
   const dy = t.clientY - _ts.y;
   const dist = Math.sqrt(dx*dx + dy*dy);
 
-  if(dist > 12) { // Slightly higher threshold - accidental highlight se bachao
+  if(dist > 12) {
     _touchSelecting = true;
-    e.preventDefault(); // Prevent scroll ONLY when actively selecting
+    e.preventDefault(); // Sirf single finger drag mein scroll rokna — text select karna hai
 
-    // Get text between start and current position
     const range = getRangeFromPoints(_ts.x, _ts.y, t.clientX, t.clientY);
     if(range) {
       const selected = range.toString().trim();
@@ -5149,16 +5167,13 @@ function onNETouchEnd(e) {
   hideMagnifier();
   if(_hlCurrentMode !== 'highlight') return;
 
-  if(!_touchSelecting) {
-    // Short tap - check if on a mark (unhighlight)
-    return;
-  }
+  // Agar 2+ finger touch tha to highlight mat karo
+  if(!_touchSelecting) return;
 
   _touchSelecting = false;
   const text = _touchSelectedText.trim();
   if(text.length < 1) return;
 
-  // Apply highlight using the custom range
   const t = e.changedTouches[0];
   const range = getRangeFromPoints(_ts.x, _ts.y, t.clientX, t.clientY);
   if(!range || range.collapsed) {
