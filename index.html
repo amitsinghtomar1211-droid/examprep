@@ -3707,6 +3707,9 @@ Restore karna hai?`)) {
       
       // Save to localStorage directly (avoid Firebase loop)
       try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
+
+      // Flag set karo - Firebase load se bachao
+      _justRestored = true;
       
       // Close login screen if open
       const ls = document.getElementById('loginScreen');
@@ -3739,15 +3742,16 @@ Restore karna hai?`)) {
       // After UI load, sync to Firebase (if logged in)
       setTimeout(() => {
         if(_currentUser && _db) {
+          _justRestored = false; // Already uploading
           saveToFirebase().then(()=>{
-            showToast('Restore + Cloud Sync ho gaya! ✅☁️ (' + subjectCount + ' subjects)', 'success');
+            showToast('✅ Restore + Cloud Sync! ' + subjectCount + ' subjects, ' + topicCount + ' topics', 'success');
           }).catch(()=>{
-            showToast('Restore ho gaya! ✅ (' + subjectCount + ' subjects, ' + topicCount + ' topics)', 'success');
+            showToast('✅ Restore ho gaya! ' + subjectCount + ' subjects, ' + topicCount + ' topics', 'success');
           });
         } else {
-          showToast('Data restore ho gaya! ✅ (' + subjectCount + ' subjects, ' + topicCount + ' topics)', 'success');
+          showToast('✅ Data restore ho gaya! ' + subjectCount + ' subjects, ' + topicCount + ' topics', 'success');
         }
-      }, 500);
+      }, 800);
       
     } catch(err) {
       showToast('File padhne mein error: ' + err.message, 'error');
@@ -5553,6 +5557,7 @@ let _auth = null;
 let _currentUser = null;
 let _fbReady = false;
 let _syncTimeout = null;
+let _justRestored = false; // Restore ke baad Firebase overwrite rokne ke liye
 
 // Firebase config localStorage se load karo
 function getFbConfig(){
@@ -5822,6 +5827,17 @@ async function saveToFirebase(){
 
 async function loadFromFirebase(){
   if(!_db || !_currentUser) return;
+
+  // Agar abhi restore hua hai to load mat karo - upload karo
+  if(_justRestored) {
+    _justRestored = false;
+    setSyncStatus('syncing');
+    await saveToFirebase();
+    setSyncStatus('synced');
+    showToast('Restore data cloud pe upload ho gaya! ✅☁️', 'success');
+    return;
+  }
+
   setSyncStatus('syncing');
   try{
     const uid = _currentUser.uid;
