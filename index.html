@@ -2403,6 +2403,7 @@ function viewTopic(sid,secid,tid){
     <button class="btn btn-xs" style="background:linear-gradient(135deg,#e65100,#f57c00);color:#fff;" onclick="openPdfModal(${sid},${secid},${tid})">📄 PDF se Notes</button>
     <button class="btn btn-xs" style="background:linear-gradient(135deg,#cc0000,#ff6d00);color:#fff;" onclick="openYtModal(${sid},${secid},${tid})">🎬 YT/Audio Notes</button>
     <button class="btn btn-xs" style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;font-weight:800;" onclick="openMasterNotesModal(${sid},${secid},${tid})">⚡ Master Notes</button>
+    <button class="btn btn-xs" style="background:linear-gradient(135deg,#1b5e20,#2e7d32);color:#fff;" onclick="quickWebSearch('${t.name.replace(/'/g,"\'")}',${sid},${secid},${tid})">🌐 Web Search</button>
   </div>`;
 
   // ---- SECTION 1: Smart Notes ----
@@ -5599,11 +5600,26 @@ async function sendEditorAiMsg() {
   _editorAiHistory.push({ role: 'user', content: msg });
   if(_editorAiHistory.length > 10) _editorAiHistory = _editorAiHistory.slice(-10);
 
-  // Messages banao with context
+  // Web search check karo — agar user ne "web se", "search karo", "latest" kaha
+  let webCtx = '';
+  const needsWeb = /web se|search karo|latest|najdik|recent|abhi|2024|2025|internet/i.test(msg);
+  if(needsWeb) {
+    try {
+      addEditorAiMessage('ai', '🌐 Web search ho rahi hai...');
+      webCtx = await performWebSearch(msg, notesTitle);
+    } catch(e) { webCtx = ''; }
+    // Last message remove karo (loading message)
+    const msgs = document.getElementById('editorAiMessages');
+    if(msgs && msgs.lastChild) msgs.removeChild(msgs.lastChild);
+  }
+
   const systemMsg = `Tu ek expert teacher hai. User ek notes editor mein hai.
 
 CURRENT NOTES (${notesTitle}):
 ${notesText}
+${webCtx ? `
+WEB SEARCH RESULTS:
+${webCtx.substring(0,2000)}` : ''}
 
 User notes padh raha/rahi hai aur tujhse poochh raha/rahi hai. 
 - Agar user koi concept poochhe to clearly explain karo
@@ -6167,6 +6183,67 @@ async function callGroq(prompt, maxTokens=4000){
   }
   const d=await r.json();
   return d.choices?.[0]?.message?.content||'';
+}
+
+// ==================== WEB SEARCH ====================
+// Free web search using multiple APIs
+async function performWebSearch(query, topicName) {
+  const encodedQuery = encodeURIComponent(query);
+  let results = '';
+
+  // API 1: DuckDuckGo
+  try {
+    const resp = await fetch(
+      'https://api.duckduckgo.com/?q=' + encodedQuery + '&format=json&no_html=1&skip_disambig=1',
+      { signal: AbortSignal.timeout(6000) }
+    );
+    if(resp.ok) {
+      const data = await resp.json();
+      if(data.AbstractText && data.AbstractText.length > 50) {
+        results += '[' + (data.AbstractSource || 'Web') + ']: ' + data.AbstractText + '\n\n';
+      }
+      if(data.RelatedTopics && data.RelatedTopics.length > 0) {
+        const related = data.RelatedTopics
+          .filter(function(r){ return r.Text && r.Text.length > 20; })
+          .slice(0, 5)
+          .map(function(r){ return '• ' + r.Text; })
+          .join('\n');
+        if(related) results += 'Related Points:\n' + related + '\n\n';
+      }
+    }
+  } catch(e) {}
+
+  // API 2: English Wikipedia
+  try {
+    const wikiQuery = encodeURIComponent(topicName.replace(/[^a-zA-Z0-9 ]/g,'').trim());
+    const wikiResp = await fetch(
+      'https://en.wikipedia.org/api/rest_v1/page/summary/' + wikiQuery,
+      { signal: AbortSignal.timeout(6000) }
+    );
+    if(wikiResp.ok) {
+      const wikiData = await wikiResp.json();
+      if(wikiData.extract && wikiData.extract.length > 100) {
+        results += '[Wikipedia - ' + wikiData.title + ']:\n' + wikiData.extract.substring(0, 1500) + '\n\n';
+      }
+    }
+  } catch(e) {}
+
+  // API 3: Hindi Wikipedia
+  try {
+    const hiQuery = encodeURIComponent(topicName.trim());
+    const hiResp = await fetch(
+      'https://hi.wikipedia.org/api/rest_v1/page/summary/' + hiQuery,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if(hiResp.ok) {
+      const hiData = await hiResp.json();
+      if(hiData.extract && hiData.extract.length > 100) {
+        results += '[Hindi Wikipedia - ' + hiData.title + ']:\n' + hiData.extract.substring(0, 1000) + '\n\n';
+      }
+    }
+  } catch(e) {}
+
+  return results.trim() || '[Web search se koi result nahi mila]';
 }
 
 // ==================== MODAL ====================
@@ -7599,6 +7676,15 @@ function ytCopyResult() {
     <div style="padding:16px 20px 0;">
       <div style="font-size:0.85rem;font-weight:800;color:#0d1b2a;margin-bottom:10px;">📚 Sources chunno (jo data AI use kare):</div>
       <div id="masterSourcesList" style="display:flex;flex-direction:column;gap:7px;"></div>
+
+      <!-- Web Search Option -->
+      <label style="display:flex;align-items:flex-start;gap:10px;padding:9px 12px;background:#e8f5e9;border-radius:10px;cursor:pointer;border:1.5px solid #a5d6a7;margin-top:7px;">
+        <input type="checkbox" id="src_websearch" style="margin-top:2px;accent-color:#2e7d32;width:15px;height:15px;flex-shrink:0;">
+        <div>
+          <div style="font-size:0.82rem;font-weight:700;color:#2e7d32;">🌐 Web Search (Latest Info)</div>
+          <div style="font-size:0.7rem;color:#37526d;margin-top:1px;">AI topic ke baare mein web se latest information search karega</div>
+        </div>
+      </label>
     </div>
 
     <!-- User Instructions -->
@@ -7769,7 +7855,8 @@ async function masterGenerateNotes() {
     sourceCount++;
   }
 
-  if(sourceCount === 0) { showToast('Kam se kam ek source chunno!', 'error'); return; }
+  const useWebSearch = document.getElementById('src_websearch')?.checked;
+  if(sourceCount === 0 && !useWebSearch) { showToast('Kam se kam ek source chunno!', 'error'); return; }
 
   const userInstructions = document.getElementById('masterInstructions').value.trim();
   const subj = getSubj(_masterState.sid);
@@ -7779,7 +7866,26 @@ async function masterGenerateNotes() {
   btn.textContent = '⏳ AI analysis kar raha hai...';
   document.getElementById('masterProgressBox').style.display = 'block';
   document.getElementById('masterResultBox').style.display = 'none';
-  setMasterProgress(15, '📚 Sources combine ho rahe hain...');
+  setMasterProgress(10, '📚 Sources combine ho rahe hain...');
+
+  // Web Search — topic ke baare mein latest info fetch karo
+  let webSearchData = '';
+  if(useWebSearch) {
+    try {
+      setMasterProgress(25, '🌐 Web search ho rahi hai...');
+      const searchQuery = `${t.name} ${subj?.name || ''} important points exam`.trim();
+      webSearchData = await performWebSearch(searchQuery, t.name);
+      if(webSearchData) {
+        combinedData += `
+
+=== 🌐 WEB SEARCH RESULTS ===
+${webSearchData}`;
+        sourceCount++;
+      }
+    } catch(e) {
+      webSearchData = '';
+    }
+  }
 
   try {
     let prompt;
@@ -8006,5 +8112,170 @@ function addSelectedExtraFacts() {
   if(tvModal && tvModal.classList.contains('show')) {
     viewTopic(_masterState.sid, _masterState.secid, _masterState.tid);
   }
+}
+</script>
+
+<script>
+// ==================== QUICK WEB SEARCH MODAL ====================
+
+let _wsState = { sid: null, secid: null, tid: null };
+
+async function quickWebSearch(topicName, sid, secid, tid) {
+  _wsState = { sid, secid, tid };
+
+  // Simple modal banao
+  const old = document.getElementById('quickWebSearchModal');
+  if(old) old.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'quickWebSearchModal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:18px;width:100%;max-width:480px;max-height:88vh;overflow-y:auto;box-shadow:0 10px 50px rgba(0,0,0,0.3);">
+      <div style="padding:16px 20px;background:linear-gradient(135deg,#1b5e20,#2e7d32);border-radius:18px 18px 0 0;color:#fff;display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-size:1rem;font-weight:800;">🌐 Web Search</div>
+          <div style="font-size:0.73rem;opacity:0.85;margin-top:2px;">${topicName}</div>
+        </div>
+        <button onclick="document.getElementById('quickWebSearchModal').remove();document.body.style.overflow='';" 
+          style="background:rgba(255,255,255,0.2);border:none;border-radius:50%;width:30px;height:30px;color:#fff;cursor:pointer;font-size:1rem;">✕</button>
+      </div>
+      <div style="padding:16px 20px 0;">
+        <div style="display:flex;gap:8px;">
+          <input id="wsSearchInput" type="text" value="${topicName}" 
+            style="flex:1;border:1.5px solid #bdd5ea;border-radius:10px;padding:10px 12px;font-size:0.85rem;font-family:inherit;outline:none;"
+            onkeydown="if(event.key==='Enter')doWebSearch()">
+          <button onclick="doWebSearch()" id="wsSearchBtn"
+            style="padding:10px 16px;background:linear-gradient(135deg,#1b5e20,#2e7d32);color:#fff;border:none;border-radius:10px;font-weight:800;cursor:pointer;font-family:inherit;">🔍</button>
+        </div>
+      </div>
+      <div id="wsProgress" style="display:none;padding:10px 20px;">
+        <div style="font-size:0.8rem;color:#37526d;">🌐 Search ho rahi hai...</div>
+        <div style="background:#e0e0e0;border-radius:10px;height:5px;margin-top:6px;overflow:hidden;">
+          <div id="wsBar" style="height:100%;background:linear-gradient(90deg,#1b5e20,#66bb6a);width:0%;transition:width 0.4s;border-radius:10px;"></div>
+        </div>
+      </div>
+      <div id="wsResults" style="padding:14px 20px 6px;display:none;">
+        <div style="font-size:0.82rem;font-weight:700;color:#0d1b2a;margin-bottom:8px;">📋 Search Results:</div>
+        <div id="wsResultText" style="background:#f1f8e9;border:1px solid #a5d6a7;border-radius:10px;padding:12px;font-size:0.78rem;line-height:1.7;max-height:260px;overflow-y:auto;white-space:pre-wrap;color:#1b5e20;"></div>
+      </div>
+      <div id="wsAiBox" style="display:none;padding:0 20px 14px;">
+        <div style="font-size:0.82rem;font-weight:700;color:#0d1b2a;margin-bottom:6px;">🤖 AI Analysis:</div>
+        <div id="wsAiText" style="background:#f4f9fe;border:1px solid #bdd5ea;border-radius:10px;padding:12px;font-size:0.8rem;line-height:1.75;max-height:220px;overflow-y:auto;white-space:pre-wrap;color:#0d1b2a;"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button onclick="wsSaveToTopic()" style="flex:1;padding:10px;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.85rem;cursor:pointer;font-family:inherit;">💾 Topic mein Save Karo</button>
+          <button onclick="wsAddToMasterNotes()" style="flex:1;padding:10px;background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.85rem;cursor:pointer;font-family:inherit;">⚡ Master Notes mein Add</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  document.body.style.overflow = 'hidden';
+
+  // Auto search shuru karo
+  setTimeout(() => doWebSearch(), 300);
+}
+
+async function doWebSearch() {
+  const query = document.getElementById('wsSearchInput')?.value.trim();
+  if(!query) return;
+
+  const btn = document.getElementById('wsSearchBtn');
+  if(btn) { btn.disabled = true; btn.textContent = '⏳'; }
+
+  document.getElementById('wsProgress').style.display = 'block';
+  document.getElementById('wsResults').style.display = 'none';
+  document.getElementById('wsAiBox').style.display = 'none';
+  document.getElementById('wsBar').style.width = '30%';
+
+  const topicName = document.getElementById('wsSearchInput').value;
+  const rawResults = await performWebSearch(query, topicName);
+
+  document.getElementById('wsBar').style.width = '70%';
+
+  if(!rawResults || rawResults.includes('koi result nahi')) {
+    document.getElementById('wsResultText').textContent = rawResults || 'Koi result nahi mila.';
+    document.getElementById('wsResults').style.display = 'block';
+    document.getElementById('wsProgress').style.display = 'none';
+    if(btn) { btn.disabled = false; btn.textContent = '🔍'; }
+    return;
+  }
+
+  document.getElementById('wsResultText').textContent = rawResults;
+  document.getElementById('wsResults').style.display = 'block';
+
+  // AI se summarize karo agar API key hai
+  if(S.apiKey) {
+    document.getElementById('wsBar').style.width = '85%';
+    try {
+      const t = getTop(_wsState.sid, _wsState.secid, _wsState.tid);
+      const aiPrompt = `Topic: ${topicName}
+
+Web search se mila data:
+${rawResults.substring(0, 4000)}
+
+Task: Is data ko exam ke liye useful notes mein convert karo. Important points ** se mark karo. Hindi mein, concise format mein do.`;
+
+      const aiResult = await callGroq(aiPrompt, 2000);
+      document.getElementById('wsAiText').textContent = aiResult;
+      document.getElementById('wsAiBox').style.display = 'block';
+      document.getElementById('wsAiBox')._aiText = aiResult;
+    } catch(e) {}
+  }
+
+  document.getElementById('wsBar').style.width = '100%';
+  setTimeout(() => { document.getElementById('wsProgress').style.display = 'none'; }, 500);
+  if(btn) { btn.disabled = false; btn.textContent = '🔍'; }
+}
+
+function wsSaveToTopic() {
+  const t = getTop(_wsState.sid, _wsState.secid, _wsState.tid);
+  if(!t) return;
+  const aiBox = document.getElementById('wsAiBox');
+  const text = aiBox?._aiText || document.getElementById('wsResultText')?.textContent || '';
+  if(!text) return;
+
+  const note = {
+    id: Date.now(),
+    name: 'Web Search Notes — ' + new Date().toLocaleDateString('hi-IN'),
+    content: text,
+    wordCount: text.trim().split(/\s+/).length,
+    addedAt: new Date().toLocaleDateString('hi-IN'),
+    source: 'websearch'
+  };
+  t.notes.push(note);
+  save();
+  renderLibraryTree();
+  showToast('✅ Web search notes topic mein save ho gaye!', 'success');
+  document.getElementById('quickWebSearchModal').remove();
+  document.body.style.overflow = '';
+  const tvModal = document.getElementById('topicViewModal');
+  if(tvModal?.classList.contains('show')) viewTopic(_wsState.sid, _wsState.secid, _wsState.tid);
+}
+
+function wsAddToMasterNotes() {
+  const t = getTop(_wsState.sid, _wsState.secid, _wsState.tid);
+  if(!t) return;
+  const aiBox = document.getElementById('wsAiBox');
+  const text = aiBox?._aiText || document.getElementById('wsResultText')?.textContent || '';
+  if(!text) return;
+
+  const section = '\n\n--- 🌐 Web Search Addition (' + new Date().toLocaleDateString('hi-IN') + ') ---\n' + text;
+  if(!t.masterNotes) {
+    t.masterNotes = text;
+    t.masterNotesAt = new Date().toLocaleDateString('hi-IN');
+  } else {
+    t.masterNotes += section;
+    if(t.masterNotesHTML) {
+      t.masterNotesHTML += '<br><br><span style="color:#1b5e20;font-weight:700;">--- 🌐 Web Search ---</span><br>' + text.replace(/\n/g,'<br>');
+    }
+  }
+  save();
+  renderLibraryTree();
+  showToast('✅ Master Notes mein add ho gaya!', 'success');
+  document.getElementById('quickWebSearchModal').remove();
+  document.body.style.overflow = '';
+  const tvModal = document.getElementById('topicViewModal');
+  if(tvModal?.classList.contains('show')) viewTopic(_wsState.sid, _wsState.secid, _wsState.tid);
 }
 </script>
