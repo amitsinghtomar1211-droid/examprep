@@ -832,43 +832,39 @@ html, body {
 /* ===== FLOATING BACK BUTTON ===== */
 .float-back-btn {
   position: fixed;
-  bottom: 22px;
-  right: 18px;
+  bottom: 20px;
+  right: 16px;
   z-index: 400;
-  background: linear-gradient(135deg, #1565c0, #1976d2);
+  background: rgba(21,101,192,0.9);
   color: #fff;
   border: none;
-  border-radius: 50px;
-  padding: 13px 20px;
-  font-size: 0.82rem;
-  font-weight: 800;
-  font-family: 'Noto Sans Devanagari', sans-serif;
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  font-size: 1.2rem;
   cursor: pointer;
-  box-shadow: 0 4px 20px rgba(21,101,192,0.4);
+  box-shadow: 0 3px 14px rgba(21,101,192,0.4);
   display: none;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   transition: all 0.2s;
   -webkit-tap-highlight-color: transparent;
-  min-height: 48px;
+  backdrop-filter: blur(4px);
 }
 .float-back-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 24px rgba(21,101,192,0.5);
+  transform: scale(1.1);
+  background: rgba(21,101,192,1);
 }
 .float-back-btn.visible {
   display: flex;
-}
-@media(min-width: 769px) {
-  .float-back-btn { bottom: 28px; right: 28px; }
 }
 </style>
 </head>
 <body>
 
 <!-- FLOATING BACK BUTTON -->
-<button class="float-back-btn" id="floatBackBtn" onclick="handleFloatBack()">
-  ← Back
+<button class="float-back-btn" id="floatBackBtn" onclick="handleFloatBack()" title="Back">
+  ‹
 </button>
 
 <!-- LOGIN SCREEN -->
@@ -921,9 +917,15 @@ html, body {
 
 <!-- SIDEBAR -->
 <aside class="sidebar" id="sidebar">
-  <div class="sidebar-logo">
-    <h2>📚 Exam Prep Pro V11</h2>
-    <p>Smart Study + Quiz Vault</p>
+  <div class="sidebar-logo" style="display:flex;align-items:center;justify-content:space-between;">
+    <div>
+      <h2>📚 Exam Prep Pro V11</h2>
+      <p>Smart Study + Quiz Vault</p>
+    </div>
+    <!-- Close button — only on mobile where hamburger is visible -->
+    <button onclick="toggleSidebar()" id="sidebarCloseBtn"
+      style="background:rgba(255,255,255,0.12);border:none;color:#fff;border-radius:8px;width:32px;height:32px;font-size:1.1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;"
+      title="Sidebar band karo">✕</button>
   </div>
 
   <div class="exam-switcher-side">
@@ -967,6 +969,9 @@ html, body {
     </div>
     <div class="nav-item" onclick="showPage('stats',this)" data-page="stats">
       <span class="nav-icon">📊</span> Stats
+    </div>
+    <div class="nav-item" onclick="openStudyCoach()" style="background:linear-gradient(90deg,rgba(255,111,0,0.15),transparent);border-left:3px solid #ff6f00;">
+      <span class="nav-icon">🎓</span> <span style="color:#ff6f00;font-weight:800;">Study Coach</span>
     </div>
     <div class="nav-section-title" style="margin-top:8px;">Settings</div>
     <div class="nav-item" onclick="showPage('settings',this)" data-page="settings">
@@ -1398,7 +1403,10 @@ html, body {
     <div id="page-stats" class="page">
       <div class="page-header">
         <div><div class="page-title">📊 Performance Stats</div></div>
-        <button class="btn btn-primary btn-sm" onclick="openAiChatStats()">🤖 AI Progress Analysis</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="openAiChatStats()">🤖 Progress Analysis</button>
+          <button class="btn btn-sm" style="background:linear-gradient(135deg,#ff6f00,#f57c00);color:#fff;font-weight:800;" onclick="openStudyCoach()">🎓 Study Coach</button>
+        </div>
       </div>
       <div class="stats-grid">
         <div class="stat-card" style="cursor:pointer;" onclick="showPage('quizvault',document.querySelector('[data-page=quizvault]'))"><div class="stat-num" id="statTotal">0</div><div class="stat-lbl">Total Qs <span style="font-size:0.65rem;">(tap=Vault)</span></div></div>
@@ -2095,6 +2103,7 @@ let S={
   activeExamId:'',
   quizHistory:[],
   aiChatSessions:[],  // Saved AI chat sessions
+  activityLog:[],     // User ke saare actions ka log
   stats:{total:0,correct:0,wrong:0,topicStats:{}},
   ui:{sid:null,secid:null,tid:null},
   _editExamId:null,
@@ -2811,6 +2820,7 @@ function toggleBlock(id){
 function viewTopic(sid,secid,tid){
   const t=getTop(sid,secid,tid); const subj=getSubj(sid); const sec=getSec(sid,secid);
   document.getElementById('topicViewTitle').textContent=`${subj.name} › ${sec.name} › ${t.name}`;
+  trackActivity('topic_view', { name: t.name, subject: subj.name });
   const wb=t.wrongBank||[];
   const ts=S.stats.topicStats[t.id];
   const pct=ts?Math.round(ts.correct/(ts.correct+ts.wrong)*100)||0:null;
@@ -3501,6 +3511,7 @@ function showResults(){
   document.getElementById('resultMsg').textContent=`${pct}% -- ${msg}`;
   const entry={id:cq.qid,date:new Date().toLocaleDateString('hi-IN'),time:new Date().toLocaleTimeString('hi-IN',{hour:'2-digit',minute:'2-digit'}),examId:cq.examId,examName:cq.examName||'Free Mode',label:cq.label,score,total:tot,pct,questions:cq.questions,sid:cq.sid,secid:cq.secid,tid:cq.tid,qtype:cq.qtype};
   S.quizHistory.unshift(entry); if(S.quizHistory.length>60)S.quizHistory=S.quizHistory.slice(0,60);
+  trackActivity('quiz', { label: entry.label, pct: entry.pct, score: entry.score, total: entry.total });
   // Clear paused quiz since this one is done
   if(S.pausedQuiz&&S.pausedQuiz.cq&&S.pausedQuiz.cq.qid===cq.qid){S.pausedQuiz=null;}
   // Sync vault answers with results
@@ -4812,6 +4823,52 @@ function openAiChat(contextType, contextName, tid, sid, secid){
 ${s}</button>`).join('');
   document.getElementById('aiChatOverlay').classList.add('show');
   setTimeout(()=>document.getElementById('aiChatInput').focus(),300);
+
+  // Show context-specific past sessions at bottom of suggestions
+  _showContextPastChats(contextType, tid, sid, secid);
+}
+
+function _showContextPastChats(contextType, tid, sid, secid) {
+  if(!S.aiChatSessions || S.aiChatSessions.length === 0) return;
+  const contextKey = [contextType, tid, sid, secid].filter(x => x != null).join('_');
+  // Filter sessions matching this context
+  const related = S.aiChatSessions.filter(s =>
+    s.contextKey === contextKey || (s.tid && s.tid == tid) || (s.contextType === contextType && !tid)
+  ).slice(0, 3);
+  if(related.length === 0) return;
+
+  const sugsEl = document.getElementById('aiChatSuggestions');
+  if(!sugsEl) return;
+
+  // Add a divider + past chats
+  const divider = document.createElement('div');
+  divider.style.cssText = 'width:100%;font-size:0.68rem;color:var(--text2);font-weight:700;padding:4px 0 2px;margin-top:2px;';
+  divider.textContent = '🕐 Pichli baatcheet:';
+  sugsEl.appendChild(divider);
+
+  related.forEach(function(s) {
+    const btn = document.createElement('button');
+    btn.className = 'ai-chat-sug';
+    btn.style.cssText = 'background:rgba(21,101,192,0.06);border-color:rgba(21,101,192,0.2);font-size:0.68rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    btn.title = s.title + ' (' + s.date + ')';
+    btn.textContent = '💬 ' + s.title.substring(0, 20) + (s.title.length > 20 ? '…' : '');
+    btn.onclick = function() {
+      // Restore this session
+      _aiChatHistory = s.messages ? s.messages.slice() : [];
+      _aiChatSessionId = s.id;
+      const msgsEl = document.getElementById('aiChatMessages');
+      msgsEl.innerHTML = '';
+      _aiChatHistory.forEach(function(m) {
+        const div = document.createElement('div');
+        div.className = 'ai-msg ' + (m.role === 'user' ? 'user' : 'bot');
+        div.innerHTML = m.text ? m.text.replace(/\n/g,'<br>') : '';
+        msgsEl.appendChild(div);
+      });
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+      sugsEl.innerHTML = '';
+    };
+    sugsEl.appendChild(btn);
+  });
 }
 
 function openAiChatQuestion(question,correctAns,explanation){
@@ -4844,8 +4901,9 @@ function _saveAiChatSession() {
   const sessionId = _aiChatSessionId || (_aiChatSessionId = 'acs_' + Date.now());
   const title = ctx ? (ctx.name || 'AI Chat') : 'AI Chat';
   const date = new Date().toLocaleDateString('hi-IN');
+  // contextKey: unique identifier for this context (topic/section/question etc.)
+  const contextKey = ctx ? [ctx.type, ctx.tid, ctx.sid, ctx.secid].filter(Boolean).join('_') : 'general';
 
-  // Find existing session or create new
   const existing = S.aiChatSessions.find(s => s.id === sessionId);
   if(existing) {
     existing.messages = _aiChatHistory.slice();
@@ -4855,6 +4913,7 @@ function _saveAiChatSession() {
       id: sessionId,
       title: title.substring(0, 50),
       contextType: ctx?.type || 'general',
+      contextKey: contextKey,
       date: date,
       lastUpdated: date,
       messages: _aiChatHistory.slice(),
@@ -4862,7 +4921,6 @@ function _saveAiChatSession() {
       sid: ctx?.sid || null,
       secid: ctx?.secid || null
     });
-    // Max 50 sessions rakhein
     if(S.aiChatSessions.length > 50) S.aiChatSessions = S.aiChatSessions.slice(0, 50);
   }
   save();
@@ -4884,10 +4942,19 @@ async function sendAiChat(){
   sendBtn.disabled=true;sendBtn.textContent='⏳';
 
   // Build system context string
-  let ctx=`Tu ek expert study assistant hai. Concise, clear aur Hindi mein jawab de.\n`;
+  let ctx = 'Tu ek expert study assistant hai. Concise, clear aur Hindi mein jawab de.\n';
 
   if(_aiChatContext){
     const c=_aiChatContext;
+
+    // COACH MODE — full student profile
+    if(c.type === 'coach') {
+      ctx = 'Tu ek Personal AI Study Coach hai. Student ka saara data neeche hai.\n';
+      ctx += 'Personalized, actionable advice do. Hindi mein baat karo.\n';
+      ctx += 'Weak topics par focus karo, specific steps do, encouraging raho.\n\n';
+      ctx += buildCoachPrompt();
+    }
+
     if(c.type==='question') ctx+=`\nQuestion context:\nQ: ${c.question}\nSahi Jawab: ${c.correctAns}\nExplanation: ${c.explanation}`;
     if(c.tid){
       let tc='';
@@ -4896,13 +4963,15 @@ async function sendAiChat(){
           if(t.finalNotes)tc=t.finalNotes.replace(/%%.*?%%/g,'').substring(0,2500);
           else if(t.notes.length)tc=t.notes.map(n=>n.content).join('\n').substring(0,2500);
           if(t.smartNotesAI)tc+='\nSMART NOTES:\n'+t.smartNotesAI.substring(0,500);
+          // Add topic performance context
+          const ts=S.stats.topicStats[t.id];
+          if(ts){const tot=ts.correct+ts.wrong;tc+=`\n\n[Performance: ${Math.round(ts.correct/Math.max(1,tot)*100)}% accuracy, ${ts.wrong} galat qs]`;}
         }
       })));
       if(tc)ctx+=`\n\nTOPIC NOTES (${c.name}):\n${tc}`;
     }
-    if(c.type==='stats'){
-      const perf=Object.entries(S.stats.topicStats).map(([k,d])=>{const tot=d.correct+d.wrong;return `${d.name||k}: ${Math.round(d.correct/Math.max(1,tot)*100)}% (${d.correct}/${tot})`;}).join('\n');
-      ctx+=`\n\nSTUDENT DATA:\nTotal: ${S.stats.total} Qs, ${S.stats.correct} sahi, ${S.stats.wrong} galat\nHistory: ${S.quizHistory.length} quizzes\nTopic Performance:\n${perf}`;
+    if(c.type==='stats' || c.type==='coach'){
+      ctx += '\n\n' + buildCoachPrompt();
     }
   }
   const wantsWeb=/(web|latest|nayi|recent|2024|2025|aaj|news)/i.test(userMsg);
@@ -5159,6 +5228,7 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   neSetEditMode(false);
   setHlMode('off'); // Default: highlight OFF
   _eraserModeOn = false;
+  trackActivity('note_open', { name: n.name, tid: tid });
   neResetToolbar();
   neSetTheme(_neState.theme, true);
   document.getElementById('noteEditableArea').style.fontSize = _neState.fontSize + 'px';
@@ -6221,6 +6291,7 @@ function applyHighlightFromRange(range, text) {
     _editorState.highlights.push({ id: uid, text, color });
     markModified();
     showToast('Highlight ho gaya! 🖊️', 'success');
+    trackActivity('highlight', { name: text.substring(0,40), tid: _editorState.tid });
   } catch(e) {
     // Range spans multiple nodes - use extractContents approach
     try {
@@ -7961,6 +8032,185 @@ function initNightMode() {
     var saved = localStorage.getItem('nightMode');
     if(saved === '1') applyNightMode(true);
   } catch(e) {}
+}
+
+
+// ==================== PERSONAL AI STUDY COACH ====================
+
+// Activity log helper — lightweight, max 200 entries
+function trackActivity(type, data) {
+  if(!S.activityLog) S.activityLog = [];
+  var entry = {
+    t: type,        // type: 'highlight','edit','quiz','note_open','topic_view','ai_chat','save_fact'
+    d: data,        // data object
+    ts: Date.now()  // timestamp
+  };
+  S.activityLog.unshift(entry);
+  if(S.activityLog.length > 200) S.activityLog = S.activityLog.slice(0, 200);
+  // Debounced save — har 5s mein ek baar
+  clearTimeout(window._actSaveTimer);
+  window._actSaveTimer = setTimeout(function(){ try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){} }, 5000);
+}
+
+// Build comprehensive student profile for AI coach
+function buildStudentProfile() {
+  var profile = {};
+
+  // ---- 1. Overall stats ----
+  profile.totalQs     = S.stats.total || 0;
+  profile.correct     = S.stats.correct || 0;
+  profile.wrong       = S.stats.wrong || 0;
+  profile.accuracy    = profile.totalQs > 0 ? Math.round(profile.correct / profile.totalQs * 100) : 0;
+  profile.quizCount   = (S.quizHistory || []).length;
+
+  // ---- 2. Topic-wise performance ----
+  var topicPerf = [];
+  S.subjects.forEach(function(subj) {
+    subj.sections.forEach(function(sec) {
+      sec.topics.forEach(function(t) {
+        var ts = S.stats.topicStats[t.id];
+        var tot = ts ? ts.correct + ts.wrong : 0;
+        var pct = tot > 0 ? Math.round(ts.correct / tot * 100) : null;
+        var wb  = (t.wrongBank || []).length;
+        var hl  = (t.highlights || []).length + (t.notes || []).reduce(function(a,n){ return a + (n.editorHighlights||[]).length; }, 0);
+        var sf  = (t.savedFacts || []).length;
+        topicPerf.push({
+          name:    t.name,
+          subject: subj.name,
+          section: sec.name,
+          pct:     pct,
+          tot:     tot,
+          correct: ts ? ts.correct : 0,
+          wrong:   ts ? ts.wrong : 0,
+          wrongBankCount: wb,
+          highlightCount: hl,
+          savedFactCount: sf,
+          hasNotes:       (t.notes || []).length > 0,
+          hasFinalNotes:  !!t.finalNotes,
+          hasMasterNotes: !!t.masterNotes,
+          hasSmartNotes:  !!t.smartNotesAI
+        });
+      });
+    });
+  });
+
+  // Sort: worst first
+  topicPerf.sort(function(a, b) {
+    if(a.pct === null && b.pct === null) return 0;
+    if(a.pct === null) return -1;
+    if(b.pct === null) return -1;
+    return a.pct - b.pct;
+  });
+  profile.weakTopics   = topicPerf.filter(function(t){ return t.pct !== null && t.pct < 50; }).slice(0, 5);
+  profile.toughTopics  = topicPerf.filter(function(t){ return t.pct !== null && t.pct >= 50 && t.pct < 75; }).slice(0, 5);
+  profile.strongTopics = topicPerf.filter(function(t){ return t.pct !== null && t.pct >= 75; }).slice(0, 5);
+  profile.untouchedTopics = topicPerf.filter(function(t){ return t.pct === null && t.hasNotes; }).slice(0, 5);
+
+  // ---- 3. Recent activity (last 20) ----
+  profile.recentActivity = (S.activityLog || []).slice(0, 20).map(function(e) {
+    return e.t + (e.d && e.d.name ? ':' + e.d.name.substring(0,20) : '');
+  });
+
+  // ---- 4. Recent quiz mistakes ----
+  var recentMistakes = [];
+  (S.quizHistory || []).slice(0, 5).forEach(function(h) {
+    (h.questions || []).filter(function(q){ return !q.isCorrect; }).slice(0, 3).forEach(function(q) {
+      recentMistakes.push({ q: q.question.substring(0,80), topic: q.topic || h.label });
+    });
+  });
+  profile.recentMistakes = recentMistakes.slice(0, 10);
+
+  // ---- 5. Highlight & notes activity ----
+  var totalHighlights = 0, totalSavedFacts = 0, notesEdited = 0;
+  S.subjects.forEach(function(subj) {
+    subj.sections.forEach(function(sec) {
+      sec.topics.forEach(function(t) {
+        totalHighlights += (t.highlights || []).length;
+        totalSavedFacts += (t.savedFacts || []).length;
+        t.notes.forEach(function(n) {
+          totalHighlights += (n.editorHighlights || []).length;
+          if(n.lastEditedAt) notesEdited++;
+        });
+      });
+    });
+  });
+  profile.totalHighlights  = totalHighlights;
+  profile.totalSavedFacts  = totalSavedFacts;
+  profile.notesEdited      = notesEdited;
+  profile.aiChatCount      = (S.aiChatSessions || []).length;
+
+  return profile;
+}
+
+// Build a concise text summary of student profile for AI prompt
+function buildCoachPrompt() {
+  var p = buildStudentProfile();
+  var lines = [];
+  lines.push('=== STUDENT PROFILE ===');
+  lines.push('Overall: ' + p.totalQs + ' questions, ' + p.accuracy + '% accuracy, ' + p.quizCount + ' quizzes');
+  lines.push('Highlights: ' + p.totalHighlights + ', Saved Facts: ' + p.totalSavedFacts + ', Notes Edited: ' + p.notesEdited);
+
+  if(p.weakTopics.length) {
+    lines.push('\nWEAK TOPICS (priority mein padho):');
+    p.weakTopics.forEach(function(t){ lines.push('  - ' + t.name + ' (' + t.subject + '): ' + (t.pct !== null ? t.pct + '% accuracy, ' + t.wrongBankCount + ' wrong' : 'untouched')); });
+  }
+  if(p.toughTopics.length) {
+    lines.push('\nTOUGH TOPICS:');
+    p.toughTopics.forEach(function(t){ lines.push('  - ' + t.name + ': ' + t.pct + '%'); });
+  }
+  if(p.strongTopics.length) {
+    lines.push('\nSTRONG TOPICS:');
+    p.strongTopics.forEach(function(t){ lines.push('  - ' + t.name + ': ' + t.pct + '%'); });
+  }
+  if(p.untouchedTopics.length) {
+    lines.push('\nUNTOUCHED TOPICS (notes hain, quiz nahi hua):');
+    p.untouchedTopics.forEach(function(t){ lines.push('  - ' + t.name + ' (' + t.subject + ')'); });
+  }
+  if(p.recentMistakes.length) {
+    lines.push('\nRECENT MISTAKES:');
+    p.recentMistakes.slice(0,5).forEach(function(m){ lines.push('  - ' + m.q + ' [' + m.topic + ']'); });
+  }
+  if(p.recentActivity.length) {
+    lines.push('\nRECENT ACTIVITY: ' + p.recentActivity.join(', '));
+  }
+  return lines.join('\n');
+}
+
+// Open Personal AI Coach chat
+function openStudyCoach() {
+  if(!S.apiKey) { showToast('Pehle API Key daalo!', 'error'); return; }
+  _aiChatHistory = [];
+  _aiChatSessionId = null;
+  _aiChatContext = { type: 'coach', name: 'Personal Study Coach' };
+
+  var ctxLabel = '🎓 Personal Study Coach';
+  document.getElementById('aiChatContext').textContent = ctxLabel;
+
+  var p = buildStudentProfile();
+  var greeting = 'Namaste! 🎓 Main aapka **Personal Study Coach** hoon.\n\nMujhe aapka saara data milta hai — notes, highlights, quiz results, weak topics sab.\n\n';
+  if(p.weakTopics.length) {
+    greeting += '⚠️ Aapke **weak topics**: ' + p.weakTopics.map(function(t){ return t.name; }).join(', ') + '\n';
+  }
+  if(p.accuracy > 0) {
+    greeting += '📊 Overall accuracy: **' + p.accuracy + '%**\n';
+  }
+  greeting += '\nKya poochna chahte ho? Ya main ek study plan banata hoon?';
+
+  document.getElementById('aiChatMessages').innerHTML = '';
+  addChatMsg('bot', greeting);
+
+  // Smart suggestions based on profile
+  var sugs = ['📋 Mera study plan banao', '⚠️ Weak topics par focus karo', '📊 Meri progress batao'];
+  if(p.recentMistakes.length) sugs.push('❌ Recent mistakes explain karo');
+  if(p.untouchedTopics.length) sugs.push('📚 Konse topics remaining hain?');
+  sugs.push('💡 Aaj kya padhna chahiye?');
+
+  document.getElementById('aiChatSuggestions').innerHTML = sugs.map(function(s) {
+    return '<button class="ai-chat-sug" onclick="useSuggestion(\'' + s.replace(/'/g, "\\'") + '\')">' + s + '</button>';
+  }).join('');
+
+  document.getElementById('aiChatOverlay').classList.add('show');
+  setTimeout(function(){ document.getElementById('aiChatInput').focus(); }, 300);
 }
 
 // ---- FIRESTORE SYNC ----
@@ -9821,6 +10071,7 @@ function fcSaveFact() {
   save();
   renderLibraryTree();
   showToast('📌 ' + savedCount + ' jagah save ho gaya!', 'success');
+  trackActivity('save_fact', { text: text.substring(0,40) });
   closeFactCollector();
   updateSavedBadge();
 
