@@ -7718,7 +7718,9 @@ function masterSaveNotes() {
   if(!t) return;
   t.masterNotes = _masterState.generatedNotes;
   t.masterNotesAt = new Date().toLocaleDateString('hi-IN');
-  t.masterNotesHTML = null;
+  // FIX: HTML null mat karo — highlights preserve honge
+  // Sirf fresh generate pe HTML reset karo (pehli baar)
+  if(!t.masterNotesHTML) t.masterNotesHTML = null;
   t.masterExtraFacts = t.masterExtraFacts || [];
   save();
   renderLibraryTree();
@@ -7793,10 +7795,19 @@ function addSelectedExtraFacts() {
 
   if(selected.length === 0) { showToast('Koi fact select nahi kiya!', 'error'); return; }
 
-  // Master notes mein add karo
+  // Master notes mein add karo — plain text aur HTML dono mein
+  const today = new Date().toLocaleDateString('hi-IN');
   const toAdd = selected.map(f => `• ${f.text}`).join('\n');
-  t.masterNotes = (t.masterNotes || '') + '\n\n--- 🆕 Naye Facts (' + new Date().toLocaleDateString('hi-IN') + ') ---\n' + toAdd;
-  t.masterNotesHTML = null; // HTML reset karo
+  const addedSection = '\n\n--- 🆕 Naye Facts (' + today + ') ---\n' + toAdd;
+  t.masterNotes = (t.masterNotes || '') + addedSection;
+
+  // FIX: Agar HTML pehle se hai (highlights hain) to HTML mein bhi append karo
+  // Isse pehle se kiye gaye highlights safe rahenge
+  if(t.masterNotesHTML) {
+    const safeText = addedSection.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    t.masterNotesHTML = t.masterNotesHTML + '<br><br><span style="color:#e65100;font-weight:700;">--- 🆕 Naye Facts (' + today + ') ---</span><br>' + selected.map(f=>'• '+f.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')).join('<br>');
+  }
+  // HTML null NAHI karenge — highlights preserve honge
 
   // Mark as added
   selected.forEach(sf => {
