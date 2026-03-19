@@ -6201,20 +6201,41 @@ function _doLiveSelect(curX, curY, absDx, absDy) {
   // Show live overlay
   showSelectionOverlay(range);
 
-  // ---- Magnifier: show ONLY the last character at finger tip ----
-  // Get the character exactly at current finger position
-  const charAtFinger = getCharAtPoint(curX, curY);
-  showMagnifierChar(curX, curY, charAtFinger, _touchDir);
+  // ---- Magnifier: show word at finger tip with current char highlighted ----
+  const wordCtx = getWordContextAtPoint(curX, curY);
+  showMagnifierWord(curX, curY, wordCtx.word, wordCtx.charIndex);
 }
 
-// Get single character at screen coordinate
-function getCharAtPoint(x, y) {
+// Get character AND surrounding word at screen coordinate
+// Returns { word, charIndex } — charIndex is position of current char within word
+function getWordContextAtPoint(x, y) {
   const { node, offset } = getNodeAndOffsetFromPoint(x, y);
-  if(!node || node.nodeType !== Node.TEXT_NODE) return '';
+  if(!node || node.nodeType !== Node.TEXT_NODE) return { word: '', charIndex: 0 };
   const text = node.textContent;
-  if(offset < text.length) return text[offset];
-  if(offset > 0) return text[offset - 1];
-  return '';
+
+  // Current char
+  const curOff = Math.min(offset, text.length - 1);
+
+  // Find word boundaries around curOff
+  let wStart = curOff, wEnd = curOff;
+  while(wStart > 0 && !/\s/.test(text[wStart-1])) wStart--;
+  while(wEnd < text.length && !/\s/.test(text[wEnd])) wEnd++;
+
+  const word = text.slice(wStart, wEnd);
+  const charIndex = curOff - wStart; // position of current char within word
+
+  if(!word.trim()) {
+    // On whitespace — just return current char
+    const ch = text[curOff] || '';
+    return { word: ch || ' ', charIndex: 0 };
+  }
+  return { word, charIndex: Math.max(0, Math.min(charIndex, word.length - 1)) };
+}
+
+// Legacy single-char getter
+function getCharAtPoint(x, y) {
+  const ctx = getWordContextAtPoint(x, y);
+  return ctx.word[ctx.charIndex] || '';
 }
 
 function onNETouchEnd(e) {
@@ -6319,17 +6340,25 @@ function neAttachUnhighlightToMark(mark) {
     mark.removeEventListener('pointerdown', mark._unhighlightFn);
   }
   mark._unhighlightFn = function(e) {
-    // ONLY work when eraser mode is ON
     if(_hlCurrentMode !== 'eraser') return;
     e.preventDefault();
     e.stopPropagation();
-    // Pehle snapshot save karo -- taaki undo karne par highlight wapas aa jaye
     neSaveSnapshot();
-    const txt = this.textContent;
     const hid = this.getAttribute('data-hlid');
+
+    // Safe removal: insert text nodes before/after mark, then remove mark
+    // This avoids DOM restructure that shifts line positions
     const parent = this.parentNode;
-    parent.replaceChild(document.createTextNode(txt), this);
-    parent.normalize();
+    if(!parent) return;
+
+    // Move all child nodes of mark before the mark (preserving their exact positions)
+    while(this.firstChild) {
+      parent.insertBefore(this.firstChild, this);
+    }
+    // Now remove the empty mark tag
+    parent.removeChild(this);
+    // Do NOT call normalize() — it merges text nodes and can shift layout
+
     _editorState.highlights = _editorState.highlights.filter(h => h.id !== hid);
     markModified();
     showToast('Highlight hata diya 🧹', 'success');
@@ -6347,54 +6376,78 @@ var _magLastChar = '';
 var _magMode = ''; // 'char' | 'word'
 var _magVisible = false;
 
-// During drag: show ONLY the character at finger tip, zoomed big
-function showMagnifierChar(x, y, ch, dir) {
+// During drag: show full word, current char is BIG, others small
+function showMagnifierWord(x, y, word, charIdx) {
   const mag = document.getElementById('neMagnifier');
   if(!mag) return;
 
-  const dispCh = (ch && ch.trim()) ? ch : '|';
+  const w = (word || '').substring(0, 16); // max 16 chars
+  const ci = Math.max(0, Math.min(charIdx, w.length - 1));
+  // Key: word + charIdx combo
+  const key = w + '|' + ci;
 
-  // Setup circle style on first show or mode change
+  // Setup pill style on first show or mode change
   if(!_magVisible || _magMode !== 'char') {
-    mag.style.display     = 'flex';
-    mag.style.flexDirection = 'column';
-    mag.style.alignItems  = 'center';
+    mag.style.display        = 'flex';
+    mag.style.flexDirection  = 'row';
+    mag.style.alignItems     = 'flex-end';
     mag.style.justifyContent = 'center';
-    mag.style.width       = '66px';
-    mag.style.height      = '66px';
-    mag.style.minHeight   = '';
-    mag.style.padding     = '0';
-    mag.style.background  = '#fff';
-    mag.style.color       = '#1565c0';
-    mag.style.border      = '2.5px solid #1565c0';
-    mag.style.borderRadius = '50%';
-    mag.style.boxShadow   = '0 4px 18px rgba(21,101,192,0.3)';
+    mag.style.width          = 'auto';
+    mag.style.minWidth       = '70px';
+    mag.style.maxWidth       = '200px';
+    mag.style.height         = 'auto';
+    mag.style.minHeight      = '52px';
+    mag.style.padding        = '8px 12px';
+    mag.style.background     = '#fff';
+    mag.style.border         = '2px solid #1565c0';
+    mag.style.borderRadius   = '14px';
+    mag.style.boxShadow      = '0 4px 18px rgba(21,101,192,0.3)';
+    mag.style.gap            = '1px';
     _magVisible = true;
-    _magMode = 'char';
+    _magMode    = 'char';
   }
 
-  // Update char only when it changes
-  if(dispCh !== _magLastChar) {
-    const hintEl = document.getElementById('neMagHint');
+  if(key !== _magLastChar) {
     const textEl = document.getElementById('neMagText');
+    const hintEl = document.getElementById('neMagHint');
     const subEl  = document.getElementById('neMagSub');
     if(hintEl) hintEl.style.display = 'none';
     if(subEl)  subEl.style.display  = 'none';
+
     if(textEl) {
-      textEl.textContent  = dispCh;
-      textEl.style.fontSize   = '2.6rem';
-      textEl.style.fontWeight = '700';
-      textEl.style.lineHeight = '1';
-      textEl.style.color      = '#1565c0';
-      textEl.style.fontFamily = 'monospace, sans-serif';
+      // Build inline HTML: each letter as a span
+      // Current char: big blue, others: small grey
+      var html = '';
+      for(var i = 0; i < w.length; i++) {
+        var ch = w[i];
+        if(i === ci) {
+          // Current char — big, bold, blue
+          html += '<span style="font-size:2rem;font-weight:800;color:#1565c0;font-family:monospace;line-height:1;">' + ch + '</span>';
+        } else {
+          // Other chars — small, grey
+          html += '<span style="font-size:0.85rem;font-weight:500;color:#666;font-family:monospace;line-height:2.2;">' + ch + '</span>';
+        }
+      }
+      textEl.innerHTML = html;
+      textEl.style.display     = 'flex';
+      textEl.style.flexDirection = 'row';
+      textEl.style.alignItems  = 'flex-end';
+      textEl.style.gap         = '0px';
+      textEl.style.fontSize    = ''; // reset
+      textEl.style.fontWeight  = ''; // reset
     }
-    _magLastChar = dispCh;
+    _magLastChar = key;
   }
 
-  // Position: circle floats just above finger
-  const size = 66;
-  mag.style.left = Math.max(6, Math.min(window.innerWidth - size - 6, x - size / 2)) + 'px';
-  mag.style.top  = Math.max(6, y - size - 16) + 'px';
+  // Position: pill floats just above finger, centered
+  const magW = 140;
+  mag.style.left = Math.max(6, Math.min(window.innerWidth - magW - 6, x - magW / 2)) + 'px';
+  mag.style.top  = Math.max(6, y - 80) + 'px';
+}
+
+// Legacy: single char fallback
+function showMagnifierChar(x, y, ch, dir) {
+  showMagnifierWord(x, y, ch || '|', 0);
 }
 
 // On long-press word snap: show detected word
@@ -9180,77 +9233,112 @@ function ytCopyResult() {
 </script>
 
 <!-- ==================== MASTER NOTES MODAL ==================== -->
-<div id="masterNotesModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:99999;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto;">
-  <div style="background:#fff;border-radius:18px;width:100%;max-width:500px;margin:auto;box-shadow:0 10px 50px rgba(0,0,0,0.35);">
+<div id="masterNotesModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:99999;align-items:flex-start;justify-content:center;padding:10px;overflow-y:auto;">
+  <div style="background:#fff;border-radius:18px;width:100%;max-width:540px;margin:auto;box-shadow:0 10px 50px rgba(0,0,0,0.4);">
 
     <!-- Header -->
-    <div style="padding:18px 20px 14px;background:linear-gradient(135deg,#4a148c,#7b1fa2);border-radius:18px 18px 0 0;color:#fff;">
+    <div style="padding:16px 18px 12px;background:linear-gradient(135deg,#4a148c,#7b1fa2);border-radius:18px 18px 0 0;color:#fff;">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <div>
-          <div style="font-size:1.1rem;font-weight:800;">⚡ Master Notes Generator</div>
-          <div id="masterTopicName" style="font-size:0.75rem;opacity:0.85;margin-top:2px;"></div>
+          <div style="font-size:1rem;font-weight:800;">⚡ Master Notes Generator</div>
+          <div id="masterTopicName" style="font-size:0.72rem;opacity:0.85;margin-top:2px;"></div>
         </div>
-        <button onclick="closeMasterModal()" style="background:rgba(255,255,255,0.2);border:none;border-radius:50%;width:32px;height:32px;color:#fff;font-size:1.1rem;cursor:pointer;">✕</button>
+        <button onclick="closeMasterModal()" style="background:rgba(255,255,255,0.2);border:none;border-radius:50%;width:30px;height:30px;color:#fff;font-size:1rem;cursor:pointer;">✕</button>
       </div>
     </div>
 
-    <!-- Sources Selection -->
-    <div style="padding:16px 20px 0;">
-      <div style="font-size:0.85rem;font-weight:800;color:#0d1b2a;margin-bottom:10px;">📚 Sources chunno (jo data AI use kare):</div>
-      <div id="masterSourcesList" style="display:flex;flex-direction:column;gap:7px;"></div>
+    <div style="padding:14px 16px 0;">
 
-      <!-- Web Search Option -->
-      <label style="display:flex;align-items:flex-start;gap:10px;padding:9px 12px;background:#e8f5e9;border-radius:10px;cursor:pointer;border:1.5px solid #a5d6a7;margin-top:7px;">
+      <!-- === SECTION 1: EXISTING NOTES SOURCES === -->
+      <div style="font-size:0.8rem;font-weight:800;color:#4a148c;margin-bottom:8px;">📚 Existing Notes Sources:</div>
+      <div id="masterSourcesList" style="display:flex;flex-direction:column;gap:5px;margin-bottom:12px;"></div>
+
+      <!-- === SECTION 2: NEW PDF FILES === -->
+      <div style="border:1.5px solid #ffcc02;border-radius:10px;padding:10px 12px;margin-bottom:10px;background:#fffde7;">
+        <div style="font-size:0.8rem;font-weight:800;color:#f57f17;margin-bottom:7px;">📄 Naye PDF Files Add Karo (multiple select):</div>
+        <input type="file" id="masterPdfFiles" accept=".pdf" multiple
+          style="font-size:0.75rem;width:100%;border:1.5px dashed #f9a825;border-radius:8px;padding:8px;background:#fff;cursor:pointer;"
+          onchange="masterOnPdfSelect(this)">
+        <div id="masterPdfList" style="margin-top:6px;display:flex;flex-direction:column;gap:4px;"></div>
+      </div>
+
+      <!-- === SECTION 3: YOUTUBE LINKS === -->
+      <div style="border:1.5px solid #ffcdd2;border-radius:10px;padding:10px 12px;margin-bottom:10px;background:#fff5f5;">
+        <div style="font-size:0.8rem;font-weight:800;color:#c62828;margin-bottom:7px;">🎬 YouTube Links / Transcripts:</div>
+        <div id="masterYtList" style="display:flex;flex-direction:column;gap:5px;margin-bottom:6px;"></div>
+        <div style="display:flex;gap:6px;">
+          <input type="text" id="masterYtInput" placeholder="YouTube link ya transcript paste karo..."
+            style="flex:1;border:1.5px solid #ef9a9a;border-radius:8px;padding:7px 9px;font-size:0.76rem;font-family:inherit;outline:none;">
+          <button onclick="masterAddYtLink()" style="padding:7px 12px;background:#c62828;color:#fff;border:none;border-radius:8px;font-size:0.76rem;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">+ Add</button>
+        </div>
+      </div>
+
+      <!-- === SECTION 4: WEB LINKS === -->
+      <div style="border:1.5px solid #b3e5fc;border-radius:10px;padding:10px 12px;margin-bottom:10px;background:#f0f9ff;">
+        <div style="font-size:0.8rem;font-weight:800;color:#0277bd;margin-bottom:7px;">🔗 Web Links (direct URL):</div>
+        <div id="masterWebLinkList" style="display:flex;flex-direction:column;gap:5px;margin-bottom:6px;"></div>
+        <div style="display:flex;gap:6px;">
+          <input type="text" id="masterWebLinkInput" placeholder="https://... koi bhi web page link"
+            style="flex:1;border:1.5px solid #81d4fa;border-radius:8px;padding:7px 9px;font-size:0.76rem;font-family:inherit;outline:none;">
+          <button onclick="masterAddWebLink()" style="padding:7px 12px;background:#0277bd;color:#fff;border:none;border-radius:8px;font-size:0.76rem;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">+ Add</button>
+        </div>
+      </div>
+
+      <!-- === SECTION 5: WEB SEARCH === -->
+      <label style="display:flex;align-items:flex-start;gap:10px;padding:9px 12px;background:#e8f5e9;border-radius:10px;cursor:pointer;border:1.5px solid #a5d6a7;margin-bottom:12px;">
         <input type="checkbox" id="src_websearch" style="margin-top:2px;accent-color:#2e7d32;width:15px;height:15px;flex-shrink:0;">
         <div>
-          <div style="font-size:0.82rem;font-weight:700;color:#2e7d32;">🌐 Web Search (Latest Info)</div>
-          <div style="font-size:0.7rem;color:#37526d;margin-top:1px;">AI topic ke baare mein web se latest information search karega</div>
+          <div style="font-size:0.8rem;font-weight:700;color:#2e7d32;">🌐 Web Search (Wikipedia + Latest Info)</div>
+          <div style="font-size:0.68rem;color:#37526d;margin-top:1px;">AI topic ke baare mein auto web search karega</div>
         </div>
       </label>
-    </div>
 
-    <!-- User Instructions -->
-    <div style="padding:14px 20px 0;">
-      <div style="font-size:0.85rem;font-weight:800;color:#0d1b2a;margin-bottom:6px;">🎯 AI ko nirdesh do:</div>
-      <textarea id="masterInstructions" placeholder="Jaise: Exam ke liye important points nikalo, ya MCQ format mein do, ya sirf definitions aur examples do, ya Chapter 3 ke baare mein focus karo..." style="width:100%;border:1.5px solid #bdd5ea;border-radius:10px;padding:11px;font-size:0.82rem;font-family:inherit;resize:vertical;min-height:85px;outline:none;color:#0d1b2a;"></textarea>
-    </div>
+      <!-- === SECTION 6: USER INSTRUCTIONS === -->
+      <div style="font-size:0.8rem;font-weight:800;color:#0d1b2a;margin-bottom:5px;">🎯 AI ko nirdesh do:</div>
+      <textarea id="masterInstructions" placeholder="Jaise: Exam ke liye important points nikalo, MCQ format mein do, Chapter 3 focus karo, simple language mein samjhao..."
+        style="width:100%;border:1.5px solid #bdd5ea;border-radius:10px;padding:10px;font-size:0.8rem;font-family:inherit;resize:vertical;min-height:72px;outline:none;color:#0d1b2a;margin-bottom:10px;"></textarea>
 
-    <!-- Regenerate notice (agar master notes pehle se hain) -->
-    <div id="masterRegenNotice" style="display:none;margin:10px 20px 0;padding:10px 12px;background:#fff3e0;border-radius:10px;font-size:0.75rem;color:#e65100;line-height:1.5;">
-      ⚠️ <strong>Regenerate mode:</strong> Purane edited notes safe rahenge. AI sirf naye sources se <strong>extra facts</strong> nikalega jo alag section mein dikhega — original notes destroy nahi honge.
+      <!-- Regenerate notice -->
+      <div id="masterRegenNotice" style="display:none;padding:9px 11px;background:#fff3e0;border-radius:8px;font-size:0.73rem;color:#e65100;line-height:1.5;margin-bottom:10px;">
+        ⚠️ <strong>Regenerate mode:</strong> Purane notes safe rahenge. AI naye sources se extra facts nikalega.
+      </div>
     </div>
 
     <!-- Generate Button -->
-    <div style="padding:14px 20px 16px;">
-      <button onclick="masterGenerateNotes()" id="masterGenBtn" style="width:100%;padding:13px;background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;border:none;border-radius:12px;font-weight:800;font-size:0.95rem;cursor:pointer;font-family:inherit;">⚡ Master Notes Banao</button>
+    <div style="padding:4px 16px 14px;">
+      <button onclick="masterGenerateNotes()" id="masterGenBtn"
+        style="width:100%;padding:13px;background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;border:none;border-radius:12px;font-weight:800;font-size:0.9rem;cursor:pointer;font-family:inherit;">
+        ⚡ Master Notes Banao
+      </button>
     </div>
 
     <!-- Progress -->
-    <div id="masterProgressBox" style="display:none;padding:0 20px 14px;">
-      <div style="font-size:0.8rem;color:#37526d;margin-bottom:6px;" id="masterProgressLabel">⏳ Analysis ho rahi hai...</div>
+    <div id="masterProgressBox" style="display:none;padding:0 16px 14px;">
+      <div style="font-size:0.78rem;color:#37526d;margin-bottom:6px;" id="masterProgressLabel">⏳ Processing...</div>
       <div style="background:#e0e0e0;border-radius:10px;height:8px;overflow:hidden;">
         <div id="masterProgressBar" style="height:100%;background:linear-gradient(90deg,#4a148c,#ab47bc);width:0%;transition:width 0.4s;border-radius:10px;"></div>
       </div>
+      <div id="masterProgressDetail" style="font-size:0.68rem;color:#888;margin-top:4px;"></div>
     </div>
 
     <!-- Result -->
-    <div id="masterResultBox" style="display:none;padding:0 20px 20px;">
-      <div style="height:1px;background:#eee;margin-bottom:14px;"></div>
+    <div id="masterResultBox" style="display:none;padding:0 16px 16px;">
+      <div style="height:1px;background:#eee;margin-bottom:12px;"></div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <div style="font-size:0.88rem;font-weight:800;color:#4a148c;">✅ Master Notes Ready!</div>
+        <div id="masterSourceSummary" style="font-size:0.68rem;color:#888;"></div>
       </div>
-      <div id="masterResultText" style="background:#f9f4ff;border:1.5px solid #ce93d8;border-radius:10px;padding:14px;font-size:0.8rem;line-height:1.75;max-height:280px;overflow-y:auto;white-space:pre-wrap;color:#0d1b2a;"></div>
-      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-        <button onclick="masterSaveNotes()" style="flex:1;padding:11px;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.85rem;cursor:pointer;font-family:inherit;">💾 Save Karo</button>
-        <button onclick="masterOpenEditor()" style="flex:1;padding:11px;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.85rem;cursor:pointer;font-family:inherit;">✏️ Edit &amp; Highlight</button>
-        <button onclick="masterCopy()" style="padding:11px 14px;background:#f4f9fe;border:1.5px solid #bdd5ea;border-radius:10px;font-weight:700;font-size:0.82rem;cursor:pointer;font-family:inherit;">📋</button>
+      <div id="masterResultText" style="background:#f9f4ff;border:1.5px solid #ce93d8;border-radius:10px;padding:12px;font-size:0.79rem;line-height:1.75;max-height:260px;overflow-y:auto;white-space:pre-wrap;color:#0d1b2a;"></div>
+      <div style="display:flex;gap:7px;margin-top:10px;flex-wrap:wrap;">
+        <button onclick="masterSaveNotes()" style="flex:1;padding:11px;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.84rem;cursor:pointer;font-family:inherit;">💾 Save</button>
+        <button onclick="masterOpenEditor()" style="flex:1;padding:11px;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.84rem;cursor:pointer;font-family:inherit;">✏️ Edit</button>
+        <button onclick="masterCopy()" style="padding:11px 13px;background:#f4f9fe;border:1.5px solid #bdd5ea;border-radius:10px;font-weight:700;font-size:0.82rem;cursor:pointer;font-family:inherit;">📋</button>
       </div>
     </div>
-
   </div>
 </div>
 
-<!-- ==================== EXTRA FACTS PANEL ==================== -->
+<!-- EXTRA FACTS PANEL (unchanged) -->
 <div id="extraFactsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;align-items:center;justify-content:center;padding:16px;">
   <div style="background:#fff;border-radius:18px;width:100%;max-width:460px;max-height:88vh;overflow-y:auto;box-shadow:0 10px 50px rgba(0,0,0,0.3);">
     <div style="padding:16px 20px;background:linear-gradient(135deg,#e65100,#f57c00);border-radius:18px 18px 0 0;color:#fff;display:flex;justify-content:space-between;align-items:center;">
@@ -9268,36 +9356,184 @@ function ytCopyResult() {
 </div>
 
 <script>
-// ==================== MASTER NOTES SYSTEM ====================
+// ==================== MASTER NOTES SYSTEM (v2) ====================
 
-let _masterState = {
+var _masterState = {
   sid: null, secid: null, tid: null,
   generatedNotes: '',
-  isRegenerate: false
+  isRegenerate: false,
+  ytLinks: [],      // [{url, transcript}]
+  webLinks: [],     // [{url}]
+  pdfTexts: []      // [{name, text}] — extracted from file
 };
+
+// --- UI helpers ---
+function masterAddYtLink() {
+  var inp = document.getElementById('masterYtInput');
+  var val = inp.value.trim();
+  if(!val) return;
+  _masterState.ytLinks.push({ url: val, transcript: '' });
+  inp.value = '';
+  masterRenderYtList();
+}
+
+function masterRemoveYt(i) {
+  _masterState.ytLinks.splice(i, 1);
+  masterRenderYtList();
+}
+
+function masterRenderYtList() {
+  var el = document.getElementById('masterYtList');
+  if(!_masterState.ytLinks.length) { el.innerHTML = ''; return; }
+  el.innerHTML = _masterState.ytLinks.map(function(yt, i) {
+    var lbl = yt.url.length > 45 ? yt.url.substring(0,45)+'...' : yt.url;
+    return '<div style="display:flex;align-items:center;gap:6px;background:#fff;border:1px solid #ef9a9a;border-radius:7px;padding:5px 8px;">'
+      + '<span style="font-size:0.72rem;flex:1;color:#0d1b2a;word-break:break-all;">🎬 ' + lbl + '</span>'
+      + '<button onclick="masterRemoveYt(' + i + ')" style="background:none;border:none;color:#c62828;cursor:pointer;font-size:0.8rem;padding:0 2px;">✕</button>'
+      + '</div>';
+  }).join('');
+}
+
+function masterAddWebLink() {
+  var inp = document.getElementById('masterWebLinkInput');
+  var val = inp.value.trim();
+  if(!val) return;
+  if(!val.startsWith('http')) val = 'https://' + val;
+  _masterState.webLinks.push({ url: val });
+  inp.value = '';
+  masterRenderWebLinks();
+}
+
+function masterRemoveWebLink(i) {
+  _masterState.webLinks.splice(i, 1);
+  masterRenderWebLinks();
+}
+
+function masterRenderWebLinks() {
+  var el = document.getElementById('masterWebLinkList');
+  if(!_masterState.webLinks.length) { el.innerHTML = ''; return; }
+  el.innerHTML = _masterState.webLinks.map(function(wl, i) {
+    var lbl = wl.url.length > 45 ? wl.url.substring(0,45)+'...' : wl.url;
+    return '<div style="display:flex;align-items:center;gap:6px;background:#fff;border:1px solid #81d4fa;border-radius:7px;padding:5px 8px;">'
+      + '<span style="font-size:0.72rem;flex:1;color:#0d1b2a;word-break:break-all;">🔗 ' + lbl + '</span>'
+      + '<button onclick="masterRemoveWebLink(' + i + ')" style="background:none;border:none;color:#0277bd;cursor:pointer;font-size:0.8rem;padding:0 2px;">✕</button>'
+      + '</div>';
+  }).join('');
+}
+
+function masterOnPdfSelect(input) {
+  var listEl = document.getElementById('masterPdfList');
+  var files = Array.from(input.files);
+  listEl.innerHTML = files.map(function(f) {
+    return '<div style="font-size:0.72rem;color:#f57f17;padding:3px 6px;background:#fff;border:1px solid #ffe082;border-radius:6px;">📄 ' + f.name + '</div>';
+  }).join('');
+}
+
+// Extract text from a PDF File object using PDF.js
+async function extractPdfText(file) {
+  try {
+    var ab = await file.arrayBuffer();
+    var pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+    var text = '';
+    var maxPages = Math.min(pdf.numPages, 20); // max 20 pages per PDF
+    for(var i = 1; i <= maxPages; i++) {
+      var page = await pdf.getPage(i);
+      var tc = await page.getTextContent();
+      text += tc.items.map(function(s){ return s.str; }).join(' ') + '\n';
+    }
+    return text.trim().substring(0, 3000);
+  } catch(e) {
+    return '';
+  }
+}
+
+// Fetch web page text via a CORS proxy
+async function fetchWebPageText(url) {
+  // Try allorigins proxy
+  try {
+    var proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(url);
+    var resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+    if(resp.ok) {
+      var data = await resp.json();
+      var html = data.contents || '';
+      // Strip HTML tags
+      var tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      var txt = (tmp.textContent || tmp.innerText || '').replace(/\s+/g,' ').trim();
+      return txt.substring(0, 3000);
+    }
+  } catch(e) {}
+  // Try corsproxy.io
+  try {
+    var resp2 = await fetch('https://corsproxy.io/?' + encodeURIComponent(url), { signal: AbortSignal.timeout(8000) });
+    if(resp2.ok) {
+      var html2 = await resp2.text();
+      var tmp2 = document.createElement('div');
+      tmp2.innerHTML = html2;
+      var txt2 = (tmp2.textContent || tmp2.innerText || '').replace(/\s+/g,' ').trim();
+      return txt2.substring(0, 3000);
+    }
+  } catch(e2) {}
+  return '';
+}
+
+// Fetch YouTube transcript using ytdl or caption API
+async function fetchYtTranscript(url) {
+  // Extract video ID
+  var vidId = '';
+  try {
+    var m = url.match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+    if(m) vidId = m[1];
+  } catch(e) {}
+  if(!vidId) return ''; // Not a valid YT URL — treat as pasted transcript
+
+  // Try unofficial transcript API
+  try {
+    var apiUrl = 'https://yt-transcript-api.vercel.app/api/transcript?videoId=' + vidId;
+    var resp = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) });
+    if(resp.ok) {
+      var data = await resp.json();
+      if(data && data.transcript) {
+        return data.transcript.map(function(s){ return s.text; }).join(' ').substring(0, 3000);
+      }
+    }
+  } catch(e) {}
+
+  // Try another endpoint
+  try {
+    var apiUrl2 = 'https://api.kome.ai/api/tools/youtube-transcripts?videoId=' + vidId;
+    var r2 = await fetch(apiUrl2, { signal: AbortSignal.timeout(8000) });
+    if(r2.ok) {
+      var d2 = await r2.json();
+      if(d2 && d2.transcript) return d2.transcript.substring(0, 3000);
+    }
+  } catch(e2) {}
+
+  return ''; // Could not fetch — will be ignored gracefully
+}
 
 function openMasterNotesModal(sid, secid, tid) {
   if(!S.apiKey) { showToast('Pehle API Key daalo Settings mein!', 'error'); return; }
-  const t = getTop(sid, secid, tid);
+  var t = getTop(sid, secid, tid);
   if(!t) return;
 
-  _masterState = { sid, secid, tid, generatedNotes: '', isRegenerate: !!t.masterNotes };
+  _masterState = { sid, secid, tid, generatedNotes: '', isRegenerate: !!t.masterNotes, ytLinks: [], webLinks: [], pdfTexts: [] };
 
   document.getElementById('masterTopicName').textContent = '📌 ' + t.name;
   document.getElementById('masterInstructions').value = '';
   document.getElementById('masterProgressBox').style.display = 'none';
   document.getElementById('masterResultBox').style.display = 'none';
+  document.getElementById('masterPdfList').innerHTML = '';
+  document.getElementById('masterPdfFiles').value = '';
+  document.getElementById('masterYtInput').value = '';
+  document.getElementById('masterWebLinkInput').value = '';
+  masterRenderYtList();
+  masterRenderWebLinks();
 
-  // Regenerate notice
-  const regenNotice = document.getElementById('masterRegenNotice');
-  regenNotice.style.display = t.masterNotes ? 'block' : 'none';
+  document.getElementById('masterRegenNotice').style.display = t.masterNotes ? 'block' : 'none';
+  document.getElementById('masterGenBtn').textContent = t.masterNotes ? '🔄 Regenerate / Extra Facts Nikalo' : '⚡ Master Notes Banao';
 
-  // Generate button text
-  document.getElementById('masterGenBtn').textContent = t.masterNotes ? '🔄 Naye Sources se Extra Facts Nikalo' : '⚡ Master Notes Banao';
-
-  // Sources list banao
   buildSourcesList(t, sid, secid, tid);
-
   document.getElementById('masterNotesModal').style.display = 'flex';
   document.body.style.overflow = 'hidden';
 }
@@ -9308,286 +9544,284 @@ function closeMasterModal() {
 }
 
 function buildSourcesList(t, sid, secid, tid) {
-  const container = document.getElementById('masterSourcesList');
-  const sources = [];
+  var container = document.getElementById('masterSourcesList');
+  var sources = [];
 
-  // Smart Notes
-  if(t.smartNotesAI) sources.push({ id: 'smartnotes', label: '🧠 Smart Notes', preview: t.smartNotesAI.substring(0,60)+'...', checked: true });
-
-  // Final Notes
-  if(t.finalNotes) sources.push({ id: 'finalnotes', label: '⭐ Final Notes', preview: t.finalNotes.substring(0,60).replace(/%%[^%]+%%/g,'')+'...', checked: true });
-
-  // Raw/Manual Notes
-  if(t.notes && t.notes.length > 0) {
-    t.notes.forEach((n, i) => {
-      sources.push({ id: 'raw_' + i, label: '📄 ' + (n.name || 'Note '+(i+1)), preview: n.content.substring(0,60)+'...', checked: true });
+  if(t.smartNotesAI) sources.push({ id: 'smartnotes', label: '🧠 Smart Notes', preview: t.smartNotesAI.substring(0,55)+'...' });
+  if(t.finalNotes)   sources.push({ id: 'finalnotes', label: '⭐ Final Notes', preview: t.finalNotes.substring(0,55).replace(/%%[^%]+%%/g,'')+'...' });
+  if(t.notes) {
+    t.notes.forEach(function(n, i) {
+      sources.push({ id: 'raw_'+i, label: '📄 '+( n.name||'Note '+(i+1)), preview: n.content.substring(0,55)+'...' });
     });
   }
+  if(t.masterNotes) sources.push({ id: 'masternotes', label: '⚡ Purane Master Notes', preview: t.masterNotes.substring(0,55)+'...' });
 
-  // Master Notes (already bane hue — sirf regenerate mein)
-  if(t.masterNotes) sources.push({ id: 'masternotes', label: '⚡ Purane Master Notes', preview: t.masterNotes.substring(0,60)+'...', checked: false });
-
-  if(sources.length === 0) {
-    container.innerHTML = '<div style="font-size:0.8rem;color:#c62828;padding:8px;background:#ffebee;border-radius:8px;">⚠️ Koi notes nahi hain! Pehle kuch notes add karo (Raw notes, PDF se, Audio se, ya Smart Notes banao).</div>';
+  if(!sources.length) {
+    container.innerHTML = '<div style="font-size:0.78rem;color:#c62828;padding:7px;background:#ffebee;border-radius:8px;">⚠️ Koi existing notes nahi — PDF/YT/Web se naye sources add karo!</div>';
     return;
   }
+  container.innerHTML = sources.map(function(s) {
+    return '<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;background:#f4f9fe;border-radius:9px;cursor:pointer;border:1.5px solid transparent;" onmouseover="this.style.borderColor=\'#bdd5ea\'" onmouseout="this.style.borderColor=\'transparent\'">'
+      + '<input type="checkbox" id="src_'+s.id+'" checked style="margin-top:2px;accent-color:#4a148c;width:14px;height:14px;flex-shrink:0;">'
+      + '<div><div style="font-size:0.79rem;font-weight:700;color:#0d1b2a;">'+s.label+'</div>'
+      + '<div style="font-size:0.67rem;color:#37526d;margin-top:1px;">'+s.preview+'</div></div>'
+      + '</label>';
+  }).join('');
+}
 
-  container.innerHTML = sources.map(s => `
-    <label style="display:flex;align-items:flex-start;gap:10px;padding:9px 12px;background:#f4f9fe;border-radius:10px;cursor:pointer;border:1.5px solid transparent;" 
-           onmouseover="this.style.borderColor='#bdd5ea'" onmouseout="this.style.borderColor='transparent'">
-      <input type="checkbox" id="src_${s.id}" ${s.checked?'checked':''} style="margin-top:2px;accent-color:#4a148c;width:15px;height:15px;flex-shrink:0;">
-      <div>
-        <div style="font-size:0.82rem;font-weight:700;color:#0d1b2a;">${s.label}</div>
-        <div style="font-size:0.7rem;color:#37526d;margin-top:1px;">${s.preview}</div>
-      </div>
-    </label>
-  `).join('');
+function setMasterProgress(pct, label, detail) {
+  document.getElementById('masterProgressBar').style.width = pct + '%';
+  document.getElementById('masterProgressLabel').textContent = label;
+  if(detail !== undefined) document.getElementById('masterProgressDetail').textContent = detail || '';
 }
 
 async function masterGenerateNotes() {
-  const t = getTop(_masterState.sid, _masterState.secid, _masterState.tid);
+  var t = getTop(_masterState.sid, _masterState.secid, _masterState.tid);
   if(!t) return;
+  var subj = getSubj(_masterState.sid);
+  var sec  = getSec(_masterState.sid, _masterState.secid);
+  var btn  = document.getElementById('masterGenBtn');
+  var isRegen = _masterState.isRegenerate;
+  var userInstructions = document.getElementById('masterInstructions').value.trim();
 
-  const btn = document.getElementById('masterGenBtn');
-  const isRegen = _masterState.isRegenerate;
+  btn.disabled = true;
+  document.getElementById('masterProgressBox').style.display = 'block';
+  document.getElementById('masterResultBox').style.display = 'none';
+  setMasterProgress(5, '🔍 Sources collect ho rahe hain...', '');
 
-  // Selected sources se data collect karo
-  let combinedData = '';
-  let sourceCount = 0;
+  var combinedData = '';
+  var sourceLog = [];
+  var ignoredLog = [];
 
+  // ---- 1. Existing notes sources ----
   if(document.getElementById('src_smartnotes')?.checked && t.smartNotesAI) {
-    combinedData += `\n\n=== 🧠 SMART NOTES ===\n${t.smartNotesAI.substring(0, 3000)}`;
-    sourceCount++;
+    combinedData += '\n\n=== 🧠 SMART NOTES ===\n' + t.smartNotesAI.substring(0, 2500);
+    sourceLog.push('Smart Notes');
   }
   if(document.getElementById('src_finalnotes')?.checked && t.finalNotes) {
-    const clean = t.finalNotes.replace(/%%[^%]+%%[^%]*%%[A-Z]+%%/g,'').replace(/%%\w+%%/g,'');
-    combinedData += `\n\n=== ⭐ FINAL NOTES ===\n${clean.substring(0, 3000)}`;
-    sourceCount++;
+    var cleanFN = t.finalNotes.replace(/%%[^%]+%%[^%]*%%[A-Z]+%%/g,'').replace(/%%\w+%%/g,'');
+    combinedData += '\n\n=== ⭐ FINAL NOTES ===\n' + cleanFN.substring(0, 2500);
+    sourceLog.push('Final Notes');
   }
   if(t.notes) {
-    t.notes.forEach((n, i) => {
-      if(document.getElementById('src_raw_' + i)?.checked) {
-        combinedData += `\n\n=== 📄 ${n.name} ===\n${n.content.substring(0, 2000)}`;
-        sourceCount++;
+    t.notes.forEach(function(n, i) {
+      if(document.getElementById('src_raw_'+i)?.checked) {
+        combinedData += '\n\n=== 📄 ' + (n.name||'Note '+(i+1)) + ' ===\n' + n.content.substring(0, 2000);
+        sourceLog.push(n.name||'Note '+(i+1));
       }
     });
   }
   if(document.getElementById('src_masternotes')?.checked && t.masterNotes) {
-    combinedData += `\n\n=== ⚡ PURANE MASTER NOTES ===\n${t.masterNotes.substring(0, 2000)}`;
-    sourceCount++;
+    combinedData += '\n\n=== ⚡ PURANE MASTER NOTES ===\n' + t.masterNotes.substring(0, 2000);
+    sourceLog.push('Purane Master Notes');
   }
+  setMasterProgress(15, '📄 PDF files process ho rahi hain...', '');
 
-  const useWebSearch = document.getElementById('src_websearch')?.checked;
-  if(sourceCount === 0 && !useWebSearch) { showToast('Kam se kam ek source chunno!', 'error'); return; }
+  // ---- 2. New PDF files ----
+  var pdfInput = document.getElementById('masterPdfFiles');
+  if(pdfInput && pdfInput.files && pdfInput.files.length > 0) {
+    var files = Array.from(pdfInput.files);
+    for(var fi = 0; fi < files.length; fi++) {
+      var f = files[fi];
+      setMasterProgress(15 + fi * 5, '📄 PDF: ' + f.name + ' padh raha hoon...', fi+1 + '/' + files.length);
+      try {
+        var pdfText = await extractPdfText(f);
+        if(pdfText && pdfText.length > 50) {
+          combinedData += '\n\n=== 📄 PDF: ' + f.name + ' ===\n' + pdfText;
+          sourceLog.push('PDF: ' + f.name);
+        } else {
+          ignoredLog.push('PDF: ' + f.name + ' (text extract nahi hua)');
+        }
+      } catch(e) {
+        ignoredLog.push('PDF: ' + f.name + ' (error: ' + e.message + ')');
+      }
+    }
+  }
+  setMasterProgress(35, '🎬 YouTube sources process ho rahe hain...', '');
 
-  const userInstructions = document.getElementById('masterInstructions').value.trim();
-  const subj = getSubj(_masterState.sid);
-  const sec = getSec(_masterState.sid, _masterState.secid);
-
-  btn.disabled = true;
-  btn.textContent = '⏳ AI analysis kar raha hai...';
-  document.getElementById('masterProgressBox').style.display = 'block';
-  document.getElementById('masterResultBox').style.display = 'none';
-  setMasterProgress(10, '📚 Sources combine ho rahe hain...');
-
-  // Web Search — topic ke baare mein latest info fetch karo
-  let webSearchData = '';
-  if(useWebSearch) {
+  // ---- 3. YouTube links ----
+  for(var yi = 0; yi < _masterState.ytLinks.length; yi++) {
+    var yt = _masterState.ytLinks[yi];
+    var ytUrl = yt.url;
+    setMasterProgress(35 + yi * 3, '🎬 YouTube transcript fetch ho raha hai...', ytUrl.substring(0,40));
     try {
-      setMasterProgress(25, '🌐 Web search ho rahi hai...');
-      const searchQuery = `${t.name} ${subj?.name || ''} important points exam`.trim();
-      webSearchData = await performWebSearch(searchQuery, t.name);
-      if(webSearchData) {
-        combinedData += `
-
-=== 🌐 WEB SEARCH RESULTS ===
-${webSearchData}`;
-        sourceCount++;
+      // Check if it's a YouTube URL or pasted transcript
+      var isYtUrl = /youtube\.com|youtu\.be/i.test(ytUrl);
+      var ytText = '';
+      if(isYtUrl) {
+        ytText = await fetchYtTranscript(ytUrl);
+        if(!ytText) {
+          ignoredLog.push('YouTube: ' + ytUrl.substring(0,40) + ' (transcript available nahi)');
+          continue;
+        }
+      } else {
+        // Treat as pasted transcript
+        ytText = ytUrl.substring(0, 3000);
+      }
+      if(ytText.length > 30) {
+        combinedData += '\n\n=== 🎬 YouTube/Transcript ===\n' + ytText;
+        sourceLog.push('YouTube: ' + ytUrl.substring(0,30));
       }
     } catch(e) {
-      webSearchData = '';
+      ignoredLog.push('YouTube: ' + ytUrl.substring(0,30) + ' (error)');
+    }
+  }
+  setMasterProgress(50, '🔗 Web links fetch ho rahe hain...', '');
+
+  // ---- 4. Web links ----
+  for(var wi = 0; wi < _masterState.webLinks.length; wi++) {
+    var wl = _masterState.webLinks[wi];
+    setMasterProgress(50 + wi * 3, '🔗 Web page padh raha hoon...', wl.url.substring(0,40));
+    try {
+      var webText = await fetchWebPageText(wl.url);
+      if(webText && webText.length > 100) {
+        combinedData += '\n\n=== 🔗 Web: ' + wl.url.substring(0,50) + ' ===\n' + webText;
+        sourceLog.push('Web: ' + wl.url.substring(0,30));
+      } else {
+        ignoredLog.push('Web: ' + wl.url.substring(0,30) + ' (content nahi mila)');
+      }
+    } catch(e) {
+      ignoredLog.push('Web: ' + wl.url.substring(0,30) + ' (error)');
+    }
+  }
+  setMasterProgress(62, '🌐 Web search ho rahi hai...', '');
+
+  // ---- 5. Web Search ----
+  if(document.getElementById('src_websearch')?.checked) {
+    try {
+      var wsQuery = (t.name + ' ' + (subj?.name||'')).trim();
+      var wsResult = await performWebSearch(wsQuery, t.name);
+      if(wsResult && wsResult.length > 50 && !wsResult.includes('koi result nahi')) {
+        combinedData += '\n\n=== 🌐 WEB SEARCH ===\n' + wsResult;
+        sourceLog.push('Web Search');
+      } else {
+        ignoredLog.push('Web Search (result nahi mila)');
+      }
+    } catch(e) {
+      ignoredLog.push('Web Search (error)');
     }
   }
 
+  // Check: koi bhi data mila?
+  if(!combinedData.trim()) {
+    setMasterProgress(0, '', '');
+    document.getElementById('masterProgressBox').style.display = 'none';
+    btn.disabled = false;
+    btn.textContent = isRegen ? '🔄 Regenerate' : '⚡ Master Notes Banao';
+    showToast('Koi bhi source se data nahi mila! Kuch sources add karo.', 'error');
+    return;
+  }
+
+  setMasterProgress(70, '🤖 AI deep analysis kar raha hai...', sourceLog.length + ' sources se notes bana raha hoon');
+
+  // ---- 6. AI Generation ----
   try {
-    let prompt;
-
+    var prompt;
     if(isRegen) {
-      // Regenerate mode — sirf extra facts nikalo
-      setMasterProgress(40, '🔍 Naye facts dhundh raha hoon...');
-      prompt = `Tu ek expert teacher hai.
-
-TOPIC: ${subj?.name} > ${sec?.name} > ${t.name}
-
-PURANE MASTER NOTES (YEH ALREADY SAVE HAIN — INHE MAT CHHEDO):
-${t.masterNotes.substring(0, 2000)}
-
-NAYE SOURCES KA DATA:
-${combinedData.substring(0, 6000)}
-
-USER KE NIRDESH: ${userInstructions || 'Naye sources mein jo extra facts hain jo purane master notes mein nahi hain unhe nikalo.'}
-
-TASK: Sirf wo points nikalo jo PURANE MASTER NOTES MEIN BILKUL NAHI HAIN.
-FORMAT: Har ek naya fact ek alag line mein likho, pehle "FACT:" likho.
-Jaise:
-FACT: Yeh ek naya point hai jo pehle nahi tha.
-FACT: Dusra naya fact.
-
-Sirf naye unique facts do, repetition mat karo:`;
+      prompt = 'Tu ek expert teacher hai.\n\nTOPIC: ' + subj?.name + ' > ' + sec?.name + ' > ' + t.name
+        + '\n\nPURANE MASTER NOTES (YEH ALREADY HAIN — INHE MAT CHHEDO):\n' + (t.masterNotes||'').substring(0, 2000)
+        + '\n\nNAYE SOURCES:\n' + combinedData.substring(0, 7000)
+        + '\n\nUSER NIRDESH: ' + (userInstructions || 'Naye unique facts nikalo jo purane master notes mein nahi hain.')
+        + '\n\nTASK: Sirf naye unique facts do. Format: har fact "FACT: " se shuru karo.\nIgnored sources: ' + (ignoredLog.length ? ignoredLog.join(', ') : 'koi nahi')
+        + '\n\nNaye facts:';
     } else {
-      // Fresh generate
-      setMasterProgress(40, '🤖 Deep analysis ho rahi hai...');
-      prompt = `Tu ek expert teacher hai jo comprehensive study notes banata hai.
-
-SUBJECT: ${subj?.name} > ${sec?.name} > ${t.name}
-
-SOURCES DATA:
-${combinedData.substring(0, 8000)}
-
-USER KE NIRDESH: ${userInstructions || 'In sabhi sources ko milake ek comprehensive, well-structured master notes banao jo exam ke liye perfect ho.'}
-
-RULES:
-1. Sabhi sources ke important points cover karo
-2. Duplicate information ek baar hi likho
-3. ** se important points mark karo
-4. Clear headings use karo
-5. Hindi mein, readable format mein
-6. Koi bhi fact miss mat karo
-
-Seedha notes do:`;
+      prompt = 'Tu ek expert teacher hai jo comprehensive study notes banata hai.\n\nSUBJECT: ' + subj?.name + ' > ' + sec?.name + ' > ' + t.name
+        + '\n\nSOURCES (' + sourceLog.join(', ') + '):\n' + combinedData.substring(0, 9000)
+        + '\n\nUSER NIRDESH: ' + (userInstructions || 'In sabhi sources ko milake ek comprehensive, well-structured master notes banao jo exam ke liye perfect ho.')
+        + '\n\nRULES:\n1. Sabhi sources ke important points cover karo\n2. Duplicate info ek baar hi likho\n3. ** se important points mark karo\n4. Clear headings use karo\n5. Hindi mein, readable format mein\n6. Koi bhi fact miss mat karo'
+        + (ignoredLog.length ? '\n\nNOTE: Ye sources access nahi hue (ignore karo): ' + ignoredLog.join(', ') : '')
+        + '\n\nSeedha notes likho:';
     }
 
-    setMasterProgress(65, '✍️ Notes likh raha hoon...');
-    const result = await callGroq(prompt, 5000);
-    setMasterProgress(100, '✅ Complete!');
+    setMasterProgress(85, '✍️ Notes likh raha hoon...', '');
+    var result = await callGroq(prompt, 5000);
+    setMasterProgress(100, '✅ Complete!', sourceLog.length + ' sources use hue' + (ignoredLog.length ? ', ' + ignoredLog.length + ' ignore kiye' : ''));
 
     if(isRegen) {
-      // Extra facts parse karo
-      const facts = [];
-      result.split('\n').forEach(line => {
-        const match = line.match(/^FACT:\s*(.+)/i);
+      var facts = [];
+      result.split('\n').forEach(function(line) {
+        var match = line.match(/^FACT:\s*(.+)/i);
         if(match && match[1].trim().length > 10) {
-          facts.push({
-            id: 'ef_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
-            text: match[1].trim(),
-            date: new Date().toLocaleDateString('hi-IN'),
-            added: false
-          });
+          facts.push({ id: 'ef_'+Date.now()+'_'+Math.random().toString(36).slice(2,6), text: match[1].trim(), date: new Date().toLocaleDateString('hi-IN'), added: false });
         }
       });
-
-      if(facts.length === 0) {
+      if(!facts.length) {
         showToast('Koi naya fact nahi mila — sab already master notes mein hai!', 'success');
         document.getElementById('masterProgressBox').style.display = 'none';
         btn.disabled = false;
-        btn.textContent = '🔄 Naye Sources se Extra Facts Nikalo';
+        btn.textContent = '🔄 Regenerate';
         return;
       }
-
-      // Facts save karo
-      t.masterExtraFacts = [...(t.masterExtraFacts || []), ...facts];
-      save();
-      renderLibraryTree();
-
+      t.masterExtraFacts = [...(t.masterExtraFacts||[]), ...facts];
+      save(); renderLibraryTree();
       document.getElementById('masterProgressBox').style.display = 'none';
       closeMasterModal();
-
-      // Topic view refresh karo
-      const tvModal = document.getElementById('topicViewModal');
-      if(tvModal && tvModal.classList.contains('show')) {
-        viewTopic(_masterState.sid, _masterState.secid, _masterState.tid);
-      }
-
-      showToast(`🆕 ${facts.length} naye facts mile! "Naye Facts Dekho" button se dekho.`, 'success');
-
+      var tvModal = document.getElementById('topicViewModal');
+      if(tvModal && tvModal.classList.contains('show')) viewTopic(_masterState.sid, _masterState.secid, _masterState.tid);
+      showToast('🆕 ' + facts.length + ' naye facts mile!', 'success');
     } else {
-      // Fresh notes — result dikhao
       _masterState.generatedNotes = result;
       document.getElementById('masterResultText').textContent = result;
+      document.getElementById('masterSourceSummary').textContent = sourceLog.length + ' sources, ' + (ignoredLog.length ? ignoredLog.length + ' ignore' : 'sab OK');
       document.getElementById('masterResultBox').style.display = 'block';
       document.getElementById('masterResultBox').scrollIntoView({ behavior: 'smooth' });
-      setTimeout(() => { document.getElementById('masterProgressBox').style.display = 'none'; }, 500);
+      setTimeout(function(){ document.getElementById('masterProgressBox').style.display = 'none'; }, 600);
     }
-
   } catch(err) {
     document.getElementById('masterProgressBox').style.display = 'none';
-    showToast('Error: ' + err.message, 'error');
+    showToast('AI Error: ' + err.message, 'error');
   }
 
   btn.disabled = false;
-  btn.textContent = isRegen ? '🔄 Naye Sources se Extra Facts Nikalo' : '⚡ Master Notes Banao';
-}
-
-function setMasterProgress(pct, label) {
-  document.getElementById('masterProgressBar').style.width = pct + '%';
-  document.getElementById('masterProgressLabel').textContent = label;
+  btn.textContent = isRegen ? '🔄 Regenerate' : '⚡ Master Notes Banao';
 }
 
 function masterSaveNotes() {
   if(!_masterState.generatedNotes) return;
-  const t = getTop(_masterState.sid, _masterState.secid, _masterState.tid);
+  var t = getTop(_masterState.sid, _masterState.secid, _masterState.tid);
   if(!t) return;
   t.masterNotes = _masterState.generatedNotes;
   t.masterNotesAt = new Date().toLocaleDateString('hi-IN');
-  // FIX: HTML null mat karo — highlights preserve honge
-  // Sirf fresh generate pe HTML reset karo (pehli baar)
   if(!t.masterNotesHTML) t.masterNotesHTML = null;
   t.masterExtraFacts = t.masterExtraFacts || [];
-  save();
-  renderLibraryTree();
+  save(); renderLibraryTree();
   showToast('✅ Master Notes save ho gaye!', 'success');
   closeMasterModal();
-  const tvModal = document.getElementById('topicViewModal');
-  if(tvModal && tvModal.classList.contains('show')) {
-    viewTopic(_masterState.sid, _masterState.secid, _masterState.tid);
-  }
+  var tvModal = document.getElementById('topicViewModal');
+  if(tvModal && tvModal.classList.contains('show')) viewTopic(_masterState.sid, _masterState.secid, _masterState.tid);
 }
 
 function masterOpenEditor() {
   if(!_masterState.generatedNotes) return;
-  // Pehle save karo phir editor kholo
   masterSaveNotes();
-  setTimeout(() => {
-    openSpecialEditor('masternotes', _masterState.sid, _masterState.secid, _masterState.tid);
-  }, 300);
+  setTimeout(function(){ openSpecialEditor('masternotes', _masterState.sid, _masterState.secid, _masterState.tid); }, 300);
 }
 
 function masterCopy() {
   if(!_masterState.generatedNotes) return;
-  navigator.clipboard.writeText(_masterState.generatedNotes)
-    .then(() => showToast('📋 Copy ho gaya!', 'success'))
-    .catch(() => showToast('Copy fail', 'error'));
+  navigator.clipboard.writeText(_masterState.generatedNotes).then(function(){ showToast('📋 Copy ho gaya!', 'success'); });
 }
 
 function masterNotesCopy(sid, secid, tid) {
-  const t = getTop(sid, secid, tid);
+  var t = getTop(sid, secid, tid);
   if(!t || !t.masterNotes) return;
-  navigator.clipboard.writeText(t.masterNotes)
-    .then(() => showToast('📋 Master Notes copy ho gaye!', 'success'))
-    .catch(() => showToast('Copy fail', 'error'));
+  navigator.clipboard.writeText(t.masterNotes).then(function(){ showToast('📋 Master Notes copy ho gaye!', 'success'); });
 }
 
 // ---- Extra Facts Panel ----
 function openExtraFactsPanel(sid, secid, tid) {
-  const t = getTop(sid, secid, tid);
+  var t = getTop(sid, secid, tid);
   if(!t) return;
-  _masterState.sid = sid;
-  _masterState.secid = secid;
-  _masterState.tid = tid;
-
-  const facts = (t.masterExtraFacts || []).filter(f => !f.added);
-  if(facts.length === 0) { showToast('Koi naye facts nahi hain!', 'error'); return; }
-
-  document.getElementById('extraFactsList').innerHTML = facts.map(f => `
-    <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid #eee;">
-      <input type="checkbox" id="ef_${f.id}" style="margin-top:3px;accent-color:#e65100;width:15px;height:15px;flex-shrink:0;">
-      <div>
-        <div style="font-size:0.82rem;color:#0d1b2a;line-height:1.5;">${f.text}</div>
-        <div style="font-size:0.68rem;color:#888;margin-top:2px;">${f.date}</div>
-      </div>
-    </div>
-  `).join('');
-
+  _masterState.sid = sid; _masterState.secid = secid; _masterState.tid = tid;
+  var facts = (t.masterExtraFacts||[]).filter(function(f){ return !f.added; });
+  if(!facts.length) { showToast('Koi naye facts nahi!', 'error'); return; }
+  document.getElementById('extraFactsList').innerHTML = facts.map(function(f) {
+    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid #eee;">'
+      + '<input type="checkbox" id="ef_'+f.id+'" style="margin-top:3px;accent-color:#e65100;width:15px;height:15px;flex-shrink:0;">'
+      + '<div><div style="font-size:0.82rem;color:#0d1b2a;line-height:1.5;">'+f.text+'</div>'
+      + '<div style="font-size:0.68rem;color:#888;margin-top:2px;">'+f.date+'</div></div>'
+      + '</div>';
+  }).join('');
   document.getElementById('extraFactsModal').style.display = 'flex';
   document.body.style.overflow = 'hidden';
 }
@@ -9635,6 +9869,7 @@ function addSelectedExtraFacts() {
     viewTopic(_masterState.sid, _masterState.secid, _masterState.tid);
   }
 }
+
 </script>
 
 <script>
