@@ -5839,20 +5839,26 @@ function _doLiveSelect(curX, curY, absDx, absDy) {
   if(!range) return;
 
   _tsCurRange = range;
-  const text = range.toString().trim();
-  _touchSelectedText = text;
+  const text = range.toString();
+  _touchSelectedText = text.trim();
 
   // Show live overlay
   showSelectionOverlay(range);
 
-  // Magnifier message
-  if(text.length > 0) {
-    const wordCount = text.trim().split(/\s+/).length;
-    const hint = wordCount === 1
-      ? '📌 ' + text.substring(0, 30)
-      : wordCount + ' words: ' + text.substring(0, 25) + (text.length > 25 ? '...' : '');
-    showMagnifier(curX, curY, hint, false);
-  }
+  // ---- Magnifier: show ONLY the last character at finger tip ----
+  // Get the character exactly at current finger position
+  const charAtFinger = getCharAtPoint(curX, curY);
+  showMagnifierChar(curX, curY, charAtFinger, _touchDir);
+}
+
+// Get single character at screen coordinate
+function getCharAtPoint(x, y) {
+  const { node, offset } = getNodeAndOffsetFromPoint(x, y);
+  if(!node || node.nodeType !== Node.TEXT_NODE) return '';
+  const text = node.textContent;
+  if(offset < text.length) return text[offset];
+  if(offset > 0) return text[offset - 1];
+  return '';
 }
 
 function onNETouchEnd(e) {
@@ -5979,64 +5985,110 @@ var _magLastText = '';
 var _magLastSnap = null;
 var _magVisible = false;
 
-function showMagnifier(x, y, text, isWordSnap) {
+// ============ MAGNIFIER v3 — Character Zoom ============
+var _magLastChar = '';
+var _magMode = ''; // 'char' | 'word'
+var _magVisible = false;
+
+// During drag: show ONLY the character at finger tip, zoomed big
+function showMagnifierChar(x, y, ch, dir) {
   const mag = document.getElementById('neMagnifier');
   if(!mag) return;
 
-  const raw = (text || '');
-  const display = raw.length > 30 ? raw.slice(0, 30) + '…' : raw;
-  const snapChanged = (isWordSnap !== _magLastSnap);
-  const textChanged = (display !== _magLastText);
+  const dispCh = (ch && ch.trim()) ? ch : '|';
 
-  // Show element first
-  if(!_magVisible) {
-    mag.style.display = 'flex';
+  // Setup circle style on first show or mode change
+  if(!_magVisible || _magMode !== 'char') {
+    mag.style.display     = 'flex';
+    mag.style.flexDirection = 'column';
+    mag.style.alignItems  = 'center';
+    mag.style.justifyContent = 'center';
+    mag.style.width       = '66px';
+    mag.style.height      = '66px';
+    mag.style.minHeight   = '';
+    mag.style.padding     = '0';
+    mag.style.background  = '#fff';
+    mag.style.color       = '#1565c0';
+    mag.style.border      = '2.5px solid #1565c0';
+    mag.style.borderRadius = '50%';
+    mag.style.boxShadow   = '0 4px 18px rgba(21,101,192,0.3)';
     _magVisible = true;
+    _magMode = 'char';
   }
 
-  // Re-style only when snap mode changes (heavy op — skip otherwise)
-  if(snapChanged) {
-    if(isWordSnap) {
-      mag.style.background = 'linear-gradient(135deg,#6a1b9a,#8e24aa)';
-      mag.style.color = '#fff';
-      mag.style.border = '2px solid #4a148c';
-      mag.style.boxShadow = '0 4px 20px rgba(106,27,154,0.4)';
-      mag.style.minHeight = '58px';
-      mag.style.width = '175px';
-      mag.style.padding = '7px 10px';
-    } else {
-      mag.style.background = '#fff';
-      mag.style.color = '#1565c0';
-      mag.style.border = '2px solid #1565c0';
-      mag.style.boxShadow = '0 4px 20px rgba(21,101,192,0.25)';
-      mag.style.minHeight = '52px';
-      mag.style.width = '165px';
-      mag.style.padding = '6px 10px';
-    }
-    _magLastSnap = isWordSnap;
-  }
-
-  // Update inner text ONLY when changed (prevents layout flicker)
-  if(textChanged) {
+  // Update char only when it changes
+  if(dispCh !== _magLastChar) {
     const hintEl = document.getElementById('neMagHint');
     const textEl = document.getElementById('neMagText');
     const subEl  = document.getElementById('neMagSub');
-    if(isWordSnap) {
-      if(hintEl) { hintEl.textContent = '📌 Word mila:'; hintEl.style.display = 'block'; }
-      if(textEl) { textEl.textContent = display.replace(/^📌 /, ''); textEl.style.fontSize = '0.92rem'; }
-      if(subEl)  { subEl.textContent  = 'Drag karo ↕ ya ↔'; subEl.style.display = 'block'; }
-    } else {
-      if(hintEl) hintEl.style.display = 'none';
-      if(textEl) { textEl.textContent = display; textEl.style.fontSize = '0.85rem'; }
-      if(subEl)  subEl.style.display = 'none';
+    if(hintEl) hintEl.style.display = 'none';
+    if(subEl)  subEl.style.display  = 'none';
+    if(textEl) {
+      textEl.textContent  = dispCh;
+      textEl.style.fontSize   = '2.6rem';
+      textEl.style.fontWeight = '700';
+      textEl.style.lineHeight = '1';
+      textEl.style.color      = '#1565c0';
+      textEl.style.fontFamily = 'monospace, sans-serif';
     }
-    _magLastText = display;
+    _magLastChar = dispCh;
   }
 
-  // Position — direct style, no class toggle (faster)
-  const magW = isWordSnap ? 175 : 165;
+  // Position: circle floats just above finger
+  const size = 66;
+  mag.style.left = Math.max(6, Math.min(window.innerWidth - size - 6, x - size / 2)) + 'px';
+  mag.style.top  = Math.max(6, y - size - 16) + 'px';
+}
+
+// On long-press word snap: show detected word
+function showMagnifierWordSnap(x, y, word) {
+  const mag = document.getElementById('neMagnifier');
+  if(!mag) return;
+
+  const w = (word || '').substring(0, 22);
+
+  if(!_magVisible || _magMode !== 'word') {
+    mag.style.display     = 'flex';
+    mag.style.flexDirection = 'column';
+    mag.style.alignItems  = 'center';
+    mag.style.justifyContent = 'center';
+    mag.style.width       = '170px';
+    mag.style.height      = '';
+    mag.style.minHeight   = '58px';
+    mag.style.padding     = '8px 10px';
+    mag.style.background  = 'linear-gradient(135deg,#6a1b9a,#8e24aa)';
+    mag.style.color       = '#fff';
+    mag.style.border      = '2px solid #4a148c';
+    mag.style.borderRadius = '14px';
+    mag.style.boxShadow   = '0 4px 20px rgba(106,27,154,0.4)';
+    _magVisible = true;
+    _magMode = 'word';
+  }
+
+  if(w !== _magLastChar) {
+    const hintEl = document.getElementById('neMagHint');
+    const textEl = document.getElementById('neMagText');
+    const subEl  = document.getElementById('neMagSub');
+    if(hintEl) { hintEl.textContent = '📌 Word:'; hintEl.style.display = 'block'; hintEl.style.fontSize = '0.65rem'; hintEl.style.opacity = '0.8'; hintEl.style.color = '#fff'; }
+    if(textEl) { textEl.textContent = w; textEl.style.fontSize = '1rem'; textEl.style.fontWeight = '800'; textEl.style.color = '#fff'; textEl.style.fontFamily = 'inherit'; textEl.style.lineHeight = '1.3'; }
+    if(subEl)  { subEl.textContent = 'Drag karo ↕ ya ↔'; subEl.style.display = 'block'; subEl.style.fontSize = '0.6rem'; subEl.style.opacity = '0.75'; subEl.style.color = '#fff'; }
+    _magLastChar = w;
+  }
+
+  const magW = 170;
   mag.style.left = Math.max(8, Math.min(window.innerWidth - magW - 8, x - magW / 2)) + 'px';
-  mag.style.top  = Math.max(8, y - (isWordSnap ? 98 : 82)) + 'px';
+  mag.style.top  = Math.max(8, y - 92) + 'px';
+}
+
+// Legacy wrapper kept for compat
+function showMagnifier(x, y, text, isWordSnap) {
+  if(isWordSnap) {
+    showMagnifierWordSnap(x, y, (text||'').replace(/^📌 /, ''));
+  } else {
+    // During selection: show last char of text
+    const ch = (text && text.length > 0) ? text[text.length - 1] : '';
+    showMagnifierChar(x, y, ch, null);
+  }
 }
 
 function hideMagnifier() {
@@ -6044,9 +6096,10 @@ function hideMagnifier() {
   const mag = document.getElementById('neMagnifier');
   if(mag) mag.style.display = 'none';
   _magVisible = false;
-  _magLastText = '';
-  _magLastSnap = null;
+  _magLastChar = '';
+  _magMode = '';
 }
+
 function toggleHighlightMode() {
   // Legacy - ab setHlMode use hota hai
   if(_hlCurrentMode === 'highlight') setHlMode('none');
