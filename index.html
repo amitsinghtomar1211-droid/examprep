@@ -5420,16 +5420,24 @@ function neAttachEraserToMarks() {
   });
 }
 
-// ============ CUSTOM TOUCH HIGHLIGHT SYSTEM ============
-// Android toolbar bypass: user-select none + manual word detection
+// ============ ADVANCED TOUCH HIGHLIGHT SYSTEM v2 ============
+// Features:
+// 1. Long press = word auto-detect + snap to word boundary
+// 2. Vertical drag = line-by-line selection
+// 3. Horizontal drag = character-level selection within line
+// 4. Word snap hint shown in magnifier
+// 5. 2+ fingers = scroll (no highlight)
+// 6. Highlight mode ON = scroll locked until finger lifted
 
-let _touchStartNode = null;
-let _touchStartOffset = 0;
 let _touchSelecting = false;
 let _touchSelectedText = '';
+let _touchLongPressTimer = null;
+let _touchPhase = 'idle'; // 'idle' | 'longpress_wait' | 'selecting'
+let _touchDir = null;     // 'vertical' | 'horizontal' | null
+let _touchStartRange = null; // Range at touch start (word-snapped)
 
+// ---- Utility: get caret position from screen coords ----
 function getNodeAndOffsetFromPoint(x, y) {
-  // Get text node and offset at given screen coordinates
   let node = null, offset = 0;
   if(document.caretPositionFromPoint) {
     const pos = document.caretPositionFromPoint(x, y);
@@ -5441,25 +5449,41 @@ function getNodeAndOffsetFromPoint(x, y) {
   return { node, offset };
 }
 
+// ---- Get word boundaries at a point ----
 function getWordAtPoint(x, y) {
   const { node, offset } = getNodeAndOffsetFromPoint(x, y);
   if(!node || node.nodeType !== Node.TEXT_NODE) return null;
   const text = node.textContent;
-  // Find word boundaries
   let start = offset, end = offset;
-  while(start > 0 && !/\s/.test(text[start-1])) start--;
-  while(end < text.length && !/\s/.test(text[end])) end++;
+  // Expand to word boundaries
+  while(start > 0 && !/[\s\n]/.test(text[start-1])) start--;
+  while(end < text.length && !/[\s\n]/.test(text[end])) end++;
   if(start === end) return null;
   return { node, start, end, word: text.slice(start, end) };
 }
 
+// ---- Snap offset to word start/end depending on direction ----
+function snapToWord(node, offset, snapToEnd) {
+  if(!node || node.nodeType !== Node.TEXT_NODE) return offset;
+  const text = node.textContent;
+  if(snapToEnd) {
+    let e = offset;
+    while(e < text.length && !/[\s\n]/.test(text[e])) e++;
+    return e;
+  } else {
+    let s = offset;
+    while(s > 0 && !/[\s\n]/.test(text[s-1])) s--;
+    return s;
+  }
+}
+
+// ---- Build range from two screen points ----
 function getRangeFromPoints(x1, y1, x2, y2) {
   const p1 = getNodeAndOffsetFromPoint(x1, y1);
   const p2 = getNodeAndOffsetFromPoint(x2, y2);
   if(!p1.node || !p2.node) return null;
   try {
     const range = document.createRange();
-    // Ensure start <= end
     const cmp = p1.node.compareDocumentPosition(p2.node);
     if(cmp & Node.DOCUMENT_POSITION_FOLLOWING ||
        (cmp === 0 && p1.offset <= p2.offset)) {
@@ -5473,7 +5497,79 @@ function getRangeFromPoints(x1, y1, x2, y2) {
   } catch(e) { return null; }
 }
 
-// Mouse (desktop) - simple approach
+// ---- Smart range: word-snapped start + direction-aware end ----
+function getSmartRange(startX, startY, endX, endY, dir, wordSnapStart) {
+  const p1 = getNodeAndOffsetFromPoint(startX, startY);
+  const p2 = getNodeAndOffsetFromPoint(endX, endY);
+  if(!p1.node || !p2.node) return null;
+
+  try {
+    const range = document.createRange();
+    let s_node = p1.node, s_off = p1.offset;
+    let e_node = p2.node, e_off = p2.offset;
+
+    // Word-snap the START point if long-press triggered
+    if(wordSnapStart && s_node.nodeType === Node.TEXT_NODE) {
+      s_off = snapToWord(s_node, s_off, false); // snap to word start
+    }
+
+    // Vertical drag: snap end to line end (word boundary on current line)
+    if(dir === 'vertical') {
+      if(e_node.nodeType === Node.TEXT_NODE) {
+        // Snap end to end of word at current position
+        e_off = snapToWord(e_node, e_off, true);
+      }
+    }
+
+    // Determine order
+    const cmp = s_node.compareDocumentPosition(e_node);
+    if(cmp & Node.DOCUMENT_POSITION_FOLLOWING ||
+       (cmp === 0 && s_off <= e_off)) {
+      range.setStart(s_node, s_off);
+      range.setEnd(e_node, e_off);
+    } else {
+      // Dragging backwards — swap
+      range.setStart(e_node, e_off);
+      range.setEnd(s_node, s_off);
+    }
+
+    return range.collapsed ? null : range;
+  } catch(ex) { return null; }
+}
+
+// ---- Visual selection overlay (live preview) ----
+let _selOverlays = [];
+function showSelectionOverlay(range) {
+  clearSelectionOverlay();
+  if(!range || range.collapsed) return;
+  try {
+    const rects = Array.from(range.getClientRects());
+    const area = document.getElementById('noteEditableArea');
+    const areaRect = area.getBoundingClientRect();
+    rects.forEach(function(r) {
+      const div = document.createElement('div');
+      div.style.cssText = [
+        'position:fixed',
+        'pointer-events:none',
+        'z-index:9990',
+        'background:rgba(255,235,59,0.45)',
+        'border-radius:2px',
+        'left:' + r.left + 'px',
+        'top:' + r.top + 'px',
+        'width:' + r.width + 'px',
+        'height:' + r.height + 'px'
+      ].join(';');
+      document.body.appendChild(div);
+      _selOverlays.push(div);
+    });
+  } catch(e) {}
+}
+function clearSelectionOverlay() {
+  _selOverlays.forEach(function(d){ if(d.parentNode) d.parentNode.removeChild(d); });
+  _selOverlays = [];
+}
+
+// ---- Mouse (desktop) ----
 function onNEMouseUp(e) {
   hideMagnifier();
   if(_hlCurrentMode !== 'highlight') return;
@@ -5486,80 +5582,164 @@ function onNEMouseUp(e) {
   applyHighlightFromSelection(sel);
 }
 
-// Touch start
+// ============ TOUCH HANDLERS ============
 let _ts = {x:0, y:0, time:0};
+let _tsWordSnapped = false; // Did long-press trigger word snap?
+let _tsCurRange = null;    // Current live range being selected
+
 function onNETouchStart(e) {
   if(_hlCurrentMode !== 'highlight') return;
-  // 2 ya zyada ungliyan = scroll, highlight nahi
+
+  // 2+ fingers = scroll
   if(e.touches.length > 1) {
-    _touchSelecting = false;
-    _touchSelectedText = '';
-    hideMagnifier();
+    _cancelTouchSelection();
     return;
   }
+
   const t = e.touches[0];
-  _ts = {x: t.clientX, y: t.clientY, time: Date.now()};
+  _ts = { x: t.clientX, y: t.clientY, time: Date.now() };
+  _touchPhase = 'longpress_wait';
+  _touchDir = null;
+  _tsWordSnapped = false;
+  _tsCurRange = null;
   _touchSelecting = false;
   _touchSelectedText = '';
   hideMagnifier();
+  clearSelectionOverlay();
+
+  // Long press timer (400ms) — snap to word
+  _touchLongPressTimer = setTimeout(function() {
+    if(_touchPhase !== 'longpress_wait') return;
+    _tsWordSnapped = true;
+    _touchPhase = 'selecting';
+    _touchSelecting = true;
+
+    // Snap start to word
+    const word = getWordAtPoint(_ts.x, _ts.y);
+    if(word) {
+      try {
+        const r = document.createRange();
+        r.setStart(word.node, word.start);
+        r.setEnd(word.node, word.end);
+        _tsCurRange = r;
+        _touchSelectedText = word.word;
+        showSelectionOverlay(r);
+        showMagnifier(_ts.x, _ts.y, '📌 ' + word.word, true);
+        // Vibrate for haptic feedback
+        if(navigator.vibrate) navigator.vibrate(40);
+      } catch(ex) {}
+    } else {
+      showMagnifier(_ts.x, _ts.y, '👆 Drag karo...', false);
+    }
+  }, 400);
 }
 
-// Touch move - show magnifier with selected text
 function onNETouchMove(e) {
-  if(_hlCurrentMode !== 'highlight') return; // Highlight OFF = scroll hone do normally
+  if(_hlCurrentMode !== 'highlight') return;
 
-  // 2 ya zyada ungliyan = scroll hone do, highlight interrupt karo
+  // 2+ fingers = cancel + scroll
   if(e.touches.length > 1) {
-    if(_touchSelecting) {
-      // Jo selection chal rahi thi use cancel karo
-      _touchSelecting = false;
-      _touchSelectedText = '';
-      hideMagnifier();
-    }
-    return; // Scroll hone do
+    _cancelTouchSelection();
+    return;
   }
 
   const t = e.touches[0];
   const dx = t.clientX - _ts.x;
   const dy = t.clientY - _ts.y;
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
   const dist = Math.sqrt(dx*dx + dy*dy);
 
-  if(dist > 12) {
-    _touchSelecting = true;
-    e.preventDefault(); // Sirf single finger drag mein scroll rokna -- text select karna hai
+  // If long press already triggered — we're selecting, prevent scroll always
+  if(_touchPhase === 'selecting') {
+    e.preventDefault();
+    _doLiveSelect(t.clientX, t.clientY, absDx, absDy);
+    return;
+  }
 
-    const range = getRangeFromPoints(_ts.x, _ts.y, t.clientX, t.clientY);
-    if(range) {
-      const selected = range.toString().trim();
-      _touchSelectedText = selected;
-      if(selected.length > 0) {
-        showMagnifier(t.clientX, t.clientY, selected);
+  // Still in longpress_wait phase
+  if(_touchPhase === 'longpress_wait') {
+    if(dist > 8) {
+      // Finger moved before long press — quick drag mode
+      clearTimeout(_touchLongPressTimer);
+      _touchLongPressTimer = null;
+
+      // Determine direction ONCE based on initial motion
+      if(_touchDir === null) {
+        _touchDir = absDy > absDx ? 'vertical' : 'horizontal';
+      }
+
+      if(dist > 14) {
+        _touchPhase = 'selecting';
+        _touchSelecting = true;
+        e.preventDefault();
+        _doLiveSelect(t.clientX, t.clientY, absDx, absDy);
       }
     }
   }
 }
 
-// Touch end - apply highlight
-function onNETouchEnd(e) {
-  hideMagnifier();
-  if(_hlCurrentMode !== 'highlight') return;
-
-  // Agar 2+ finger touch tha to highlight mat karo
-  if(!_touchSelecting) return;
-
-  _touchSelecting = false;
-  const text = _touchSelectedText.trim();
-  if(text.length < 1) return;
-
-  const t = e.changedTouches[0];
-  const range = getRangeFromPoints(_ts.x, _ts.y, t.clientX, t.clientY);
-  if(!range || range.collapsed) {
-    _touchSelectedText = '';
-    return;
+function _doLiveSelect(curX, curY, absDx, absDy) {
+  // Set direction if not set
+  if(_touchDir === null) {
+    _touchDir = absDy > absDx ? 'vertical' : 'horizontal';
   }
 
-  applyHighlightFromRange(range, text);
+  const range = getSmartRange(_ts.x, _ts.y, curX, curY, _touchDir, _tsWordSnapped);
+  if(!range) return;
+
+  _tsCurRange = range;
+  const text = range.toString().trim();
+  _touchSelectedText = text;
+
+  // Show live overlay
+  showSelectionOverlay(range);
+
+  // Magnifier message
+  if(text.length > 0) {
+    const wordCount = text.trim().split(/\s+/).length;
+    const hint = wordCount === 1
+      ? '📌 ' + text.substring(0, 30)
+      : wordCount + ' words: ' + text.substring(0, 25) + (text.length > 25 ? '...' : '');
+    showMagnifier(curX, curY, hint, false);
+  }
+}
+
+function onNETouchEnd(e) {
+  clearTimeout(_touchLongPressTimer);
+  _touchLongPressTimer = null;
+  hideMagnifier();
+  clearSelectionOverlay();
+
+  if(_hlCurrentMode !== 'highlight') { _cancelTouchSelection(); return; }
+
+  const wasSelecting = _touchSelecting && _touchPhase === 'selecting';
+  _touchPhase = 'idle';
+  _touchSelecting = false;
+
+  if(!wasSelecting) return;
+
+  const text = _touchSelectedText.trim();
+  const range = _tsCurRange;
   _touchSelectedText = '';
+  _tsCurRange = null;
+
+  if(!text || text.length < 1 || !range || range.collapsed) return;
+
+  applyHighlightFromRange(range, text);
+}
+
+function _cancelTouchSelection() {
+  clearTimeout(_touchLongPressTimer);
+  _touchLongPressTimer = null;
+  _touchPhase = 'idle';
+  _touchSelecting = false;
+  _touchSelectedText = '';
+  _tsCurRange = null;
+  _tsWordSnapped = false;
+  _touchDir = null;
+  hideMagnifier();
+  clearSelectionOverlay();
 }
 
 // Apply highlight from browser Selection object
@@ -5645,18 +5825,46 @@ function neAttachUnhighlightToMark(mark) {
 }
 
 // Magnifier
-function showMagnifier(x, y, text) {
+function showMagnifier(x, y, text, isWordSnap) {
   const mag = document.getElementById('neMagnifier');
   if(!mag) return;
-  const display = text.length > 25 ? text.slice(0,25) + '...' : text;
-  mag.textContent = '"' + display + '"';
+  const display = (text||'').length > 28 ? text.slice(0,28) + '…' : (text||'');
+  if(isWordSnap) {
+    // Word snap hint — different style
+    mag.innerHTML = '<span style="font-size:0.7rem;opacity:0.7;display:block;line-height:1;">📌 Word mila:</span><span style="font-size:0.9rem;">' + display.replace(/^📌 /,'') + '</span><span style="font-size:0.62rem;opacity:0.65;display:block;margin-top:2px;">Drag karo select karne ke liye</span>';
+    mag.style.background = 'linear-gradient(135deg,#6a1b9a,#8e24aa)';
+    mag.style.color = '#fff';
+    mag.style.border = '2px solid #4a148c';
+    mag.style.width = '170px';
+    mag.style.height = 'auto';
+    mag.style.padding = '8px 12px';
+  } else {
+    mag.innerHTML = '<span>' + display + '</span>';
+    mag.style.background = '#fff';
+    mag.style.color = 'var(--accent)';
+    mag.style.border = '2px solid var(--accent)';
+    mag.style.width = '160px';
+    mag.style.height = '60px';
+    mag.style.padding = '6px 10px';
+  }
   mag.classList.add('show');
-  mag.style.left = Math.max(10, Math.min(window.innerWidth - 170, x - 80)) + 'px';
-  mag.style.top = Math.max(10, y - 90) + 'px';
+  // Position: above finger, centered
+  const magW = isWordSnap ? 170 : 160;
+  mag.style.left = Math.max(8, Math.min(window.innerWidth - magW - 8, x - magW/2)) + 'px';
+  mag.style.top = Math.max(8, y - (isWordSnap ? 90 : 80)) + 'px';
 }
 function hideMagnifier() {
   const mag = document.getElementById('neMagnifier');
-  if(mag) mag.classList.remove('show');
+  if(mag) {
+    mag.classList.remove('show');
+    // Reset styles
+    mag.style.background = '';
+    mag.style.color = '';
+    mag.style.border = '';
+    mag.style.width = '';
+    mag.style.height = '';
+    mag.style.padding = '';
+  }
 }
 
 function toggleHighlightMode() {
