@@ -1702,6 +1702,10 @@ function load(){
           // Ensure finalNotesHTML and smartNotesHTML are preserved
           if(t.finalNotesHTML === undefined) t.finalNotesHTML = null;
           if(t.smartNotesHTML === undefined) t.smartNotesHTML = null;
+          if(t.masterNotes === undefined) t.masterNotes = null;
+          if(t.masterNotesHTML === undefined) t.masterNotesHTML = null;
+          if(t.masterExtraFacts === undefined) t.masterExtraFacts = [];
+          if(t.masterNotesAt === undefined) t.masterNotesAt = null;
           t.notes.forEach(n=>{
             if(!n.editorHighlights) n.editorHighlights=[];
             // Ensure editorRichHTML is preserved on load (critical for highlight persistence)
@@ -2379,6 +2383,7 @@ function viewTopic(sid,secid,tid){
     <button class="btn btn-xs btn-primary" style="margin-left:auto;" onclick="openAiChat('topic','${t.name.replace(/'/g,"\\'")}',${tid},${sid},${secid})">🤖 AI Chat</button>
     <button class="btn btn-xs" style="background:linear-gradient(135deg,#e65100,#f57c00);color:#fff;" onclick="openPdfModal(${sid},${secid},${tid})">📄 PDF se Notes</button>
     <button class="btn btn-xs" style="background:linear-gradient(135deg,#cc0000,#ff6d00);color:#fff;" onclick="openYtModal(${sid},${secid},${tid})">🎬 YT/Audio Notes</button>
+    <button class="btn btn-xs" style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;font-weight:800;" onclick="openMasterNotesModal(${sid},${secid},${tid})">⚡ Master Notes</button>
   </div>`;
 
   // ---- SECTION 1: Smart Notes ----
@@ -2423,6 +2428,31 @@ function viewTopic(sid,secid,tid){
       </div>`;
   } else {
     html+=`<p style="font-size:0.78rem;color:var(--text2);">Final notes nahi bane. Library mein jaake AI Final Notes banao.</p>`;
+  }
+  html+=`</div></div>`;
+
+  // ---- SECTION 2.5: Master Notes ----
+  const mnOpen=!!t.masterNotes;
+  const extraFactsCount=(t.masterExtraFacts||[]).filter(f=>!f.added).length;
+  html+=`<div class="collapsible-section">
+    <div class="collapsible-header ${mnOpen?'open':''}" onclick="toggleCollapsible('vtMN-${t.id}',this)">
+      <span class="ch-title">⚡ Master Notes ${t.masterNotes?'<span class="badge" style="background:rgba(74,20,140,0.12);color:#4a148c;">AI</span>':'<span style="font-size:0.68rem;color:var(--text2);font-weight:500;">(banao)</span>'}
+      ${extraFactsCount>0?`<span class="badge" style="background:#e65100;color:#fff;">🆕 ${extraFactsCount} naye facts</span>`:''}</span>
+      <span class="ch-arrow">▼</span>
+    </div>
+    <div class="collapsible-body ${mnOpen?'open':''}" id="vtMN-${t.id}">`;
+  if(t.masterNotes){
+    html+=`<div style="font-size:0.68rem;color:var(--text2);margin-bottom:6px;">${t.masterNotesAt||''}</div>
+      <div style="font-size:0.8rem;line-height:1.75;white-space:pre-wrap;max-height:300px;overflow-y:auto;">${t.masterNotes.substring(0,800)}${t.masterNotes.length>800?'\n\n...(Edit mein poora dekho)':''}</div>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+        <button class="btn btn-xs btn-primary" onclick="openSpecialEditor('masternotes',${sid},${secid},${tid})">✏️ Edit &amp; Highlight</button>
+        <button class="btn btn-xs" style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;" onclick="openMasterNotesModal(${sid},${secid},${tid})">🔄 Regenerate</button>
+        <button class="btn btn-xs btn-outline" onclick="masterNotesCopy(${sid},${secid},${tid})">📋 Copy</button>
+        ${extraFactsCount>0?`<button class="btn btn-xs" style="background:#e65100;color:#fff;" onclick="openExtraFactsPanel(${sid},${secid},${tid})">🆕 ${extraFactsCount} Naye Facts Dekho</button>`:''}
+      </div>`;
+  } else {
+    html+=`<div style="font-size:0.78rem;color:var(--text2);margin-bottom:8px;">Sabhi sources (Smart Notes, Final Notes, Raw Notes, PDF/Audio notes) ko milake AI deep analysis karega.</div>
+      <button class="btn btn-xs" style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;font-weight:800;" onclick="openMasterNotesModal(${sid},${secid},${tid})">⚡ Master Notes Banao</button>`;
   }
   html+=`</div></div>`;
 
@@ -4749,8 +4779,13 @@ function _doSaveNoteData() {
   else if(isSpecial === 'smartnotes') {
     t.smartNotesAI = plainText;
     t.smartNotesAt = new Date().toLocaleDateString('hi-IN');
-    t.smartNotesHTML = richHTML; // Save full HTML including highlights
-  } 
+    t.smartNotesHTML = richHTML;
+  }
+  else if(isSpecial === 'masternotes') {
+    t.masterNotes = plainText;
+    t.masterNotesAt = new Date().toLocaleDateString('hi-IN');
+    t.masterNotesHTML = richHTML;
+  }
   else {
     var n = t.notes[_editorState.noteIdx];
     if(!n) return false;
@@ -4989,7 +5024,11 @@ function openSpecialEditor(type, sid, secid, tid) {
   } else if(type === 'smartnotes') {
     text = t.smartNotesAI || '';
     title = '🧠 Smart Notes';
-    savedHTML = t.smartNotesHTML || null; // saved highlights ke saath
+    savedHTML = t.smartNotesHTML || null;
+  } else if(type === 'masternotes') {
+    text = t.masterNotes || '';
+    title = '⚡ Master Notes';
+    savedHTML = t.masterNotesHTML || null;
   }
   _editorState.sid = sid;
   _editorState.secid = secid;
@@ -7355,5 +7394,423 @@ function ytCopyResult() {
   navigator.clipboard.writeText(_ytState.generatedNotes)
     .then(() => showToast('📋 Copy ho gaya!', 'success'))
     .catch(() => showToast('Copy nahi ho saka', 'error'));
+}
+</script>
+
+<!-- ==================== MASTER NOTES MODAL ==================== -->
+<div id="masterNotesModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:99999;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto;">
+  <div style="background:#fff;border-radius:18px;width:100%;max-width:500px;margin:auto;box-shadow:0 10px 50px rgba(0,0,0,0.35);">
+
+    <!-- Header -->
+    <div style="padding:18px 20px 14px;background:linear-gradient(135deg,#4a148c,#7b1fa2);border-radius:18px 18px 0 0;color:#fff;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-size:1.1rem;font-weight:800;">⚡ Master Notes Generator</div>
+          <div id="masterTopicName" style="font-size:0.75rem;opacity:0.85;margin-top:2px;"></div>
+        </div>
+        <button onclick="closeMasterModal()" style="background:rgba(255,255,255,0.2);border:none;border-radius:50%;width:32px;height:32px;color:#fff;font-size:1.1rem;cursor:pointer;">✕</button>
+      </div>
+    </div>
+
+    <!-- Sources Selection -->
+    <div style="padding:16px 20px 0;">
+      <div style="font-size:0.85rem;font-weight:800;color:#0d1b2a;margin-bottom:10px;">📚 Sources chunno (jo data AI use kare):</div>
+      <div id="masterSourcesList" style="display:flex;flex-direction:column;gap:7px;"></div>
+    </div>
+
+    <!-- User Instructions -->
+    <div style="padding:14px 20px 0;">
+      <div style="font-size:0.85rem;font-weight:800;color:#0d1b2a;margin-bottom:6px;">🎯 AI ko nirdesh do:</div>
+      <textarea id="masterInstructions" placeholder="Jaise: Exam ke liye important points nikalo, ya MCQ format mein do, ya sirf definitions aur examples do, ya Chapter 3 ke baare mein focus karo..." style="width:100%;border:1.5px solid #bdd5ea;border-radius:10px;padding:11px;font-size:0.82rem;font-family:inherit;resize:vertical;min-height:85px;outline:none;color:#0d1b2a;"></textarea>
+    </div>
+
+    <!-- Regenerate notice (agar master notes pehle se hain) -->
+    <div id="masterRegenNotice" style="display:none;margin:10px 20px 0;padding:10px 12px;background:#fff3e0;border-radius:10px;font-size:0.75rem;color:#e65100;line-height:1.5;">
+      ⚠️ <strong>Regenerate mode:</strong> Purane edited notes safe rahenge. AI sirf naye sources se <strong>extra facts</strong> nikalega jo alag section mein dikhega — original notes destroy nahi honge.
+    </div>
+
+    <!-- Generate Button -->
+    <div style="padding:14px 20px 16px;">
+      <button onclick="masterGenerateNotes()" id="masterGenBtn" style="width:100%;padding:13px;background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;border:none;border-radius:12px;font-weight:800;font-size:0.95rem;cursor:pointer;font-family:inherit;">⚡ Master Notes Banao</button>
+    </div>
+
+    <!-- Progress -->
+    <div id="masterProgressBox" style="display:none;padding:0 20px 14px;">
+      <div style="font-size:0.8rem;color:#37526d;margin-bottom:6px;" id="masterProgressLabel">⏳ Analysis ho rahi hai...</div>
+      <div style="background:#e0e0e0;border-radius:10px;height:8px;overflow:hidden;">
+        <div id="masterProgressBar" style="height:100%;background:linear-gradient(90deg,#4a148c,#ab47bc);width:0%;transition:width 0.4s;border-radius:10px;"></div>
+      </div>
+    </div>
+
+    <!-- Result -->
+    <div id="masterResultBox" style="display:none;padding:0 20px 20px;">
+      <div style="height:1px;background:#eee;margin-bottom:14px;"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div style="font-size:0.88rem;font-weight:800;color:#4a148c;">✅ Master Notes Ready!</div>
+      </div>
+      <div id="masterResultText" style="background:#f9f4ff;border:1.5px solid #ce93d8;border-radius:10px;padding:14px;font-size:0.8rem;line-height:1.75;max-height:280px;overflow-y:auto;white-space:pre-wrap;color:#0d1b2a;"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+        <button onclick="masterSaveNotes()" style="flex:1;padding:11px;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.85rem;cursor:pointer;font-family:inherit;">💾 Save Karo</button>
+        <button onclick="masterOpenEditor()" style="flex:1;padding:11px;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.85rem;cursor:pointer;font-family:inherit;">✏️ Edit &amp; Highlight</button>
+        <button onclick="masterCopy()" style="padding:11px 14px;background:#f4f9fe;border:1.5px solid #bdd5ea;border-radius:10px;font-weight:700;font-size:0.82rem;cursor:pointer;font-family:inherit;">📋</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ==================== EXTRA FACTS PANEL ==================== -->
+<div id="extraFactsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;align-items:center;justify-content:center;padding:16px;">
+  <div style="background:#fff;border-radius:18px;width:100%;max-width:460px;max-height:88vh;overflow-y:auto;box-shadow:0 10px 50px rgba(0,0,0,0.3);">
+    <div style="padding:16px 20px;background:linear-gradient(135deg,#e65100,#f57c00);border-radius:18px 18px 0 0;color:#fff;display:flex;justify-content:space-between;align-items:center;">
+      <div style="font-size:1rem;font-weight:800;">🆕 Naye Extra Facts</div>
+      <button onclick="closeExtraFacts()" style="background:rgba(255,255,255,0.2);border:none;border-radius:50%;width:30px;height:30px;color:#fff;cursor:pointer;">✕</button>
+    </div>
+    <div style="padding:14px 20px 0;font-size:0.78rem;color:#37526d;line-height:1.5;">
+      Ye facts naye sources se nikale gaye hain. Jo add karna ho use ✅ karke <strong>"Selected ko Notes mein Add Karo"</strong> dabao:
+    </div>
+    <div id="extraFactsList" style="padding:12px 20px;"></div>
+    <div style="padding:0 20px 16px;display:flex;gap:8px;">
+      <button onclick="addSelectedExtraFacts()" style="flex:1;padding:11px;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.85rem;cursor:pointer;font-family:inherit;">✅ Selected ko Notes mein Add Karo</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ==================== MASTER NOTES SYSTEM ====================
+
+let _masterState = {
+  sid: null, secid: null, tid: null,
+  generatedNotes: '',
+  isRegenerate: false
+};
+
+function openMasterNotesModal(sid, secid, tid) {
+  if(!S.apiKey) { showToast('Pehle API Key daalo Settings mein!', 'error'); return; }
+  const t = getTop(sid, secid, tid);
+  if(!t) return;
+
+  _masterState = { sid, secid, tid, generatedNotes: '', isRegenerate: !!t.masterNotes };
+
+  document.getElementById('masterTopicName').textContent = '📌 ' + t.name;
+  document.getElementById('masterInstructions').value = '';
+  document.getElementById('masterProgressBox').style.display = 'none';
+  document.getElementById('masterResultBox').style.display = 'none';
+
+  // Regenerate notice
+  const regenNotice = document.getElementById('masterRegenNotice');
+  regenNotice.style.display = t.masterNotes ? 'block' : 'none';
+
+  // Generate button text
+  document.getElementById('masterGenBtn').textContent = t.masterNotes ? '🔄 Naye Sources se Extra Facts Nikalo' : '⚡ Master Notes Banao';
+
+  // Sources list banao
+  buildSourcesList(t, sid, secid, tid);
+
+  document.getElementById('masterNotesModal').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeMasterModal() {
+  document.getElementById('masterNotesModal').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function buildSourcesList(t, sid, secid, tid) {
+  const container = document.getElementById('masterSourcesList');
+  const sources = [];
+
+  // Smart Notes
+  if(t.smartNotesAI) sources.push({ id: 'smartnotes', label: '🧠 Smart Notes', preview: t.smartNotesAI.substring(0,60)+'...', checked: true });
+
+  // Final Notes
+  if(t.finalNotes) sources.push({ id: 'finalnotes', label: '⭐ Final Notes', preview: t.finalNotes.substring(0,60).replace(/%%[^%]+%%/g,'')+'...', checked: true });
+
+  // Raw/Manual Notes
+  if(t.notes && t.notes.length > 0) {
+    t.notes.forEach((n, i) => {
+      sources.push({ id: 'raw_' + i, label: '📄 ' + (n.name || 'Note '+(i+1)), preview: n.content.substring(0,60)+'...', checked: true });
+    });
+  }
+
+  // Master Notes (already bane hue — sirf regenerate mein)
+  if(t.masterNotes) sources.push({ id: 'masternotes', label: '⚡ Purane Master Notes', preview: t.masterNotes.substring(0,60)+'...', checked: false });
+
+  if(sources.length === 0) {
+    container.innerHTML = '<div style="font-size:0.8rem;color:#c62828;padding:8px;background:#ffebee;border-radius:8px;">⚠️ Koi notes nahi hain! Pehle kuch notes add karo (Raw notes, PDF se, Audio se, ya Smart Notes banao).</div>';
+    return;
+  }
+
+  container.innerHTML = sources.map(s => `
+    <label style="display:flex;align-items:flex-start;gap:10px;padding:9px 12px;background:#f4f9fe;border-radius:10px;cursor:pointer;border:1.5px solid transparent;" 
+           onmouseover="this.style.borderColor='#bdd5ea'" onmouseout="this.style.borderColor='transparent'">
+      <input type="checkbox" id="src_${s.id}" ${s.checked?'checked':''} style="margin-top:2px;accent-color:#4a148c;width:15px;height:15px;flex-shrink:0;">
+      <div>
+        <div style="font-size:0.82rem;font-weight:700;color:#0d1b2a;">${s.label}</div>
+        <div style="font-size:0.7rem;color:#37526d;margin-top:1px;">${s.preview}</div>
+      </div>
+    </label>
+  `).join('');
+}
+
+async function masterGenerateNotes() {
+  const t = getTop(_masterState.sid, _masterState.secid, _masterState.tid);
+  if(!t) return;
+
+  const btn = document.getElementById('masterGenBtn');
+  const isRegen = _masterState.isRegenerate;
+
+  // Selected sources se data collect karo
+  let combinedData = '';
+  let sourceCount = 0;
+
+  if(document.getElementById('src_smartnotes')?.checked && t.smartNotesAI) {
+    combinedData += `\n\n=== 🧠 SMART NOTES ===\n${t.smartNotesAI.substring(0, 3000)}`;
+    sourceCount++;
+  }
+  if(document.getElementById('src_finalnotes')?.checked && t.finalNotes) {
+    const clean = t.finalNotes.replace(/%%[^%]+%%[^%]*%%[A-Z]+%%/g,'').replace(/%%\w+%%/g,'');
+    combinedData += `\n\n=== ⭐ FINAL NOTES ===\n${clean.substring(0, 3000)}`;
+    sourceCount++;
+  }
+  if(t.notes) {
+    t.notes.forEach((n, i) => {
+      if(document.getElementById('src_raw_' + i)?.checked) {
+        combinedData += `\n\n=== 📄 ${n.name} ===\n${n.content.substring(0, 2000)}`;
+        sourceCount++;
+      }
+    });
+  }
+  if(document.getElementById('src_masternotes')?.checked && t.masterNotes) {
+    combinedData += `\n\n=== ⚡ PURANE MASTER NOTES ===\n${t.masterNotes.substring(0, 2000)}`;
+    sourceCount++;
+  }
+
+  if(sourceCount === 0) { showToast('Kam se kam ek source chunno!', 'error'); return; }
+
+  const userInstructions = document.getElementById('masterInstructions').value.trim();
+  const subj = getSubj(_masterState.sid);
+  const sec = getSec(_masterState.sid, _masterState.secid);
+
+  btn.disabled = true;
+  btn.textContent = '⏳ AI analysis kar raha hai...';
+  document.getElementById('masterProgressBox').style.display = 'block';
+  document.getElementById('masterResultBox').style.display = 'none';
+  setMasterProgress(15, '📚 Sources combine ho rahe hain...');
+
+  try {
+    let prompt;
+
+    if(isRegen) {
+      // Regenerate mode — sirf extra facts nikalo
+      setMasterProgress(40, '🔍 Naye facts dhundh raha hoon...');
+      prompt = `Tu ek expert teacher hai.
+
+TOPIC: ${subj?.name} > ${sec?.name} > ${t.name}
+
+PURANE MASTER NOTES (YEH ALREADY SAVE HAIN — INHE MAT CHHEDO):
+${t.masterNotes.substring(0, 2000)}
+
+NAYE SOURCES KA DATA:
+${combinedData.substring(0, 6000)}
+
+USER KE NIRDESH: ${userInstructions || 'Naye sources mein jo extra facts hain jo purane master notes mein nahi hain unhe nikalo.'}
+
+TASK: Sirf wo points nikalo jo PURANE MASTER NOTES MEIN BILKUL NAHI HAIN.
+FORMAT: Har ek naya fact ek alag line mein likho, pehle "FACT:" likho.
+Jaise:
+FACT: Yeh ek naya point hai jo pehle nahi tha.
+FACT: Dusra naya fact.
+
+Sirf naye unique facts do, repetition mat karo:`;
+    } else {
+      // Fresh generate
+      setMasterProgress(40, '🤖 Deep analysis ho rahi hai...');
+      prompt = `Tu ek expert teacher hai jo comprehensive study notes banata hai.
+
+SUBJECT: ${subj?.name} > ${sec?.name} > ${t.name}
+
+SOURCES DATA:
+${combinedData.substring(0, 8000)}
+
+USER KE NIRDESH: ${userInstructions || 'In sabhi sources ko milake ek comprehensive, well-structured master notes banao jo exam ke liye perfect ho.'}
+
+RULES:
+1. Sabhi sources ke important points cover karo
+2. Duplicate information ek baar hi likho
+3. ** se important points mark karo
+4. Clear headings use karo
+5. Hindi mein, readable format mein
+6. Koi bhi fact miss mat karo
+
+Seedha notes do:`;
+    }
+
+    setMasterProgress(65, '✍️ Notes likh raha hoon...');
+    const result = await callGroq(prompt, 5000);
+    setMasterProgress(100, '✅ Complete!');
+
+    if(isRegen) {
+      // Extra facts parse karo
+      const facts = [];
+      result.split('\n').forEach(line => {
+        const match = line.match(/^FACT:\s*(.+)/i);
+        if(match && match[1].trim().length > 10) {
+          facts.push({
+            id: 'ef_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+            text: match[1].trim(),
+            date: new Date().toLocaleDateString('hi-IN'),
+            added: false
+          });
+        }
+      });
+
+      if(facts.length === 0) {
+        showToast('Koi naya fact nahi mila — sab already master notes mein hai!', 'success');
+        document.getElementById('masterProgressBox').style.display = 'none';
+        btn.disabled = false;
+        btn.textContent = '🔄 Naye Sources se Extra Facts Nikalo';
+        return;
+      }
+
+      // Facts save karo
+      t.masterExtraFacts = [...(t.masterExtraFacts || []), ...facts];
+      save();
+      renderLibraryTree();
+
+      document.getElementById('masterProgressBox').style.display = 'none';
+      closeMasterModal();
+
+      // Topic view refresh karo
+      const tvModal = document.getElementById('topicViewModal');
+      if(tvModal && tvModal.classList.contains('show')) {
+        viewTopic(_masterState.sid, _masterState.secid, _masterState.tid);
+      }
+
+      showToast(`🆕 ${facts.length} naye facts mile! "Naye Facts Dekho" button se dekho.`, 'success');
+
+    } else {
+      // Fresh notes — result dikhao
+      _masterState.generatedNotes = result;
+      document.getElementById('masterResultText').textContent = result;
+      document.getElementById('masterResultBox').style.display = 'block';
+      document.getElementById('masterResultBox').scrollIntoView({ behavior: 'smooth' });
+      setTimeout(() => { document.getElementById('masterProgressBox').style.display = 'none'; }, 500);
+    }
+
+  } catch(err) {
+    document.getElementById('masterProgressBox').style.display = 'none';
+    showToast('Error: ' + err.message, 'error');
+  }
+
+  btn.disabled = false;
+  btn.textContent = isRegen ? '🔄 Naye Sources se Extra Facts Nikalo' : '⚡ Master Notes Banao';
+}
+
+function setMasterProgress(pct, label) {
+  document.getElementById('masterProgressBar').style.width = pct + '%';
+  document.getElementById('masterProgressLabel').textContent = label;
+}
+
+function masterSaveNotes() {
+  if(!_masterState.generatedNotes) return;
+  const t = getTop(_masterState.sid, _masterState.secid, _masterState.tid);
+  if(!t) return;
+  t.masterNotes = _masterState.generatedNotes;
+  t.masterNotesAt = new Date().toLocaleDateString('hi-IN');
+  t.masterNotesHTML = null;
+  t.masterExtraFacts = t.masterExtraFacts || [];
+  save();
+  renderLibraryTree();
+  showToast('✅ Master Notes save ho gaye!', 'success');
+  closeMasterModal();
+  const tvModal = document.getElementById('topicViewModal');
+  if(tvModal && tvModal.classList.contains('show')) {
+    viewTopic(_masterState.sid, _masterState.secid, _masterState.tid);
+  }
+}
+
+function masterOpenEditor() {
+  if(!_masterState.generatedNotes) return;
+  // Pehle save karo phir editor kholo
+  masterSaveNotes();
+  setTimeout(() => {
+    openSpecialEditor('masternotes', _masterState.sid, _masterState.secid, _masterState.tid);
+  }, 300);
+}
+
+function masterCopy() {
+  if(!_masterState.generatedNotes) return;
+  navigator.clipboard.writeText(_masterState.generatedNotes)
+    .then(() => showToast('📋 Copy ho gaya!', 'success'))
+    .catch(() => showToast('Copy fail', 'error'));
+}
+
+function masterNotesCopy(sid, secid, tid) {
+  const t = getTop(sid, secid, tid);
+  if(!t || !t.masterNotes) return;
+  navigator.clipboard.writeText(t.masterNotes)
+    .then(() => showToast('📋 Master Notes copy ho gaye!', 'success'))
+    .catch(() => showToast('Copy fail', 'error'));
+}
+
+// ---- Extra Facts Panel ----
+function openExtraFactsPanel(sid, secid, tid) {
+  const t = getTop(sid, secid, tid);
+  if(!t) return;
+  _masterState.sid = sid;
+  _masterState.secid = secid;
+  _masterState.tid = tid;
+
+  const facts = (t.masterExtraFacts || []).filter(f => !f.added);
+  if(facts.length === 0) { showToast('Koi naye facts nahi hain!', 'error'); return; }
+
+  document.getElementById('extraFactsList').innerHTML = facts.map(f => `
+    <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid #eee;">
+      <input type="checkbox" id="ef_${f.id}" style="margin-top:3px;accent-color:#e65100;width:15px;height:15px;flex-shrink:0;">
+      <div>
+        <div style="font-size:0.82rem;color:#0d1b2a;line-height:1.5;">${f.text}</div>
+        <div style="font-size:0.68rem;color:#888;margin-top:2px;">${f.date}</div>
+      </div>
+    </div>
+  `).join('');
+
+  document.getElementById('extraFactsModal').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeExtraFacts() {
+  document.getElementById('extraFactsModal').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function addSelectedExtraFacts() {
+  const t = getTop(_masterState.sid, _masterState.secid, _masterState.tid);
+  if(!t) return;
+
+  const facts = (t.masterExtraFacts || []).filter(f => !f.added);
+  const selected = facts.filter(f => document.getElementById('ef_' + f.id)?.checked);
+
+  if(selected.length === 0) { showToast('Koi fact select nahi kiya!', 'error'); return; }
+
+  // Master notes mein add karo
+  const toAdd = selected.map(f => `• ${f.text}`).join('\n');
+  t.masterNotes = (t.masterNotes || '') + '\n\n--- 🆕 Naye Facts (' + new Date().toLocaleDateString('hi-IN') + ') ---\n' + toAdd;
+  t.masterNotesHTML = null; // HTML reset karo
+
+  // Mark as added
+  selected.forEach(sf => {
+    const idx = t.masterExtraFacts.findIndex(f => f.id === sf.id);
+    if(idx !== -1) t.masterExtraFacts[idx].added = true;
+  });
+
+  save();
+  closeExtraFacts();
+  showToast(`✅ ${selected.length} facts Master Notes mein add ho gaye!`, 'success');
+
+  const tvModal = document.getElementById('topicViewModal');
+  if(tvModal && tvModal.classList.contains('show')) {
+    viewTopic(_masterState.sid, _masterState.secid, _masterState.tid);
+  }
 }
 </script>
