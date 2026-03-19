@@ -9053,13 +9053,118 @@ function openHighlightExport() {
   });
   box.appendChild(listDiv);
 
+  // Destination Selector
+  var destDiv = document.createElement('div');
+  destDiv.style.cssText = 'padding:8px 18px 10px;border-top:1px solid #eee;';
+
+  var destLabel = document.createElement('div');
+  destLabel.style.cssText = 'font-size:0.76rem;font-weight:800;color:#37526d;margin-bottom:6px;';
+  destLabel.textContent = '📍 Destination chunno (kahan bhejna hai):';
+  destDiv.appendChild(destLabel);
+
+  // Subject select
+  var destSubjSel = document.createElement('select');
+  destSubjSel.id = 'hlDestSubjectSel';
+  destSubjSel.style.cssText = 'width:100%;padding:7px 10px;border:1.5px solid #bdd5ea;border-radius:8px;font-size:0.8rem;font-family:inherit;margin-bottom:5px;outline:none;';
+  destSubjSel.innerHTML = '<option value="">-- Subject chunno --</option>';
+  S.subjects.forEach(function(s){
+    var opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = '📗 ' + s.name;
+    if(s.id == sid) opt.selected = true;
+    destSubjSel.appendChild(opt);
+  });
+
+  // Section select
+  var destSecSel = document.createElement('select');
+  destSecSel.id = 'hlDestSectionSel';
+  destSecSel.style.cssText = 'width:100%;padding:7px 10px;border:1.5px solid #bdd5ea;border-radius:8px;font-size:0.8rem;font-family:inherit;margin-bottom:5px;outline:none;';
+  destSecSel.innerHTML = '<option value="">-- Section chunno --</option>';
+
+  // Topic select
+  var destTopicSel = document.createElement('select');
+  destTopicSel.id = 'hlDestTopicSel';
+  destTopicSel.style.cssText = 'width:100%;padding:7px 10px;border:1.5px solid #bdd5ea;border-radius:8px;font-size:0.8rem;font-family:inherit;margin-bottom:5px;outline:none;';
+  destTopicSel.innerHTML = '<option value="">-- Topic chunno (optional) --</option>';
+
+  // Hidden dest type
+  var destTypeInp = document.createElement('input');
+  destTypeInp.type = 'hidden';
+  destTypeInp.id = 'hlDestType';
+  destTypeInp.value = tid ? 'topic' : secid ? 'section' : 'subject';
+
+  // Fill sections on subject change
+  function fillDestSections(selSid) {
+    destSecSel.innerHTML = '<option value="">-- Section chunno --</option>';
+    destTopicSel.innerHTML = '<option value="">-- Topic chunno (optional) --</option>';
+    if(!selSid) return;
+    var subj = S.subjects.find(function(s){ return s.id == selSid; });
+    if(subj) {
+      subj.sections.forEach(function(sec){
+        var opt = document.createElement('option');
+        opt.value = sec.id;
+        opt.textContent = '📘 ' + sec.name;
+        if(sec.id == secid) opt.selected = true;
+        destSecSel.appendChild(opt);
+      });
+    }
+  }
+
+  function fillDestTopics(selSid, selSecid) {
+    destTopicSel.innerHTML = '<option value="">-- Topic chunno (optional) --</option>';
+    if(!selSid || !selSecid) return;
+    var subj = S.subjects.find(function(s){ return s.id == selSid; });
+    if(subj) {
+      var sec = subj.sections.find(function(sec){ return sec.id == selSecid; });
+      if(sec) {
+        sec.topics.forEach(function(t){
+          var opt = document.createElement('option');
+          opt.value = t.id;
+          opt.textContent = '📙 ' + t.name;
+
+          // Show duplicate count for this topic
+          var existing = (t.savedFacts||[]);
+          var dupCount = 0;
+          hlItems.forEach(function(h){
+            if(existing.some(function(f){ return (f.text||'').toLowerCase().trim() === h.text.toLowerCase().trim(); })) dupCount++;
+          });
+          if(dupCount > 0) opt.textContent += ' (' + dupCount + ' pehle se hain)';
+
+          if(t.id == tid) opt.selected = true;
+          destTopicSel.appendChild(opt);
+        });
+      }
+    }
+  }
+
+  // Pre-fill if source context available
+  if(sid) {
+    fillDestSections(sid);
+    if(secid) fillDestTopics(sid, secid);
+  }
+
+  destSubjSel.onchange = function(){ fillDestSections(this.value); destTypeInp.value = 'subject'; };
+  destSecSel.onchange = function(){ fillDestTopics(destSubjSel.value, this.value); destTypeInp.value = 'section'; };
+  destTopicSel.onchange = function(){ if(this.value) destTypeInp.value = 'topic'; else destTypeInp.value = 'section'; };
+
+  destDiv.appendChild(destSubjSel);
+  destDiv.appendChild(destSecSel);
+  destDiv.appendChild(destTopicSel);
+  destDiv.appendChild(destTypeInp);
+  box.appendChild(destDiv);
+
   // Footer button
   var footer = document.createElement('div');
   footer.style.cssText = 'padding:10px 18px 16px;display:flex;gap:8px;';
   var saveBtn = document.createElement('button');
   saveBtn.style.cssText = 'flex:1;padding:11px;background:linear-gradient(135deg,#6a1b9a,#8e24aa);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.85rem;cursor:pointer;font-family:inherit;';
-  saveBtn.textContent = 'Facts mein Bhejo';
-  saveBtn.onclick = function(){ hlExportSelected(sid, secid, tid); };
+  saveBtn.textContent = '📌 Facts mein Bhejo (Duplicates Skip)';
+  saveBtn.onclick = function(){
+    var dSid = parseInt(destSubjSel.value) || sid;
+    var dSecid = parseInt(destSecSel.value) || secid;
+    var dTid = parseInt(destTopicSel.value) || (destTopicSel.value ? parseInt(destTopicSel.value) : tid);
+    hlExportSelected(dSid, dSecid, dTid);
+  };
   footer.appendChild(saveBtn);
   box.appendChild(footer);
 
@@ -9072,37 +9177,99 @@ function hlToggleAll(checked) {
   document.querySelectorAll('.hlExportCheck').forEach(cb => cb.checked = checked);
 }
 
+// Helper: destination ke existing facts check karo duplicate ke liye
+function _getDestFacts(destType, sid, secid, tid) {
+  if(destType === 'topic') {
+    const t = getTop(sid, secid, tid);
+    return t ? (t.savedFacts || []) : [];
+  } else if(destType === 'section') {
+    const sec = getSec(sid, secid);
+    return sec ? (sec.facts || []) : [];
+  } else {
+    const subj = getSubj(sid);
+    return subj ? (subj.facts || []) : [];
+  }
+}
+
+// Text ka normalized version (lowercase + trim) for comparison
+function _normText(t) { return (t||'').toLowerCase().replace(/\s+/g,' ').trim(); }
+
+// Kya yeh text pehle se destination mein hai?
+function _isDuplicate(text, existingFacts) {
+  const norm = _normText(text);
+  return existingFacts.some(f => _normText(f.text) === norm);
+}
+
 function hlExportSelected(sid, secid, tid) {
   const checks = document.querySelectorAll('.hlExportCheck:checked');
   if(checks.length === 0) { showToast("Koi highlight select nahi kiya!", "error"); return; }
 
   const texts = Array.from(checks).map(cb => cb.dataset.text);
+  const destTid = parseInt(document.getElementById('hlDestTopicSel')?.value) || tid;
+  const destSecid = parseInt(document.getElementById('hlDestSectionSel')?.value) || secid;
+  const destSid = parseInt(document.getElementById('hlDestSubjectSel')?.value) || sid;
+  const destType = document.getElementById('hlDestType')?.value || (destTid ? 'topic' : destSecid ? 'section' : 'subject');
 
   document.getElementById('hlExportModal').remove();
   document.body.style.overflow = '';
 
-  // Ek ek kar ke fact collector mein open karo — ya seedha save karo
+  // Single fact: fact collector mein bhejo (with destination pre-selected)
   if(texts.length === 1) {
-    openFactCollector(texts[0], sid, secid, tid);
-  } else {
-    // Multiple: seedha save karo topic mein
-    const t = tid ? getTop(sid, secid, tid) : null;
-    const sec = secid ? getSec(sid, secid) : null;
-    const subj = getSubj(sid);
-    let savedCount = 0;
-
-    texts.forEach(text => {
-      const fact = { id: Date.now() + Math.random(), text, date: new Date().toLocaleDateString('hi-IN'), source: 'highlight' };
-      if(t) { if(!t.savedFacts) t.savedFacts=[]; t.savedFacts.push(fact); savedCount++; }
-      else if(sec) { if(!sec.facts) sec.facts=[]; sec.facts.push(fact); savedCount++; }
-      else if(subj) { if(!subj.facts) subj.facts=[]; subj.facts.push(fact); savedCount++; }
-    });
-
-    save();
-    renderLibraryTree();
-    showToast('📌 ' + savedCount + ' highlights facts mein save ho gaye!', 'success');
-    updateSavedBadge();
+    openFactCollector(texts[0], destSid, destSecid, destTid);
+    return;
   }
+
+  // Multiple facts: duplicate check karke save karo
+  const t   = destTid   ? getTop(destSid, destSecid, destTid)   : null;
+  const sec = destSecid ? getSec(destSid, destSecid)             : null;
+  const subj = getSubj(destSid);
+
+  // Destination ki existing facts lo
+  let existingFacts = [];
+  if(t)      existingFacts = t.savedFacts    || [];
+  else if(sec) existingFacts = sec.facts       || [];
+  else if(subj) existingFacts = subj.facts    || [];
+
+  let savedCount = 0;
+  let skippedCount = 0;
+  let skippedTexts = [];
+
+  texts.forEach(text => {
+    if(_isDuplicate(text, existingFacts)) {
+      // Pehle se hai is destination mein — skip karo
+      skippedCount++;
+      skippedTexts.push(text.substring(0, 40) + (text.length > 40 ? '...' : ''));
+      return;
+    }
+    // Naya fact — add karo
+    const fact = {
+      id: Date.now() + Math.random(),
+      text,
+      date: new Date().toLocaleDateString('hi-IN'),
+      source: 'highlight'
+    };
+    if(t)         { if(!t.savedFacts) t.savedFacts=[]; t.savedFacts.push(fact); existingFacts = t.savedFacts; }
+    else if(sec)  { if(!sec.facts) sec.facts=[]; sec.facts.push(fact); existingFacts = sec.facts; }
+    else if(subj) { if(!subj.facts) subj.facts=[]; subj.facts.push(fact); existingFacts = subj.facts; }
+    savedCount++;
+  });
+
+  save();
+  renderLibraryTree();
+  updateSavedBadge();
+
+  // User ko clear message do
+  if(savedCount > 0 && skippedCount === 0) {
+    showToast('📌 ' + savedCount + ' facts save ho gaye!', 'success');
+  } else if(savedCount > 0 && skippedCount > 0) {
+    showToast('📌 ' + savedCount + ' naye save | ⏭️ ' + skippedCount + ' pehle se the — skip kiye', 'success');
+  } else if(savedCount === 0 && skippedCount > 0) {
+    showToast('⏭️ Saare ' + skippedCount + ' facts pehle se is destination mein hain!', 'error');
+  }
+
+  // Topic view refresh
+  const tvModal = document.getElementById('topicViewModal');
+  if(tvModal?.classList.contains('show') && destTid) viewTopic(destSid, destSecid, destTid);
 }
 
 // Editor mein "Highlights → Facts" button add karo
