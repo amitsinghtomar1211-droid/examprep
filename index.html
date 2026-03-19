@@ -4593,31 +4593,27 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesEditor'}, '');
 }
-
 function closeNotesEditor() {
-  // Agar already closing chal raha hai to ignore (double-click prevention)
-  if(_editorClosing) return;
-
   if(_editorState.modified) {
-    // Changes hain -- popup dikhao
+    // Agar changes hain aur save nahi kiye, to popup dikhao
     showUnsavedPopup();
-    return;
+  } else {
+    // Agar changes save ho chuke hain, to seedha bahar nikalo
+    _forceCloseEditor();
   }
-  // Koi changes nahi -- seedha band karo
-  _forceCloseEditor();
 }
-
 function _forceCloseEditor() {
   neSetEditMode(false);
   setHlMode('off');
   hideMagnifier();
-  _editorState.modified = false;
+  _editorState.modified = false; // Flag reset karna zaroori hai
 
   // UI cleanup
   var dot = document.getElementById('unsavedDot');
   var dot2 = document.getElementById('unsavedDot2');
   if(dot) dot.style.display = 'none';
   if(dot2) dot2.style.display = 'none';
+  
   var saveBtn = document.getElementById('saveNoteBtn');
   if(saveBtn) {
     saveBtn.style.display = 'none';
@@ -4627,22 +4623,21 @@ function _forceCloseEditor() {
   }
   neResetToolbar();
 
-  // Editor overlay band karo - ONLY via classList (inline style conflict avoid karo)
+  // Editor overlay ko properly band karna
   var ov = document.getElementById('notesEditorOverlay');
   if(ov) {
     ov.classList.remove('show');
-    // Inline style reset karo taaki future opens work karein
-    ov.style.display = '';
+    ov.style.display = 'none'; // Ise 'none' karna zaroori tha taaki screen se hate
   }
   document.body.style.overflow = '';
+  
   // Koi bhi pending unsaved popup bhi hatao
   var popup = document.getElementById('unsavedPopupOverlay');
   if(popup) popup.remove();
+  
+  // Closing process finish
+  _editorClosing = false; 
 }
-
-// Flag: double-close aur race condition rokne ke liye
-var _editorClosing = false;
-
 function showUnsavedPopup() {
   // Agar already closing chal raha hai to ignore
   if(_editorClosing) return;
@@ -5399,15 +5394,17 @@ function copyEditorContent() {
 }
 
 function saveEditedNote() {
-  // Sirf Save button ke liye -- editor page par REHNA hai, band NAHI karna
   var ok = _doSaveNoteData();
   if(!ok) {
     showToast('Save nahi ho saka!', 'error');
     return;
   }
 
-  save(); // localStorage mein save + Firebase sync trigger
-  _editorState.modified = false;
+  // localStorage mein save + Firebase sync trigger (Isse refresh par data rahega)
+  save(); 
+  
+  // MOST IMPORTANT: Yeh batata hai ki ab changes save ho gaye hain
+  _editorState.modified = false; 
 
   // Save button: "Saved!" dikhao, phir hide karo
   var saveBtn = document.getElementById('saveNoteBtn');
@@ -5429,7 +5426,7 @@ function saveEditedNote() {
   if(dot) dot.style.display = 'none';
   if(dot2) dot2.style.display = 'none';
 
-  neUpdateStatusBar('✅ Save Ho Gaya! -- Ab aur edit kar sakte hain');
+  neUpdateStatusBar('✅ Save Ho Gaya! -- Ab band karke bahar ja sakte hain');
   renderLibraryTree();
 
   var tvModal = document.getElementById('topicViewModal');
@@ -5439,7 +5436,6 @@ function saveEditedNote() {
 
   showSaveSuccessPopup();
 }
-
 function showSaveSuccessPopup() {
   // Remove purana agar hai
   const old = document.getElementById('saveSuccessPopup');
