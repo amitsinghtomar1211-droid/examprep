@@ -6944,8 +6944,11 @@ function pdfCopyResult() {
       <button onclick="ytExtractTranscript()" id="ytExtractBtn" style="width:100%;padding:11px;background:linear-gradient(135deg,#ff0000,#cc0000);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.88rem;cursor:pointer;font-family:inherit;">📥 Transcript Extract Karo</button>
 
       <!-- Manual fallback info -->
-      <div style="margin-top:10px;padding:10px 12px;background:#fff8e1;border-radius:8px;font-size:0.72rem;color:#e65100;line-height:1.5;">
-        💡 <strong>Tip:</strong> Agar transcript nahi mile to YouTube mein video kholo → <strong>3 dots (⋮) → Transcript</strong> → Copy karo → "📝 Paste" tab mein paste karo
+      <div style="margin-top:10px;padding:10px 12px;background:#fff8e1;border-radius:8px;font-size:0.72rem;color:#e65100;line-height:1.6;">
+        💡 <strong>Agar auto-fetch kaam na kare:</strong><br>
+        YouTube app → video → <strong>⋮ → Transcript</strong> → Copy → "📝 Paste" tab
+        <br><br>
+        ✅ <strong>Audio tab bhi use kar sakte ho</strong> — video ka audio download karke Whisper AI se exact transcription milegi!
       </div>
     </div>
 
@@ -7090,73 +7093,79 @@ async function ytExtractTranscript() {
   const link = document.getElementById('ytLinkInput').value.trim();
   if(!link) { showToast('YouTube link daalo!', 'error'); return; }
 
-  // Video ID extract karo
+  // Video ID extract karo — sabhi YouTube URL formats handle karo
   let videoId = '';
   try {
     const url = new URL(link);
-    videoId = url.searchParams.get('v') || url.pathname.split('/').pop();
+    if(url.hostname.includes('youtu.be')) {
+      videoId = url.pathname.slice(1).split('?')[0];
+    } else {
+      videoId = url.searchParams.get('v') || '';
+    }
   } catch(e) {
-    showToast('Valid YouTube link daalo!', 'error'); return;
+    // Plain video ID bhi ho sakta hai
+    videoId = link.trim();
   }
-  if(!videoId) { showToast('Video ID nahi mila link mein!', 'error'); return; }
+  if(!videoId) { showToast('Valid YouTube link daalo!', 'error'); return; }
 
   const btn = document.getElementById('ytExtractBtn');
   btn.disabled = true;
   btn.textContent = '⏳ Transcript dhundh raha hoon...';
-  setYtProgress(20, '🔍 YouTube transcript fetch ho rahi hai...');
+  setYtProgress(10, '🔍 YouTube transcript fetch ho rahi hai...');
   document.getElementById('ytProgressBox').style.display = 'block';
 
-  try {
-    // Free transcript API try karo
-    const apis = [
-      `https://yt-transcript-api.vercel.app/api/transcript?videoId=${videoId}`,
-      `https://youtube-transcript.vercel.app/api/transcript?videoId=${videoId}`
-    ];
+  let transcript = '';
+  let success = false;
 
-    let transcript = '';
-    let success = false;
+  // Multiple APIs try karo
+  const apis = [
+    `https://api.kome.ai/api/tools/youtube-transcripts?video_id=${videoId}`,
+    `https://yt-transcripter.vercel.app/api?videoId=${videoId}`,
+    `https://deserving-daily-shrimp.ngrok-free.app/transcript/${videoId}`,
+  ];
 
-    for(const apiUrl of apis) {
-      try {
-        setYtProgress(40, '📡 API se data aa raha hai...');
-        const resp = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) });
-        if(resp.ok) {
-          const data = await resp.json();
-          // Different API response formats handle karo
-          if(Array.isArray(data)) {
-            transcript = data.map(item => item.text || item.transcript || '').join(' ');
-          } else if(data.transcript) {
-            transcript = data.transcript;
-          } else if(data.text) {
-            transcript = data.text;
-          }
-          if(transcript.length > 50) { success = true; break; }
+  for(let i = 0; i < apis.length; i++) {
+    try {
+      setYtProgress(20 + i*15, `📡 API ${i+1} try kar raha hoon...`);
+      const resp = await fetch(apis[i], {
+        signal: AbortSignal.timeout(7000),
+        headers: { 'Accept': 'application/json' }
+      });
+      if(resp.ok) {
+        const data = await resp.json();
+        // Alag alag formats handle
+        if(typeof data === 'string' && data.length > 50) {
+          transcript = data; success = true; break;
+        } else if(Array.isArray(data)) {
+          const t = data.map(x => x.text || x.transcript || x.content || '').join(' ');
+          if(t.length > 50) { transcript = t; success = true; break; }
+        } else if(data.transcript && data.transcript.length > 50) {
+          transcript = data.transcript; success = true; break;
+        } else if(data.text && data.text.length > 50) {
+          transcript = data.text; success = true; break;
+        } else if(data.data) {
+          const t = Array.isArray(data.data) 
+            ? data.data.map(x => x.text || '').join(' ')
+            : String(data.data);
+          if(t.length > 50) { transcript = t; success = true; break; }
         }
-      } catch(e) { continue; }
-    }
+      }
+    } catch(e) { continue; }
+  }
 
-    if(!success || transcript.length < 50) {
-      // API kaam nahi kiya — manual tab suggest karo
-      setYtProgress(0, '');
-      document.getElementById('ytProgressBox').style.display = 'none';
-      showToast('Transcript auto-fetch nahi ho saka', 'error');
-      // Switch to manual tab with helpful message
-      switchYtTab('manual');
-      document.getElementById('manualPasteInput').placeholder = `YouTube se transcript manually copy karo:\n\n1. YouTube mein video kholo: youtube.com/watch?v=${videoId}\n2. Video ke neeche ⋮ (3 dots) click karo\n3. "Open transcript" ya "Transcript" option chunno\n4. Saara text copy karo aur yahan paste karo`;
-      showToast('💡 Manual tab mein YouTube transcript paste karo', 'error');
-      btn.disabled = false;
-      btn.textContent = '📥 Transcript Extract Karo';
-      return;
-    }
-
+  if(success) {
     setYtProgress(100, '✅ Transcript mil gayi!');
     _ytState.extractedText = transcript;
     showExtractedText(transcript, 'YouTube Transcript');
     setTimeout(() => { document.getElementById('ytProgressBox').style.display = 'none'; }, 800);
-
-  } catch(err) {
+  } else {
+    // Koi bhi API kaam nahi ki — manual guide dikhao
     document.getElementById('ytProgressBox').style.display = 'none';
-    showToast('Error: ' + err.message, 'error');
+    switchYtTab('manual');
+    document.getElementById('manualPasteInput').value = '';
+    document.getElementById('manualPasteInput').placeholder = 
+      'YouTube transcript yahan paste karo:\n\n📋 Steps:\n1. YouTube app mein video kholo\n2. Video title ke neeche ⋮ (3 dots) tap karo\n3. "Transcript" ya "Open transcript" option chunno\n4. Saara text select karke copy karo\n5. Yahan paste karo\n\n(Desktop pe: Video ke neeche ... > Show transcript)';
+    showToast('⚠️ Auto-fetch nahi hua — Paste tab mein manually paste karo', 'error');
   }
 
   btn.disabled = false;
@@ -7176,88 +7185,63 @@ function audioFileSelected(input) {
 
 async function audioExtractText() {
   if(!_ytState.audioFile) { showToast('Audio file chunno!', 'error'); return; }
+  if(!S.apiKey) { showToast('Pehle API Key daalo Settings mein!', 'error'); return; }
 
   const btn = document.getElementById('audioExtractBtn');
   btn.disabled = true;
-  btn.textContent = '⏳ Sun raha hoon...';
-  setYtProgress(10, '🎵 Audio load ho rahi hai...');
+  btn.textContent = '⏳ Processing...';
+  setYtProgress(10, '🎵 Audio prepare ho rahi hai...');
   document.getElementById('ytProgressBox').style.display = 'block';
   document.getElementById('ytProgressBar').style.background = 'linear-gradient(90deg,#6a1b9a,#ab47bc)';
 
   try {
-    // Browser SpeechRecognition API use karo
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const file = _ytState.audioFile;
+    setYtProgress(30, '📤 Groq Whisper ko bhej raha hoon...');
 
-    if(!SpeechRecognition) {
-      throw new Error('Aapka browser Speech Recognition support nahi karta. Chrome use karo.');
+    // File size check — Groq Whisper 25MB limit
+    if(file.size > 25 * 1024 * 1024) {
+      throw new Error('File bahut badi hai (25MB se zyada). Choti audio clip use karo.');
     }
 
-    setYtProgress(30, '🎙️ Audio convert ho rahi hai...');
+    // FormData banao Whisper API ke liye
+    const formData = new FormData();
+    formData.append('file', file, file.name);
+    formData.append('model', 'whisper-large-v3');
+    formData.append('response_format', 'text');
+    formData.append('language', 'hi'); // Hindi primary, auto-detect bhi karta hai
 
-    // Audio ko URL mein convert karo
-    const audioUrl = URL.createObjectURL(_ytState.audioFile);
-    const audio = new Audio(audioUrl);
+    setYtProgress(50, '🤖 Groq Whisper transcribing... (thoda time lagega)');
 
-    // SpeechRecognition setup
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = 'hi-IN'; // Hindi primary
-    recognition.maxAlternatives = 1;
-
-    let fullText = '';
-    let isListening = true;
-
-    recognition.onresult = (event) => {
-      for(let i = event.resultIndex; i < event.results.length; i++) {
-        if(event.results[i].isFinal) {
-          fullText += event.results[i][0].transcript + ' ';
-        }
-      }
-      setYtProgress(60, `🎙️ Text extract ho raha hai... (${fullText.split(' ').length} words)`);
-    };
-
-    recognition.onerror = (e) => {
-      isListening = false;
-    };
-
-    recognition.onend = () => {
-      isListening = false;
-    };
-
-    // Audio play karo aur recognition start karo
-    recognition.start();
-    audio.play();
-
-    setYtProgress(50, '🎙️ Audio sun raha hoon — please wait...');
-
-    // Audio end hone ka wait karo
-    await new Promise((resolve) => {
-      audio.onended = resolve;
-      setTimeout(resolve, 120000); // Max 2 min
+    const resp = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${S.apiKey}` },
+      body: formData
     });
 
-    // Recognition band karo
-    recognition.stop();
-    await new Promise(r => setTimeout(r, 1500));
-
-    URL.revokeObjectURL(audioUrl);
-
-    if(fullText.trim().length < 20) {
-      // SpeechRecognition se nahi mila — Tesseract fallback bata do
-      throw new Error('Audio se text nahi nikal saka. Manual paste try karo ya English audio ho to Chrome mein try karo.');
+    if(!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error?.message || 'Whisper API error');
     }
 
-    setYtProgress(100, '✅ Text extract ho gaya!');
-    _ytState.extractedText = fullText.trim();
-    showExtractedText(fullText.trim(), 'Audio Transcript');
+    // Response text format mein aata hai
+    const transcript = await resp.text();
+
+    if(!transcript || transcript.trim().length < 10) {
+      throw new Error('Audio mein koi text nahi mila. Audio clear hai?');
+    }
+
+    setYtProgress(100, '✅ Transcription complete!');
+    _ytState.extractedText = transcript.trim();
+    showExtractedText(transcript.trim(), 'Audio Transcription (Whisper AI)');
     setTimeout(() => { document.getElementById('ytProgressBox').style.display = 'none'; }, 800);
+    showToast('🎙️ Audio transcription ho gayi!', 'success');
 
   } catch(err) {
     document.getElementById('ytProgressBox').style.display = 'none';
     showToast('❌ ' + err.message, 'error');
-    // Manual tab suggest karo
+    // Manual fallback
     switchYtTab('manual');
+    document.getElementById('manualPasteInput').placeholder = 'Audio ka content manually yahan type ya paste karo...';
   }
 
   btn.disabled = false;
