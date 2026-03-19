@@ -2378,6 +2378,7 @@ function viewTopic(sid,secid,tid){
     ${t.smartNotesAI?'<span class="badge" style="background:rgba(106,27,154,0.1);color:var(--purple);">🧠 Smart Notes</span>':''}
     <button class="btn btn-xs btn-primary" style="margin-left:auto;" onclick="openAiChat('topic','${t.name.replace(/'/g,"\\'")}',${tid},${sid},${secid})">🤖 AI Chat</button>
     <button class="btn btn-xs" style="background:linear-gradient(135deg,#e65100,#f57c00);color:#fff;" onclick="openPdfModal(${sid},${secid},${tid})">📄 PDF se Notes</button>
+    <button class="btn btn-xs" style="background:linear-gradient(135deg,#cc0000,#ff6d00);color:#fff;" onclick="openYtModal(${sid},${secid},${tid})">🎬 YT/Audio Notes</button>
   </div>`;
 
   // ---- SECTION 1: Smart Notes ----
@@ -6907,6 +6908,462 @@ function pdfSaveAsNote() {
 function pdfCopyResult() {
   if(!_pdfState.generatedNotes) return;
   navigator.clipboard.writeText(_pdfState.generatedNotes)
+    .then(() => showToast('📋 Copy ho gaya!', 'success'))
+    .catch(() => showToast('Copy nahi ho saka', 'error'));
+}
+</script>
+
+<!-- ==================== YOUTUBE + AUDIO MODAL ==================== -->
+<div id="ytAudioModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;align-items:center;justify-content:center;padding:16px;">
+  <div style="background:#fff;border-radius:18px;width:100%;max-width:490px;max-height:92vh;overflow-y:auto;box-shadow:0 10px 50px rgba(0,0,0,0.3);">
+
+    <!-- Header -->
+    <div style="padding:18px 20px 0;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-size:1.1rem;font-weight:800;color:#0d1b2a;">🎬 YouTube / 🎵 Audio se Notes</div>
+        <div id="ytModalTopicName" style="font-size:0.75rem;color:#37526d;margin-top:2px;"></div>
+      </div>
+      <button onclick="closeYtModal()" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:#666;">✕</button>
+    </div>
+
+    <!-- Source Tabs -->
+    <div style="padding:14px 20px 0;display:flex;gap:8px;">
+      <button id="tabYT" onclick="switchYtTab('yt')" style="flex:1;padding:9px;border-radius:10px;border:2px solid #ff0000;background:#ff0000;color:#fff;font-weight:700;font-size:0.82rem;cursor:pointer;font-family:inherit;">▶️ YouTube</button>
+      <button id="tabAudio" onclick="switchYtTab('audio')" style="flex:1;padding:9px;border-radius:10px;border:2px solid #bdd5ea;background:#f4f9fe;color:#37526d;font-weight:700;font-size:0.82rem;cursor:pointer;font-family:inherit;">🎵 Audio</button>
+      <button id="tabManual" onclick="switchYtTab('manual')" style="flex:1;padding:9px;border-radius:10px;border:2px solid #bdd5ea;background:#f4f9fe;color:#37526d;font-weight:700;font-size:0.82rem;cursor:pointer;font-family:inherit;">📝 Paste</button>
+    </div>
+
+    <!-- YouTube Tab -->
+    <div id="ytTabContent" style="padding:16px 20px;">
+      <div style="font-size:0.8rem;color:#37526d;margin-bottom:8px;line-height:1.5;">YouTube video ka link paste karo — transcript automatically extract hogi:</div>
+      <input id="ytLinkInput" type="url" placeholder="https://www.youtube.com/watch?v=..." style="width:100%;border:1.5px solid #bdd5ea;border-radius:10px;padding:11px 14px;font-size:0.85rem;font-family:inherit;outline:none;color:#0d1b2a;margin-bottom:10px;">
+      <button onclick="ytExtractTranscript()" id="ytExtractBtn" style="width:100%;padding:11px;background:linear-gradient(135deg,#ff0000,#cc0000);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.88rem;cursor:pointer;font-family:inherit;">📥 Transcript Extract Karo</button>
+
+      <!-- Manual fallback info -->
+      <div style="margin-top:10px;padding:10px 12px;background:#fff8e1;border-radius:8px;font-size:0.72rem;color:#e65100;line-height:1.5;">
+        💡 <strong>Tip:</strong> Agar transcript nahi mile to YouTube mein video kholo → <strong>3 dots (⋮) → Transcript</strong> → Copy karo → "📝 Paste" tab mein paste karo
+      </div>
+    </div>
+
+    <!-- Audio Tab -->
+    <div id="audioTabContent" style="display:none;padding:16px 20px;">
+      <div style="font-size:0.8rem;color:#37526d;margin-bottom:10px;line-height:1.5;">Audio file chunno (MP3, WAV, M4A, OGG) — browser speech recognition se text extract hoga:</div>
+
+      <div style="background:#f4f9fe;border:2px dashed #bdd5ea;border-radius:12px;padding:20px;text-align:center;cursor:pointer;margin-bottom:10px;" onclick="document.getElementById('audioFileInput').click()">
+        <div style="font-size:2rem;margin-bottom:6px;">🎵</div>
+        <div style="font-weight:700;color:#1565c0;font-size:0.85rem;">Audio File Chunno</div>
+        <div style="font-size:0.72rem;color:#37526d;margin-top:3px;">MP3, WAV, M4A, OGG support</div>
+        <input type="file" id="audioFileInput" accept="audio/*" style="display:none;" onchange="audioFileSelected(this)">
+      </div>
+      <div id="audioFileInfo" style="display:none;margin-bottom:10px;padding:8px 12px;background:#e8f5e9;border-radius:8px;font-size:0.8rem;color:#2e7d32;font-weight:600;"></div>
+
+      <button onclick="audioExtractText()" id="audioExtractBtn" style="width:100%;padding:11px;background:linear-gradient(135deg,#6a1b9a,#8e24aa);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.88rem;cursor:pointer;font-family:inherit;display:none;">🎙️ Audio se Text Nikalo</button>
+
+      <div style="margin-top:10px;padding:10px 12px;background:#f3e5f5;border-radius:8px;font-size:0.72rem;color:#6a1b9a;line-height:1.5;">
+        💡 <strong>Note:</strong> Browser speech recognition use hogi — Hindi + English dono supported hain. Lamba audio slow ho sakta hai.
+      </div>
+    </div>
+
+    <!-- Manual Paste Tab -->
+    <div id="manualTabContent" style="display:none;padding:16px 20px;">
+      <div style="font-size:0.8rem;color:#37526d;margin-bottom:8px;">YouTube transcript, koi bhi text, notes — yahan paste karo:</div>
+      <textarea id="manualPasteInput" placeholder="Yahan text paste karo..." style="width:100%;border:1.5px solid #bdd5ea;border-radius:10px;padding:12px;font-size:0.82rem;font-family:inherit;resize:vertical;min-height:140px;outline:none;color:#0d1b2a;"></textarea>
+      <button onclick="manualTextReady()" style="width:100%;padding:11px;margin-top:8px;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.88rem;cursor:pointer;font-family:inherit;">✅ Text Ready — Aage Badho</button>
+    </div>
+
+    <!-- Progress Bar (shared) -->
+    <div id="ytProgressBox" style="display:none;padding:0 20px 14px;">
+      <div style="font-size:0.8rem;color:#37526d;margin-bottom:6px;" id="ytProgressLabel">⏳ Extract ho raha hai...</div>
+      <div style="background:#e0e0e0;border-radius:10px;height:8px;overflow:hidden;">
+        <div id="ytProgressBar" style="height:100%;background:linear-gradient(90deg,#ff0000,#ff6d00);width:0%;transition:width 0.4s;border-radius:10px;"></div>
+      </div>
+    </div>
+
+    <!-- Extracted Text Preview -->
+    <div id="ytTextPreview" style="display:none;padding:0 20px 14px;">
+      <div style="font-size:0.78rem;font-weight:700;color:#0d1b2a;margin-bottom:6px;">📋 Extract Hua Text (preview):</div>
+      <div id="ytTextContent" style="background:#f4f9fe;border:1px solid #bdd5ea;border-radius:10px;padding:12px;font-size:0.75rem;line-height:1.6;max-height:160px;overflow-y:auto;white-space:pre-wrap;color:#37526d;"></div>
+      <div id="ytWordCount" style="font-size:0.7rem;color:#888;margin-top:4px;"></div>
+    </div>
+
+    <!-- AI Instructions -->
+    <div id="ytStep2" style="display:none;padding:0 20px 14px;">
+      <div style="height:1px;background:#eee;margin-bottom:14px;"></div>
+      <div style="font-size:0.85rem;font-weight:700;color:#0d1b2a;margin-bottom:8px;">🤖 AI ko kya karna hai?</div>
+      <textarea id="ytAiInstructions" placeholder="Jaise: Sirf main points lo, ya MCQ format mein do, ya simple Hindi mein summarize karo, ya definitions nikalo..." style="width:100%;border:1.5px solid #bdd5ea;border-radius:10px;padding:12px;font-size:0.82rem;font-family:inherit;resize:vertical;min-height:80px;outline:none;color:#0d1b2a;"></textarea>
+      <button onclick="ytGenerateNotes()" id="ytGenBtn" style="width:100%;padding:12px;margin-top:10px;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.88rem;cursor:pointer;font-family:inherit;">🤖 AI se Notes Banao</button>
+    </div>
+
+    <!-- Result -->
+    <div id="ytResultBox" style="display:none;padding:0 20px 20px;">
+      <div style="height:1px;background:#eee;margin-bottom:14px;"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div style="font-size:0.85rem;font-weight:700;color:#0d1b2a;">✅ Notes Ready!</div>
+        <button onclick="ytRegenerateNotes()" style="background:none;border:1.5px solid #1565c0;border-radius:8px;padding:4px 10px;color:#1565c0;font-size:0.72rem;font-weight:700;cursor:pointer;">🔄 Regenerate</button>
+      </div>
+      <div id="ytResultText" style="background:#f4f9fe;border:1px solid #bdd5ea;border-radius:10px;padding:14px;font-size:0.8rem;line-height:1.75;max-height:240px;overflow-y:auto;white-space:pre-wrap;color:#0d1b2a;"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+        <button onclick="ytSaveAsNote()" style="flex:1;padding:11px;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.85rem;cursor:pointer;font-family:inherit;">💾 Topic mein Save Karo</button>
+        <button onclick="ytCopyResult()" style="padding:11px 14px;background:#f4f9fe;border:1.5px solid #bdd5ea;border-radius:10px;font-weight:700;font-size:0.82rem;cursor:pointer;font-family:inherit;">📋 Copy</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ==================== YOUTUBE + AUDIO NOTES SYSTEM ====================
+
+let _ytState = {
+  sid: null, secid: null, tid: null,
+  extractedText: '',
+  generatedNotes: '',
+  activeTab: 'yt',
+  audioFile: null
+};
+
+function openYtModal(sid, secid, tid) {
+  const t = getTop(sid, secid, tid);
+  if(!t) return;
+  _ytState = { sid, secid, tid, extractedText: '', generatedNotes: '', activeTab: 'yt', audioFile: null };
+
+  document.getElementById('ytModalTopicName').textContent = '📌 Topic: ' + t.name;
+  document.getElementById('ytProgressBox').style.display = 'none';
+  document.getElementById('ytTextPreview').style.display = 'none';
+  document.getElementById('ytStep2').style.display = 'none';
+  document.getElementById('ytResultBox').style.display = 'none';
+  document.getElementById('ytLinkInput').value = '';
+  document.getElementById('ytAiInstructions').value = '';
+  document.getElementById('manualPasteInput').value = '';
+  document.getElementById('audioFileInfo').style.display = 'none';
+  document.getElementById('audioExtractBtn').style.display = 'none';
+
+  switchYtTab('yt');
+
+  const modal = document.getElementById('ytAudioModal');
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeYtModal() {
+  document.getElementById('ytAudioModal').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function switchYtTab(tab) {
+  _ytState.activeTab = tab;
+  // Reset previews
+  document.getElementById('ytTextPreview').style.display = 'none';
+  document.getElementById('ytStep2').style.display = 'none';
+  document.getElementById('ytResultBox').style.display = 'none';
+  document.getElementById('ytProgressBox').style.display = 'none';
+
+  // Tab contents
+  document.getElementById('ytTabContent').style.display = tab === 'yt' ? 'block' : 'none';
+  document.getElementById('audioTabContent').style.display = tab === 'audio' ? 'block' : 'none';
+  document.getElementById('manualTabContent').style.display = tab === 'manual' ? 'block' : 'none';
+
+  // Tab button styles
+  const tabs = ['yt', 'audio', 'manual'];
+  const colors = { yt: '#ff0000', audio: '#6a1b9a', manual: '#1565c0' };
+  tabs.forEach(t => {
+    const btn = document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1));
+    if(t === tab) {
+      btn.style.background = colors[t];
+      btn.style.borderColor = colors[t];
+      btn.style.color = '#fff';
+    } else {
+      btn.style.background = '#f4f9fe';
+      btn.style.borderColor = '#bdd5ea';
+      btn.style.color = '#37526d';
+    }
+  });
+}
+
+// ---- YOUTUBE TRANSCRIPT ----
+async function ytExtractTranscript() {
+  const link = document.getElementById('ytLinkInput').value.trim();
+  if(!link) { showToast('YouTube link daalo!', 'error'); return; }
+
+  // Video ID extract karo
+  let videoId = '';
+  try {
+    const url = new URL(link);
+    videoId = url.searchParams.get('v') || url.pathname.split('/').pop();
+  } catch(e) {
+    showToast('Valid YouTube link daalo!', 'error'); return;
+  }
+  if(!videoId) { showToast('Video ID nahi mila link mein!', 'error'); return; }
+
+  const btn = document.getElementById('ytExtractBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Transcript dhundh raha hoon...';
+  setYtProgress(20, '🔍 YouTube transcript fetch ho rahi hai...');
+  document.getElementById('ytProgressBox').style.display = 'block';
+
+  try {
+    // Free transcript API try karo
+    const apis = [
+      `https://yt-transcript-api.vercel.app/api/transcript?videoId=${videoId}`,
+      `https://youtube-transcript.vercel.app/api/transcript?videoId=${videoId}`
+    ];
+
+    let transcript = '';
+    let success = false;
+
+    for(const apiUrl of apis) {
+      try {
+        setYtProgress(40, '📡 API se data aa raha hai...');
+        const resp = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) });
+        if(resp.ok) {
+          const data = await resp.json();
+          // Different API response formats handle karo
+          if(Array.isArray(data)) {
+            transcript = data.map(item => item.text || item.transcript || '').join(' ');
+          } else if(data.transcript) {
+            transcript = data.transcript;
+          } else if(data.text) {
+            transcript = data.text;
+          }
+          if(transcript.length > 50) { success = true; break; }
+        }
+      } catch(e) { continue; }
+    }
+
+    if(!success || transcript.length < 50) {
+      // API kaam nahi kiya — manual tab suggest karo
+      setYtProgress(0, '');
+      document.getElementById('ytProgressBox').style.display = 'none';
+      showToast('Transcript auto-fetch nahi ho saka', 'error');
+      // Switch to manual tab with helpful message
+      switchYtTab('manual');
+      document.getElementById('manualPasteInput').placeholder = `YouTube se transcript manually copy karo:\n\n1. YouTube mein video kholo: youtube.com/watch?v=${videoId}\n2. Video ke neeche ⋮ (3 dots) click karo\n3. "Open transcript" ya "Transcript" option chunno\n4. Saara text copy karo aur yahan paste karo`;
+      showToast('💡 Manual tab mein YouTube transcript paste karo', 'error');
+      btn.disabled = false;
+      btn.textContent = '📥 Transcript Extract Karo';
+      return;
+    }
+
+    setYtProgress(100, '✅ Transcript mil gayi!');
+    _ytState.extractedText = transcript;
+    showExtractedText(transcript, 'YouTube Transcript');
+    setTimeout(() => { document.getElementById('ytProgressBox').style.display = 'none'; }, 800);
+
+  } catch(err) {
+    document.getElementById('ytProgressBox').style.display = 'none';
+    showToast('Error: ' + err.message, 'error');
+  }
+
+  btn.disabled = false;
+  btn.textContent = '📥 Transcript Extract Karo';
+}
+
+// ---- AUDIO EXTRACTION ----
+function audioFileSelected(input) {
+  const file = input.files[0];
+  if(!file) return;
+  _ytState.audioFile = file;
+  const sizeKB = Math.round(file.size / 1024);
+  document.getElementById('audioFileInfo').style.display = 'block';
+  document.getElementById('audioFileInfo').textContent = `🎵 ${file.name} (${sizeKB} KB)`;
+  document.getElementById('audioExtractBtn').style.display = 'block';
+}
+
+async function audioExtractText() {
+  if(!_ytState.audioFile) { showToast('Audio file chunno!', 'error'); return; }
+
+  const btn = document.getElementById('audioExtractBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Sun raha hoon...';
+  setYtProgress(10, '🎵 Audio load ho rahi hai...');
+  document.getElementById('ytProgressBox').style.display = 'block';
+  document.getElementById('ytProgressBar').style.background = 'linear-gradient(90deg,#6a1b9a,#ab47bc)';
+
+  try {
+    // Browser SpeechRecognition API use karo
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if(!SpeechRecognition) {
+      throw new Error('Aapka browser Speech Recognition support nahi karta. Chrome use karo.');
+    }
+
+    setYtProgress(30, '🎙️ Audio convert ho rahi hai...');
+
+    // Audio ko URL mein convert karo
+    const audioUrl = URL.createObjectURL(_ytState.audioFile);
+    const audio = new Audio(audioUrl);
+
+    // SpeechRecognition setup
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'hi-IN'; // Hindi primary
+    recognition.maxAlternatives = 1;
+
+    let fullText = '';
+    let isListening = true;
+
+    recognition.onresult = (event) => {
+      for(let i = event.resultIndex; i < event.results.length; i++) {
+        if(event.results[i].isFinal) {
+          fullText += event.results[i][0].transcript + ' ';
+        }
+      }
+      setYtProgress(60, `🎙️ Text extract ho raha hai... (${fullText.split(' ').length} words)`);
+    };
+
+    recognition.onerror = (e) => {
+      isListening = false;
+    };
+
+    recognition.onend = () => {
+      isListening = false;
+    };
+
+    // Audio play karo aur recognition start karo
+    recognition.start();
+    audio.play();
+
+    setYtProgress(50, '🎙️ Audio sun raha hoon — please wait...');
+
+    // Audio end hone ka wait karo
+    await new Promise((resolve) => {
+      audio.onended = resolve;
+      setTimeout(resolve, 120000); // Max 2 min
+    });
+
+    // Recognition band karo
+    recognition.stop();
+    await new Promise(r => setTimeout(r, 1500));
+
+    URL.revokeObjectURL(audioUrl);
+
+    if(fullText.trim().length < 20) {
+      // SpeechRecognition se nahi mila — Tesseract fallback bata do
+      throw new Error('Audio se text nahi nikal saka. Manual paste try karo ya English audio ho to Chrome mein try karo.');
+    }
+
+    setYtProgress(100, '✅ Text extract ho gaya!');
+    _ytState.extractedText = fullText.trim();
+    showExtractedText(fullText.trim(), 'Audio Transcript');
+    setTimeout(() => { document.getElementById('ytProgressBox').style.display = 'none'; }, 800);
+
+  } catch(err) {
+    document.getElementById('ytProgressBox').style.display = 'none';
+    showToast('❌ ' + err.message, 'error');
+    // Manual tab suggest karo
+    switchYtTab('manual');
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🎙️ Audio se Text Nikalo';
+}
+
+// ---- MANUAL PASTE ----
+function manualTextReady() {
+  const text = document.getElementById('manualPasteInput').value.trim();
+  if(!text || text.length < 20) { showToast('Kuch text paste karo!', 'error'); return; }
+  _ytState.extractedText = text;
+  showExtractedText(text, 'Paste Kiya Hua Text');
+}
+
+// ---- COMMON: Show extracted text ----
+function showExtractedText(text, source) {
+  const wordCount = text.trim().split(/\s+/).length;
+  document.getElementById('ytTextContent').textContent = text.substring(0, 600) + (text.length > 600 ? '\n\n...(aur bhi hai)' : '');
+  document.getElementById('ytWordCount').textContent = `📊 ${wordCount} words — Source: ${source}`;
+  document.getElementById('ytTextPreview').style.display = 'block';
+  document.getElementById('ytStep2').style.display = 'block';
+  document.getElementById('ytStep2').scrollIntoView({ behavior: 'smooth' });
+}
+
+function setYtProgress(pct, label) {
+  document.getElementById('ytProgressBar').style.width = pct + '%';
+  document.getElementById('ytProgressLabel').textContent = label;
+}
+
+// ---- AI NOTES GENERATE ----
+async function ytGenerateNotes() {
+  if(!S.apiKey) { showToast('Pehle API Key daalo Settings mein!', 'error'); return; }
+  if(!_ytState.extractedText) { showToast('Pehle text extract karo!', 'error'); return; }
+
+  const btn = document.getElementById('ytGenBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Notes ban rahe hain...';
+
+  const t = getTop(_ytState.sid, _ytState.secid, _ytState.tid);
+  const userInstructions = document.getElementById('ytAiInstructions').value.trim();
+  const textToSend = _ytState.extractedText.substring(0, 10000);
+
+  const prompt = `Tu ek expert teacher hai.
+
+TOPIC: ${t ? t.name : 'Notes'}
+SOURCE TEXT (YouTube/Audio se extract hua):
+${textToSend}
+
+USER KE NIRDESH: ${userInstructions || 'Is content ka comprehensive summary banao. Important points, concepts, aur key ideas cover karo. Hindi mein do.'}
+
+RULES:
+1. Sirf diye gaye content ke basis par notes banao
+2. ** se important points mark karo
+3. Clear, readable format mein do — headings use karo
+4. User ke nirdesh ko zaroor follow karo
+5. Irrelevant ya repetitive content skip karo
+
+Seedha notes do:`;
+
+  try {
+    const result = await callGroq(prompt, 4000);
+    _ytState.generatedNotes = result;
+    document.getElementById('ytResultText').textContent = result;
+    document.getElementById('ytResultBox').style.display = 'block';
+    document.getElementById('ytResultBox').scrollIntoView({ behavior: 'smooth' });
+    showToast('Notes ready hain! 🎉', 'success');
+  } catch(err) {
+    showToast('Error: ' + err.message, 'error');
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🤖 AI se Notes Banao';
+}
+
+async function ytRegenerateNotes() {
+  document.getElementById('ytResultBox').style.display = 'none';
+  await ytGenerateNotes();
+}
+
+function ytSaveAsNote() {
+  if(!_ytState.generatedNotes) return;
+  const t = getTop(_ytState.sid, _ytState.secid, _ytState.tid);
+  if(!t) return;
+
+  const tabNames = { yt: 'YouTube Notes', audio: 'Audio Notes', manual: 'Text Notes' };
+  const noteName = (tabNames[_ytState.activeTab] || 'Notes') + ' — ' + new Date().toLocaleDateString('hi-IN');
+
+  const newNote = {
+    id: Date.now(),
+    name: noteName,
+    content: _ytState.generatedNotes,
+    wordCount: _ytState.generatedNotes.trim().split(/\s+/).length,
+    addedAt: new Date().toLocaleDateString('hi-IN'),
+    source: _ytState.activeTab
+  };
+
+  t.notes.push(newNote);
+  save();
+  renderLibraryTree();
+  showToast('✅ Notes topic mein save ho gaye!', 'success');
+  closeYtModal();
+
+  const tvModal = document.getElementById('topicViewModal');
+  if(tvModal && tvModal.classList.contains('show')) {
+    viewTopic(_ytState.sid, _ytState.secid, _ytState.tid);
+  }
+}
+
+function ytCopyResult() {
+  if(!_ytState.generatedNotes) return;
+  navigator.clipboard.writeText(_ytState.generatedNotes)
     .then(() => showToast('📋 Copy ho gaya!', 'success'))
     .catch(() => showToast('Copy nahi ho saka', 'error'));
 }
