@@ -576,8 +576,26 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 /* Custom highlight selection overlay */
 .ne-hl-selection{background:rgba(255,235,59,0.4);position:absolute;pointer-events:none;border-radius:3px;}
 /* Magnifier for text selection */
-.ne-magnifier{position:fixed;width:160px;height:60px;background:#fff;border:2px solid var(--accent);border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.25);pointer-events:none;z-index:9999;overflow:hidden;display:none;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:var(--accent);padding:6px 10px;text-align:center;line-height:1.3;}
-.ne-magnifier.show{display:flex;}
+.ne-magnifier{
+  position:fixed;
+  display:none;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  width:165px;
+  min-height:52px;
+  background:#fff;
+  color:#1565c0;
+  border:2px solid #1565c0;
+  border-radius:12px;
+  box-shadow:0 4px 20px rgba(21,101,192,0.25);
+  pointer-events:none;
+  z-index:9999;
+  padding:6px 10px;
+  overflow:hidden;
+  /* No transition on display, only position */
+  will-change:left,top;
+}
 /* Eraser cursor */
 .hl-eraser-mode .ne-editable mark{cursor:cell;}
 .hl-eraser-mode .ne-editable mark:hover{opacity:0.5;outline:2px dashed var(--red);}
@@ -1535,6 +1553,25 @@ html, body {
         <div class="notes-editor-title" id="notesEditorTitle">📄 Notes</div>
         <div style="font-size:0.7rem;color:var(--text2);margin-top:1px;" id="notesEditorMeta"></div>
       </div>
+      <!-- Highlight + Eraser permanently in header (quick access) -->
+      <div style="display:flex;align-items:center;gap:5px;margin-right:6px;">
+        <!-- Highlight color dots (compact) -->
+        <div style="display:flex;gap:3px;align-items:center;">
+          <div class="hl-dot hl-dot-yellow sel" id="hlDotYellow2" onclick="selectHlColor('yellow')" title="Yellow" style="width:14px;height:14px;"></div>
+          <div class="hl-dot hl-dot-pink" id="hlDotPink2" onclick="selectHlColor('pink')" title="Pink" style="width:14px;height:14px;"></div>
+          <div class="hl-dot hl-dot-green" id="hlDotGreen2" onclick="selectHlColor('green')" title="Green" style="width:14px;height:14px;"></div>
+        </div>
+        <!-- Highlight marker icon button -->
+        <button id="hlHeaderBtn" onclick="toggleHlMode()" title="Highlight (Marker)"
+          style="width:36px;height:36px;border-radius:8px;border:1.5px solid #bdd5ea;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1.2rem;transition:all 0.15s;-webkit-tap-highlight-color:transparent;">
+          🖊
+        </button>
+        <!-- Eraser icon button -->
+        <button id="hlEraserHeaderBtn" onclick="toggleEraserMode()" title="Highlight Eraser"
+          style="width:36px;height:36px;border-radius:8px;border:1.5px solid #bdd5ea;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1.2rem;transition:all 0.15s;-webkit-tap-highlight-color:transparent;">
+          🧼
+        </button>
+      </div>
       <div style="display:flex;align-items:center;gap:6px;">
         <span id="unsavedDot" style="display:none;font-size:0.7rem;color:var(--accent2);font-weight:800;">● Unsaved</span>
         <button class="toolbar-btn" onclick="closeNotesEditor()" style="font-size:0.82rem;padding:6px 12px;">✕ Band</button>
@@ -1560,22 +1597,48 @@ html, body {
 
       <!-- TOOLBAR: All tools in one compact scrollable row -->
       <div id="mainToolbar" style="display:flex;align-items:center;gap:5px;padding:7px 10px;overflow-x:auto;flex-shrink:0;background:var(--surface2);border-bottom:1px solid var(--border);-webkit-overflow-scrolling:touch;scrollbar-width:none;">
-        <!-- Highlight colors -->
+        <!-- Highlight/Eraser moved to header — color dots kept for reference -->
         <div class="hl-color-row" style="flex-shrink:0;">
           <div class="hl-dot hl-dot-yellow sel" id="hlDotYellow" onclick="selectHlColor('yellow')" title="Yellow"></div>
           <div class="hl-dot hl-dot-pink" id="hlDotPink" onclick="selectHlColor('pink')" title="Pink"></div>
           <div class="hl-dot hl-dot-green" id="hlDotGreen" onclick="selectHlColor('green')" title="Green"></div>
         </div>
-        <div style="width:1px;height:20px;background:var(--border);flex-shrink:0;"></div>
-        <!-- Highlight tools -->
-        <button class="toolbar-btn" id="hlToggleBtn" onclick="toggleHlMode()" title="Highlight" style="flex-shrink:0;padding:5px 8px;">🖊️</button>
-        <button class="toolbar-btn" id="hlEraserBtn" onclick="toggleEraserMode()" title="Eraser" style="flex-shrink:0;padding:5px 8px;">🧹</button>
+        <!-- Hidden refs for JS compat -->
+        <button class="toolbar-btn" id="hlToggleBtn" onclick="toggleHlMode()" title="Highlight" style="display:none;">🖊️</button>
+        <button class="toolbar-btn" id="hlEraserBtn" onclick="toggleEraserMode()" title="Eraser" style="display:none;">🧹</button>
         <div style="width:1px;height:20px;background:var(--border);flex-shrink:0;"></div>
         <!-- Edit tools -->
         <button class="toolbar-btn" id="editToggleBtn" onclick="neToggleEdit()" title="Edit" style="flex-shrink:0;padding:5px 8px;">✏️</button>
         <button class="toolbar-btn" onclick="neUndo()" title="Undo" style="flex-shrink:0;padding:5px 8px;">↩️</button>
         <button class="toolbar-btn" onclick="neRedo()" title="Redo" style="flex-shrink:0;padding:5px 8px;">↪️</button>
-        <button class="toolbar-btn" id="fmtBold" onclick="neFormat('bold')" title="Bold" style="flex-shrink:0;padding:5px 8px;"><b>B</b></button>
+        <!-- Bold button + color picker -->
+        <div style="display:flex;align-items:center;gap:2px;flex-shrink:0;">
+          <button class="toolbar-btn" id="fmtBold" onclick="neFormat('bold')" title="Bold"
+            style="padding:5px 8px;border-radius:7px 0 0 7px;border-right:none;font-weight:800;">
+            <span style="display:flex;align-items:center;gap:3px;">
+              <b style="font-size:0.85rem;">B</b>
+              <span id="boldColorActive" style="width:8px;height:8px;border-radius:50%;background:#000000;display:inline-block;border:1px solid #999;flex-shrink:0;"></span>
+            </span>
+          </button>
+          <!-- Color picker dropdown trigger -->
+          <div style="position:relative;flex-shrink:0;">
+            <button onclick="toggleBoldColorPicker()" title="Bold Color"
+              style="padding:5px 5px;border:1.5px solid var(--border);border-radius:0 7px 7px 0;background:var(--surface);cursor:pointer;font-size:0.7rem;display:flex;align-items:center;">▾</button>
+            <div id="boldColorPicker" style="display:none;position:absolute;top:110%;right:0;background:#fff;border:1.5px solid var(--border);border-radius:10px;padding:8px 10px;box-shadow:0 4px 16px rgba(0,0,0,0.15);z-index:9999;min-width:130px;">
+              <div style="font-size:0.68rem;color:var(--text2);font-weight:700;margin-bottom:6px;">Bold Color:</div>
+              <div style="display:flex;gap:7px;flex-wrap:wrap;">
+                <div class="bold-color-dot" data-color="#000000" onclick="setBoldColor('#000000');toggleBoldColorPicker()"
+                  style="width:22px;height:22px;border-radius:50%;background:#000000;cursor:pointer;outline:2px solid #333;border:2px solid #fff;" title="Black"></div>
+                <div class="bold-color-dot" data-color="#1a237e" onclick="setBoldColor('#1a237e');toggleBoldColorPicker()"
+                  style="width:22px;height:22px;border-radius:50%;background:#1a237e;cursor:pointer;border:2px solid #fff;" title="Dark Blue"></div>
+                <div class="bold-color-dot" data-color="#b71c1c" onclick="setBoldColor('#b71c1c');toggleBoldColorPicker()"
+                  style="width:22px;height:22px;border-radius:50%;background:#b71c1c;cursor:pointer;border:2px solid #fff;" title="Dark Red"></div>
+                <div class="bold-color-dot" data-color="#1b5e20" onclick="setBoldColor('#1b5e20');toggleBoldColorPicker()"
+                  style="width:22px;height:22px;border-radius:50%;background:#1b5e20;cursor:pointer;border:2px solid #fff;" title="Dark Green"></div>
+              </div>
+            </div>
+          </div>
+        </div>
         <button class="toolbar-btn" id="fmtItalic" onclick="neFormat('italic')" title="Italic" style="flex-shrink:0;padding:5px 8px;"><i>I</i></button>
         <button class="toolbar-btn" onclick="neFormat('insertUnorderedList')" title="List" style="flex-shrink:0;padding:5px 8px;">•</button>
         <div style="width:1px;height:20px;background:var(--border);flex-shrink:0;"></div>
@@ -1835,7 +1898,11 @@ html, body {
 </div>
 
 <!-- TEXT MAGNIFIER -->
-<div class="ne-magnifier" id="neMagnifier"></div>
+<div class="ne-magnifier" id="neMagnifier">
+  <div id="neMagHint" style="font-size:0.62rem;opacity:0.75;display:none;line-height:1;margin-bottom:3px;text-align:center;"></div>
+  <div id="neMagText" style="font-size:0.88rem;font-weight:700;text-align:center;line-height:1.3;word-break:break-word;"></div>
+  <div id="neMagSub" style="font-size:0.6rem;opacity:0.65;display:none;line-height:1;margin-top:3px;text-align:center;"></div>
+</div>
 
 <!-- OFFLINE BAR -->
 <div class="offline-bar" id="offlineBar">📵 Aap offline hain -- App cached data se kaam kar raha hai</div>
@@ -5208,13 +5275,74 @@ function neFormat(cmd) {
   const area = document.getElementById('noteEditableArea');
   if(area.contentEditable !== 'true') return;
   area.focus();
-  document.execCommand(cmd, false, null);
+
+  if(cmd === 'bold') {
+    // Bold with color — wrap in <b style="color:...">
+    const sel = window.getSelection();
+    if(sel && !sel.isCollapsed) {
+      try {
+        const range = sel.getRangeAt(0);
+        const text = sel.toString();
+        if(text.trim().length > 0) {
+          // Check if already bold — remove bold
+          const parentB = sel.anchorNode?.parentElement?.closest('b,strong');
+          if(parentB) {
+            // Unwrap — replace with plain text
+            document.execCommand('bold', false, null);
+          } else {
+            // Wrap with colored bold
+            const frag = range.extractContents();
+            const b = document.createElement('b');
+            b.style.color = _boldColor;
+            b.style.fontWeight = '800';
+            b.appendChild(frag);
+            range.insertNode(b);
+            sel.removeAllRanges();
+          }
+          markModified();
+          return;
+        }
+      } catch(ex) {}
+    }
+    document.execCommand('bold', false, null);
+  } else {
+    document.execCommand(cmd, false, null);
+  }
+
   markModified();
-  // Update button states
   ['bold','italic','underline'].forEach(c => {
     const btn = document.getElementById('fmt' + c.charAt(0).toUpperCase() + c.slice(1));
     if(btn) btn.classList.toggle('active', document.queryCommandState(c));
   });
+}
+
+function toggleBoldColorPicker() {
+  const picker = document.getElementById('boldColorPicker');
+  if(!picker) return;
+  picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
+  // Close on outside click
+  if(picker.style.display === 'block') {
+    setTimeout(function() {
+      document.addEventListener('click', function closePicker(e) {
+        if(!picker.contains(e.target) && !e.target.closest('[onclick*="toggleBoldColorPicker"]')) {
+          picker.style.display = 'none';
+          document.removeEventListener('click', closePicker);
+        }
+      });
+    }, 10);
+  }
+}
+
+function setBoldColor(color) {
+  _boldColor = color;
+  // Update color picker UI
+  document.querySelectorAll('.bold-color-dot').forEach(d => {
+    d.style.outline = d.dataset.color === color ? '2px solid #333' : 'none';
+  });
+  // Show which color is selected
+  const activeEl = document.getElementById('boldColorActive');
+  if(activeEl) activeEl.style.background = color;
+  showToast('Bold color: ' + color, 'success');
 }
 
 // Insert table
@@ -5340,24 +5468,39 @@ function neRedo() {
 // Highlight - text select se
 // hl mode: 'highlight' | 'eraser' | 'none'
 let _hlCurrentMode = 'highlight';
+let _boldColor = '#000000'; // Default: black
 
 function setHlMode(mode) {
   // mode: 'highlight' | 'eraser' | 'off'
   _hlCurrentMode = mode;
+
+  // Both hidden refs (kept for JS compat)
   const hlBtn   = document.getElementById('hlToggleBtn');
   const erBtn   = document.getElementById('hlEraserBtn');
+  // Header buttons (visible, always shown)
+  const hlHdr   = document.getElementById('hlHeaderBtn');
+  const erHdr   = document.getElementById('hlEraserHeaderBtn');
   const area    = document.getElementById('noteEditableArea');
-  const status  = document.getElementById('editorStatus');
 
-  // Reset both buttons first
-  if(hlBtn) { hlBtn.classList.remove('highlight-active'); hlBtn.textContent = '🖊️ Highlight'; }
-  if(erBtn) {
-    erBtn.classList.remove('highlight-active');
-    erBtn.textContent = '🧹 Eraser';
-    erBtn.style.background=''; erBtn.style.color=''; erBtn.style.borderColor='';
-  }
-  if(area)  area.classList.remove('hl-mode-active');
-  // Update cursor on all marks based on mode
+  // --- Reset all button states ---
+  [hlBtn, hlHdr].forEach(b => {
+    if(!b) return;
+    b.classList.remove('highlight-active');
+    b.style.background = '#fff';
+    b.style.border = '1.5px solid #bdd5ea';
+    b.style.boxShadow = 'none';
+  });
+  [erBtn, erHdr].forEach(b => {
+    if(!b) return;
+    b.classList.remove('highlight-active');
+    b.style.background = '#fff';
+    b.style.border = '1.5px solid #bdd5ea';
+    b.style.color = '';
+    b.style.boxShadow = 'none';
+  });
+  if(area) area.classList.remove('hl-mode-active');
+
+  // Update eraser cursor on marks
   if(area) {
     area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(mark => {
       mark.style.cursor = (mode === 'eraser') ? 'cell' : 'default';
@@ -5366,29 +5509,34 @@ function setHlMode(mode) {
   }
 
   if(mode === 'highlight') {
-    if(hlBtn) { hlBtn.classList.add('highlight-active'); hlBtn.textContent = '🖊️ Highlight ON'; }
-    if(area)  area.classList.add('hl-mode-active');
-    neUpdateStatusBar('🖊️ Highlight ON -- text drag karo');
+    // Highlight ON — green tint
+    [hlBtn, hlHdr].forEach(b => {
+      if(!b) return;
+      b.classList.add('highlight-active');
+      b.style.background = 'rgba(255,235,59,0.35)';
+      b.style.border = '1.5px solid #f9a825';
+      b.style.boxShadow = '0 0 0 2px rgba(249,168,37,0.3)';
+    });
+    if(area) area.classList.add('hl-mode-active');
+    neUpdateStatusBar('🖊 Highlight ON — text drag karo');
     _eraserModeOn = false;
-    // Toolbar auto-open karo (jaise edit mode mein hota hai)
-    if(typeof neOpenToolbar === 'function') neOpenToolbar();
   } else if(mode === 'eraser') {
-    if(erBtn) {
-      erBtn.classList.add('highlight-active');
-      erBtn.textContent = '🧹 Eraser ON ✓';
-      erBtn.style.background = 'rgba(198,40,40,0.12)';
-      erBtn.style.color = 'var(--red)';
-      erBtn.style.borderColor = 'var(--red)';
-    }
-    neUpdateStatusBar('🧹 Eraser ON -- highlighted text pe tap karo');
+    // Eraser ON — red tint
+    [erBtn, erHdr].forEach(b => {
+      if(!b) return;
+      b.classList.add('highlight-active');
+      b.style.background = 'rgba(198,40,40,0.1)';
+      b.style.border = '1.5px solid #c62828';
+      b.style.color = '#c62828';
+      b.style.boxShadow = '0 0 0 2px rgba(198,40,40,0.2)';
+    });
+    neUpdateStatusBar('🧼 Eraser ON — highlighted text tap karo');
     _eraserModeOn = true;
-    if(typeof neOpenToolbar === 'function') neOpenToolbar();
   } else {
-    neUpdateStatusBar('👁️ Read Mode -- Highlight ya Edit button dabao');
+    // Both OFF
+    neUpdateStatusBar('👁️ Read Mode — 🖊 ya 🧼 dabao');
     hideMagnifier();
     _eraserModeOn = false;
-    // Toolbar close karo jab sab off ho
-    if(typeof neCloseToolbar === 'function') neCloseToolbar();
   }
 }
 
@@ -5403,10 +5551,12 @@ let _eraserModeOn = false;
 function toggleEraserMode() {
   _eraserModeOn = !_eraserModeOn;
   if(_eraserModeOn) {
+    // Eraser ON — highlight ko pause karo (dono ek saath nahi)
+    _hlBeforeEraser = (_hlCurrentMode === 'highlight'); // remember state
     setHlMode('eraser');
   } else {
-    // Eraser off karo - wapas highlight mode ya off
-    setHlMode(_hlCurrentMode === 'eraser' ? 'highlight' : _hlCurrentMode);
+    // Eraser OFF — wapas OFF state mein jao (highlight auto-ON nahi)
+    setHlMode('off');
   }
 }
 
@@ -5824,49 +5974,79 @@ function neAttachUnhighlightToMark(mark) {
   mark.addEventListener('pointerdown', mark._unhighlightFn);
 }
 
-// Magnifier
+// ============ MAGNIFIER (smooth, no DOM thrash) ============
+var _magLastText = '';
+var _magLastSnap = null;
+var _magVisible = false;
+
 function showMagnifier(x, y, text, isWordSnap) {
   const mag = document.getElementById('neMagnifier');
   if(!mag) return;
-  const display = (text||'').length > 28 ? text.slice(0,28) + '…' : (text||'');
-  if(isWordSnap) {
-    // Word snap hint — different style
-    mag.innerHTML = '<span style="font-size:0.7rem;opacity:0.7;display:block;line-height:1;">📌 Word mila:</span><span style="font-size:0.9rem;">' + display.replace(/^📌 /,'') + '</span><span style="font-size:0.62rem;opacity:0.65;display:block;margin-top:2px;">Drag karo select karne ke liye</span>';
-    mag.style.background = 'linear-gradient(135deg,#6a1b9a,#8e24aa)';
-    mag.style.color = '#fff';
-    mag.style.border = '2px solid #4a148c';
-    mag.style.width = '170px';
-    mag.style.height = 'auto';
-    mag.style.padding = '8px 12px';
-  } else {
-    mag.innerHTML = '<span>' + display + '</span>';
-    mag.style.background = '#fff';
-    mag.style.color = 'var(--accent)';
-    mag.style.border = '2px solid var(--accent)';
-    mag.style.width = '160px';
-    mag.style.height = '60px';
-    mag.style.padding = '6px 10px';
+
+  const raw = (text || '');
+  const display = raw.length > 30 ? raw.slice(0, 30) + '…' : raw;
+  const snapChanged = (isWordSnap !== _magLastSnap);
+  const textChanged = (display !== _magLastText);
+
+  // Show element first
+  if(!_magVisible) {
+    mag.style.display = 'flex';
+    _magVisible = true;
   }
-  mag.classList.add('show');
-  // Position: above finger, centered
-  const magW = isWordSnap ? 170 : 160;
-  mag.style.left = Math.max(8, Math.min(window.innerWidth - magW - 8, x - magW/2)) + 'px';
-  mag.style.top = Math.max(8, y - (isWordSnap ? 90 : 80)) + 'px';
-}
-function hideMagnifier() {
-  const mag = document.getElementById('neMagnifier');
-  if(mag) {
-    mag.classList.remove('show');
-    // Reset styles
-    mag.style.background = '';
-    mag.style.color = '';
-    mag.style.border = '';
-    mag.style.width = '';
-    mag.style.height = '';
-    mag.style.padding = '';
+
+  // Re-style only when snap mode changes (heavy op — skip otherwise)
+  if(snapChanged) {
+    if(isWordSnap) {
+      mag.style.background = 'linear-gradient(135deg,#6a1b9a,#8e24aa)';
+      mag.style.color = '#fff';
+      mag.style.border = '2px solid #4a148c';
+      mag.style.boxShadow = '0 4px 20px rgba(106,27,154,0.4)';
+      mag.style.minHeight = '58px';
+      mag.style.width = '175px';
+      mag.style.padding = '7px 10px';
+    } else {
+      mag.style.background = '#fff';
+      mag.style.color = '#1565c0';
+      mag.style.border = '2px solid #1565c0';
+      mag.style.boxShadow = '0 4px 20px rgba(21,101,192,0.25)';
+      mag.style.minHeight = '52px';
+      mag.style.width = '165px';
+      mag.style.padding = '6px 10px';
+    }
+    _magLastSnap = isWordSnap;
   }
+
+  // Update inner text ONLY when changed (prevents layout flicker)
+  if(textChanged) {
+    const hintEl = document.getElementById('neMagHint');
+    const textEl = document.getElementById('neMagText');
+    const subEl  = document.getElementById('neMagSub');
+    if(isWordSnap) {
+      if(hintEl) { hintEl.textContent = '📌 Word mila:'; hintEl.style.display = 'block'; }
+      if(textEl) { textEl.textContent = display.replace(/^📌 /, ''); textEl.style.fontSize = '0.92rem'; }
+      if(subEl)  { subEl.textContent  = 'Drag karo ↕ ya ↔'; subEl.style.display = 'block'; }
+    } else {
+      if(hintEl) hintEl.style.display = 'none';
+      if(textEl) { textEl.textContent = display; textEl.style.fontSize = '0.85rem'; }
+      if(subEl)  subEl.style.display = 'none';
+    }
+    _magLastText = display;
+  }
+
+  // Position — direct style, no class toggle (faster)
+  const magW = isWordSnap ? 175 : 165;
+  mag.style.left = Math.max(8, Math.min(window.innerWidth - magW - 8, x - magW / 2)) + 'px';
+  mag.style.top  = Math.max(8, y - (isWordSnap ? 98 : 82)) + 'px';
 }
 
+function hideMagnifier() {
+  if(!_magVisible) return;
+  const mag = document.getElementById('neMagnifier');
+  if(mag) mag.style.display = 'none';
+  _magVisible = false;
+  _magLastText = '';
+  _magLastSnap = null;
+}
 function toggleHighlightMode() {
   // Legacy - ab setHlMode use hota hai
   if(_hlCurrentMode === 'highlight') setHlMode('none');
