@@ -16,6 +16,11 @@
 <meta name="theme-color" content="#1565c0">
 <meta name="mobile-web-app-capable" content="yes">
 
+<!-- PDF.js for PDF text extraction -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- Tesseract.js for scanned PDF OCR -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
@@ -2372,6 +2377,7 @@ function viewTopic(sid,secid,tid){
     ${t.finalNotes?'<span class="badge badge-orange">⭐ Final Notes</span>':''}
     ${t.smartNotesAI?'<span class="badge" style="background:rgba(106,27,154,0.1);color:var(--purple);">🧠 Smart Notes</span>':''}
     <button class="btn btn-xs btn-primary" style="margin-left:auto;" onclick="openAiChat('topic','${t.name.replace(/'/g,"\\'")}',${tid},${sid},${secid})">🤖 AI Chat</button>
+    <button class="btn btn-xs" style="background:linear-gradient(135deg,#e65100,#f57c00);color:#fff;" onclick="openPdfModal(${sid},${secid},${tid})">📄 PDF se Notes</button>
   </div>`;
 
   // ---- SECTION 1: Smart Notes ----
@@ -6602,3 +6608,306 @@ initFirebase();
 </body>
 </html>
 
+
+<!-- ==================== PDF EXTRACTOR MODAL ==================== -->
+<!-- Ye modal topics ke sath milkar kaam karta hai -->
+<div id="pdfExtractorModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;align-items:center;justify-content:center;padding:16px;">
+  <div style="background:#fff;border-radius:18px;width:100%;max-width:480px;max-height:90vh;overflow-y:auto;box-shadow:0 10px 50px rgba(0,0,0,0.3);">
+    <!-- Header -->
+    <div style="padding:18px 20px 0;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-size:1.1rem;font-weight:800;color:#0d1b2a;">📄 PDF se Notes Banao</div>
+        <div id="pdfModalTopicName" style="font-size:0.75rem;color:#37526d;margin-top:2px;"></div>
+      </div>
+      <button onclick="closePdfModal()" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:#666;">✕</button>
+    </div>
+
+    <!-- Step 1: File Select -->
+    <div id="pdfStep1" style="padding:20px;">
+      <div style="background:#f4f9fe;border:2px dashed #bdd5ea;border-radius:12px;padding:24px;text-align:center;cursor:pointer;" onclick="document.getElementById('pdfFileInput').click()">
+        <div style="font-size:2.5rem;margin-bottom:8px;">📂</div>
+        <div style="font-weight:700;color:#1565c0;margin-bottom:4px;">PDF File Chunno</div>
+        <div style="font-size:0.75rem;color:#37526d;">Normal PDF ya Scanned PDF — dono chalega</div>
+        <input type="file" id="pdfFileInput" accept=".pdf" style="display:none;" onchange="pdfFileSelected(this)">
+      </div>
+      <div id="pdfFileInfo" style="display:none;margin-top:12px;padding:10px 14px;background:#e8f5e9;border-radius:10px;font-size:0.82rem;color:#2e7d32;font-weight:600;"></div>
+
+      <!-- Progress bar -->
+      <div id="pdfProgressBox" style="display:none;margin-top:16px;">
+        <div style="font-size:0.8rem;color:#37526d;margin-bottom:6px;" id="pdfProgressLabel">⏳ Extract ho raha hai...</div>
+        <div style="background:#e0e0e0;border-radius:10px;height:8px;overflow:hidden;">
+          <div id="pdfProgressBar" style="height:100%;background:linear-gradient(90deg,#1565c0,#42a5f5);width:0%;transition:width 0.3s;border-radius:10px;"></div>
+        </div>
+      </div>
+
+      <!-- Extracted text preview -->
+      <div id="pdfTextPreview" style="display:none;margin-top:14px;">
+        <div style="font-size:0.78rem;font-weight:700;color:#0d1b2a;margin-bottom:6px;">📋 Extract Hua Text (preview):</div>
+        <div id="pdfTextContent" style="background:#f4f9fe;border:1px solid #bdd5ea;border-radius:10px;padding:12px;font-size:0.75rem;line-height:1.6;max-height:180px;overflow-y:auto;white-space:pre-wrap;color:#37526d;"></div>
+        <div id="pdfWordCount" style="font-size:0.7rem;color:#888;margin-top:4px;"></div>
+      </div>
+    </div>
+
+    <!-- Step 2: AI Instructions -->
+    <div id="pdfStep2" style="display:none;padding:0 20px 20px;">
+      <div style="height:1px;background:#eee;margin-bottom:16px;"></div>
+      <div style="font-size:0.85rem;font-weight:700;color:#0d1b2a;margin-bottom:8px;">🤖 AI ko kya karna hai?</div>
+      <textarea id="pdfAiInstructions" placeholder="Jaise: Sirf Chapter 3 ke points lo, ya MCQ format mein do, ya simple Hindi mein summarize karo, ya sirf definitions nikalo..." style="width:100%;border:1.5px solid #bdd5ea;border-radius:10px;padding:12px;font-size:0.82rem;font-family:inherit;resize:vertical;min-height:90px;outline:none;color:#0d1b2a;"></textarea>
+
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button onclick="pdfGenerateNotes()" id="pdfGenBtn" style="flex:1;padding:12px;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.88rem;cursor:pointer;font-family:inherit;">🤖 AI se Notes Banao</button>
+      </div>
+    </div>
+
+    <!-- Result -->
+    <div id="pdfResultBox" style="display:none;padding:0 20px 20px;">
+      <div style="height:1px;background:#eee;margin-bottom:16px;"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div style="font-size:0.85rem;font-weight:700;color:#0d1b2a;">✅ Notes Ready!</div>
+        <button onclick="pdfRegenerateNotes()" style="background:none;border:1.5px solid #1565c0;border-radius:8px;padding:4px 10px;color:#1565c0;font-size:0.72rem;font-weight:700;cursor:pointer;">🔄 Regenerate</button>
+      </div>
+      <div id="pdfResultText" style="background:#f4f9fe;border:1px solid #bdd5ea;border-radius:10px;padding:14px;font-size:0.8rem;line-height:1.75;max-height:250px;overflow-y:auto;white-space:pre-wrap;color:#0d1b2a;"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+        <button onclick="pdfSaveAsNote()" style="flex:1;padding:11px;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.85rem;cursor:pointer;font-family:inherit;">💾 Topic mein Save Karo</button>
+        <button onclick="pdfCopyResult()" style="padding:11px 14px;background:#f4f9fe;border:1.5px solid #bdd5ea;border-radius:10px;font-weight:700;font-size:0.82rem;cursor:pointer;font-family:inherit;">📋 Copy</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script>
+// ==================== PDF EXTRACTOR SYSTEM ====================
+
+// PDF.js worker setup
+if(typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+let _pdfState = {
+  topicId: null, sid: null, secid: null, tid: null,
+  extractedText: '',
+  generatedNotes: ''
+};
+
+// Topic ke saath PDF button click
+function openPdfModal(sid, secid, tid) {
+  const t = getTop(sid, secid, tid);
+  if(!t) return;
+  _pdfState = { topicId: t.id, sid, secid, tid, extractedText: '', generatedNotes: '' };
+
+  // Reset modal
+  document.getElementById('pdfModalTopicName').textContent = '📌 Topic: ' + t.name;
+  document.getElementById('pdfFileInfo').style.display = 'none';
+  document.getElementById('pdfProgressBox').style.display = 'none';
+  document.getElementById('pdfTextPreview').style.display = 'none';
+  document.getElementById('pdfStep2').style.display = 'none';
+  document.getElementById('pdfResultBox').style.display = 'none';
+  document.getElementById('pdfFileInput').value = '';
+  document.getElementById('pdfAiInstructions').value = '';
+
+  const modal = document.getElementById('pdfExtractorModal');
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closePdfModal() {
+  document.getElementById('pdfExtractorModal').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+// File select ho gayi
+async function pdfFileSelected(input) {
+  const file = input.files[0];
+  if(!file) return;
+
+  // File info dikhao
+  const sizeKB = Math.round(file.size / 1024);
+  document.getElementById('pdfFileInfo').style.display = 'block';
+  document.getElementById('pdfFileInfo').textContent = `📄 ${file.name} (${sizeKB} KB)`;
+
+  // Progress show karo
+  document.getElementById('pdfProgressBox').style.display = 'block';
+  document.getElementById('pdfTextPreview').style.display = 'none';
+  document.getElementById('pdfStep2').style.display = 'none';
+  setPdfProgress(10, '📖 PDF padh raha hoon...');
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    setPdfProgress(20, '🔍 Text dhundh raha hoon...');
+
+    // PDF.js se load karo
+    const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const totalPages = pdfDoc.numPages;
+    let fullText = '';
+
+    // Har page se text nikalo
+    for(let i = 1; i <= totalPages; i++) {
+      setPdfProgress(20 + Math.round((i/totalPages)*50), `📄 Page ${i}/${totalPages} padh raha hoon...`);
+      const page = await pdfDoc.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map(item => item.str).join(' ');
+      fullText += pageText + '\n\n';
+    }
+
+    fullText = fullText.trim();
+
+    // Check karo text mila ya nahi (scanned PDF case)
+    if(fullText.replace(/\s/g,'').length < 100) {
+      // Scanned PDF — OCR se try karo
+      setPdfProgress(75, '🔬 Scanned PDF detect hua — OCR chal raha hai (thoda time lagega)...');
+      fullText = await extractTextWithOCR(pdfDoc, totalPages);
+    }
+
+    setPdfProgress(100, '✅ Text extract ho gaya!');
+
+    // Result dikhao
+    _pdfState.extractedText = fullText;
+    const wordCount = fullText.trim().split(/\s+/).length;
+
+    document.getElementById('pdfTextContent').textContent = fullText.substring(0, 800) + (fullText.length > 800 ? '\n\n...(aur bhi hai)' : '');
+    document.getElementById('pdfWordCount').textContent = `📊 Kul ${wordCount} words extract hue | ${totalPages} pages`;
+    document.getElementById('pdfTextPreview').style.display = 'block';
+    document.getElementById('pdfStep2').style.display = 'block';
+
+    setTimeout(() => { document.getElementById('pdfProgressBox').style.display = 'none'; }, 1000);
+
+  } catch(err) {
+    setPdfProgress(0, '❌ Error: ' + err.message);
+    showToast('PDF read nahi ho saki: ' + err.message, 'error');
+  }
+}
+
+// Scanned PDF ke liye OCR
+async function extractTextWithOCR(pdfDoc, totalPages) {
+  let allText = '';
+  // Sirf pehle 5 pages OCR karo (performance ke liye)
+  const pagesToProcess = Math.min(totalPages, 5);
+
+  for(let i = 1; i <= pagesToProcess; i++) {
+    setPdfProgress(75 + Math.round((i/pagesToProcess)*20), `🔬 OCR: Page ${i}/${pagesToProcess}...`);
+    try {
+      const page = await pdfDoc.getPage(i);
+      const viewport = page.getViewport({ scale: 1.5 });
+
+      // Canvas pe render karo
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      // Tesseract se OCR
+      const result = await Tesseract.recognize(canvas, 'hin+eng', {
+        logger: () => {}
+      });
+      allText += result.data.text + '\n\n';
+    } catch(e) {
+      allText += `[Page ${i} OCR failed]\n\n`;
+    }
+  }
+
+  if(totalPages > 5) {
+    allText += `\n\n[Note: Sirf pehle 5 pages OCR kiye gaye. Baki ${totalPages - 5} pages ke liye manually copy-paste karo.]`;
+  }
+  return allText.trim();
+}
+
+function setPdfProgress(pct, label) {
+  document.getElementById('pdfProgressBar').style.width = pct + '%';
+  document.getElementById('pdfProgressLabel').textContent = label;
+}
+
+// AI se notes generate karo
+async function pdfGenerateNotes() {
+  if(!S.apiKey) { showToast('Pehle API Key daalo Settings mein!', 'error'); return; }
+  if(!_pdfState.extractedText) { showToast('Pehle PDF select karo!', 'error'); return; }
+
+  const btn = document.getElementById('pdfGenBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Notes ban rahe hain...';
+
+  const t = getTop(_pdfState.sid, _pdfState.secid, _pdfState.tid);
+  const userInstructions = document.getElementById('pdfAiInstructions').value.trim();
+
+  // Text limit karo (API ke liye)
+  const textToSend = _pdfState.extractedText.substring(0, 10000);
+
+  const prompt = `Tu ek expert teacher hai.
+
+TOPIC: ${t ? t.name : 'Notes'}
+PDF SE EXTRACT HUA TEXT:
+${textToSend}
+
+USER KE NIRDESH: ${userInstructions || 'Is PDF ka comprehensive summary banao. Important points, definitions, aur key concepts cover karo. Hindi mein do.'}
+
+RULES:
+1. Sirf PDF ke content ke basis par notes banao
+2. ** se important points mark karo
+3. Clear, readable format mein do
+4. User ke nirdesh ko zaroor follow karo
+5. Koi bhi irrelevant content mat add karo
+
+Seedha notes do, koi introduction nahi:`;
+
+  try {
+    const result = await callGroq(prompt, 4000);
+    _pdfState.generatedNotes = result;
+
+    document.getElementById('pdfResultText').textContent = result;
+    document.getElementById('pdfResultBox').style.display = 'block';
+
+    // Scroll to result
+    document.getElementById('pdfResultBox').scrollIntoView({ behavior: 'smooth' });
+    showToast('Notes ready hain! 🎉', 'success');
+  } catch(err) {
+    showToast('Error: ' + err.message, 'error');
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🤖 AI se Notes Banao';
+}
+
+// Regenerate
+async function pdfRegenerateNotes() {
+  document.getElementById('pdfResultBox').style.display = 'none';
+  await pdfGenerateNotes();
+}
+
+// Topic mein note save karo
+function pdfSaveAsNote() {
+  if(!_pdfState.generatedNotes) return;
+  const t = getTop(_pdfState.sid, _pdfState.secid, _pdfState.tid);
+  if(!t) return;
+
+  const noteName = 'PDF Notes — ' + new Date().toLocaleDateString('hi-IN');
+  const newNote = {
+    id: Date.now(),
+    name: noteName,
+    content: _pdfState.generatedNotes,
+    wordCount: _pdfState.generatedNotes.trim().split(/\s+/).length,
+    addedAt: new Date().toLocaleDateString('hi-IN'),
+    source: 'pdf'
+  };
+
+  t.notes.push(newNote);
+  save();
+  renderLibraryTree();
+  showToast('✅ Notes topic mein save ho gaye!', 'success');
+  closePdfModal();
+
+  // Topic view refresh karo agar khula ho
+  const tvModal = document.getElementById('topicViewModal');
+  if(tvModal && tvModal.classList.contains('show')) {
+    viewTopic(_pdfState.sid, _pdfState.secid, _pdfState.tid);
+  }
+}
+
+// Copy result
+function pdfCopyResult() {
+  if(!_pdfState.generatedNotes) return;
+  navigator.clipboard.writeText(_pdfState.generatedNotes)
+    .then(() => showToast('📋 Copy ho gaya!', 'success'))
+    .catch(() => showToast('Copy nahi ho saka', 'error'));
+}
+</script>
