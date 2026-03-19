@@ -7795,19 +7795,39 @@ function addSelectedExtraFacts() {
 
   if(selected.length === 0) { showToast('Koi fact select nahi kiya!', 'error'); return; }
 
-  // Master notes mein add karo — plain text aur HTML dono mein
   const today = new Date().toLocaleDateString('hi-IN');
-  const toAdd = selected.map(f => `• ${f.text}`).join('\n');
-  const addedSection = '\n\n--- 🆕 Naye Facts (' + today + ') ---\n' + toAdd;
-  t.masterNotes = (t.masterNotes || '') + addedSection;
+  const toAdd = selected.map(f => '• ' + f.text).join('\n');
+  const addedSectionText = '\n\n--- 🆕 Naye Facts (' + today + ') ---\n' + toAdd;
+  const addedSectionHTML = '<br><br><span style="color:#e65100;font-weight:700;">--- 🆕 Naye Facts (' + today + ') ---</span><br>'
+    + selected.map(f => '• ' + f.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')).join('<br>');
 
-  // FIX: Agar HTML pehle se hai (highlights hain) to HTML mein bhi append karo
-  // Isse pehle se kiye gaye highlights safe rahenge
-  if(t.masterNotesHTML) {
-    const safeText = addedSection.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    t.masterNotesHTML = t.masterNotesHTML + '<br><br><span style="color:#e65100;font-weight:700;">--- 🆕 Naye Facts (' + today + ') ---</span><br>' + selected.map(f=>'• '+f.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')).join('<br>');
+  // Plain text update
+  t.masterNotes = (t.masterNotes || '') + addedSectionText;
+
+  // HTML update — SABSE IMPORTANT:
+  // Agar editor abhi khula hua hai aur masternotes edit chal raha hai
+  // to LIVE DOM se HTML lo (ismein latest highlights hain)
+  // Nahi to stored HTML use karo
+  const editorArea = document.getElementById('noteEditableArea');
+  const editorOverlay = document.getElementById('notesEditorOverlay');
+  const editorIsOpen = editorOverlay && editorOverlay.classList.contains('show');
+  const editorIsMaster = _editorState.specialType === 'masternotes'
+    && _editorState.sid == _masterState.sid
+    && _editorState.tid == _masterState.tid;
+
+  if(editorIsOpen && editorIsMaster && editorArea) {
+    // Live DOM se latest HTML lo — ismein user ke highlights preserved hain
+    const liveHTML = editorArea.innerHTML;
+    t.masterNotesHTML = liveHTML + addedSectionHTML;
+    // Editor mein bhi append karo taaki user turant dekh sake
+    editorArea.innerHTML = t.masterNotesHTML;
+    setTimeout(() => neAttachEraserToMarks(), 50);
+    markModified();
+  } else if(t.masterNotesHTML) {
+    // Editor band hai — stored HTML mein append karo
+    t.masterNotesHTML = t.masterNotesHTML + addedSectionHTML;
   }
-  // HTML null NAHI karenge — highlights preserve honge
+  // Agar koi HTML nahi tha — null hi rehne do, next open pe plain text load hoga
 
   // Mark as added
   selected.forEach(sf => {
