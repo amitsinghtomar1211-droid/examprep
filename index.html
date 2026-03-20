@@ -1215,6 +1215,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
           <div id="creatorModeMenu"
             style="display:none;position:absolute;top:110%;left:0;background:#fff;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,0.25);z-index:9999;min-width:150px;overflow:hidden;">
             <div class="cmenu-item" onclick="switchCreatorTab('draw',null)">✏️ Draw</div>
+            <div class="cmenu-item" onclick="switchCreatorTab('aidraw',null)" style="color:#6a1b9a;font-weight:800;">🤖 AI Draw</div>
             <div class="cmenu-item" onclick="switchCreatorTab('insert',null)">➕ Insert</div>
             <div class="cmenu-item" onclick="switchCreatorTab('tree',null)">🌿 Tree / Mind Map</div>
             <div class="cmenu-item" onclick="switchCreatorTab('table',null)">⊞ Table Builder</div>
@@ -1350,6 +1351,58 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
           Upar rows/cols set karo → Preview → Insert
         </div>
         <div id="tablePreviewArea" style="flex:1;overflow:auto;padding:12px;"></div>
+      </div>
+
+      <!-- AI DRAW TAB -->
+      <div id="creator-tab-aidraw" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
+
+        <!-- Input area -->
+        <div style="padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface2);">
+          <div style="font-size:0.72rem;color:var(--text2);margin-bottom:6px;font-weight:700;">
+            🤖 AI ko batao kya draw kare — tree, flowchart, timeline, comparison table, mind map...
+          </div>
+          <div style="display:flex;gap:7px;">
+            <textarea id="aiDrawPrompt" rows="2" placeholder="Jaise: Ras ke char bhag ka tree diagram banao — Sthayi Bhav, Vibhav (Alamban+Uddipan), Anubhav, Sanchari Bhav"
+              style="flex:1;border:1.5px solid var(--border);border-radius:9px;padding:8px 10px;font-size:0.78rem;font-family:inherit;resize:none;outline:none;background:var(--surface);color:var(--text);"></textarea>
+            <button onclick="runAiDraw()" id="aiDrawBtn"
+              style="padding:8px 14px;background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;border:none;border-radius:9px;font-weight:800;cursor:pointer;font-family:inherit;font-size:0.8rem;flex-shrink:0;align-self:stretch;">
+              ✦ Draw
+            </button>
+          </div>
+          <!-- Quick prompts -->
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            <button class="itb-btn" onclick="aiDrawQuick('Tree diagram')">🌿 Tree</button>
+            <button class="itb-btn" onclick="aiDrawQuick('Flowchart')">🔄 Flow</button>
+            <button class="itb-btn" onclick="aiDrawQuick('Timeline')">📅 Timeline</button>
+            <button class="itb-btn" onclick="aiDrawQuick('Comparison table')">⚖️ Compare</button>
+            <button class="itb-btn" onclick="aiDrawQuick('Mind map')">🧠 Mind Map</button>
+            <button class="itb-btn" onclick="aiDrawQuick('Cycle diagram')">🔁 Cycle</button>
+          </div>
+        </div>
+
+        <!-- Canvas area (same canvas reused) -->
+        <div style="flex:1;position:relative;overflow:hidden;" id="aiDrawCanvasWrap">
+          <canvas id="aiDrawCanvas" style="width:100%;height:100%;display:block;background:#fafafa;touch-action:pinch-zoom;"></canvas>
+          <!-- Loading overlay -->
+          <div id="aiDrawLoading" style="display:none;position:absolute;inset:0;background:rgba(255,255,255,0.9);align-items:center;justify-content:center;flex-direction:column;gap:10px;">
+            <div style="font-size:2rem;">🤖</div>
+            <div style="font-size:0.85rem;font-weight:700;color:#4a148c;" id="aiDrawLoadingText">AI diagram bana raha hai...</div>
+            <div style="width:120px;height:4px;background:#e0e0e0;border-radius:4px;overflow:hidden;">
+              <div id="aiDrawLoadingBar" style="height:100%;background:linear-gradient(90deg,#4a148c,#ab47bc);width:0%;transition:width 0.3s;border-radius:4px;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom actions -->
+        <div class="creator-bottom-bar">
+          <div style="display:flex;gap:5px;">
+            <button onclick="aiDrawZoom(1.2)" style="width:34px;height:34px;border-radius:8px;border:1.5px solid var(--border);background:var(--surface);font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Zoom In">＋</button>
+            <button onclick="aiDrawZoom(0.8)" style="width:34px;height:34px;border-radius:8px;border:1.5px solid var(--border);background:var(--surface);font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Zoom Out">－</button>
+            <button onclick="aiDrawFit()" style="width:34px;height:34px;border-radius:8px;border:1.5px solid var(--border);background:var(--surface);font-size:0.65rem;font-weight:800;cursor:pointer;" title="Fit">FIT</button>
+          </div>
+          <button class="cbb-btn cbb-primary" onclick="insertAiDrawingToNotes()">📝 Notes mein Insert</button>
+          <button class="cbb-btn" onclick="downloadAiDrawing()">⬇️</button>
+        </div>
       </div>
 
     </div><!-- /creator-body -->
@@ -8935,7 +8988,7 @@ function switchCreatorTab(tab, btn) {
   _creatorActiveTab = tab;
 
   // Hide all content tabs + toolbars
-  ['draw','insert','tree','table'].forEach(function(t) {
+  ['draw','insert','tree','table','aidraw'].forEach(function(t) {
     var c = document.getElementById('creator-tab-' + t);
     if(c) c.style.display = 'none';
     var tb = document.getElementById('dtoolbar-' + t);
@@ -8945,7 +8998,7 @@ function switchCreatorTab(tab, btn) {
   // Show selected content
   var target = document.getElementById('creator-tab-' + tab);
   if(target) {
-    target.style.display = 'flex';
+    target.style.display = (tab === 'insert') ? 'block' : 'flex';
   }
   // Show toolbar for this tab
   var toolbar = document.getElementById('dtoolbar-' + tab);
@@ -8964,6 +9017,14 @@ function switchCreatorTab(tab, btn) {
   if(tab === 'draw') setTimeout(initDrawCanvas, 30);
   if(tab === 'tree') initTreeEditor();
   if(tab === 'table') previewTable();
+  if(tab === 'aidraw') setTimeout(initAiDrawCanvas, 30);
+
+  // Update labels
+  var labels = { draw:'✏️ Draw', insert:'➕ Insert', tree:'🌿 Tree', table:'⊞ Table', aidraw:'🤖 AI Draw' };
+  var lbl = document.getElementById('creatorModeBtnLabel');
+  if(lbl) lbl.textContent = labels[tab] || tab;
+  var menu = document.getElementById('creatorModeMenu');
+  if(menu) menu.style.display = 'none';
 }
 
 function toggleCreatorModeMenu() {
@@ -9831,6 +9892,291 @@ function hideCreatorFab() {
 
 // Init triple-tap detector when DOM ready
 document.addEventListener('DOMContentLoaded', initCreatorTapDetector);
+
+
+// ==================== AI DRAW ENGINE ====================
+
+var _aiDraw = {
+  canvas: null, ctx: null,
+  scale: 1, offsetX: 0, offsetY: 0,
+  diagram: null  // parsed diagram data
+};
+
+function initAiDrawCanvas() {
+  var canvas = document.getElementById('aiDrawCanvas');
+  var wrap   = document.getElementById('aiDrawCanvasWrap');
+  if(!canvas || !wrap) return;
+  canvas.width  = wrap.offsetWidth  || 360;
+  canvas.height = wrap.offsetHeight || 400;
+  _aiDraw.canvas = canvas;
+  _aiDraw.ctx    = canvas.getContext('2d');
+  _aiDraw.scale  = 1;
+  _aiDraw.offsetX = 0; _aiDraw.offsetY = 0;
+  // Draw placeholder
+  aiDrawPlaceholder();
+}
+
+function aiDrawPlaceholder() {
+  var ctx = _aiDraw.ctx;
+  if(!ctx) return;
+  var w = _aiDraw.canvas.width, h = _aiDraw.canvas.height;
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle = '#fafafa';
+  ctx.fillRect(0,0,w,h);
+  ctx.fillStyle = 'rgba(106,27,154,0.12)';
+  ctx.font = '2.5rem serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('🤖', w/2, h/2-20);
+  ctx.font = '700 0.85rem sans-serif';
+  ctx.fillStyle = 'rgba(106,27,154,0.5)';
+  ctx.fillText('Upar apna prompt likhkar ✦ Draw dabao', w/2, h/2+20);
+  ctx.textAlign = 'left';
+}
+
+function aiDrawQuick(type) {
+  var inp = document.getElementById('aiDrawPrompt');
+  if(inp) inp.value = 'Mere notes ke content ke liye ek ' + type + ' banao jo saari key concepts clearly dikhaye';
+  document.getElementById('aiDrawPrompt')?.focus();
+}
+
+function setAiDrawLoading(pct, text) {
+  var ld = document.getElementById('aiDrawLoading');
+  var bar = document.getElementById('aiDrawLoadingBar');
+  var txt = document.getElementById('aiDrawLoadingText');
+  if(ld) ld.style.display = pct < 100 ? 'flex' : 'none';
+  if(bar) bar.style.width = pct + '%';
+  if(txt) txt.textContent = text || 'AI soch raha hai...';
+}
+
+async function runAiDraw() {
+  var prompt = (document.getElementById('aiDrawPrompt')?.value || '').trim();
+  if(!prompt) { showToast('Pehle prompt likhein!', 'error'); return; }
+  if(!S.apiKey) { showToast('API Key daalo Settings mein!', 'error'); return; }
+
+  var btn = document.getElementById('aiDrawBtn');
+  if(btn) { btn.disabled = true; btn.textContent = '⏳'; }
+
+  setAiDrawLoading(20, '🤖 AI structure soch raha hai...');
+  initAiDrawCanvas();
+
+  // Get topic context from current notes editor state
+  var notesContext = '';
+  if(_editorState && _editorState.tid) {
+    var t = getTop(_editorState.sid, _editorState.secid, _editorState.tid);
+    if(t) {
+      if(t.finalNotes) notesContext = t.finalNotes.substring(0,1500);
+      else if(t.notes && t.notes.length) notesContext = t.notes.map(function(n){return n.content;}).join(' ').substring(0,1500);
+    }
+  }
+
+    var systemPrompt = [
+    'Tu ek diagram generator hai. JSON format mein SIRF ek valid JSON object return kar, koi explanation nahi, koi markdown nahi.',
+    'JSON schema: {"type":"tree|flowchart|timeline|mindmap|comparison|cycle","title":"...","nodes":[{"id":"n1","label":"text","x":0.5,"y":0.1,"style":"root|branch|leaf|step|highlight"}],"edges":[{"from":"n1","to":"n2","label":"optional"}]}',
+    'Coordinates: x aur y 0-1 range (relative). Root top mein, children neeche.',
+    'Style: root=purple box, branch=blue box, leaf=light green box, step=rounded orange, highlight=orange bold.',
+    'NODE LIMIT: Maximum 20 nodes. Labels max 4 words each.',
+    'Notes context: ' + notesContext
+  ].join(' ');
+
+  try {
+    setAiDrawLoading(50, '🤖 Diagram structure bana raha hai...');
+    var resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1500,
+        system: systemPrompt,
+        messages: [{ role:'user', content: prompt }]
+      })
+    });
+    var data = await resp.json();
+    var raw = (data.content || []).map(function(c){return c.text||'';}).join('');
+    // Extract JSON
+    var jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if(!jsonMatch) throw new Error('JSON nahi mila');
+    var diagram = JSON.parse(jsonMatch[0]);
+
+    setAiDrawLoading(80, '🎨 Canvas par draw kar raha hai...');
+    _aiDraw.diagram = diagram;
+    setTimeout(function() {
+      renderAiDiagram(diagram);
+      setAiDrawLoading(100, 'Done!');
+    }, 100);
+
+  } catch(err) {
+    setAiDrawLoading(100, '');
+    showToast('Error: ' + err.message, 'error');
+  }
+
+  if(btn) { btn.disabled = false; btn.textContent = '✦ Draw'; }
+}
+
+// ---- Render diagram on canvas ----
+function renderAiDiagram(diagram) {
+  if(!_aiDraw.canvas || !diagram) return;
+  var canvas = _aiDraw.canvas;
+  var ctx    = _aiDraw.ctx;
+  var W = canvas.width, H = canvas.height;
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0,0,W,H);
+
+  var pad = 30;
+  var drawW = W - pad*2;
+  var drawH = H - pad*2;
+
+  // Style map
+  var styles = {
+    root:      { bg:'#4a148c', fg:'#fff',    border:'#6a1b9a', r:10 },
+    branch:    { bg:'#1565c0', fg:'#fff',    border:'#1976d2', r:8  },
+    leaf:      { bg:'#e8f5e9', fg:'#1b5e20', border:'#a5d6a7', r:7  },
+    step:      { bg:'#fff3e0', fg:'#e65100', border:'#ffcc02', r:20 },
+    highlight: { bg:'#ff6f00', fg:'#fff',    border:'#ffa000', r:8  },
+    default:   { bg:'#f4f9fe', fg:'#0d1b2a', border:'#bdd5ea', r:7  }
+  };
+
+  // Title
+  ctx.font = '700 14px sans-serif';
+  ctx.fillStyle = '#0d1b2a';
+  ctx.textAlign = 'center';
+  ctx.fillText(diagram.title || '', W/2, 18);
+
+  // Build node position map
+  var nodeMap = {};
+  (diagram.nodes || []).forEach(function(node) {
+    var x = pad + node.x * drawW;
+    var y = pad + 16 + node.y * (drawH - 16);
+    nodeMap[node.id] = { x:x, y:y, node:node };
+  });
+
+  // Draw edges first (behind nodes)
+  ctx.strokeStyle = '#90a4ae';
+  ctx.lineWidth   = 1.5;
+  ctx.setLineDash([]);
+  (diagram.edges || []).forEach(function(edge) {
+    var from = nodeMap[edge.from];
+    var to   = nodeMap[edge.to];
+    if(!from || !to) return;
+    ctx.beginPath();
+    // Curved connector
+    var mx = (from.x + to.x) / 2;
+    var my = (from.y + to.y) / 2;
+    ctx.moveTo(from.x, from.y);
+    ctx.quadraticCurveTo(mx, from.y + (to.y-from.y)*0.3, to.x, to.y);
+    ctx.stroke();
+    // Arrow
+    var angle = Math.atan2(to.y - my, to.x - mx);
+    ctx.beginPath();
+    ctx.moveTo(to.x, to.y);
+    ctx.lineTo(to.x - 8*Math.cos(angle-0.4), to.y - 8*Math.sin(angle-0.4));
+    ctx.lineTo(to.x - 8*Math.cos(angle+0.4), to.y - 8*Math.sin(angle+0.4));
+    ctx.closePath();
+    ctx.fillStyle = '#90a4ae';
+    ctx.fill();
+    // Edge label
+    if(edge.label) {
+      ctx.font = '500 9px sans-serif';
+      ctx.fillStyle = '#607d8b';
+      ctx.textAlign = 'center';
+      ctx.fillText(edge.label, mx, my - 4);
+    }
+  });
+
+  // Draw nodes
+  (diagram.nodes || []).forEach(function(node) {
+    var pos = nodeMap[node.id];
+    if(!pos) return;
+    var st = styles[node.style] || styles.default;
+    var label = node.label || '';
+
+    // Measure text to size box
+    ctx.font = '600 11px sans-serif';
+    var tw = ctx.measureText(label).width;
+    var bw = Math.max(tw + 20, 60);
+    var bh = 28;
+
+    // Box
+    ctx.beginPath();
+    roundRect(ctx, pos.x - bw/2, pos.y - bh/2, bw, bh, st.r);
+    ctx.fillStyle = st.bg;
+    ctx.fill();
+    ctx.strokeStyle = st.border;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Label
+    ctx.fillStyle = st.fg;
+    ctx.textAlign = 'center';
+    ctx.font = '600 11px sans-serif';
+    ctx.fillText(label, pos.x, pos.y + 4);
+  });
+
+  ctx.setLineDash([]);
+  ctx.textAlign = 'left';
+  _aiDraw.scale = 1;
+  _aiDraw.offsetX = 0; _aiDraw.offsetY = 0;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x+w-r, y);
+  ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r);
+  ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h);
+  ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r);
+  ctx.quadraticCurveTo(x, y, x+r, y);
+  ctx.closePath();
+}
+
+function aiDrawZoom(factor) {
+  var canvas = document.getElementById('aiDrawCanvas');
+  var ctx = _aiDraw.ctx;
+  if(!canvas || !ctx || !_aiDraw.diagram) return;
+  _aiDraw.scale *= factor;
+  // Re-render at new scale (simple approach: redraw with scaled canvas)
+  var orig = { w: canvas.width, h: canvas.height };
+  // Scale canvas visually using CSS transform
+  canvas.style.transform = 'scale(' + _aiDraw.scale + ')';
+  canvas.style.transformOrigin = 'top left';
+}
+
+function aiDrawFit() {
+  var canvas = document.getElementById('aiDrawCanvas');
+  if(!canvas) return;
+  canvas.style.transform = 'scale(1)';
+  _aiDraw.scale = 1;
+}
+
+function insertAiDrawingToNotes() {
+  var canvas = document.getElementById('aiDrawCanvas');
+  if(!canvas) return;
+  // Reset zoom for clean export
+  var prevTransform = canvas.style.transform;
+  canvas.style.transform = 'scale(1)';
+  var dataUrl = canvas.toDataURL('image/png');
+  canvas.style.transform = prevTransform;
+  var area = document.getElementById('noteEditableArea');
+  if(!area || area.contentEditable !== 'true') {
+    neSetEditMode(true);
+    setTimeout(function() { insertImageToNotes(dataUrl); }, 300);
+  } else {
+    insertImageToNotes(dataUrl);
+  }
+  closeCreatorPanel();
+}
+
+function downloadAiDrawing() {
+  var canvas = document.getElementById('aiDrawCanvas');
+  if(!canvas) return;
+  var a = document.createElement('a');
+  a.download = 'ai-diagram-' + Date.now() + '.png';
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+}
 
 // ---- FIRESTORE SYNC ----
 async function saveToFirebase(){
