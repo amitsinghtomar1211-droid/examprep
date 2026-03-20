@@ -9970,12 +9970,11 @@ async function runAiDraw() {
   }
 
     var systemPrompt = [
-    'Tu ek diagram generator hai. JSON format mein SIRF ek valid JSON object return kar, koi explanation nahi, koi markdown nahi.',
-    'JSON schema: {"type":"tree|flowchart|timeline|mindmap|comparison|cycle","title":"...","nodes":[{"id":"n1","label":"text","x":0.5,"y":0.1,"style":"root|branch|leaf|step|highlight"}],"edges":[{"from":"n1","to":"n2","label":"optional"}]}',
-    'Coordinates: x aur y 0-1 range (relative). Root top mein, children neeche.',
-    'Style: root=purple box, branch=blue box, leaf=light green box, step=rounded orange, highlight=orange bold.',
-    'NODE LIMIT: Maximum 20 nodes. Labels max 4 words each.',
-    'Notes context: ' + notesContext
+    'You are a diagram JSON generator. Return ONLY a valid JSON object, no explanation, no markdown, no code blocks.',
+    'JSON format: {"type":"tree","title":"diagram title in Hindi","nodes":[{"id":"n1","label":"short label","style":"root"},{"id":"n2","label":"label","style":"branch"}],"edges":[{"from":"n1","to":"n2"}]}',
+    'RULES: 1) Labels must be SHORT (2-4 words max). 2) IDs must be unique strings like n1,n2,n3. 3) Max 16 nodes. 4) Every node must have id, label, style. 5) style values: root (1 only), branch, leaf, step, highlight.',
+    'IMPORTANT: Use the SAME language as the notes content for labels (Hindi if notes are in Hindi).',
+    'Notes context for diagram content: ' + (notesContext || 'General topic')
   ].join(' ');
 
   try {
@@ -10008,112 +10007,218 @@ async function runAiDraw() {
 
 // ---- Render diagram on canvas ----
 function renderAiDiagram(diagram) {
-  if(!_aiDraw.canvas || !diagram) return;
-  var canvas = _aiDraw.canvas;
-  var ctx    = _aiDraw.ctx;
-  var W = canvas.width, H = canvas.height;
+  if(!diagram) return;
 
+  // ---- Step 1: Auto-compute layout ----
+  var nodes = diagram.nodes || [];
+  var edges = diagram.edges || [];
+
+  // Build adjacency: parent → children
+  var children = {};
+  var hasParent = {};
+  nodes.forEach(function(n){ children[n.id] = []; });
+  edges.forEach(function(e){
+    if(children[e.from]) children[e.from].push(e.to);
+    hasParent[e.to] = true;
+  });
+
+  // Find roots (nodes with no parent)
+  var roots = nodes.filter(function(n){ return !hasParent[n.id]; }).map(function(n){ return n.id; });
+  if(!roots.length && nodes.length) roots = [nodes[0].id];
+
+  // Compute tree layout (Reingold-Tilford simplified)
+  var NODE_W = 130, NODE_H = 38, H_GAP = 20, V_GAP = 60;
+  var positions = {};
+
+  function subtreeWidth(id, visited) {
+    if(!visited) visited = {};
+    if(visited[id]) return NODE_W;
+    visited[id] = true;
+    var kids = children[id] || [];
+    if(!kids.length) return NODE_W;
+    var total = 0;
+    kids.forEach(function(k){ total += subtreeWidth(k, visited) + H_GAP; });
+    return Math.max(NODE_W, total - H_GAP);
+  }
+
+  function assignPositions(id, x, y, visited) {
+    if(!visited) visited = {};
+    if(visited[id]) return;
+    visited[id] = true;
+    positions[id] = { x: x, y: y };
+    var kids = children[id] || [];
+    if(!kids.length) return;
+    var totalW = 0;
+    kids.forEach(function(k){ totalW += subtreeWidth(k) + H_GAP; });
+    totalW -= H_GAP;
+    var cx = x - totalW / 2;
+    kids.forEach(function(k){
+      var kw = subtreeWidth(k);
+      assignPositions(k, cx + kw/2, y + NODE_H + V_GAP, visited);
+      cx += kw + H_GAP;
+    });
+  }
+
+  // Assign positions for all roots
+  var rootSpacing = 0;
+  roots.forEach(function(r){ rootSpacing += subtreeWidth(r) + H_GAP; });
+  rootSpacing -= H_GAP;
+  var rx = rootSpacing / 2;
+  var usedVis = {};
+  roots.forEach(function(r){
+    var rw = subtreeWidth(r);
+    assignPositions(r, rx - rootSpacing/2 + rw/2, 60, usedVis);
+    rootSpacing -= rw + H_GAP;
+    rx -= rw + H_GAP;
+  });
+  // Assign fallback positions for disconnected nodes
+  nodes.forEach(function(n, i){
+    if(!positions[n.id]) positions[n.id] = { x: 80 + (i%4)*160, y: 60 + Math.floor(i/4)*100 };
+  });
+
+  // ---- Step 2: Compute canvas size ----
+  var maxX = 0, maxY = 0, minX = Infinity;
+  nodes.forEach(function(n){
+    var p = positions[n.id];
+    maxX = Math.max(maxX, p.x + NODE_W/2 + 20);
+    maxY = Math.max(maxY, p.y + NODE_H + 30);
+    minX = Math.min(minX, p.x - NODE_W/2 - 20);
+  });
+  if(!nodes.length){ maxX = 360; maxY = 300; minX = 0; }
+
+  // Shift all positions so minX = 20
+  var shiftX = 20 - (minX < 20 ? minX : 20);
+  nodes.forEach(function(n){ positions[n.id].x += shiftX; });
+  maxX += shiftX;
+
+  // Size canvas to fit diagram
+  var wrap = document.getElementById('aiDrawCanvasWrap');
+  var wrapW = wrap ? wrap.offsetWidth : 360;
+  var W = Math.max(wrapW, maxX + 20);
+  var H = Math.max(400, maxY + 20);
+
+  var canvas = document.getElementById('aiDrawCanvas');
+  canvas.width  = W;
+  canvas.height = H;
+  // Reset CSS transform
+  canvas.style.transform = 'none';
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  // Make wrap scrollable if diagram is bigger
+  if(wrap) { wrap.style.overflow = 'auto'; }
+
+  var ctx = canvas.getContext('2d');
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle = '#fff';
   ctx.fillRect(0,0,W,H);
 
-  var pad = 30;
-  var drawW = W - pad*2;
-  var drawH = H - pad*2;
+  // ---- Step 3: Hindi-safe font ----
+  var FONT = "'Noto Sans Devanagari','Noto Sans',sans-serif";
 
-  // Style map
+  // ---- Step 4: Styles ----
   var styles = {
-    root:      { bg:'#4a148c', fg:'#fff',    border:'#6a1b9a', r:10 },
-    branch:    { bg:'#1565c0', fg:'#fff',    border:'#1976d2', r:8  },
-    leaf:      { bg:'#e8f5e9', fg:'#1b5e20', border:'#a5d6a7', r:7  },
-    step:      { bg:'#fff3e0', fg:'#e65100', border:'#ffcc02', r:20 },
-    highlight: { bg:'#ff6f00', fg:'#fff',    border:'#ffa000', r:8  },
-    default:   { bg:'#f4f9fe', fg:'#0d1b2a', border:'#bdd5ea', r:7  }
+    root:      { bg:'#4a148c', fg:'#fff',    border:'#6a1b9a', r:12 },
+    branch:    { bg:'#1565c0', fg:'#fff',    border:'#1976d2', r:9  },
+    leaf:      { bg:'#e8f5e9', fg:'#1b5e20', border:'#66bb6a', r:7  },
+    step:      { bg:'#fff3e0', fg:'#bf360c', border:'#ffa726', r:18 },
+    highlight: { bg:'#e65100', fg:'#fff',    border:'#ff6d00', r:9  },
+    default:   { bg:'#e3f2fd', fg:'#0d47a1', border:'#90caf9', r:8  }
   };
 
-  // Title
-  ctx.font = '700 14px sans-serif';
+  // ---- Step 5: Draw title ----
+  ctx.font = '700 15px ' + FONT;
   ctx.fillStyle = '#0d1b2a';
   ctx.textAlign = 'center';
-  ctx.fillText(diagram.title || '', W/2, 18);
+  ctx.fillText(diagram.title || '', W/2, 22);
 
-  // Build node position map
-  var nodeMap = {};
-  (diagram.nodes || []).forEach(function(node) {
-    var x = pad + node.x * drawW;
-    var y = pad + 16 + node.y * (drawH - 16);
-    nodeMap[node.id] = { x:x, y:y, node:node };
-  });
+  // ---- Step 6: Draw edges ----
+  edges.forEach(function(edge){
+    var fp = positions[edge.from], tp = positions[edge.to];
+    if(!fp || !tp) return;
+    var x1 = fp.x, y1 = fp.y + NODE_H/2;
+    var x2 = tp.x, y2 = tp.y - NODE_H/2;
 
-  // Draw edges first (behind nodes)
-  ctx.strokeStyle = '#90a4ae';
-  ctx.lineWidth   = 1.5;
-  ctx.setLineDash([]);
-  (diagram.edges || []).forEach(function(edge) {
-    var from = nodeMap[edge.from];
-    var to   = nodeMap[edge.to];
-    if(!from || !to) return;
+    ctx.save();
+    ctx.strokeStyle = '#90a4ae';
+    ctx.lineWidth   = 1.8;
+    ctx.setLineDash([]);
     ctx.beginPath();
-    // Curved connector
-    var mx = (from.x + to.x) / 2;
-    var my = (from.y + to.y) / 2;
-    ctx.moveTo(from.x, from.y);
-    ctx.quadraticCurveTo(mx, from.y + (to.y-from.y)*0.3, to.x, to.y);
+    ctx.moveTo(x1, y1);
+    // Smooth S-curve connector
+    ctx.bezierCurveTo(x1, y1 + (y2-y1)*0.45, x2, y2 - (y2-y1)*0.45, x2, y2);
     ctx.stroke();
-    // Arrow
-    var angle = Math.atan2(to.y - my, to.x - mx);
-    ctx.beginPath();
-    ctx.moveTo(to.x, to.y);
-    ctx.lineTo(to.x - 8*Math.cos(angle-0.4), to.y - 8*Math.sin(angle-0.4));
-    ctx.lineTo(to.x - 8*Math.cos(angle+0.4), to.y - 8*Math.sin(angle+0.4));
-    ctx.closePath();
+
+    // Arrowhead
+    var angle = Math.atan2(y2 - (y2 - (y2-y1)*0.45), x2 - x2);
     ctx.fillStyle = '#90a4ae';
-    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - 7*Math.cos(Math.PI/2 - 0.4), y2 - 7*Math.sin(Math.PI/2 - 0.4));
+    ctx.lineTo(x2 - 7*Math.cos(Math.PI/2 + 0.4), y2 - 7*Math.sin(Math.PI/2 + 0.4));
+    ctx.closePath(); ctx.fill();
+
     // Edge label
     if(edge.label) {
-      ctx.font = '500 9px sans-serif';
+      var mx = (x1+x2)/2, my = (y1+y2)/2;
+      ctx.font = '500 9px ' + FONT;
       ctx.fillStyle = '#607d8b';
       ctx.textAlign = 'center';
-      ctx.fillText(edge.label, mx, my - 4);
+      ctx.fillText(edge.label, mx, my);
     }
+    ctx.restore();
   });
 
-  // Draw nodes
-  (diagram.nodes || []).forEach(function(node) {
-    var pos = nodeMap[node.id];
-    if(!pos) return;
+  // ---- Step 7: Draw nodes ----
+  nodes.forEach(function(node){
+    var p = positions[node.id];
+    if(!p) return;
     var st = styles[node.style] || styles.default;
-    var label = node.label || '';
+    var label = (node.label || '').trim();
 
-    // Measure text to size box
-    ctx.font = '600 11px sans-serif';
+    // Measure text properly
+    ctx.font = '600 12px ' + FONT;
     var tw = ctx.measureText(label).width;
-    var bw = Math.max(tw + 20, 60);
-    var bh = 28;
+    var bw = Math.max(tw + 24, 80);
+    var bh = NODE_H;
+    var bx = p.x - bw/2, by = p.y - bh/2;
+
+    // Shadow
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.12)';
+    ctx.shadowBlur  = 6;
+    ctx.shadowOffsetY = 2;
 
     // Box
     ctx.beginPath();
-    roundRect(ctx, pos.x - bw/2, pos.y - bh/2, bw, bh, st.r);
+    roundRect(ctx, bx, by, bw, bh, st.r);
     ctx.fillStyle = st.bg;
     ctx.fill();
+    ctx.restore();
+
+    // Border
+    ctx.beginPath();
+    roundRect(ctx, bx, by, bw, bh, st.r);
     ctx.strokeStyle = st.border;
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // Label
+    // Label — centered, Hindi-safe
+    ctx.font = '600 12px ' + FONT;
     ctx.fillStyle = st.fg;
     ctx.textAlign = 'center';
-    ctx.font = '600 11px sans-serif';
-    ctx.fillText(label, pos.x, pos.y + 4);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, p.x, p.y);
+    ctx.textBaseline = 'alphabetic';
   });
 
   ctx.setLineDash([]);
   ctx.textAlign = 'left';
   _aiDraw.scale = 1;
-  _aiDraw.offsetX = 0; _aiDraw.offsetY = 0;
 }
 
 function roundRect(ctx, x, y, w, h, r) {
+  r = Math.min(r, w/2, h/2);
+  ctx.beginPath();
   ctx.moveTo(x+r, y);
   ctx.lineTo(x+w-r, y);
   ctx.quadraticCurveTo(x+w, y, x+w, y+r);
@@ -10127,22 +10232,26 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 function aiDrawZoom(factor) {
+  if(!_aiDraw.diagram) return;
+  _aiDraw.scale = Math.max(0.3, Math.min(3, (_aiDraw.scale || 1) * factor));
   var canvas = document.getElementById('aiDrawCanvas');
-  var ctx = _aiDraw.ctx;
-  if(!canvas || !ctx || !_aiDraw.diagram) return;
-  _aiDraw.scale *= factor;
-  // Re-render at new scale (simple approach: redraw with scaled canvas)
-  var orig = { w: canvas.width, h: canvas.height };
-  // Scale canvas visually using CSS transform
+  if(!canvas) return;
   canvas.style.transform = 'scale(' + _aiDraw.scale + ')';
   canvas.style.transformOrigin = 'top left';
+  // Adjust wrap scroll area
+  var wrap = document.getElementById('aiDrawCanvasWrap');
+  if(wrap) {
+    wrap.style.width  = (canvas.width  * _aiDraw.scale) + 'px';
+    wrap.style.height = (canvas.height * _aiDraw.scale) + 'px';
+  }
 }
 
 function aiDrawFit() {
-  var canvas = document.getElementById('aiDrawCanvas');
-  if(!canvas) return;
-  canvas.style.transform = 'scale(1)';
   _aiDraw.scale = 1;
+  var canvas = document.getElementById('aiDrawCanvas');
+  if(canvas) { canvas.style.transform = 'scale(1)'; canvas.style.width = ''; canvas.style.height = ''; }
+  var wrap = document.getElementById('aiDrawCanvasWrap');
+  if(wrap)   { wrap.style.width = ''; wrap.style.height = ''; }
 }
 
 function insertAiDrawingToNotes() {
