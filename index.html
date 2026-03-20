@@ -1253,7 +1253,10 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         <input type="color" value="#000000" onchange="setDrawColor(this.value)"
           style="width:26px;height:26px;border:none;padding:0;cursor:pointer;border-radius:6px;flex-shrink:0;">
         <div style="margin-left:auto;display:flex;gap:5px;">
-          <button class="draw-tool-btn" onclick="undoCanvas()" title="Undo">↩️</button>
+          <!-- AI Enhance toggle -->
+          <button class="draw-tool-btn" id="enhanceToggleBtn" onclick="toggleEnhance()"
+            title="AI Enhance ON"
+            style="background:rgba(106,27,154,0.15);border-color:var(--purple);font-size:0.68rem;font-weight:800;width:36px;padding:0 3px;">✨AI</button>
           <button class="draw-tool-btn" onclick="clearCanvas()" title="Clear">🗑️</button>
         </div>
       </div>
@@ -1306,9 +1309,23 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         </div>
         <!-- Draw actions: bottom strip -->
         <div class="creator-bottom-bar">
-          <button class="cbb-btn cbb-primary" onclick="saveDrawingToNotes()">📝 Notes mein Insert</button>
-          <button class="cbb-btn" onclick="saveDrawingToFacts()">📌 Fact Save</button>
-          <button class="cbb-btn" onclick="downloadDrawing()">⬇️ Download</button>
+          <!-- Floating Undo/Redo — compact, always visible -->
+          <div style="display:flex;align-items:center;gap:4px;margin-right:auto;">
+            <button id="floatUndoBtn" onclick="undoCanvas()"
+              style="width:38px;height:38px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface);font-size:1.1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:800;transition:opacity 0.15s;opacity:0.35;"
+              title="Undo (Ctrl+Z)">↩</button>
+            <button id="floatRedoBtn" onclick="redoCanvas()"
+              style="width:38px;height:38px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface);font-size:1.1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:800;transition:opacity 0.15s;opacity:0.35;"
+              title="Redo">↪</button>
+            <!-- AI enhance indicator -->
+            <div id="enhanceIndicator"
+              style="font-size:0.65rem;font-weight:800;color:var(--purple);padding:4px 8px;background:rgba(106,27,154,0.1);border-radius:8px;border:1px solid rgba(106,27,154,0.2);opacity:0;transform:scale(0.8);transition:all 0.2s;white-space:nowrap;">
+              ✨ Enhancing...
+            </div>
+          </div>
+          <button class="cbb-btn cbb-primary" onclick="saveDrawingToNotes()">📝 Insert</button>
+          <button class="cbb-btn" onclick="saveDrawingToFacts()">📌 Save</button>
+          <button class="cbb-btn" onclick="downloadDrawing()">⬇️</button>
         </div>
       </div>
 
@@ -8977,14 +8994,18 @@ function toggleCreatorToolbar() {
 // ==================== CANVAS DRAW ENGINE ====================
 var _dc = {
   ctx: null, canvas: null,
-  tool: 'pen',       // pen | marker | eraser
+  tool: 'pen',
   color: '#000000',
   size: 3,
   drawing: false,
   lastX: 0, lastY: 0,
   pressure: 1,
-  strokes: [],       // undo stack (list of ImageData snapshots)
-  currentStroke: null
+  hasRealPressure: false,
+  lastPressure: 1,
+  strokes: [],        // undo stack
+  redoStack: [],      // redo stack
+  rawPoints: [],      // current stroke raw points for AI enhancement
+  enhanceMode: true   // AI enhancement ON by default
 };
 
 function initDrawCanvas() {
@@ -9022,7 +9043,10 @@ function initDrawCanvas() {
   // Fill white background
   _dc.ctx.fillStyle = document.body.classList.contains('night-mode') ? '#1a1a2e' : '#fafafa';
   _dc.ctx.fillRect(0, 0, canvas.width, canvas.height);
-  _dc.strokes = [];
+  _dc.strokes    = [];
+  _dc.redoStack  = [];
+  _dc.rawPoints  = [];
+  updateUndoRedoBtns();
 }
 
 function canvasPoint(e) {
@@ -9035,18 +9059,15 @@ function canvasPoint(e) {
   };
 }
 
-function saveCanvasSnapshot() {
-  if(!_dc.ctx) return;
-  _dc.strokes.push(_dc.ctx.getImageData(0, 0, _dc.canvas.width, _dc.canvas.height));
-  if(_dc.strokes.length > 30) _dc.strokes.shift();
-}
+// saveCanvasSnapshot moved to AI engine
 
 function beginStroke(x, y, pressure) {
   saveCanvasSnapshot();
+  _dc.redoStack = []; // New stroke clears redo
   _dc.drawing = true;
-  _dc.lastX = x;
-  _dc.lastY = y;
+  _dc.lastX = x; _dc.lastY = y;
   _dc.lastPressure = pressure || 1;
+  _dc.rawPoints = [{ x: x, y: y, p: pressure || 1, t: Date.now() }];
   var ctx = _dc.ctx;
   ctx.beginPath();
   ctx.moveTo(x, y);
@@ -9057,32 +9078,223 @@ function continueStroke(x, y, pressure) {
   if(!_dc.drawing) return;
   var ctx = _dc.ctx;
   var p = pressure || 1;
+  _dc.rawPoints.push({ x: x, y: y, p: p, t: Date.now() });
 
   if(_dc.tool === 'pen') {
-    // Real pressure from stylus → thicker stroke when pressing harder
-    // Speed thinning + pressure thickening combined
     var dx = x - _dc.lastX, dy = y - _dc.lastY;
-    var speed = Math.sqrt(dx*dx + dy*dy);
-    var speedFactor = Math.max(0.5, 1 - speed * 0.03);
-    // Stylus: 0-1 pressure. Finger/mouse: always 1 (no real pressure)
-    var hasRealPressure = _dc.hasRealPressure;
-    var pressureFactor = hasRealPressure ? Math.max(0.3, p) : 1;
-    ctx.lineWidth = Math.max(1, _dc.size * speedFactor * pressureFactor);
+    var speed = Math.sqrt(dx*dx+dy*dy);
+    var sf = Math.max(0.5, 1 - speed * 0.025);
+    var pf = _dc.hasRealPressure ? Math.max(0.3, p) : 1;
+    ctx.lineWidth = Math.max(1, _dc.size * sf * pf);
   }
 
-  ctx.lineTo(x, y);
+  // Smooth real-time rendering with quadratic curves
+  if(_dc.rawPoints.length >= 3 && _dc.tool !== 'eraser') {
+    var pts = _dc.rawPoints;
+    var len = pts.length;
+    var mx = (pts[len-2].x + pts[len-1].x) / 2;
+    var my = (pts[len-2].y + pts[len-1].y) / 2;
+    ctx.quadraticCurveTo(pts[len-2].x, pts[len-2].y, mx, my);
+  } else {
+    ctx.lineTo(x, y);
+  }
   ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(x, y);
-  _dc.lastX = x;
-  _dc.lastY = y;
-  _dc.lastPressure = p;
+  _dc.lastX = x; _dc.lastY = y; _dc.lastPressure = p;
 }
 
 function endStroke() {
   _dc.drawing = false;
-  if(_dc.ctx) _dc.ctx.beginPath();
+  if(!_dc.ctx) return;
+  _dc.ctx.beginPath();
+
+  // AI Enhancement — auto-trigger when finger lifts
+  if(_dc.enhanceMode && _dc.tool === 'pen' && _dc.rawPoints.length > 3) {
+    showEnhanceIndicator();
+    // Small delay so user sees the "enhancing..." feedback
+    setTimeout(function() {
+      enhanceLastStroke();
+      hideEnhanceIndicator();
+    }, 120);
+  }
 }
+
+// ==================== AI STROKE ENHANCEMENT ENGINE ====================
+
+// Chaikin's algorithm — rounds corners, smooths jagged lines
+function chaikinSmooth(pts, iterations) {
+  var result = pts;
+  for(var iter = 0; iter < iterations; iter++) {
+    var next = [result[0]];
+    for(var i = 0; i < result.length - 1; i++) {
+      var p0 = result[i], p1 = result[i+1];
+      next.push({ x: p0.x*0.75 + p1.x*0.25, y: p0.y*0.75 + p1.y*0.25, p: p0.p });
+      next.push({ x: p0.x*0.25 + p1.x*0.75, y: p0.y*0.25 + p1.y*0.75, p: p1.p });
+    }
+    next.push(result[result.length-1]);
+    result = next;
+  }
+  return result;
+}
+
+// Douglas-Peucker simplification — removes redundant points
+function dpSimplify(pts, epsilon) {
+  if(pts.length <= 2) return pts;
+  var maxDist = 0, maxIdx = 0;
+  for(var i = 1; i < pts.length-1; i++) {
+    var d = pointLineDistance(pts[i], pts[0], pts[pts.length-1]);
+    if(d > maxDist) { maxDist = d; maxIdx = i; }
+  }
+  if(maxDist > epsilon) {
+    var left  = dpSimplify(pts.slice(0, maxIdx+1), epsilon);
+    var right = dpSimplify(pts.slice(maxIdx), epsilon);
+    return left.slice(0,-1).concat(right);
+  }
+  return [pts[0], pts[pts.length-1]];
+}
+
+function pointLineDistance(pt, a, b) {
+  var dx = b.x-a.x, dy = b.y-a.y;
+  if(dx===0 && dy===0) return Math.sqrt((pt.x-a.x)**2+(pt.y-a.y)**2);
+  var t = ((pt.x-a.x)*dx+(pt.y-a.y)*dy)/(dx*dx+dy*dy);
+  t = Math.max(0,Math.min(1,t));
+  return Math.sqrt((pt.x-(a.x+t*dx))**2+(pt.y-(a.y+t*dy))**2);
+}
+
+// Simulate pressure taper — thick in middle, thin at start/end
+function addPressureTaper(pts) {
+  var n = pts.length;
+  return pts.map(function(pt, i) {
+    // Bell curve: thin → thick → thin
+    var t = i / (n-1);
+    var bell = Math.sin(Math.PI * t); // 0 at ends, 1 in middle
+    var naturalP = 0.4 + 0.6 * bell;
+    return { x: pt.x, y: pt.y, p: pt.p > 0.99 ? naturalP : pt.p };
+  });
+}
+
+// Draw enhanced stroke with variable width using Bezier
+function drawEnhancedStroke(pts, color, baseSize, tool) {
+  var ctx = _dc.ctx;
+  if(!ctx || pts.length < 2) return;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.lineCap  = 'round';
+  ctx.lineJoin = 'round';
+
+  if(tool === 'marker') {
+    // Marker: flat uniform semi-transparent
+    ctx.strokeStyle = color + '99';
+    ctx.lineWidth   = baseSize * 2.5;
+    ctx.globalAlpha = 0.75;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for(var i = 1; i < pts.length; i++) {
+      ctx.lineTo(pts[i].x, pts[i].y);
+    }
+    ctx.stroke();
+  } else {
+    // Pen: variable width segments with pressure
+    for(var i = 0; i < pts.length-1; i++) {
+      var p0 = pts[i], p1 = pts[i+1];
+      var pressure = (p0.p + p1.p) / 2;
+      ctx.beginPath();
+      ctx.lineWidth = Math.max(0.8, baseSize * pressure * 1.2);
+      ctx.strokeStyle = color;
+      ctx.moveTo(p0.x, p0.y);
+      // Smooth bezier between points
+      var mx = (p0.x+p1.x)/2, my = (p0.y+p1.y)/2;
+      ctx.quadraticCurveTo(p0.x, p0.y, mx, my);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+// MAIN: Enhance the last drawn stroke
+function enhanceLastStroke() {
+  var raw = _dc.rawPoints;
+  if(!raw || raw.length < 3) return;
+
+  // Restore canvas to state before this stroke (the snapshot we saved)
+  if(_dc.strokes.length > 0) {
+    var snapshot = _dc.strokes[_dc.strokes.length - 1];
+    _dc.ctx.putImageData(snapshot, 0, 0);
+  }
+
+  // Step 1: Simplify — remove micro-jitters
+  var epsilon = _dc.size * 0.8;
+  var simplified = dpSimplify(raw, epsilon);
+
+  // Step 2: Smooth with Chaikin (2 passes for finger, 1 for stylus)
+  var smoothPasses = _dc.hasRealPressure ? 1 : 2;
+  var smoothed = chaikinSmooth(simplified, smoothPasses);
+
+  // Step 3: Add natural pressure taper (only for finger — no real pressure)
+  var final = _dc.hasRealPressure ? smoothed : addPressureTaper(smoothed);
+
+  // Step 4: Draw the enhanced stroke
+  drawEnhancedStroke(final, _dc.color, _dc.size, _dc.tool);
+
+  // Save this enhanced state as new snapshot for undo
+  _dc.strokes[_dc.strokes.length-1] = _dc.ctx.getImageData(0,0,_dc.canvas.width,_dc.canvas.height);
+}
+
+// Enhancement indicator — brief flash
+function showEnhanceIndicator() {
+  var ind = document.getElementById('enhanceIndicator');
+  if(ind) { ind.style.opacity = '1'; ind.style.transform = 'scale(1)'; }
+}
+function hideEnhanceIndicator() {
+  var ind = document.getElementById('enhanceIndicator');
+  if(ind) { ind.style.opacity = '0'; ind.style.transform = 'scale(0.8)'; }
+}
+
+// Toggle AI enhancement
+function toggleEnhance() {
+  _dc.enhanceMode = !_dc.enhanceMode;
+  var btn = document.getElementById('enhanceToggleBtn');
+  if(btn) {
+    btn.style.background = _dc.enhanceMode ? 'rgba(106,27,154,0.15)' : 'var(--surface)';
+    btn.style.borderColor = _dc.enhanceMode ? 'var(--purple)' : 'var(--border)';
+    btn.title = _dc.enhanceMode ? 'AI Enhance ON' : 'AI Enhance OFF';
+  }
+  showToast(_dc.enhanceMode ? '✨ AI Enhance ON' : 'AI Enhance OFF', 'success');
+}
+
+// ==================== UNDO / REDO ====================
+function saveCanvasSnapshot() {
+  if(!_dc.ctx) return;
+  _dc.strokes.push(_dc.ctx.getImageData(0, 0, _dc.canvas.width, _dc.canvas.height));
+  if(_dc.strokes.length > 40) _dc.strokes.shift();
+}
+
+function undoCanvas() {
+  if(!_dc.ctx || _dc.strokes.length === 0) { showToast('Kuch undo nahi', 'error'); return; }
+  // Save current to redo
+  _dc.redoStack.push(_dc.ctx.getImageData(0,0,_dc.canvas.width,_dc.canvas.height));
+  var prev = _dc.strokes.pop();
+  _dc.ctx.putImageData(prev, 0, 0);
+  updateUndoRedoBtns();
+}
+
+function redoCanvas() {
+  if(!_dc.ctx || _dc.redoStack.length === 0) { showToast('Kuch redo nahi', 'error'); return; }
+  _dc.strokes.push(_dc.ctx.getImageData(0,0,_dc.canvas.width,_dc.canvas.height));
+  var next = _dc.redoStack.pop();
+  _dc.ctx.putImageData(next, 0, 0);
+  updateUndoRedoBtns();
+}
+
+function updateUndoRedoBtns() {
+  var ub = document.getElementById('floatUndoBtn');
+  var rb = document.getElementById('floatRedoBtn');
+  if(ub) ub.style.opacity = _dc.strokes.length > 0 ? '1' : '0.35';
+  if(rb) rb.style.opacity = _dc.redoStack.length > 0 ? '1' : '0.35';
+}
+
 
 function applyDrawStyle(ctx, pressure) {
   var p = pressure || 1;
@@ -9152,11 +9364,7 @@ function setDrawColor(color) {
 
 function setStrokeSize(sz) { _dc.size = sz; }
 
-function undoCanvas() {
-  if(!_dc.ctx || _dc.strokes.length === 0) { showToast('Kuch undo nahi hai', 'error'); return; }
-  var prev = _dc.strokes.pop();
-  _dc.ctx.putImageData(prev, 0, 0);
-}
+// undoCanvas moved to AI engine
 
 function clearCanvas() {
   if(!_dc.ctx) return;
