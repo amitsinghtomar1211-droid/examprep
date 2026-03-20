@@ -1061,6 +1061,104 @@ html, body {
   flex:1;overflow:auto;position:relative;background:#f5f5f5;
 }
 
+
+/* ===== QUICKMAP — Margin Notes System ===== */
+.qmap-fab {
+  position: absolute;
+  right: 8px;
+  bottom: 80px;
+  z-index: 200;
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  background: linear-gradient(135deg,#e65100,#f57c00);
+  color: #fff; font-size: 1.1rem;
+  border: none; cursor: pointer;
+  display: none; align-items: center; justify-content: center;
+  box-shadow: 0 3px 12px rgba(230,81,0,0.4);
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.2s;
+}
+.qmap-fab.visible { display: flex; }
+
+/* QuickMap overlay — full notes body overlay */
+.qmap-overlay {
+  position: absolute; inset: 0; z-index: 300;
+  display: none; flex-direction: column;
+  background: rgba(255,253,250,0.97);
+}
+body.night-mode .qmap-overlay { background: rgba(15,17,23,0.97); }
+.qmap-overlay.open { display: flex; }
+
+/* QuickMap toolbar */
+.qmap-toolbar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px;
+  background: linear-gradient(135deg,#e65100,#f57c00);
+  flex-shrink: 0; flex-wrap: wrap;
+}
+.qmap-tool-btn {
+  width: 34px; height: 34px; border-radius: 8px;
+  border: 1.5px solid rgba(255,255,255,0.3);
+  background: rgba(255,255,255,0.15);
+  color: #fff; font-size: 0.9rem; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.15s;
+}
+.qmap-tool-btn.sel {
+  background: rgba(255,255,255,0.35);
+  border-color: rgba(255,255,255,0.7);
+}
+.qmap-sep { width: 1px; height: 24px; background: rgba(255,255,255,0.25); flex-shrink:0; }
+
+/* QuickMap canvas area */
+.qmap-canvas-wrap {
+  flex: 1; position: relative; overflow: hidden;
+  touch-action: none;
+}
+#qmapCanvas {
+  width: 100%; height: 100%; display: block;
+  touch-action: none;
+}
+
+/* Node input popup */
+.qmap-node-input {
+  position: absolute; z-index: 400;
+  background: var(--surface);
+  border: 2px solid #e65100;
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  display: none;
+  min-width: 180px;
+}
+.qmap-node-input input {
+  width: 100%; border: none; outline: none;
+  font-family: inherit; font-size: 0.88rem;
+  font-weight: 700; color: var(--text);
+  background: transparent;
+}
+.qmap-node-input-btns {
+  display: flex; gap: 5px; margin-top: 7px; flex-wrap: wrap;
+}
+.qmap-nib { /* node input button */
+  padding: 4px 8px; border-radius: 6px;
+  border: 1.5px solid var(--border);
+  font-size: 0.68rem; font-weight: 700;
+  cursor: pointer; font-family: inherit;
+  background: var(--surface); color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Saved QuickMaps list */
+.qmap-saved-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+}
+.qmap-saved-item:hover { background: rgba(230,81,0,0.05); }
+
 /* ===== CREATOR STUDIO — FULLSCREEN ===== */
 .creator-overlay {
   position: fixed; inset: 0; z-index: 9995;
@@ -2495,7 +2593,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     </div>
 
     <!-- BODY -->
-    <div class="notes-editor-body" id="neBody" onscroll="neUpdateProgress()">
+    <div class="notes-editor-body" id="neBody" onscroll="neUpdateProgress()" style="position:relative;">
       <div id="noteEditableArea"
         class="ne-editable"
         contenteditable="false"
@@ -2509,6 +2607,68 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         style="outline:none;min-height:100%;padding:4px 2px;">
       </div>
       <textarea id="noteEditContent" style="display:none;" oninput="onEditInput()"></textarea>
+
+      <!-- QuickMap FAB -->
+      <button class="qmap-fab" id="qmapFab" onclick="openQuickMap()" title="QuickMap — Key Points Map Banao">
+        🗺
+      </button>
+
+      <!-- QuickMap Overlay -->
+      <div class="qmap-overlay" id="qmapOverlay">
+
+        <!-- Toolbar -->
+        <div class="qmap-toolbar">
+          <span style="font-size:0.78rem;font-weight:800;color:#fff;flex-shrink:0;">🗺 QuickMap</span>
+          <div class="qmap-sep"></div>
+          <!-- Shape tools -->
+          <button class="qmap-tool-btn sel" id="qmt-bubble" onclick="setQmTool('bubble',this)" title="Bubble">⬭</button>
+          <button class="qmap-tool-btn" id="qmt-box"    onclick="setQmTool('box',this)"    title="Box">▭</button>
+          <button class="qmap-tool-btn" id="qmt-diamond" onclick="setQmTool('diamond',this)" title="Diamond">◇</button>
+          <button class="qmap-tool-btn" id="qmt-circle"  onclick="setQmTool('circle',this)"  title="Circle">○</button>
+          <div class="qmap-sep"></div>
+          <!-- Connection tools -->
+          <button class="qmap-tool-btn" id="qmt-arrow"  onclick="setQmTool('arrow',this)"  title="Arrow connector">→</button>
+          <button class="qmap-tool-btn" id="qmt-line"   onclick="setQmTool('line',this)"   title="Line">—</button>
+          <div class="qmap-sep"></div>
+          <!-- Colors -->
+          <div onclick="setQmColor('#000000')" style="width:22px;height:22px;border-radius:50%;background:#000;border:2px solid #fff;cursor:pointer;flex-shrink:0;"></div>
+          <div onclick="setQmColor('#1565c0')" style="width:22px;height:22px;border-radius:50%;background:#1565c0;border:2px solid transparent;cursor:pointer;flex-shrink:0;"></div>
+          <div onclick="setQmColor('#c62828')" style="width:22px;height:22px;border-radius:50%;background:#c62828;border:2px solid transparent;cursor:pointer;flex-shrink:0;"></div>
+          <div onclick="setQmColor('#2e7d32')" style="width:22px;height:22px;border-radius:50%;background:#2e7d32;border:2px solid transparent;cursor:pointer;flex-shrink:0;"></div>
+          <div class="qmap-sep"></div>
+          <button class="qmap-tool-btn" onclick="qmUndo()" title="Undo">↩</button>
+          <button class="qmap-tool-btn" onclick="clearQuickMap()" title="Clear" style="font-size:0.75rem;">🗑</button>
+          <div style="margin-left:auto;display:flex;gap:4px;">
+            <button onclick="saveQuickMap()" style="padding:5px 10px;background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);color:#fff;border-radius:7px;font-weight:800;cursor:pointer;font-size:0.72rem;font-family:inherit;">💾 Save</button>
+            <button onclick="insertQuickMapToNotes()" style="padding:5px 10px;background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.4);color:#fff;border-radius:7px;font-weight:800;cursor:pointer;font-size:0.72rem;font-family:inherit;">📝 Insert</button>
+            <button onclick="closeQuickMap()" style="width:30px;height:30px;background:rgba(255,255,255,0.15);border:none;color:#fff;border-radius:50%;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;">✕</button>
+          </div>
+        </div>
+
+        <!-- Saved maps row -->
+        <div id="qmapSavedRow" style="display:none;padding:5px 10px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:0.7rem;overflow-x:auto;white-space:nowrap;"></div>
+
+        <!-- Canvas -->
+        <div class="qmap-canvas-wrap" id="qmapCanvasWrap">
+          <canvas id="qmapCanvas"></canvas>
+        </div>
+
+        <!-- Node text input popup -->
+        <div class="qmap-node-input" id="qmapNodeInput">
+          <input id="qmapNodeText" placeholder="Key point likhein..." maxlength="40" autofocus
+            onkeydown="onQmNodeInputKey(event)">
+          <div class="qmap-node-input-btns">
+            <button class="qmap-nib" onclick="qmConfirmNode()">✓ Add</button>
+            <button class="qmap-nib qmt-shape-btn" data-shape="bubble" onclick="setQmNodeShape('bubble')">⬭</button>
+            <button class="qmap-nib qmt-shape-btn" data-shape="box"    onclick="setQmNodeShape('box')">▭</button>
+            <button class="qmap-nib qmt-shape-btn" data-shape="circle" onclick="setQmNodeShape('circle')">○</button>
+            <button class="qmap-nib qmt-shape-btn" data-shape="diamond" onclick="setQmNodeShape('diamond')">◇</button>
+            <button class="qmap-nib" onclick="cancelQmNode()" style="color:var(--red);">✕</button>
+          </div>
+        </div>
+
+      </div><!-- /qmapOverlay -->
+
     </div>
 
     <!-- EDITOR AI CHAT PANEL -->
@@ -6498,6 +6658,7 @@ function openSpecialEditor(type, sid, secid, tid) {
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesEditor'}, '');
   showCreatorFab && showCreatorFab();
+  showQmapFab && showQmapFab();
 }
 
 function neSaveSnapshot() {
@@ -10454,6 +10615,421 @@ function downloadAiDrawing() {
   a.download = 'ai-diagram-' + Date.now() + '.png';
   a.href = canvas.toDataURL('image/png');
   a.click();
+}
+
+
+// ==================== QUICKMAP ENGINE ====================
+
+var _qm = {
+  canvas: null, ctx: null,
+  tool: 'bubble',       // bubble | box | circle | diamond | arrow | line
+  color: '#000000',
+  nodes: [],            // [{id,x,y,w,h,shape,text,color}]
+  edges: [],            // [{from,to,type}] type: arrow|line
+  history: [],          // undo stack (snapshots)
+  connecting: null,     // node being connected from
+  pendingNode: null,    // node being added (waiting for text)
+  dragging: null,       // {node, offsetX, offsetY}
+  saved: [],            // [{name, nodes, edges, date}]
+  noteKey: null         // which note this map belongs to
+};
+
+// ---- Open/Close ----
+function openQuickMap() {
+  var ov = document.getElementById('qmapOverlay');
+  if(!ov) return;
+  ov.classList.add('open');
+  // Set note key for saving
+  _qm.noteKey = (_editorState.tid || '') + '_' + (_editorState.noteIdx || 'special');
+  // Load saved map for this note if exists
+  loadQmForCurrentNote();
+  setTimeout(initQmCanvas, 30);
+}
+
+function closeQuickMap() {
+  var ov = document.getElementById('qmapOverlay');
+  if(ov) ov.classList.remove('open');
+  var inp = document.getElementById('qmapNodeInput');
+  if(inp) inp.style.display = 'none';
+}
+
+function initQmCanvas() {
+  var canvas = document.getElementById('qmapCanvas');
+  var wrap   = document.getElementById('qmapCanvasWrap');
+  if(!canvas || !wrap) return;
+  canvas.width  = wrap.offsetWidth  || 360;
+  canvas.height = wrap.offsetHeight || 400;
+  _qm.canvas = canvas;
+  _qm.ctx    = canvas.getContext('2d');
+  _qm.ctx.imageSmoothingEnabled = true;
+
+  // Pointer events
+  canvas.addEventListener('pointerdown', onQmPointerDown, { passive: false });
+  canvas.addEventListener('pointermove', onQmPointerMove, { passive: false });
+  canvas.addEventListener('pointerup',   onQmPointerUp,   { passive: true  });
+  canvas.style.touchAction = 'none';
+
+  qmRedraw();
+}
+
+// ---- Tools ----
+function setQmTool(tool, btn) {
+  _qm.tool = tool;
+  document.querySelectorAll('.qmap-tool-btn').forEach(function(b){ b.classList.remove('sel'); });
+  if(btn) btn.classList.add('sel');
+  _qm.connecting = null;
+  qmRedraw();
+}
+function setQmColor(c) { _qm.color = c; }
+function setQmNodeShape(shape) {
+  if(_qm.pendingNode) { _qm.pendingNode.shape = shape; }
+}
+
+// ---- Pointer events ----
+function qmPoint(e) {
+  var r = _qm.canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * (_qm.canvas.width  / r.width),
+    y: (e.clientY - r.top)  * (_qm.canvas.height / r.height)
+  };
+}
+
+function qmNodeAt(x, y) {
+  for(var i = _qm.nodes.length-1; i >= 0; i--) {
+    var n = _qm.nodes[i];
+    if(x >= n.x - n.w/2 && x <= n.x + n.w/2 &&
+       y >= n.y - n.h/2 && y <= n.y + n.h/2) return n;
+  }
+  return null;
+}
+
+function onQmPointerDown(e) {
+  e.preventDefault();
+  if(!e.isPrimary) return;
+  try { _qm.canvas.setPointerCapture(e.pointerId); } catch(x) {}
+  var p = qmPoint(e);
+  var hit = qmNodeAt(p.x, p.y);
+
+  if(_qm.tool === 'arrow' || _qm.tool === 'line') {
+    // Connecting mode
+    if(hit) {
+      if(!_qm.connecting) {
+        _qm.connecting = { from: hit, mx: p.x, my: p.y };
+      } else {
+        // Complete connection
+        if(hit.id !== _qm.connecting.from.id) {
+          qmSaveHistory();
+          _qm.edges.push({ from: _qm.connecting.from.id, to: hit.id, type: _qm.tool, color: _qm.color });
+          qmRedraw();
+        }
+        _qm.connecting = null;
+      }
+    } else {
+      _qm.connecting = null;
+    }
+    return;
+  }
+
+  // Drag existing node
+  if(hit) {
+    _qm.dragging = { node: hit, ox: p.x - hit.x, oy: p.y - hit.y };
+    return;
+  }
+
+  // Place new node
+  qmSaveHistory();
+  var newNode = {
+    id: 'q' + Date.now(),
+    x: p.x, y: p.y,
+    w: 100, h: 36,
+    shape: _qm.tool === 'bubble' ? 'bubble' : _qm.tool,
+    text: '',
+    color: _qm.color
+  };
+  _qm.pendingNode = newNode;
+  showQmNodeInput(p.x, p.y, newNode);
+}
+
+function onQmPointerMove(e) {
+  e.preventDefault();
+  var p = qmPoint(e);
+  if(_qm.dragging) {
+    _qm.dragging.node.x = p.x - _qm.dragging.ox;
+    _qm.dragging.node.y = p.y - _qm.dragging.oy;
+    qmRedraw();
+    return;
+  }
+  if(_qm.connecting) {
+    _qm.connecting.mx = p.x;
+    _qm.connecting.my = p.y;
+    qmRedraw();
+  }
+}
+
+function onQmPointerUp(e) {
+  _qm.dragging = null;
+}
+
+// ---- Node input popup ----
+function showQmNodeInput(canvasX, canvasY, node) {
+  var inp = document.getElementById('qmapNodeInput');
+  var wrap = document.getElementById('qmapCanvasWrap');
+  if(!inp || !wrap) return;
+  // Convert canvas coords to overlay coords
+  var wr = wrap.getBoundingClientRect();
+  var sc = _qm.canvas.width / wr.width;
+  var px = canvasX / sc;
+  var py = canvasY / sc;
+  inp.style.left = Math.max(5, Math.min(wr.width - 200, px - 90)) + 'px';
+  inp.style.top  = Math.max(5, py - 10) + 'px';
+  inp.style.display = 'block';
+  var txt = document.getElementById('qmapNodeText');
+  if(txt) { txt.value = ''; txt.focus(); }
+}
+
+function onQmNodeInputKey(e) {
+  if(e.key === 'Enter') { e.preventDefault(); qmConfirmNode(); }
+  if(e.key === 'Escape') cancelQmNode();
+}
+
+function qmConfirmNode() {
+  var txt = document.getElementById('qmapNodeText')?.value?.trim();
+  if(!txt || !_qm.pendingNode) { cancelQmNode(); return; }
+  _qm.pendingNode.text = txt;
+  // Calculate width based on text length
+  _qm.pendingNode.w = Math.max(80, txt.length * 9 + 24);
+  _qm.nodes.push(_qm.pendingNode);
+  _qm.pendingNode = null;
+  document.getElementById('qmapNodeInput').style.display = 'none';
+  qmRedraw();
+}
+
+function cancelQmNode() {
+  _qm.pendingNode = null;
+  document.getElementById('qmapNodeInput').style.display = 'none';
+}
+
+// ---- Draw engine ----
+function qmRedraw() {
+  var ctx = _qm.ctx;
+  var W = _qm.canvas.width, H = _qm.canvas.height;
+  if(!ctx) return;
+
+  // Background — subtle grid
+  ctx.fillStyle = document.body.classList.contains('night-mode') ? '#0f1117' : '#fffaf6';
+  ctx.fillRect(0,0,W,H);
+
+  // Dot grid
+  ctx.fillStyle = document.body.classList.contains('night-mode') ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)';
+  for(var gx = 20; gx < W; gx += 20) {
+    for(var gy = 20; gy < H; gy += 20) {
+      ctx.beginPath(); ctx.arc(gx, gy, 1, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  // Draw edges
+  _qm.edges.forEach(function(e) {
+    var fn = _qm.nodes.find(function(n){ return n.id === e.from; });
+    var tn = _qm.nodes.find(function(n){ return n.id === e.to; });
+    if(!fn || !tn) return;
+    drawQmEdge(ctx, fn, tn, e);
+  });
+
+  // Live connecting line
+  if(_qm.connecting) {
+    var fn = _qm.connecting.from;
+    ctx.save();
+    ctx.strokeStyle = _qm.color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5,4]);
+    ctx.beginPath();
+    ctx.moveTo(fn.x, fn.y);
+    ctx.lineTo(_qm.connecting.mx, _qm.connecting.my);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  // Draw nodes
+  _qm.nodes.forEach(function(n) { drawQmNode(ctx, n); });
+}
+
+function drawQmEdge(ctx, from, to, edge) {
+  ctx.save();
+  ctx.strokeStyle = edge.color || '#555';
+  ctx.lineWidth = 1.8;
+  ctx.setLineDash([]);
+  var fx = from.x, fy = from.y;
+  var tx = to.x,   ty = to.y;
+  ctx.beginPath();
+  // Curved line
+  var mx = (fx+tx)/2, my = (fy+ty)/2;
+  ctx.moveTo(fx, fy);
+  ctx.quadraticCurveTo(mx, my - 20, tx, ty);
+  ctx.stroke();
+
+  // Arrowhead for arrow type
+  if(edge.type === 'arrow') {
+    var angle = Math.atan2(ty - (my-20), tx - mx);
+    ctx.fillStyle = edge.color || '#555';
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(tx - 10*Math.cos(angle-0.4), ty - 10*Math.sin(angle-0.4));
+    ctx.lineTo(tx - 10*Math.cos(angle+0.4), ty - 10*Math.sin(angle+0.4));
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawQmNode(ctx, n) {
+  var FONT = "'Noto Sans Devanagari','Noto Sans',sans-serif";
+  var isDark = document.body.classList.contains('night-mode');
+  ctx.save();
+
+  // Shadow
+  ctx.shadowColor = 'rgba(0,0,0,0.15)';
+  ctx.shadowBlur  = 5; ctx.shadowOffsetY = 2;
+
+  var x = n.x, y = n.y, w = n.w, h = n.h;
+  var col = n.color || '#000';
+
+  ctx.fillStyle = isDark ? '#1c2128' : '#fff';
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 1.8;
+
+  if(n.shape === 'bubble' || n.shape === 'bubble') {
+    // Rounded pill
+    ctx.beginPath();
+    ctx.ellipse(x, y, w/2, h/2, 0, 0, Math.PI*2);
+    ctx.fill(); ctx.stroke();
+  } else if(n.shape === 'circle') {
+    var r = Math.max(w, h) / 2;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI*2);
+    ctx.fill(); ctx.stroke();
+  } else if(n.shape === 'diamond') {
+    ctx.beginPath();
+    ctx.moveTo(x, y - h/2);
+    ctx.lineTo(x + w/2, y);
+    ctx.lineTo(x, y + h/2);
+    ctx.lineTo(x - w/2, y);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  } else {
+    // Box
+    ctx.beginPath();
+    var r = 8;
+    ctx.moveTo(x-w/2+r, y-h/2);
+    ctx.lineTo(x+w/2-r, y-h/2); ctx.quadraticCurveTo(x+w/2, y-h/2, x+w/2, y-h/2+r);
+    ctx.lineTo(x+w/2, y+h/2-r); ctx.quadraticCurveTo(x+w/2, y+h/2, x+w/2-r, y+h/2);
+    ctx.lineTo(x-w/2+r, y+h/2); ctx.quadraticCurveTo(x-w/2, y+h/2, x-w/2, y+h/2-r);
+    ctx.lineTo(x-w/2, y-h/2+r); ctx.quadraticCurveTo(x-w/2, y-h/2, x-w/2+r, y-h/2);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+
+  ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+
+  // Text
+  ctx.fillStyle = isDark ? '#e6edf3' : col;
+  ctx.font = '700 12px ' + FONT;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(n.text, x, y);
+  ctx.textBaseline = 'alphabetic';
+  ctx.restore();
+}
+
+// ---- Undo ----
+function qmSaveHistory() {
+  _qm.history.push({
+    nodes: JSON.parse(JSON.stringify(_qm.nodes)),
+    edges: JSON.parse(JSON.stringify(_qm.edges))
+  });
+  if(_qm.history.length > 20) _qm.history.shift();
+}
+
+function qmUndo() {
+  if(!_qm.history.length) { showToast('Kuch undo nahi', 'error'); return; }
+  var prev = _qm.history.pop();
+  _qm.nodes = prev.nodes;
+  _qm.edges = prev.edges;
+  qmRedraw();
+}
+
+function clearQuickMap() {
+  if(!confirm('QuickMap clear karo?')) return;
+  qmSaveHistory();
+  _qm.nodes = []; _qm.edges = [];
+  qmRedraw();
+}
+
+// ---- Save / Load ----
+function saveQuickMap() {
+  if(!_qm.nodes.length) { showToast('Kuch to banao pehle!', 'error'); return; }
+  var name = prompt('Is QuickMap ka naam:', 'QuickMap ' + new Date().toLocaleDateString('hi-IN')) || 'QuickMap';
+  _qm.saved.push({
+    name: name,
+    noteKey: _qm.noteKey,
+    nodes: JSON.parse(JSON.stringify(_qm.nodes)),
+    edges: JSON.parse(JSON.stringify(_qm.edges)),
+    date: new Date().toLocaleDateString('hi-IN')
+  });
+  // Save to S
+  if(!S.quickMaps) S.quickMaps = [];
+  S.quickMaps = _qm.saved;
+  save();
+  showToast('QuickMap save ho gayi! ✅', 'success');
+}
+
+function loadQmForCurrentNote() {
+  if(!S.quickMaps) return;
+  _qm.saved = S.quickMaps;
+  // Show saved maps for this note
+  var related = _qm.saved.filter(function(m){ return m.noteKey === _qm.noteKey; });
+  var row = document.getElementById('qmapSavedRow');
+  if(!row) return;
+  if(!related.length) { row.style.display = 'none'; return; }
+  row.style.display = 'block';
+  row.innerHTML = '';
+  related.forEach(function(m) {
+    var btn = document.createElement('button');
+    btn.textContent = m.name;
+    btn.style.cssText = 'display:inline-block;background:rgba(230,81,0,0.1);border:1px solid rgba(230,81,0,0.3);border-radius:6px;padding:3px 9px;font-size:0.7rem;font-weight:700;cursor:pointer;margin-right:5px;color:#e65100;font-family:inherit;';
+    (function(name){ btn.onclick = function(){ loadQmByName(name); }; })(m.name);
+    row.appendChild(btn);
+  });
+}
+
+function loadQmByName(name) {
+  var m = _qm.saved.find(function(x){ return x.name === name; });
+  if(!m) return;
+  _qm.nodes = JSON.parse(JSON.stringify(m.nodes));
+  _qm.edges = JSON.parse(JSON.stringify(m.edges));
+  qmRedraw();
+  showToast(name + ' load ho gayi!', 'success');
+}
+
+// ---- Insert to Notes ----
+function insertQuickMapToNotes() {
+  if(!_qm.canvas || !_qm.nodes.length) { showToast('Kuch banao pehle!', 'error'); return; }
+  var dataUrl = _qm.canvas.toDataURL('image/png');
+  closeQuickMap();
+  var area = document.getElementById('noteEditableArea');
+  if(!area) return;
+  if(area.contentEditable !== 'true') neSetEditMode(true);
+  // Insert as floating right image (bagal mein)
+  var html = '<img src="' + dataUrl + '" style="float:right;max-width:45%;border-radius:8px;margin:0 0 8px 12px;border:1.5px solid #e65100;box-shadow:0 2px 8px rgba(230,81,0,0.15);" alt="QuickMap">';
+  document.execCommand('insertHTML', false, html);
+  markModified();
+  showToast('QuickMap notes mein insert ho gayi! ✅', 'success');
+}
+
+// ---- Show QuickMap FAB when editor opens ----
+function showQmapFab() {
+  var fab = document.getElementById('qmapFab');
+  if(fab) fab.classList.add('visible');
+}
+function hideQmapFab() {
+  var fab = document.getElementById('qmapFab');
+  if(fab) fab.classList.remove('visible');
 }
 
 // ---- FIRESTORE SYNC ----
