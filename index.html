@@ -8998,232 +8998,307 @@ var _dc = {
   color: '#000000',
   size: 3,
   drawing: false,
-  lastX: 0, lastY: 0,
-  pressure: 1,
   hasRealPressure: false,
-  lastPressure: 1,
-  strokes: [],        // undo stack
-  redoStack: [],      // redo stack
-  rawPoints: [],      // current stroke raw points for AI enhancement
-  enhanceMode: true   // AI enhancement ON by default
+  strokes: [],
+  redoStack: [],
+  rawPoints: [],
+  filteredPoints: [],
+  enhanceMode: true,
+  _strokeBase: null
 };
 
-function initDrawCanvas() {
-  var canvas = document.getElementById('drawCanvas');
-  var wrap   = document.getElementById('drawCanvasArea');
-  if(!canvas || !wrap) return;
-  if(_dc.canvas === canvas && canvas.width > 0) return; // Already init
+// ============================================================
+// KALMAN FILTER — removes finger tremor in real-time
+// ============================================================
+function KalmanFilter() {
+  this.R = 0.01;  // Measurement noise (lower = trust sensor more)
+  this.Q = 3;     // Process noise (higher = follow movement faster)
+  this.x = null;  // State estimate
+  this.P = 1;     // Error covariance
+}
+KalmanFilter.prototype.filter = function(z) {
+  if(this.x === null) { this.x = z; return z; }
+  // Predict
+  var P_ = this.P + this.Q;
+  // Update
+  var K = P_ / (P_ + this.R);
+  this.x = this.x + K * (z - this.x);
+  this.P = (1 - K) * P_;
+  return this.x;
+};
 
-  canvas.width  = wrap.offsetWidth  || 340;
-  canvas.height = wrap.offsetHeight || 300;
-  _dc.canvas = canvas;
-  _dc.ctx    = canvas.getContext('2d');
-  _dc.ctx.lineCap     = 'round';
-  _dc.ctx.lineJoin    = 'round';
-  _dc.ctx.imageSmoothingEnabled = true;
+var _kfX = new KalmanFilter();
+var _kfY = new KalmanFilter();
 
-  // Pointer Events — handles finger, Apple Pencil, S-Pen, stylus, mouse — sab ek saath
-  canvas.addEventListener('pointerdown',  onCanvasPointerDown,  { passive: false });
-  canvas.addEventListener('pointermove',  onCanvasPointerMove,  { passive: false });
-  canvas.addEventListener('pointerup',    onCanvasPointerUp,    { passive: true  });
-  canvas.addEventListener('pointerout',   onCanvasPointerUp,    { passive: true  });
-  canvas.addEventListener('pointercancel',onCanvasPointerUp,    { passive: true  });
-  // Disable browser's default touch/scroll handling on canvas
-  canvas.style.touchAction = 'none';
-
-  // Detect if device supports real stylus pressure (Apple Pencil, S-Pen etc.)
-  _dc.hasRealPressure = false;
-  canvas.addEventListener('pointerdown', function detectPressure(e) {
-    if(e.pointerType === 'pen') {
-      _dc.hasRealPressure = true; // Stylus detected!
-    }
-    canvas.removeEventListener('pointerdown', detectPressure);
-  }, { once: true });
-
-  // Fill white background
-  _dc.ctx.fillStyle = document.body.classList.contains('night-mode') ? '#1a1a2e' : '#fafafa';
-  _dc.ctx.fillRect(0, 0, canvas.width, canvas.height);
-  _dc.strokes    = [];
-  _dc.redoStack  = [];
-  _dc.rawPoints  = [];
-  updateUndoRedoBtns();
+function resetKalman() {
+  _kfX = new KalmanFilter();
+  _kfY = new KalmanFilter();
 }
 
-function canvasPoint(e) {
-  var rect = _dc.canvas.getBoundingClientRect();
-  var scaleX = _dc.canvas.width  / rect.width;
-  var scaleY = _dc.canvas.height / rect.height;
-  return {
-    x: (e.clientX - rect.left) * scaleX,
-    y: (e.clientY - rect.top)  * scaleY
-  };
+// ============================================================
+// VELOCITY + DIRECTION ANALYSIS
+// ============================================================
+var _strokeState = {
+  velocities: [],
+  directions: [],
+  intentionalWobble: false,
+  straightnessScore: 0,
+  wobbleAmplitude: 0
+};
+
+function analyzeStrokeIntent(pts) {
+  if(pts.length < 4) return;
+
+  // Calculate velocities
+  var vels = [];
+  for(var i = 1; i < pts.length; i++) {
+    var dx = pts[i].rx - pts[i-1].rx;
+    var dy = pts[i].ry - pts[i-1].ry;
+    var dt = Math.max(1, pts[i].t - pts[i-1].t);
+    vels.push({ vx: dx/dt, vy: dy/dt, speed: Math.sqrt(dx*dx+dy*dy)/dt });
+  }
+  _strokeState.velocities = vels;
+
+  // Calculate overall direction (start → end vector)
+  var first = pts[0], last = pts[pts.length-1];
+  var mainDx = last.rx - first.rx;
+  var mainDy = last.ry - first.ry;
+  var mainLen = Math.sqrt(mainDx*mainDx + mainDy*mainDy);
+  if(mainLen < 1) return;
+
+  // Measure perpendicular deviation from main axis
+  var maxDev = 0;
+  var deviations = [];
+  for(var i = 1; i < pts.length-1; i++) {
+    var px = pts[i].rx - first.rx;
+    var py = pts[i].ry - first.ry;
+    // Project onto main direction
+    var proj = (px*mainDx + py*mainDy) / mainLen;
+    // Perpendicular component
+    var perpX = px - proj * mainDx/mainLen;
+    var perpY = py - proj * mainDy/mainLen;
+    var dev = Math.sqrt(perpX*perpX + perpY*perpY);
+    deviations.push(dev);
+    maxDev = Math.max(maxDev, dev);
+  }
+
+  // Straightness: 0 = very curved, 1 = perfectly straight
+  var avgDev = deviations.reduce(function(a,b){return a+b;}, 0) / Math.max(1, deviations.length);
+  _strokeState.straightnessScore = Math.max(0, 1 - avgDev / (mainLen * 0.15));
+  _strokeState.wobbleAmplitude = maxDev;
+
+  // Intentional wobble detection:
+  // If perpendicular oscillations are rhythmic (user deliberately zigzagging)
+  // vs random tremor (small, irregular, high frequency)
+  var signChanges = 0;
+  var prevSign = 0;
+  var prevDev = 0;
+  for(var i = 0; i < deviations.length; i++) {
+    var d = deviations[i];
+    var sign = d > prevDev ? 1 : -1;
+    if(prevSign !== 0 && sign !== prevSign) signChanges++;
+    prevSign = sign; prevDev = d;
+  }
+  // High amplitude + low frequency oscillation = intentional
+  // Low amplitude + high frequency = tremor
+  var oscillationFreq = signChanges / Math.max(1, pts.length);
+  var isIntentional = maxDev > _dc.size * 4 && oscillationFreq < 0.4;
+  _strokeState.intentionalWobble = isIntentional;
 }
 
-// saveCanvasSnapshot moved to AI engine
-
+// ============================================================
+// STROKE RENDERING ENGINE
+// ============================================================
 function beginStroke(x, y, pressure) {
   saveCanvasSnapshot();
   _dc.redoStack = [];
-  _dc.drawing  = true;
-  _dc.lastX    = x; _dc.lastY = y;
-  _dc.lastPressure = pressure || 1;
-  _dc.rawPoints = [{ x: x, y: y, p: pressure || 1, t: Date.now() }];
-  // Save background so we can redraw cleanly each frame
+  _dc.drawing = true;
+  resetKalman();
+  _dc.rawPoints = [];
+  _dc.filteredPoints = [];
+  _strokeState = { velocities:[], directions:[], intentionalWobble:false, straightnessScore:0, wobbleAmplitude:0 };
+
+  // Apply Kalman immediately on first point
+  var fx = _kfX.filter(x);
+  var fy = _kfY.filter(y);
+  var pt = { rx:x, ry:y, fx:fx, fy:fy, p:pressure||1, t:Date.now() };
+  _dc.rawPoints.push(pt);
+  _dc.filteredPoints.push(pt);
+
+  // Snapshot background for clean redraw
   _dc._strokeBase = _dc.ctx.getImageData(0, 0, _dc.canvas.width, _dc.canvas.height);
 }
 
 function continueStroke(x, y, pressure) {
   if(!_dc.drawing) return;
+  var now = Date.now();
   var p = pressure || 1;
-  _dc.rawPoints.push({ x: x, y: y, p: p, t: Date.now() });
-  _dc.lastX = x; _dc.lastY = y; _dc.lastPressure = p;
 
-  // Restore background snapshot — erase previous partial stroke
+  // Raw point
+  var rawPt = { rx:x, ry:y, p:p, t:now };
+  _dc.rawPoints.push(rawPt);
+
+  // Kalman-filtered point — removes micro-tremor
+  var fx = _kfX.filter(x);
+  var fy = _kfY.filter(y);
+  var filtPt = { rx:x, ry:y, fx:fx, fy:fy, p:p, t:now };
+  _dc.filteredPoints.push(filtPt);
+
+  // Analyze stroke intent every 5 points
+  if(_dc.filteredPoints.length % 5 === 0) {
+    analyzeStrokeIntent(_dc.filteredPoints);
+  }
+
+  // Restore base and redraw full stroke
   if(_dc._strokeBase) {
     _dc.ctx.putImageData(_dc._strokeBase, 0, 0);
   }
-
-  // Draw entire stroke as ONE continuous smooth path — no gaps, no dashes
-  drawLiveStroke(_dc.rawPoints);
-}
-
-// Draw all rawPoints as a single unbroken smooth path
-function drawLiveStroke(pts) {
-  if(pts.length < 2) return;
-  var ctx = _dc.ctx;
-  ctx.save();
-  applyDrawStyle(ctx, 1);
-
-  ctx.beginPath();
-  ctx.moveTo(pts[0].x, pts[0].y);
-
-  if(pts.length === 2) {
-    ctx.lineTo(pts[1].x, pts[1].y);
-  } else {
-    // Catmull-Rom spline — smooth continuous curve through ALL points
-    for(var i = 1; i < pts.length - 1; i++) {
-      var mx = (pts[i].x + pts[i+1].x) / 2;
-      var my = (pts[i].y + pts[i+1].y) / 2;
-      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
-    }
-    // Final point
-    ctx.lineTo(pts[pts.length-1].x, pts[pts.length-1].y);
-  }
-
-  ctx.stroke();
-  ctx.restore();
+  renderStroke(_dc.filteredPoints, false);
 }
 
 function endStroke() {
   _dc.drawing = false;
-  if(!_dc.ctx) return;
-  _dc.ctx.beginPath();
+  if(!_dc.ctx || _dc.filteredPoints.length < 2) return;
 
-  // AI Enhancement — auto-trigger when finger lifts
-  if(_dc.enhanceMode && _dc.tool === 'pen' && _dc.rawPoints.length > 3) {
-    showEnhanceIndicator();
-    // Small delay so user sees the "enhancing..." feedback
-    setTimeout(function() {
-      enhanceLastStroke();
-      hideEnhanceIndicator();
-    }, 120);
+  // Final analysis
+  analyzeStrokeIntent(_dc.filteredPoints);
+
+  // Restore base, draw final polished stroke
+  if(_dc._strokeBase) {
+    _dc.ctx.putImageData(_dc._strokeBase, 0, 0);
   }
+  renderStroke(_dc.filteredPoints, true); // true = final render
+  _dc._strokeBase = null;
+
+  // Update undo button
+  updateUndoRedoBtns();
 }
 
-// ==================== AI STROKE ENHANCEMENT ENGINE ====================
-
-// Chaikin's algorithm — rounds corners, smooths jagged lines
-function chaikinSmooth(pts, iterations) {
-  var result = pts;
-  for(var iter = 0; iter < iterations; iter++) {
-    var next = [result[0]];
-    for(var i = 0; i < result.length - 1; i++) {
-      var p0 = result[i], p1 = result[i+1];
-      next.push({ x: p0.x*0.75 + p1.x*0.25, y: p0.y*0.75 + p1.y*0.25, p: p0.p });
-      next.push({ x: p0.x*0.25 + p1.x*0.75, y: p0.y*0.25 + p1.y*0.75, p: p1.p });
-    }
-    next.push(result[result.length-1]);
-    result = next;
-  }
-  return result;
-}
-
-// Douglas-Peucker simplification — removes redundant points
-function dpSimplify(pts, epsilon) {
-  if(pts.length <= 2) return pts;
-  var maxDist = 0, maxIdx = 0;
-  for(var i = 1; i < pts.length-1; i++) {
-    var d = pointLineDistance(pts[i], pts[0], pts[pts.length-1]);
-    if(d > maxDist) { maxDist = d; maxIdx = i; }
-  }
-  if(maxDist > epsilon) {
-    var left  = dpSimplify(pts.slice(0, maxIdx+1), epsilon);
-    var right = dpSimplify(pts.slice(maxIdx), epsilon);
-    return left.slice(0,-1).concat(right);
-  }
-  return [pts[0], pts[pts.length-1]];
-}
-
-function pointLineDistance(pt, a, b) {
-  var dx = b.x-a.x, dy = b.y-a.y;
-  if(dx===0 && dy===0) return Math.sqrt((pt.x-a.x)**2+(pt.y-a.y)**2);
-  var t = ((pt.x-a.x)*dx+(pt.y-a.y)*dy)/(dx*dx+dy*dy);
-  t = Math.max(0,Math.min(1,t));
-  return Math.sqrt((pt.x-(a.x+t*dx))**2+(pt.y-(a.y+t*dy))**2);
-}
-
-// Simulate pressure taper — thick in middle, thin at start/end
-function addPressureTaper(pts) {
-  var n = pts.length;
-  return pts.map(function(pt, i) {
-    // Bell curve: thin → thick → thin
-    var t = i / (n-1);
-    var bell = Math.sin(Math.PI * t); // 0 at ends, 1 in middle
-    var naturalP = 0.4 + 0.6 * bell;
-    return { x: pt.x, y: pt.y, p: pt.p > 0.99 ? naturalP : pt.p };
-  });
-}
-
-// Draw enhanced stroke with variable width using Bezier
-function drawEnhancedStroke(pts, color, baseSize, tool) {
+// ============================================================
+// MAIN RENDER FUNCTION
+// ============================================================
+function renderStroke(pts, isFinal) {
+  if(pts.length < 2) return;
   var ctx = _dc.ctx;
-  if(!ctx || pts.length < 2) return;
+
+  // Choose rendering strategy based on stroke analysis
+  var useStraighten = false;
+  var useCurve = true;
+
+  if(isFinal && _dc.tool === 'pen') {
+    // Straight line intent: high straightness + no intentional wobble
+    if(_strokeState.straightnessScore > 0.85 && !_strokeState.intentionalWobble) {
+      useStraighten = true;
+    }
+  }
 
   ctx.save();
-  ctx.globalCompositeOperation = 'source-over';
   ctx.lineCap  = 'round';
   ctx.lineJoin = 'round';
+  ctx.imageSmoothingEnabled = true;
 
-  if(tool === 'marker') {
-    // Marker: flat uniform semi-transparent
-    ctx.strokeStyle = color + '99';
-    ctx.lineWidth   = baseSize * 2.5;
-    ctx.globalAlpha = 0.75;
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for(var i = 1; i < pts.length; i++) {
-      ctx.lineTo(pts[i].x, pts[i].y);
-    }
+  if(_dc.tool === 'eraser') {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.strokeStyle = 'rgba(0,0,0,1)';
+    ctx.lineWidth = _dc.size * 4;
+    drawSmoothPath(ctx, pts, false);
     ctx.stroke();
+
+  } else if(_dc.tool === 'marker') {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = _dc.color + '99';
+    ctx.lineWidth = _dc.size * 2.5;
+    ctx.globalAlpha = 0.7;
+    drawSmoothPath(ctx, pts, false);
+    ctx.stroke();
+
   } else {
-    // Pen: variable width segments with pressure
-    for(var i = 0; i < pts.length-1; i++) {
-      var p0 = pts[i], p1 = pts[i+1];
-      var pressure = (p0.p + p1.p) / 2;
+    // PEN — variable width, smooth
+    ctx.globalCompositeOperation = 'source-over';
+
+    if(useStraighten) {
+      // Draw as straight line from first to last point
       ctx.beginPath();
-      ctx.lineWidth = Math.max(0.8, baseSize * pressure * 1.2);
-      ctx.strokeStyle = color;
-      ctx.moveTo(p0.x, p0.y);
-      // Smooth bezier between points
-      var mx = (p0.x+p1.x)/2, my = (p0.y+p1.y)/2;
-      ctx.quadraticCurveTo(p0.x, p0.y, mx, my);
+      ctx.moveTo(pts[0].fx, pts[0].fy);
+      ctx.lineTo(pts[pts.length-1].fx, pts[pts.length-1].fy);
+      ctx.strokeStyle = _dc.color;
+      ctx.lineWidth = _dc.size;
+      ctx.stroke();
+    } else if(isFinal && pts.length > 3) {
+      // Final render: variable width with pressure taper
+      drawVariableWidthStroke(ctx, pts);
+    } else {
+      // Live render: smooth single-path (no gaps, no dashes)
+      ctx.beginPath();
+      drawSmoothPath(ctx, pts, true);
+      ctx.strokeStyle = _dc.color;
+      ctx.lineWidth = _dc.size;
       ctx.stroke();
     }
   }
+
   ctx.restore();
 }
 
-// MAIN: Enhance the last drawn stroke
+// Single continuous smooth path — NO gaps ever
+function drawSmoothPath(ctx, pts, withBezier) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0].fx, pts[0].fy);
+
+  if(!withBezier || pts.length < 3) {
+    for(var i = 1; i < pts.length; i++) {
+      ctx.lineTo(pts[i].fx, pts[i].fy);
+    }
+    return;
+  }
+
+  // Catmull-Rom → Bezier conversion for smooth curves
+  for(var i = 1; i < pts.length - 1; i++) {
+    var x0 = pts[i-1].fx, y0 = pts[i-1].fy;
+    var x1 = pts[i].fx,   y1 = pts[i].fy;
+    var x2 = pts[i+1].fx, y2 = pts[i+1].fy;
+    // Control points
+    var cp1x = x1 - (x2-x0)*0.15;
+    var cp1y = y1 - (y2-y0)*0.15;
+    var cp2x = x1 + (x2-x0)*0.15;
+    var cp2y = y1 + (y2-y0)*0.15;
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x1, y1);
+  }
+  ctx.lineTo(pts[pts.length-1].fx, pts[pts.length-1].fy);
+}
+
+// Variable width stroke — tapers at start/end like real pen
+function drawVariableWidthStroke(ctx, pts) {
+  var n = pts.length;
+  ctx.strokeStyle = _dc.color;
+
+  for(var i = 1; i < n; i++) {
+    var p0 = pts[i-1], p1 = pts[i];
+    // Taper: thin at ends, thick in middle
+    var t0 = i / n;
+    var taper = Math.sin(Math.PI * t0);
+    var width = Math.max(0.8, _dc.size * (0.5 + 0.6 * taper));
+
+    ctx.beginPath();
+    ctx.lineWidth = width;
+    ctx.moveTo(p0.fx, p0.fy);
+    // Bezier control point
+    if(i < n-1) {
+      var p2 = pts[i+1];
+      ctx.bezierCurveTo(
+        p0.fx + (p1.fx-p0.fx)*0.5, p0.fy + (p1.fy-p0.fy)*0.5,
+        p1.fx - (p2.fx-p0.fx)*0.1, p1.fy - (p2.fy-p0.fy)*0.1,
+        p1.fx, p1.fy
+      );
+    } else {
+      ctx.lineTo(p1.fx, p1.fy);
+    }
+    ctx.stroke();
+  }
+}
+
+
+
 function enhanceLastStroke() {
   var raw = _dc.rawPoints;
   if(!raw || raw.length < 3) return;
