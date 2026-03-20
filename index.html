@@ -9001,15 +9001,23 @@ function initDrawCanvas() {
   _dc.ctx.lineJoin    = 'round';
   _dc.ctx.imageSmoothingEnabled = true;
 
-  // Touch events (passive:false for draw to prevent scroll)
-  canvas.addEventListener('touchstart',  onCanvasTouchStart,  { passive: false });
-  canvas.addEventListener('touchmove',   onCanvasTouchMove,   { passive: false });
-  canvas.addEventListener('touchend',    onCanvasTouchEnd,    { passive: true  });
-  // Mouse events for desktop
-  canvas.addEventListener('mousedown',   onCanvasMouseDown);
-  canvas.addEventListener('mousemove',   onCanvasMouseMove);
-  canvas.addEventListener('mouseup',     onCanvasMouseUp);
-  canvas.addEventListener('mouseleave',  onCanvasMouseUp);
+  // Pointer Events — handles finger, Apple Pencil, S-Pen, stylus, mouse — sab ek saath
+  canvas.addEventListener('pointerdown',  onCanvasPointerDown,  { passive: false });
+  canvas.addEventListener('pointermove',  onCanvasPointerMove,  { passive: false });
+  canvas.addEventListener('pointerup',    onCanvasPointerUp,    { passive: true  });
+  canvas.addEventListener('pointerout',   onCanvasPointerUp,    { passive: true  });
+  canvas.addEventListener('pointercancel',onCanvasPointerUp,    { passive: true  });
+  // Disable browser's default touch/scroll handling on canvas
+  canvas.style.touchAction = 'none';
+
+  // Detect if device supports real stylus pressure (Apple Pencil, S-Pen etc.)
+  _dc.hasRealPressure = false;
+  canvas.addEventListener('pointerdown', function detectPressure(e) {
+    if(e.pointerType === 'pen') {
+      _dc.hasRealPressure = true; // Stylus detected!
+    }
+    canvas.removeEventListener('pointerdown', detectPressure);
+  }, { once: true });
 
   // Fill white background
   _dc.ctx.fillStyle = document.body.classList.contains('night-mode') ? '#1a1a2e' : '#fafafa';
@@ -9033,33 +9041,42 @@ function saveCanvasSnapshot() {
   if(_dc.strokes.length > 30) _dc.strokes.shift();
 }
 
-function beginStroke(x, y) {
+function beginStroke(x, y, pressure) {
   saveCanvasSnapshot();
   _dc.drawing = true;
   _dc.lastX = x;
   _dc.lastY = y;
+  _dc.lastPressure = pressure || 1;
   var ctx = _dc.ctx;
   ctx.beginPath();
   ctx.moveTo(x, y);
-  applyDrawStyle(ctx);
+  applyDrawStyle(ctx, pressure || 1);
 }
 
 function continueStroke(x, y, pressure) {
   if(!_dc.drawing) return;
   var ctx = _dc.ctx;
-  // Pen pressure simulation: size varies with speed
+  var p = pressure || 1;
+
   if(_dc.tool === 'pen') {
+    // Real pressure from stylus → thicker stroke when pressing harder
+    // Speed thinning + pressure thickening combined
     var dx = x - _dc.lastX, dy = y - _dc.lastY;
     var speed = Math.sqrt(dx*dx + dy*dy);
-    var ps = Math.max(1.5, _dc.size - speed * 0.05); // Faster = thinner
-    ctx.lineWidth = ps;
+    var speedFactor = Math.max(0.5, 1 - speed * 0.03);
+    // Stylus: 0-1 pressure. Finger/mouse: always 1 (no real pressure)
+    var hasRealPressure = _dc.hasRealPressure;
+    var pressureFactor = hasRealPressure ? Math.max(0.3, p) : 1;
+    ctx.lineWidth = Math.max(1, _dc.size * speedFactor * pressureFactor);
   }
+
   ctx.lineTo(x, y);
   ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(x, y);
   _dc.lastX = x;
   _dc.lastY = y;
+  _dc.lastPressure = p;
 }
 
 function endStroke() {
@@ -9067,14 +9084,17 @@ function endStroke() {
   if(_dc.ctx) _dc.ctx.beginPath();
 }
 
-function applyDrawStyle(ctx) {
+function applyDrawStyle(ctx, pressure) {
+  var p = pressure || 1;
   if(_dc.tool === 'eraser') {
     ctx.globalCompositeOperation = 'destination-out';
     ctx.strokeStyle = 'rgba(0,0,0,1)';
     ctx.lineWidth = _dc.size * 4;
   } else if(_dc.tool === 'marker') {
     ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle = _dc.color + '88'; // Semi-transparent
+    // Marker opacity varies with pressure if real stylus
+    var alpha = _dc.hasRealPressure ? Math.round(p * 120).toString(16).padStart(2,'0') : '88';
+    ctx.strokeStyle = _dc.color + alpha;
     ctx.lineWidth = _dc.size * 3;
   } else { // pen
     ctx.globalCompositeOperation = 'source-over';
@@ -9083,31 +9103,31 @@ function applyDrawStyle(ctx) {
   }
 }
 
-// Touch handlers
-function onCanvasTouchStart(e) {
+// ---- Unified Pointer Handlers (finger + stylus + mouse + epen) ----
+function onCanvasPointerDown(e) {
   e.preventDefault();
-  var t = e.touches[0];
-  var p = canvasPoint(t);
-  beginStroke(p.x, p.y);
+  // Only primary pointer (ignore extra fingers in multi-touch)
+  if(!e.isPrimary) return;
+  // Capture pointer so pointermove fires even outside canvas
+  try { _dc.canvas.setPointerCapture(e.pointerId); } catch(x) {}
+  var p = canvasPoint(e);
+  // Real pressure from stylus (e.pressure: 0-1), fallback to 1 for finger/mouse
+  var pressure = (e.pressure && e.pressure > 0) ? e.pressure : 1;
+  _dc.lastPressure = pressure;
+  beginStroke(p.x, p.y, pressure);
 }
-function onCanvasTouchMove(e) {
-  e.preventDefault();
-  if(!_dc.drawing) return;
-  var t = e.touches[0];
-  var p = canvasPoint(t);
-  continueStroke(p.x, p.y, 1);
-}
-function onCanvasTouchEnd(e) { endStroke(); }
 
-// Mouse handlers
-function onCanvasMouseDown(e) {
+function onCanvasPointerMove(e) {
+  e.preventDefault();
+  if(!e.isPrimary || !_dc.drawing) return;
   var p = canvasPoint(e);
-  beginStroke(p.x, p.y);
+  var pressure = (e.pressure && e.pressure > 0) ? e.pressure : 1;
+  continueStroke(p.x, p.y, pressure);
 }
-function onCanvasMouseMove(e) {
-  if(!_dc.drawing) return;
-  var p = canvasPoint(e);
-  continueStroke(p.x, p.y, 1);
+
+function onCanvasPointerUp(e) {
+  if(!e.isPrimary) return;
+  endStroke();
 }
 function onCanvasMouseUp(e) { endStroke(); }
 
