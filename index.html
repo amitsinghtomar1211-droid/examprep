@@ -11983,9 +11983,9 @@ function insertQuickMapToNotes() {
     date: new Date().toLocaleDateString('hi-IN')
   });
   save();
-  closeQuickMap();
+  closeQuickMap(); // Canvas band karo
 
-  // Show destination selector modal
+  // AB destination select karo (subject/section/topic)
   _openQmInsertModal(mapId, mapName);
 }
 
@@ -12098,12 +12098,24 @@ function _navigateToTopicAndSpawnPin() {
   }, 350);
 }
 
-// ── Spawn floating pin ──
+// ── Update hint label position ──
+function _updateHint(x, y) {
+  if(!_fp.hintEl) return;
+  var hx = Math.min(x - 10, window.innerWidth - 210);
+  var hy = y + 36;
+  if(hy > window.innerHeight - 44) hy = y - 54;
+  _fp.hintEl.style.left = Math.max(8, hx) + 'px';
+  _fp.hintEl.style.top  = hy + 'px';
+}
+
+// ── Spawn floating pin (called after destination confirmed) ──
 function _spawnFloatPin(mapId, mapName, x, y) {
-  _fp.el      = document.getElementById('qmapFloatPin');
-  _fp.hintEl  = document.getElementById('qmapFloatPinHint');
-  _fp.mapId   = mapId;
-  _fp.mapName = mapName;
+  _fp.el     = document.getElementById('qmapFloatPin');
+  _fp.hintEl = document.getElementById('qmapFloatPinHint');
+  if(!_fp.el) return;
+
+  _fp.mapId      = mapId;
+  _fp.mapName    = mapName;
   _fp.isFloating = true;
   _fp.isSet      = false;
   _fp.isDragging = false;
@@ -12111,16 +12123,24 @@ function _spawnFloatPin(mapId, mapName, x, y) {
   _fp.lastX      = x;
   _fp.lastY      = y;
 
-  _fp.el.style.left    = (x - 24) + 'px';
-  _fp.el.style.top     = (y - 24) + 'px';
+  // Position pin at center of screen
+  _fp.el.style.left = (x - 24) + 'px';
+  _fp.el.style.top  = (y - 24) + 'px';
   _fp.el.classList.add('active');
   _fp.el.classList.remove('is-set', 'is-dragging');
 
+  // Show hint
   _updateHint(x, y);
-  if(_fp.hintEl) _fp.hintEl.classList.add('show');
+  if(_fp.hintEl) {
+    _fp.hintEl.textContent = 'Press & move karo — double-tap se set karo ✅';
+    _fp.hintEl.classList.add('show');
+  }
 
+  // Attach pointer events (remove old listeners first to avoid duplicates)
   _fp.el.removeEventListener('pointerdown', _fpPointerDown);
   _fp.el.addEventListener('pointerdown', _fpPointerDown, { passive: false });
+
+  showToast('🧭 Pin float ho gaya! Move karo, double-tap se set karo', 'success');
 }
 
 
@@ -12601,27 +12621,20 @@ function initQmapFab() {
   fab.addEventListener('click', function(e) {
     e.preventDefault(); e.stopPropagation();
     var now = Date.now();
-    if(now - _fabTap.last < 380) {
-      // Double-tap → open QuickMap Studio
+    if(now - _fabTap.last < 400) {
+      // Double-tap → seedha Canvas/QuickMap Studio khulo — kahi bhi ho user
       clearTimeout(_fabTap.timer);
       _fabTap.last = 0;
-      if(!fab.classList.contains('qm-inactive')) {
-        openQuickMap();
-      } else {
-        // Reactivate
-        fab.classList.remove('qm-inactive');
-        showToast('QuickMap ready — double-tap to create!', 'success');
-      }
+      // Pehle FAB active karo (agar inactive tha)
+      fab.classList.remove('qm-inactive');
+      // Direct canvas open — no notes page selection needed
+      openQuickMap();
     } else {
       _fabTap.last = now;
-      // Single tap → brief hint
       _fabTap.timer = setTimeout(function() {
-        if(fab.classList.contains('qm-inactive')) {
-          showToast('Double-tap to create new map', 'success');
-        } else {
-          showToast('Double-tap to open QuickMap Studio ✦', 'success');
-        }
-      }, 420);
+        // Single tap hint
+        showToast('Double-tap karo — QuickMap Studio kholne ke liye 🧭', 'success');
+      }, 430);
     }
   }, { passive: false });
 }
