@@ -9063,45 +9063,55 @@ function canvasPoint(e) {
 
 function beginStroke(x, y, pressure) {
   saveCanvasSnapshot();
-  _dc.redoStack = []; // New stroke clears redo
-  _dc.drawing = true;
-  _dc.lastX = x; _dc.lastY = y;
+  _dc.redoStack = [];
+  _dc.drawing  = true;
+  _dc.lastX    = x; _dc.lastY = y;
   _dc.lastPressure = pressure || 1;
   _dc.rawPoints = [{ x: x, y: y, p: pressure || 1, t: Date.now() }];
-  var ctx = _dc.ctx;
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  applyDrawStyle(ctx, pressure || 1);
+  // Save background so we can redraw cleanly each frame
+  _dc._strokeBase = _dc.ctx.getImageData(0, 0, _dc.canvas.width, _dc.canvas.height);
 }
 
 function continueStroke(x, y, pressure) {
   if(!_dc.drawing) return;
-  var ctx = _dc.ctx;
   var p = pressure || 1;
   _dc.rawPoints.push({ x: x, y: y, p: p, t: Date.now() });
-
-  if(_dc.tool === 'pen') {
-    var dx = x - _dc.lastX, dy = y - _dc.lastY;
-    var speed = Math.sqrt(dx*dx+dy*dy);
-    var sf = Math.max(0.5, 1 - speed * 0.025);
-    var pf = _dc.hasRealPressure ? Math.max(0.3, p) : 1;
-    ctx.lineWidth = Math.max(1, _dc.size * sf * pf);
-  }
-
-  // Smooth real-time rendering with quadratic curves
-  if(_dc.rawPoints.length >= 3 && _dc.tool !== 'eraser') {
-    var pts = _dc.rawPoints;
-    var len = pts.length;
-    var mx = (pts[len-2].x + pts[len-1].x) / 2;
-    var my = (pts[len-2].y + pts[len-1].y) / 2;
-    ctx.quadraticCurveTo(pts[len-2].x, pts[len-2].y, mx, my);
-  } else {
-    ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(x, y);
   _dc.lastX = x; _dc.lastY = y; _dc.lastPressure = p;
+
+  // Restore background snapshot — erase previous partial stroke
+  if(_dc._strokeBase) {
+    _dc.ctx.putImageData(_dc._strokeBase, 0, 0);
+  }
+
+  // Draw entire stroke as ONE continuous smooth path — no gaps, no dashes
+  drawLiveStroke(_dc.rawPoints);
+}
+
+// Draw all rawPoints as a single unbroken smooth path
+function drawLiveStroke(pts) {
+  if(pts.length < 2) return;
+  var ctx = _dc.ctx;
+  ctx.save();
+  applyDrawStyle(ctx, 1);
+
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+
+  if(pts.length === 2) {
+    ctx.lineTo(pts[1].x, pts[1].y);
+  } else {
+    // Catmull-Rom spline — smooth continuous curve through ALL points
+    for(var i = 1; i < pts.length - 1; i++) {
+      var mx = (pts[i].x + pts[i+1].x) / 2;
+      var my = (pts[i].y + pts[i+1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+    }
+    // Final point
+    ctx.lineTo(pts[pts.length-1].x, pts[pts.length-1].y);
+  }
+
+  ctx.stroke();
+  ctx.restore();
 }
 
 function endStroke() {
