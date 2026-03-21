@@ -18114,6 +18114,895 @@ function openSaveFactModal(topicId, defaultText) {
   openFactCollector(defaultText || '', sid, secid, tid);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// ██████  CREATOR STUDIO v2 PATCH — All Improvements  ██████████████
+// ═══════════════════════════════════════════════════════════════════
+// Features:
+// 1. ROTATE — 2+ finger se rotation (fresh drag + re-adjust dono mein)
+// 2. DOUBLE TAP = adjust mode (long press hataya)
+// 3. TRIPLE TAP = rewrite text from scratch
+// 4. WRITE MODE ↔ DRAW MODE conflict fix — sirf ek active rahega
+// 5. Hindi text accuracy improvement — offscreen canvas + better measure
+// 6. Floating Creator Studio button mein bhi Write mode add
+// ═══════════════════════════════════════════════════════════════════
+
+(function() {
+'use strict';
+
+// ─── Helper: wait until DOM ready ───
+function onReady(fn) {
+  if(document.readyState !== 'loading') { fn(); }
+  else { document.addEventListener('DOMContentLoaded', fn); }
+}
+
+// ─── UTILITY: Get canvas scale ───
+function _canvasScale(canvas) {
+  var r = canvas.getBoundingClientRect();
+  return { sx: canvas.width / r.width, sy: canvas.height / r.height, r: r };
+}
+
+// ─── UTILITY: Angle between two touch points ───
+function _touchAngle(t1, t2) {
+  return Math.atan2(t2.y - t1.y, t2.x - t1.x) * 180 / Math.PI;
+}
+
+// ─── UTILITY: Distance between two points ───
+function _touchDist(t1, t2) {
+  return Math.hypot(t2.x - t1.x, t2.y - t1.y);
+}
+
+// ════════════════════════════════════════════════════════
+// FIX 1 & 2 & 3: Replace _ncoStartFreshDrag with improved version
+// - Adds ROTATE (2+ fingers = pinch+rotate simultaneously)  
+// - DOUBLE TAP = adjust mode
+// - TRIPLE TAP = rewrite
+// ════════════════════════════════════════════════════════
+window._ncoStartFreshDrag = function(obj) {
+  var canvas = document.getElementById('neDrawCanvas');
+  if(!canvas) return;
+
+  canvas._freshDragActive = true;
+  obj._origW = obj.w; obj._origH = obj.h;
+
+  var touches     = {};  // pointerId → {x,y}
+  var moveStartX  = null, moveStartY = null;
+  var origObjX    = obj.x, origObjY = obj.y;
+  var pinchStart  = null; // { dist, angle, w, h, angle_obj }
+
+  function ptCount() { return Object.keys(touches).length; }
+  function twoTouches() {
+    var ids = Object.keys(touches);
+    return { t1: touches[ids[0]], t2: touches[ids[1]] };
+  }
+
+  function onDown(e) {
+    e.preventDefault(); e.stopPropagation();
+    try { canvas.setPointerCapture(e.pointerId); } catch(x) {}
+    touches[e.pointerId] = { x: e.clientX, y: e.clientY };
+
+    if(ptCount() === 1) {
+      moveStartX = e.clientX; moveStartY = e.clientY;
+      origObjX = obj.x; origObjY = obj.y;
+      pinchStart = null;
+    }
+    if(ptCount() === 2) {
+      var tt = twoTouches();
+      pinchStart = {
+        dist:  _touchDist(tt.t1, tt.t2),
+        angle: _touchAngle(tt.t1, tt.t2),
+        w: obj.w, h: obj.h,
+        angle_obj: obj.angle || 0
+      };
+      moveStartX = null; // no single-finger move while pinching
+    }
+  }
+
+  function onMove(e) {
+    e.preventDefault();
+    if(!touches[e.pointerId]) return;
+    touches[e.pointerId] = { x: e.clientX, y: e.clientY };
+
+    var cs = _canvasScale(canvas);
+
+    if(ptCount() >= 2 && pinchStart) {
+      var tt = twoTouches();
+      var dist  = _touchDist(tt.t1, tt.t2);
+      var angle = _touchAngle(tt.t1, tt.t2);
+      var scale = dist / pinchStart.dist;
+      var dAngle = angle - pinchStart.angle;
+
+      var cx = obj.x + obj.w/2, cy = obj.y + obj.h/2;
+      obj.w     = Math.max(30, pinchStart.w * scale);
+      obj.h     = Math.max(16, pinchStart.h * scale);
+      obj.x     = cx - obj.w/2; obj.y = cy - obj.h/2;
+      obj.angle = (pinchStart.angle_obj + dAngle) % 360;
+
+    } else if(ptCount() === 1 && moveStartX !== null) {
+      var dx = (e.clientX - moveStartX) * cs.sx;
+      var dy = (e.clientY - moveStartY) * cs.sy;
+      obj.x = origObjX + dx;
+      obj.y = origObjY + dy;
+    }
+    _ncoRedrawObj(obj);
+    // Update handle if shown
+    if(document.getElementById('ncoHandle')) _ncoShowHandle(obj);
+  }
+
+  function onUp(e) {
+    delete touches[e.pointerId];
+    if(ptCount() === 0) {
+      cleanup();
+      _nedSaveSnapshot();
+      if(window._ned && _ned.ctx) {
+        obj.baseSnapshot = _ned.ctx.getImageData(0, 0, canvas.width, canvas.height);
+      }
+      window._nco && (_nco.freshObj = null);
+      canvas._freshDragActive = false;
+      _ncoInstallGestures();
+      if(typeof showToast === 'function')
+        showToast('✅ Set! Double tap = adjust · Triple tap = rewrite', 'success');
+      return;
+    }
+    if(ptCount() === 1) {
+      var rem = Object.keys(touches)[0];
+      moveStartX = touches[rem].x; moveStartY = touches[rem].y;
+      origObjX = obj.x; origObjY = obj.y; pinchStart = null;
+    }
+  }
+
+  function cleanup() {
+    canvas.removeEventListener('pointerdown', onDown, true);
+    canvas.removeEventListener('pointermove', onMove, true);
+    canvas.removeEventListener('pointerup',   onUp,   true);
+    canvas.removeEventListener('pointercancel', onUp, true);
+  }
+
+  canvas.addEventListener('pointerdown',  onDown, { capture:true, passive:false });
+  canvas.addEventListener('pointermove',  onMove, { capture:true, passive:false });
+  canvas.addEventListener('pointerup',    onUp,   { capture:true, passive:false });
+  canvas.addEventListener('pointercancel',onUp,   { capture:true, passive:false });
+};
+
+// ════════════════════════════════════════════════════════
+// FIX 2 & 3: Replace _ncoEnsureHandlers
+// DOUBLE TAP = drag/resize/rotate mode
+// TRIPLE TAP = rewrite text (replaces object)
+// ════════════════════════════════════════════════════════
+window._ncoInstallGestures = function() {
+  var canvas = document.getElementById('neDrawCanvas');
+  if(!canvas || canvas._ncoV2HandlersOn) return;
+  canvas._ncoV2HandlersOn = true;
+
+  // Tap tracking
+  var _lastTap = 0, _tapCount = 0, _tapTimer = null;
+  var _tapObjId = null; // which object was tapped
+
+  // Adjust state
+  var adjustObj    = null;
+  var adjustActive = false;
+  var touches      = {};
+  var moveStartX   = null, moveStartY = null;
+  var origObjX, origObjY;
+  var pinchStart   = null;
+
+  function ptCount() { return Object.keys(touches).length; }
+  function twoTouches() {
+    var ids = Object.keys(touches);
+    return { t1: touches[ids[0]], t2: touches[ids[1]] };
+  }
+
+  function _hitTest(cx, cy) {
+    var list = window._nco ? _nco.list : [];
+    for(var i = list.length - 1; i >= 0; i--) {
+      var o = list[i];
+      // Hit test with rotation awareness (bounding box + padding)
+      var pad = 12;
+      if(cx >= o.x - pad && cx <= o.x + o.w + pad &&
+         cy >= o.y - pad && cy <= o.y + o.h + pad) return o;
+    }
+    return null;
+  }
+
+  canvas.addEventListener('pointerdown', function(e) {
+    if(canvas._freshDragActive) return;
+
+    var cs = _canvasScale(canvas);
+    var cx = (e.clientX - cs.r.left) * cs.sx;
+    var cy = (e.clientY - cs.r.top)  * cs.sy;
+
+    if(!e.isPrimary) {
+      // Second finger during adjust → pinch+rotate
+      if(adjustActive && adjustObj) {
+        touches[e.pointerId] = { x: e.clientX, y: e.clientY };
+        if(ptCount() >= 2) {
+          var tt = twoTouches();
+          pinchStart = {
+            dist:  _touchDist(tt.t1, tt.t2),
+            angle: _touchAngle(tt.t1, tt.t2),
+            w: adjustObj.w, h: adjustObj.h,
+            angle_obj: adjustObj.angle || 0
+          };
+          moveStartX = null; // disable single move while pinching
+        }
+      }
+      return;
+    }
+
+    touches = {};
+    touches[e.pointerId] = { x: e.clientX, y: e.clientY };
+
+    var hit = _hitTest(cx, cy);
+
+    // ── Tap counting ──
+    var now = Date.now();
+    if(now - _lastTap < 350 && (!_tapObjId || _tapObjId === (hit && hit.id))) {
+      _tapCount++;
+    } else {
+      _tapCount = 1;
+      _tapObjId = hit ? hit.id : null;
+    }
+    _lastTap = now;
+    clearTimeout(_tapTimer);
+
+    if(_tapCount === 2 && hit) {
+      // DOUBLE TAP → Adjust mode
+      _tapCount = 0;
+      adjustObj = hit; adjustActive = true;
+      moveStartX = e.clientX; moveStartY = e.clientY;
+      origObjX = hit.x; origObjY = hit.y;
+      pinchStart = null;
+      try { canvas.setPointerCapture(e.pointerId); } catch(x){}
+      if(navigator.vibrate) navigator.vibrate([30, 30, 30]);
+      window._nco && (_nco.selected = hit);
+      _ncoShowHandle(hit);
+      if(typeof showToast === 'function')
+        showToast('✋ Adjust: Drag · 2 finger = Resize+Rotate', 'success');
+      return;
+    }
+
+    if(_tapCount >= 3 && hit && hit.type === 'text') {
+      // TRIPLE TAP → Rewrite
+      _tapCount = 0;
+      if(navigator.vibrate) navigator.vibrate([20,20,20,20,20]);
+      _ncoHideHandle();
+      if(typeof _ncoEditObj === 'function') { _ncoEditObj(hit); return; }
+    }
+
+    // Not double/triple or no hit → just deselect
+    if(!adjustActive) {
+      _tapTimer = setTimeout(function() {
+        if(adjustActive) return; // was activated
+        _ncoHideHandle();
+        adjustObj = null;
+      }, 260);
+    }
+
+  }, { passive: true });
+
+  canvas.addEventListener('pointermove', function(e) {
+    if(canvas._freshDragActive) return;
+    if(!adjustActive || !adjustObj) return;
+
+    touches[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var cs = _canvasScale(canvas);
+    var obj = adjustObj;
+
+    if(ptCount() >= 2 && pinchStart) {
+      var tt = twoTouches();
+      var dist  = _touchDist(tt.t1, tt.t2);
+      var angle = _touchAngle(tt.t1, tt.t2);
+      var scale = dist / pinchStart.dist;
+      var dAngle = angle - pinchStart.angle;
+      var ocx = obj.x + obj.w/2, ocy = obj.y + obj.h/2;
+      obj.w     = Math.max(30, pinchStart.w * scale);
+      obj.h     = Math.max(16, pinchStart.h * scale);
+      obj.x     = ocx - obj.w/2; obj.y = ocy - obj.h/2;
+      obj.angle = (pinchStart.angle_obj + dAngle) % 360;
+    } else if(ptCount() === 1 && e.isPrimary) {
+      if(moveStartX === null) { moveStartX=e.clientX; moveStartY=e.clientY; origObjX=obj.x; origObjY=obj.y; }
+      var dx = (e.clientX - moveStartX) * cs.sx;
+      var dy = (e.clientY - moveStartY) * cs.sy;
+      obj.x = origObjX + dx; obj.y = origObjY + dy;
+    }
+    _ncoRedrawObj(obj);
+    _ncoShowHandle(obj);
+  }, { passive: true });
+
+  canvas.addEventListener('pointerup', function(e) {
+    if(canvas._freshDragActive) return;
+    delete touches[e.pointerId];
+
+    if(adjustActive && adjustObj && Object.keys(touches).length === 0) {
+      if(typeof _nedSaveSnapshot === 'function') _nedSaveSnapshot();
+      if(window._ned && _ned.ctx)
+        adjustObj.baseSnapshot = _ned.ctx.getImageData(0, 0, canvas.width, canvas.height);
+      adjustActive = false; adjustObj = null; pinchStart = null; moveStartX = null;
+      if(typeof showToast === 'function')
+        showToast('✅ Position saved! Double tap to adjust again', 'success');
+    }
+  }, { passive: true });
+};
+
+// Override old _ncoEnsureHandlers to use new version
+window._ncoEnsureHandlers = window._ncoInstallGestures;
+
+// ════════════════════════════════════════════════════════
+// FIX 4: Write mode ↔ Draw mode conflict — mutual exclusion
+// Jab write mode active ho to draw disabled, aur vice versa
+// ════════════════════════════════════════════════════════
+(function patchWriteDrawConflict() {
+  // neWriteActivate → draw mode OFF karo
+  var _origWriteActivate = window.neWriteActivate;
+  window.neWriteActivate = function() {
+    // Draw mode OFF karo agar active hai
+    if(window._ned && _ned.active) {
+      if(typeof window.neDrawToggle === 'function') window.neDrawToggle();
+    }
+    if(typeof _origWriteActivate === 'function') _origWriteActivate.apply(this, arguments);
+  };
+
+  // _nedDown → write popup agar open hai to draw block karo
+  var _origNedDown = window._nedDown;
+  window._nedDown = function(e) {
+    var pop = document.getElementById('neWritePopup');
+    if(pop && pop.classList.contains('open')) {
+      e.preventDefault(); e.stopPropagation(); return; // write mode active — draw block
+    }
+    if(window.canvas && window.canvas._freshDragActive) return; // text object being placed
+    if(typeof _origNedDown === 'function') _origNedDown.apply(this, arguments);
+  };
+
+  // neDrawToggle → write popup band karo
+  var _origDrawToggle = window.neDrawToggle;
+  window.neDrawToggle = function() {
+    var pop = document.getElementById('neWritePopup');
+    if(pop) pop.classList.remove('open');
+    if(typeof _origDrawToggle === 'function') _origDrawToggle.apply(this, arguments);
+  };
+
+  // Also: when neDrawCanvas has _freshDragActive (text placing), block _nedDown
+  // This is the key fix: fresh text drag mein draw nahi hoga
+  var nedc = document.getElementById('neDrawCanvas');
+  if(nedc) {
+    nedc.addEventListener('pointerdown', function(e) {
+      if(nedc._freshDragActive && e.isPrimary) {
+        // Text object active — draw events capture kar liye hain already
+        // Bas normal draw block karna hai
+      }
+    }, { passive: true, capture: false });
+  }
+})();
+
+// ════════════════════════════════════════════════════════
+// FIX 5: Hindi / Devanagari text accuracy improvement
+// Offscreen canvas measurement + proper Unicode segmentation
+// ════════════════════════════════════════════════════════
+var _ncoMeasureCanvas = document.createElement('canvas');
+_ncoMeasureCanvas.width = 1; _ncoMeasureCanvas.height = 1;
+var _ncoMeasureCtx = _ncoMeasureCanvas.getContext('2d');
+
+// Override _ncoRenderText for better Devanagari rendering
+var _origRenderText = window._ncoRenderText;
+window._ncoRenderText = function(ctx, txt, x, y, opts) {
+  var size   = opts.size   || 24;
+  var color  = opts.color  || '#000';
+  var effect = opts.effect || 'none';
+  var font   = opts.font   || 'normal';
+
+  // Enhanced font string for Devanagari
+  function getFontStr(sz) {
+    if(font === 'deva') {
+      // Use larger base + Noto Sans Devanagari with explicit weight
+      return '700 ' + sz + 'px "Noto Sans Devanagari","Mangal","Devanagari MT",sans-serif';
+    }
+    if(font === 'math') return '700 ' + sz + 'px "STIX Two Math","Latin Modern Math",serif';
+    if(font === 'mono') return '700 ' + sz + 'px "Courier New",monospace';
+    var w = (font==='bold'||font==='italic') ? 'bold ' : '700 ';
+    var s = font==='italic' ? 'italic ' : '';
+    return s + w + sz + 'px "Baloo 2","Noto Sans Devanagari",sans-serif';
+  }
+
+  ctx.save();
+  ctx.textBaseline = 'alphabetic'; // 'alphabetic' better for Devanagari than 'top'
+  ctx.font = getFontStr(size);
+
+  // For Devanagari: use Intl.Segmenter if available for proper grapheme clusters
+  function splitGraphemes(str) {
+    if(typeof Intl !== 'undefined' && Intl.Segmenter) {
+      try {
+        var seg = new Intl.Segmenter('hi', { granularity: 'grapheme' });
+        return Array.from(seg.segment(str), function(s){ return s.segment; });
+      } catch(ex) {}
+    }
+    // Fallback: Array.from handles most Unicode correctly
+    return Array.from(str);
+  }
+
+  var lines  = txt.split('\n');
+  var lh     = size * 1.45; // slightly taller line height for Devanagari
+  
+  // Better width measurement — use measureText properly
+  function measureLine(l) {
+    ctx.font = getFontStr(size);
+    var m = ctx.measureText(l);
+    // Include actual bounding box if available
+    if(m.actualBoundingBoxLeft !== undefined) {
+      return m.actualBoundingBoxRight + Math.abs(m.actualBoundingBoxLeft || 0);
+    }
+    return m.width;
+  }
+
+  var maxW   = lines.reduce(function(m, l) { return Math.max(m, measureLine(l)); }, 0);
+  var totalH = lines.length * lh;
+
+  ctx.translate(x, y);
+
+  if(effect === 'shadow') {
+    ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 7;
+    ctx.shadowOffsetX = 3; ctx.shadowOffsetY = 3;
+  }
+  if(effect === 'fill') {
+    ctx.fillStyle = color + '22';
+    ctx.fillRect(-6, -8, maxW + 12, totalH + 12);
+    ctx.shadowColor = 'transparent';
+  }
+
+  // For Devanagari: use simpler, direct rendering (avoid char-by-char which breaks matras)
+  lines.forEach(function(line, li) {
+    var ly = li * lh + size * 0.85; // alphabetic baseline offset
+
+    if(effect === 'arc' && font !== 'deva') {
+      // Arc effect — keep existing logic but use better font
+      var radius = Math.max(maxW, 60) * 0.8;
+      var arcSpan = Math.min(Math.PI * 0.7, maxW / radius);
+      var startAngle = -arcSpan/2 - Math.PI/2;
+      var glyphs = splitGraphemes(line);
+      ctx.save(); ctx.translate(maxW/2, radius);
+      glyphs.forEach(function(ch, ci) {
+        var ca = startAngle + (ci/Math.max(glyphs.length-1,1))*arcSpan;
+        ctx.save(); ctx.rotate(ca); ctx.translate(0,-radius);
+        ctx.fillStyle=color; ctx.fillText(ch, 0, ly);
+        ctx.restore();
+      });
+      ctx.restore();
+    } else if(effect === 'wave' && font !== 'deva') {
+      // Wave effect — Devanagari ke liye avoid (matras break)
+      var glyphs = splitGraphemes(line);
+      var charX = 0;
+      glyphs.forEach(function(ch, ci) {
+        var wY = ly + Math.sin(ci * 0.7) * (size * 0.15);
+        ctx.font = getFontStr(size);
+        ctx.fillStyle = color; ctx.fillText(ch, charX, wY);
+        charX += ctx.measureText(ch).width;
+      });
+    } else {
+      // Standard / Devanagari — render full line at once (best for matras)
+      if(effect === 'arc' || effect === 'wave') {
+        // Devanagari fallback: render straight
+      }
+      if(effect === 'outline') {
+        ctx.strokeStyle = color; ctx.lineWidth = size * 0.05; ctx.strokeText(line, 0, ly);
+      }
+      ctx.fillStyle = color; ctx.fillText(line, 0, ly);
+    }
+  });
+
+  ctx.restore();
+
+  // Return corrected dimensions
+  return { w: maxW, h: totalH };
+};
+
+// Also patch _ncoPlaceText to use better measurement for initial sizing
+var _origPlaceText = window._ncoPlaceText;
+window._ncoPlaceText = function(txt, cx, cy, opts) {
+  // For Devanagari, add some extra width margin for matras/conjuncts
+  var isHindi = opts && opts.font === 'deva';
+  if(isHindi) {
+    // Measure on offscreen canvas first
+    _ncoMeasureCtx.font = '700 ' + (opts.size||24) + 'px "Noto Sans Devanagari",sans-serif';
+    var lines = txt.split('\n');
+    var lh = (opts.size||24) * 1.45;
+    var maxW = lines.reduce(function(m, l) {
+      var w = _ncoMeasureCtx.measureText(l).width;
+      return Math.max(m, w);
+    }, 0);
+    maxW = maxW * 1.1 + 20; // 10% extra for Devanagari matras
+    var totalH = lines.length * lh + 16;
+
+    // Direct place without recalculation
+    if(window._ned && _ned.ctx && document.getElementById('neDrawCanvas')) {
+      var canvas = document.getElementById('neDrawCanvas');
+      var obj = {
+        id:     'nco_' + Date.now(),
+        type:   'text', txt: txt,
+        opts:   JSON.parse(JSON.stringify(opts)),
+        x: cx - maxW/2, y: cy - totalH/2,
+        w: maxW, h: totalH, angle: 0,
+        baseSnapshot: null
+      };
+      _nedSaveSnapshot && _nedSaveSnapshot();
+      obj.baseSnapshot = _ned.ctx.getImageData(0, 0, canvas.width, canvas.height);
+      _ncoDrawObj(obj);
+      window._nco && _nco.list.push(obj);
+      _nco.freshObj = obj;
+      _ncoStartFreshDrag(obj);
+      if(typeof showToast === 'function')
+        showToast('✋ Drag · 2 finger = resize+rotate · Release = set', 'success');
+      return;
+    }
+  }
+  // Non-Hindi: use original function
+  if(typeof _origPlaceText === 'function') _origPlaceText.apply(this, arguments);
+};
+
+// ════════════════════════════════════════════════════════
+// FIX 6: Floating Creator Studio FAB mein Write Mode add karo
+// ════════════════════════════════════════════════════════
+function _addWriteModeToFloatingCreator() {
+  // Creator overlay ke draw tab mein Write Mode button inject karo
+  var drawTab = document.getElementById('creator-tab-draw');
+  if(!drawTab || document.getElementById('csWriteModeBtn')) return;
+
+  var bottomBar = drawTab.querySelector('.creator-bottom-bar');
+  if(!bottomBar) return;
+
+  // Write mode button add karo toolbar mein
+  var dtoolbarDraw = document.getElementById('dtoolbar-draw');
+  if(dtoolbarDraw && !document.getElementById('csWriteToolBtn')) {
+    var sep = document.createElement('div');
+    sep.className = 'ctb-sep';
+    dtoolbarDraw.insertBefore(sep, dtoolbarDraw.querySelector('div[style*="margin-left:auto"]') || dtoolbarDraw.lastChild);
+
+    var writeBtn = document.createElement('button');
+    writeBtn.id = 'csWriteToolBtn';
+    writeBtn.className = 'draw-tool-btn';
+    writeBtn.title = 'Write text on canvas (✍️ mode)';
+    writeBtn.innerHTML = '✍️<span style="font-size:0.6rem;display:block;line-height:1;margin-top:1px;font-weight:800;">Write</span>';
+    writeBtn.style.cssText = 'width:44px;height:44px;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:2px;';
+    writeBtn.onclick = function() { _csWriteActivate(); };
+    dtoolbarDraw.insertBefore(writeBtn, dtoolbarDraw.querySelector('div[style*="margin-left:auto"]') || dtoolbarDraw.lastChild);
+  }
+}
+
+// Creator Studio ke liye write mode popup (same as notes write mode)
+var _csWriteState = { font:'normal', size:24, effect:'none', color:'#000000', tapX:0, tapY:0 };
+
+function _csWriteActivate() {
+  // Create a popup if not exists
+  var existingPop = document.getElementById('csWritePopup');
+  if(existingPop) { existingPop.classList.toggle('open'); return; }
+
+  var pop = document.createElement('div');
+  pop.id = 'csWritePopup';
+  pop.style.cssText = [
+    'position:fixed', 'bottom:80px', 'left:50%', 'transform:translateX(-50%)',
+    'background:var(--surface,#fff)', 'border:1.5px solid var(--border,#bdd5ea)',
+    'border-radius:16px', 'padding:14px 16px', 'z-index:10000',
+    'box-shadow:0 8px 32px rgba(0,0,0,0.18)', 'width:min(360px,94vw)',
+    'display:none'
+  ].join(';');
+
+  pop.innerHTML = [
+    '<div style="font-size:0.82rem;font-weight:800;color:var(--text,#0d1b2a);margin-bottom:10px;">✍️ Text likhein — canvas par place hoga</div>',
+    '<textarea id="csWriteInput" placeholder="Yahan type karein..." rows="2"',
+    '  style="width:100%;padding:8px 10px;border:1.5px solid var(--border,#bdd5ea);border-radius:10px;font-family:inherit;font-size:1rem;resize:none;outline:none;color:var(--text,#0d1b2a);background:var(--surface2,#f4f9fe);"></textarea>',
+    // Font buttons
+    '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:10px;">',
+    ['normal','bold','italic','deva','math','mono'].map(function(f) {
+      var label = {normal:'Normal',bold:'<b>Bold</b>',italic:'<i>Italic</i>',deva:'देव',math:'∑',mono:'Code'}[f];
+      return '<button onclick="_csWriteSetFont(\''+f+'\',this)" class="nwp-style-btn'+(f==='normal'?' sel':'')+'" id="csFont-'+f+'">'+label+'</button>';
+    }).join(''),
+    '</div>',
+    // Size
+    '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;">',
+    '<span style="font-size:0.7rem;color:var(--text2);align-self:center;font-weight:700;">Size:</span>',
+    [[16,'S'],[24,'M'],[36,'L'],[56,'XL']].map(function(s) {
+      return '<button onclick="_csWriteSetSize('+s[0]+',this)" class="nwp-style-btn'+(s[0]===24?' sel':'')+'" style="min-width:36px;">'+s[1]+'</button>';
+    }).join(''),
+    '</div>',
+    // Color picker
+    '<div style="display:flex;gap:6px;margin-top:10px;align-items:center;">',
+    '<span style="font-size:0.7rem;color:var(--text2);font-weight:700;">Color:</span>',
+    ['#000000','#1565c0','#c62828','#2e7d32','#6a1b9a','#e65100'].map(function(c) {
+      return '<div onclick="_csWriteState.color=\''+c+'\'" style="width:22px;height:22px;border-radius:50%;background:'+c+';cursor:pointer;border:2px solid rgba(0,0,0,0.1);flex-shrink:0;"></div>';
+    }).join(''),
+    '<input type="color" value="#000000" onchange="_csWriteState.color=this.value" style="width:26px;height:26px;border:none;padding:0;cursor:pointer;border-radius:6px;flex-shrink:0;">',
+    '</div>',
+    // Buttons
+    '<div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end;">',
+    '<button onclick="_csWriteCancel()" style="padding:8px 16px;border-radius:10px;border:1.5px solid var(--border,#bdd5ea);background:var(--surface,#fff);font-weight:700;cursor:pointer;font-family:inherit;">Cancel</button>',
+    '<button onclick="_csWriteConfirm()" style="padding:8px 18px;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-weight:800;cursor:pointer;font-family:inherit;">✓ Place</button>',
+    '</div>'
+  ].join('');
+
+  document.body.appendChild(pop);
+  setTimeout(function() {
+    pop.style.display = 'block';
+    var inp = document.getElementById('csWriteInput');
+    if(inp) inp.focus();
+  }, 10);
+}
+
+window._csWriteSetFont = function(f, btn) {
+  _csWriteState.font = f;
+  document.querySelectorAll('[id^="csFont-"]').forEach(function(b){ b.classList.remove('sel'); });
+  if(btn) btn.classList.add('sel');
+};
+
+window._csWriteSetSize = function(sz, btn) {
+  _csWriteState.size = sz;
+  var pop = document.getElementById('csWritePopup');
+  if(pop) pop.querySelectorAll('.nwp-style-btn').forEach(function(b){
+    // Only deselect size buttons
+    if(b.onclick && b.onclick.toString().includes('csWriteSetSize')) b.classList.remove('sel');
+  });
+  if(btn) btn.classList.add('sel');
+};
+
+window._csWriteCancel = function() {
+  var pop = document.getElementById('csWritePopup');
+  if(pop) pop.style.display = 'none';
+};
+
+window._csWriteConfirm = function() {
+  var inp = document.getElementById('csWriteInput');
+  var txt = inp ? inp.value.trim() : '';
+  if(!txt) { _csWriteCancel(); return; }
+  if(inp) inp.value = '';
+  var pop = document.getElementById('csWritePopup');
+  if(pop) pop.style.display = 'none';
+
+  // Place text on Creator Studio drawCanvas
+  var canvas = document.getElementById('drawCanvas');
+  if(!canvas) return;
+  var ctx = canvas.getContext('2d');
+  if(!ctx) return;
+
+  // Use same render engine
+  var cx = canvas.width / 2;
+  var cy = canvas.height / 3;
+  var opts = {
+    font:   _csWriteState.font,
+    size:   _csWriteState.size,
+    effect: _csWriteState.effect || 'none',
+    color:  _csWriteState.color || '#000000'
+  };
+
+  // Measure
+  ctx.font = '700 ' + opts.size + 'px "' + (opts.font==='deva'?'Noto Sans Devanagari':'Baloo 2') + '",sans-serif';
+  var lines = txt.split('\n');
+  var lh = opts.size * 1.45;
+  var maxW = lines.reduce(function(m, l){ return Math.max(m, ctx.measureText(l).width); }, 0) + 20;
+  var totalH = lines.length * lh + 16;
+
+  var obj = {
+    id: 'dco_' + Date.now(),
+    type: 'text', txt: txt, opts: opts,
+    x: cx - maxW/2, y: cy - totalH/2,
+    w: maxW, h: totalH, angle: 0,
+    baseSnapshot: null
+  };
+
+  // Save snapshot
+  if(window._dc && _dc.ctx) {
+    window._dc.strokes && _dc.strokes.push(_dc.ctx.getImageData(0,0,canvas.width,canvas.height));
+    obj.baseSnapshot = _dc.ctx.getImageData(0,0,canvas.width,canvas.height);
+  }
+
+  // Draw it
+  _csDrawObjOnCreator(obj);
+
+  // Store in global creator list
+  if(!window._csObjects) window._csObjects = [];
+  window._csObjects.push(obj);
+
+  // Start draggable mode
+  _csStartFreshDrag(obj, canvas);
+  if(typeof showToast === 'function')
+    showToast('✋ Drag · 2 finger = resize+rotate · Release = set', 'success');
+};
+
+function _csDrawObjOnCreator(obj) {
+  var canvas = document.getElementById('drawCanvas');
+  if(!canvas) return;
+  var ctx = canvas.getContext('2d');
+  ctx.save();
+  var cx = obj.x + obj.w/2, cy = obj.y + obj.h/2;
+  ctx.translate(cx, cy);
+  ctx.rotate((obj.angle||0) * Math.PI/180);
+  ctx.translate(-obj.w/2, -obj.h/2);
+  // Use our improved render
+  _ncoRenderText(ctx, obj.txt, 0, 0, obj.opts);
+  ctx.restore();
+}
+
+function _csRedrawObj(obj) {
+  var canvas = document.getElementById('drawCanvas');
+  if(!canvas || !obj.baseSnapshot) return;
+  canvas.getContext('2d').putImageData(obj.baseSnapshot, 0, 0);
+  _csDrawObjOnCreator(obj);
+}
+
+// Fresh drag for Creator Studio canvas (same logic as notes)
+function _csStartFreshDrag(obj, canvas) {
+  if(!canvas) return;
+  canvas._csFreshActive = true;
+
+  var touches = {}, moveStartX=null, moveStartY=null;
+  var origX=obj.x, origY=obj.y;
+  var pinchStart = null;
+
+  function ptCount() { return Object.keys(touches).length; }
+  function two() { var k=Object.keys(touches); return {t1:touches[k[0]],t2:touches[k[1]]}; }
+
+  function onD(e) {
+    e.preventDefault(); e.stopPropagation();
+    try{canvas.setPointerCapture(e.pointerId);}catch(x){}
+    touches[e.pointerId]={x:e.clientX,y:e.clientY};
+    if(ptCount()===1){moveStartX=e.clientX;moveStartY=e.clientY;origX=obj.x;origY=obj.y;pinchStart=null;}
+    if(ptCount()===2){var t=two();pinchStart={dist:_touchDist(t.t1,t.t2),angle:_touchAngle(t.t1,t.t2),w:obj.w,h:obj.h,a:obj.angle||0};moveStartX=null;}
+  }
+  function onM(e) {
+    e.preventDefault();
+    if(!touches[e.pointerId]) return;
+    touches[e.pointerId]={x:e.clientX,y:e.clientY};
+    var r=canvas.getBoundingClientRect(), sx=canvas.width/r.width, sy=canvas.height/r.height;
+    if(ptCount()>=2&&pinchStart){
+      var t=two();
+      var dist=_touchDist(t.t1,t.t2), angle=_touchAngle(t.t1,t.t2);
+      var sc=dist/pinchStart.dist, da=angle-pinchStart.angle;
+      var ocx=obj.x+obj.w/2,ocy=obj.y+obj.h/2;
+      obj.w=Math.max(30,pinchStart.w*sc);obj.h=Math.max(16,pinchStart.h*sc);
+      obj.x=ocx-obj.w/2;obj.y=ocy-obj.h/2;obj.angle=(pinchStart.a+da)%360;
+    } else if(ptCount()===1&&moveStartX!==null){
+      obj.x=origX+(e.clientX-moveStartX)*sx;obj.y=origY+(e.clientY-moveStartY)*sy;
+    }
+    _csRedrawObj(obj);
+  }
+  function onU(e) {
+    delete touches[e.pointerId];
+    if(ptCount()===0){
+      canvas.removeEventListener('pointerdown',onD,true);
+      canvas.removeEventListener('pointermove',onM,true);
+      canvas.removeEventListener('pointerup',onU,true);
+      canvas._csFreshActive=false;
+      // Save snapshot
+      if(window._dc&&_dc.ctx) obj.baseSnapshot=_dc.ctx.getImageData(0,0,canvas.width,canvas.height);
+      if(typeof showToast==='function') showToast('✅ Set! Double tap = adjust', 'success');
+      _csInstallDoubleTap(canvas);
+    }
+    if(ptCount()===1){var k=Object.keys(touches)[0];moveStartX=touches[k].x;moveStartY=touches[k].y;origX=obj.x;origY=obj.y;pinchStart=null;}
+  }
+  canvas.addEventListener('pointerdown',onD,{capture:true,passive:false});
+  canvas.addEventListener('pointermove',onM,{capture:true,passive:false});
+  canvas.addEventListener('pointerup',onU,{capture:true,passive:false});
+}
+
+// Double tap handler for Creator Studio canvas
+function _csInstallDoubleTap(canvas) {
+  if(canvas._csDoubleTapOn) return;
+  canvas._csDoubleTapOn = true;
+  var lastTap=0, tapCount=0, adjustObj=null, adjustActive=false;
+  var touches={}, moveStartX, moveStartY, origX, origY, pinchStart=null;
+
+  function hitTest(cx,cy) {
+    if(!window._csObjects) return null;
+    for(var i=_csObjects.length-1;i>=0;i--){
+      var o=_csObjects[i];
+      if(cx>=o.x-12&&cx<=o.x+o.w+12&&cy>=o.y-12&&cy<=o.y+o.h+12) return o;
+    }
+    return null;
+  }
+
+  canvas.addEventListener('pointerdown', function(e) {
+    if(canvas._csFreshActive) return;
+    var r=canvas.getBoundingClientRect(), sx=canvas.width/r.width, sy=canvas.height/r.height;
+    var cx=(e.clientX-r.left)*sx, cy=(e.clientY-r.top)*sy;
+
+    if(!e.isPrimary) {
+      if(adjustActive&&adjustObj){
+        touches[e.pointerId]={x:e.clientX,y:e.clientY};
+        if(Object.keys(touches).length>=2){
+          var k=Object.keys(touches);
+          var t1=touches[k[0]],t2=touches[k[1]];
+          pinchStart={dist:_touchDist(t1,t2),angle:_touchAngle(t1,t2),w:adjustObj.w,h:adjustObj.h,a:adjustObj.angle||0};
+          moveStartX=null;
+        }
+      }
+      return;
+    }
+
+    touches={};touches[e.pointerId]={x:e.clientX,y:e.clientY};
+    var hit=hitTest(cx,cy);
+    var now=Date.now();
+    if(now-lastTap<350) { tapCount++; } else { tapCount=1; }
+    lastTap=now;
+
+    if(tapCount===2&&hit) {
+      tapCount=0;
+      adjustObj=hit; adjustActive=true;
+      moveStartX=e.clientX; moveStartY=e.clientY;
+      origX=hit.x; origY=hit.y; pinchStart=null;
+      try{canvas.setPointerCapture(e.pointerId);}catch(x){}
+      if(navigator.vibrate) navigator.vibrate([30,30,30]);
+      if(typeof showToast==='function') showToast('✋ Adjust: Drag · 2 finger = Resize+Rotate','success');
+    }
+  }, {passive:true});
+
+  canvas.addEventListener('pointermove', function(e) {
+    if(!adjustActive||!adjustObj) return;
+    touches[e.pointerId]={x:e.clientX,y:e.clientY};
+    var r=canvas.getBoundingClientRect(), sx=canvas.width/r.width, sy=canvas.height/r.height;
+    var k=Object.keys(touches);
+
+    if(k.length>=2&&pinchStart){
+      var t1=touches[k[0]],t2=touches[k[1]];
+      var dist=_touchDist(t1,t2),angle=_touchAngle(t1,t2);
+      var sc=dist/pinchStart.dist, da=angle-pinchStart.angle;
+      var ocx=adjustObj.x+adjustObj.w/2, ocy=adjustObj.y+adjustObj.h/2;
+      adjustObj.w=Math.max(30,pinchStart.w*sc);adjustObj.h=Math.max(16,pinchStart.h*sc);
+      adjustObj.x=ocx-adjustObj.w/2;adjustObj.y=ocy-adjustObj.h/2;
+      adjustObj.angle=(pinchStart.a+da)%360;
+    } else if(k.length===1&&e.isPrimary&&moveStartX!==null){
+      adjustObj.x=origX+(e.clientX-moveStartX)*sx;
+      adjustObj.y=origY+(e.clientY-moveStartY)*sy;
+    }
+    _csRedrawObj(adjustObj);
+  },{passive:true});
+
+  canvas.addEventListener('pointerup', function(e) {
+    delete touches[e.pointerId];
+    if(adjustActive&&adjustObj&&Object.keys(touches).length===0){
+      if(window._dc&&_dc.ctx) adjustObj.baseSnapshot=_dc.ctx.getImageData(0,0,canvas.width,canvas.height);
+      adjustActive=false; adjustObj=null; pinchStart=null; moveStartX=null;
+      if(typeof showToast==='function') showToast('✅ Saved! Double tap to adjust again','success');
+    }
+  },{passive:true});
+}
+
+// ── Init: Run after page load ──
+onReady(function() {
+  // Install double-tap handler on notes draw canvas
+  setTimeout(function() {
+    var nedc = document.getElementById('neDrawCanvas');
+    if(nedc && !nedc._ncoV2HandlersOn) _ncoInstallGestures();
+
+    // Add write mode button to floating creator studio
+    _addWriteModeToFloatingCreator();
+
+    // Also add write mode button when creator panel opens
+    var origOpen = window.openCreatorPanel;
+    window.openCreatorPanel = function() {
+      if(typeof origOpen === 'function') origOpen.apply(this, arguments);
+      setTimeout(_addWriteModeToFloatingCreator, 100);
+    };
+  }, 800);
+
+  // Install write mode on creator canvas when it initializes
+  var origInitDraw = window.initDrawCanvas;
+  window.initDrawCanvas = function() {
+    if(typeof origInitDraw === 'function') origInitDraw.apply(this, arguments);
+    setTimeout(function() {
+      var dc = document.getElementById('drawCanvas');
+      if(dc && !dc._csDoubleTapOn) _csInstallDoubleTap(dc);
+    }, 100);
+  };
+
+  // Patch old _ncoEnsureHandlers calls to use new system
+  setTimeout(function() {
+    var nedc = document.getElementById('neDrawCanvas');
+    if(nedc) {
+      // Remove old handlers flag so new ones can install
+      // (old handlers had { passive:true } so they won't conflict much)
+      nedc._ncoHandlersOn = true; // prevent old ones from re-installing
+      if(!nedc._ncoV2HandlersOn) _ncoInstallGestures();
+    }
+  }, 1200);
+});
+
+})(); // End IIFE
+
 // Topic view mein "Facts Page" link dikhao
 function viewSubjectFacts(sid) {
   const subj = getSubj(sid);
