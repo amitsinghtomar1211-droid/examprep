@@ -14313,9 +14313,15 @@ var _sr = {
 function _srStartSession() {
   if(!_sr.session) {
     _sr.session = { timer: null, snapshot: null };
-    // Save canvas state before session begins
-    if(_dc.ctx) {
-      _sr.session.snapshot = _dc.ctx.getImageData(0,0,_dc.canvas.width,_dc.canvas.height);
+    // Snapshot BEFORE any new strokes in this session
+    if(_dc.ctx && _dc.canvas) {
+      try {
+        _sr.session.snapshot = _dc.ctx.getImageData(
+          0, 0, _dc.canvas.width, _dc.canvas.height
+        );
+      } catch(e) {
+        _sr.session.snapshot = null;
+      }
     }
   }
 }
@@ -14323,7 +14329,6 @@ function _srStartSession() {
 function _srAddStroke() {
   if(!_dc.enhanceMode || _dc.tool !== 'pen') return;
   _srStartSession();
-  // Reset the idle timer on every new stroke
   clearTimeout(_sr.session.timer);
   _sr.session.timer = setTimeout(_srTriggerRecognition, 520);
 }
@@ -14334,81 +14339,107 @@ function _srAddStroke() {
 async function _srTriggerRecognition() {
   if(!_sr.session || !_dc.canvas) return;
 
-  // Find bounding box of what was drawn since session started
   var snap0 = _sr.session.snapshot;
   var bbox   = _srGetDirtyBBox(snap0);
   if(!bbox || bbox.w < 8 || bbox.h < 8) { _sr.session = null; return; }
 
-  // Crop canvas to just the drawn area (with padding)
-  var pad = 12;
+  var pad = 14;
   var cx = Math.max(0, bbox.x - pad);
   var cy = Math.max(0, bbox.y - pad);
   var cw = Math.min(_dc.canvas.width  - cx, bbox.w + pad*2);
   var ch = Math.min(_dc.canvas.height - cy, bbox.h + pad*2);
 
-  var tmpCanvas = document.createElement('canvas');
-  tmpCanvas.width  = cw;
-  tmpCanvas.height = ch;
-  var tmpCtx = tmpCanvas.getContext('2d');
-  tmpCtx.drawImage(_dc.canvas, cx,cy,cw,ch, 0,0,cw,ch);
-  var dataUrl = tmpCanvas.toDataURL('image/png');
-  var base64  = dataUrl.split(',')[1];
+  var base64;
+  try {
+    // Create offscreen canvas with white background (avoids transparency issues)
+    var tmpCanvas = document.createElement('canvas');
+    tmpCanvas.width  = Math.max(cw, 1);
+    tmpCanvas.height = Math.max(ch, 1);
+    var tmpCtx = tmpCanvas.getContext('2d');
+    // White background so strokes are visible
+    tmpCtx.fillStyle = '#ffffff';
+    tmpCtx.fillRect(0, 0, tmpCanvas.width, tmpCanvas.height);
+    tmpCtx.drawImage(_dc.canvas, cx, cy, cw, ch, 0, 0, cw, ch);
+    var dataUrl = tmpCanvas.toDataURL('image/png');
+    base64 = dataUrl.split(',')[1];
+    if(!base64) throw new Error('Canvas export failed');
+  } catch(canvasErr) {
+    console.log('SR canvas error:', canvasErr.message);
+    _sr.session = null;
+    return;
+  }
 
-  // Show "recognizing..." indicator
-  showEnhanceIndicator();
-  document.getElementById('enhanceIndicator').textContent = '✦ Recognizing...';
+  // Show indicator
+  var ind = document.getElementById('enhanceIndicator');
+  if(ind) { ind.textContent = '✦ Reading...'; ind.style.opacity='1'; ind.style.transform='scale(1)'; }
 
-  var sessionData = { snapshot: _sr.session.snapshot, bbox: bbox, cx,cy,cw,ch, dataUrl };
-  _sr.session = null; // clear session immediately
+  var sessionData = { snapshot: snap0, bbox, cx, cy, cw, ch };
+  _sr.session = null;
 
   try {
     var result = await _srCallApi(base64, cw, ch);
-    hideEnhanceIndicator();
-    if(result) {
+    if(ind) { ind.style.opacity='0'; ind.style.transform='scale(0.8)'; }
+    if(result && result.label) {
       _sr.pendingResult = { result, sessionData };
       _srShowConfirmDialog(result, sessionData);
     }
   } catch(err) {
-    hideEnhanceIndicator();
-    console.log('SR API error:', err);
-    // Silently fail — keep raw drawing
+    if(ind) { ind.style.opacity='0'; ind.style.transform='scale(0.8)'; }
+    console.log('SR API error:', err.message || err);
   }
 }
 
 async function _srCallApi(base64, w, h) {
-  var prompt = 'This is a handwritten stroke on a digital canvas ('+w+'×'+h+'px). '
-    + 'Identify what the person is writing or drawing. It could be:\n'
-    + '- Hindi/Devanagari letter or word (e.g. क, ख, प्र, etc.)\n'
+  var prompt = 'This image shows a handwritten stroke/drawing on a white canvas ('
+    + w + '×' + h + 'px). Identify what is drawn. It could be:\n'
+    + '- Hindi/Devanagari letter, matra or word\n'
     + '- English letter or word\n'
-    + '- Mathematical symbol or equation (+, -, =, ×, ÷, ∑, π, etc.)\n'
-    + '- A geometric shape (circle, arrow, rectangle, triangle, etc.)\n'
-    + '- A digit (0-9)\n\n'
-    + 'Respond ONLY with this JSON (no explanation):\n'
-    + '{"type":"letter|word|devanagari|math|shape|digit","label":"exact text or shape name","confidence":0.0-1.0,"renderAs":"text|shape","fontHint":"serif|sans|devanagari|math"}\n'
-    + 'For shapes, label must be: circle|ellipse|rectangle|triangle|arrow|line|star|checkmark\n'
-    + 'Be very precise. If unsure, pick the most likely.';
+    + '- Mathematical symbol (+, -, =, ×, ÷, ∑, π, √, etc.)\n'
+    + '- Geometric shape (circle, arrow, rectangle, triangle, line, star, checkmark)\n'
+    + '- Digit (0-9)\n\n'
+    + 'Reply ONLY with valid JSON, no markdown, no explanation:\n'
+    + '{"type":"letter","label":"A","confidence":0.9,"renderAs":"text","fontHint":"sans"}\n'
+    + 'renderAs must be "text" or "shape". For shapes use label: circle|ellipse|rectangle|triangle|arrow|line|star|checkmark\n'
+    + 'fontHint: sans|serif|devanagari|math';
 
   var resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 120,
+      max_tokens: 80,
       messages: [{
         role: 'user',
         content: [
-          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64 } },
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: base64 }
+          },
           { type: 'text', text: prompt }
         ]
       }]
     })
   });
 
+  if(!resp.ok) {
+    var errText = await resp.text();
+    throw new Error('API ' + resp.status + ': ' + errText.substring(0, 100));
+  }
+
   var data = await resp.json();
-  var text = (data.content||[]).map(function(c){return c.text||'';}).join('');
+  if(data.error) throw new Error(data.error.message || 'API error');
+
+  var text = (data.content||[]).map(function(c){ return c.text||''; }).join('');
+  // Extract JSON from response (handle markdown code blocks too)
   var m = text.match(/\{[\s\S]*?\}/);
-  if(!m) return null;
-  return JSON.parse(m[0]);
+  if(!m) throw new Error('No JSON in response: ' + text.substring(0, 80));
+
+  var parsed = JSON.parse(m[0]);
+  if(!parsed.label) throw new Error('No label in response');
+  return parsed;
 }
 
 // ─────────────────────────────────────
