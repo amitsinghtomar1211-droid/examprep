@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="hi">
 <head>
 <meta charset="UTF-8">
@@ -13856,6 +13856,7 @@ function _nedPt(e) {
 function _nedDown(e) {
   // Adjust mode ON — block all drawing, let object handlers work
   if(_nco.adjustMode) return;
+  if(_adj && _adj.mode) return;   // action (drag/resize/rotate) in progress — no draw
   if(_ned.tool === 'none') return;
   if(!e.isPrimary) return;
   e.preventDefault();
@@ -13878,6 +13879,7 @@ function _nedDown(e) {
 
 function _nedMove(e) {
   if(_nco.adjustMode) return;   // adjust mode — no drawing
+  if(_adj && _adj.mode) return; // action in progress — no draw
   if(!_ned.drawing || !e.isPrimary) return;
   e.preventDefault();
 
@@ -14144,40 +14146,47 @@ function _ncoShowAllBoxes() {
   var body   = document.getElementById('neBody');
   if(!canvas || !_nco.list.length) return;
 
-  // Canvas internal size = body.offsetWidth × body.scrollHeight
-  // Canvas CSS size: width=100% of body, height=scrollHeight px
-  // When body scrolls, canvas moves up (it's position:absolute inside body)
+  // ── CORRECT canvas-px → viewport-px formula ──
+  // Canvas is position:absolute; inset:0 inside neBody.
+  // canvas.width  = body.offsetWidth  (internal px, no CSS scale)
+  // canvas.height = body.scrollHeight (internal px, equals CSS height too)
   //
-  // To convert canvas pixel (cx,cy) → viewport pixel:
-  //   body viewport rect
-  var br = body.getBoundingClientRect();
-  //   pixels per canvas-px (CSS scale factor - usually 1:1)
-  var scaleX = br.width  / canvas.width;   // ≈ 1
-  //   vertical: canvas height = scrollHeight, 1 canvas-px = 1 CSS-px (no scale)
-  var scaleY = scaleX;  // canvas is not scaled vertically differently
-  //   scroll offset
-  var scrollTop  = body.scrollTop;
-  var scrollLeft = body.scrollLeft;
+  // canvas.getBoundingClientRect() gives us:
+  //   left/top = current viewport position of canvas TOP-LEFT corner
+  //              (already accounts for body scroll — canvas scrolls with body)
+  //   width/height = CSS rendered size
+  //
+  // Scale factor: internal px / CSS px  (usually ≈ 1 but could differ on zoom)
+  var cr = canvas.getBoundingClientRect();
+  var scaleX = canvas.width  / cr.width;
+  var scaleY = canvas.height / cr.height;
+
+  // canvas top-left in viewport coords = cr.left, cr.top
+  // object is at (obj.x, obj.y) in canvas-internal px
+  // viewport position = cr.left + obj.x / scaleX  (divide because scale > 1 means CSS is smaller)
 
   _nco.list.forEach(function(obj) {
     var ang = obj.angle || 0;
 
-    // Canvas-px → viewport-px
-    // canvas origin is at body's top-left MINUS scroll
-    var vx = br.left + (obj.x - scrollLeft) * scaleX;
-    var vy = br.top  + (obj.y - scrollTop)  * scaleY;
-    var vw = obj.w * scaleX;
-    var vh = obj.h * scaleY;
+    // Canvas internal-px → viewport-px
+    var vx = cr.left + obj.x / scaleX;
+    var vy = cr.top  + obj.y / scaleY;
+    var vw = obj.w / scaleX;
+    var vh = obj.h / scaleY;
+
+    // Clamp so box is never fully off-screen (helps when object is near edge)
+    // Small padding of 4px around the object bounds
+    var PAD = 4;
 
     var box = document.createElement('div');
     box.className = 'nco-adj-box';
     box.dataset.objId = obj.id;
     box.style.cssText = [
       'position:fixed',
-      'left:'  + (vx - 4) + 'px',
-      'top:'   + (vy - 4) + 'px',
-      'width:' + (vw + 8) + 'px',
-      'height:'+ (vh + 8) + 'px',
+      'left:'  + (vx - PAD) + 'px',
+      'top:'   + (vy - PAD) + 'px',
+      'width:' + (vw + PAD*2) + 'px',
+      'height:'+ (vh + PAD*2) + 'px',
       'transform-origin:center center',
       'transform:rotate(' + ang + 'deg)',
       'pointer-events:all',
@@ -14267,6 +14276,11 @@ function _ncoErasedSnap(obj) {
 
 // ─────────────────────────────────────────────────────────
 // UNIFIED ACTION START — drag | resize | rotate
+// FIXES:
+//   • Drag: continuous multi-lift — dragStart resets on each finger-down
+//           from current obj position → no jump between lifts
+//   • Accidental draw: stopPropagation on ALL events + force canvas PE=none
+//   • Coordinate: canvas BCR used for accurate client→canvas mapping
 // ─────────────────────────────────────────────────────────
 function _adjStart(mode, obj) {
   var canvas = document.getElementById('neDrawCanvas');
@@ -14276,39 +14290,28 @@ function _adjStart(mode, obj) {
   var cleanSnap = _ncoErasedSnap(obj);
   if(!cleanSnap) { showToast('Snapshot error — try again', 'error'); return; }
 
+  // ── Hard-disable canvas drawing (Problem 3 fix) ──
+  _ned.tool = 'none';
+  _ned.drawing = false;
+  if(canvas) { canvas.style.pointerEvents = 'none'; canvas.classList.remove('draw-active'); }
+
   // Lock horizontal scroll
   if(body) body.style.overflowX = 'hidden';
 
-  // Prevent browser pinch-zoom for resize/rotate
+  // Prevent browser pinch-zoom
   var metaVP = document.querySelector('meta[name="viewport"]');
   var origVP = metaVP ? metaVP.content : '';
-  if(mode === 'resize' || mode === 'rotate') {
-    if(metaVP) metaVP.content = 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no';
-  }
+  if(metaVP) metaVP.content = 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no';
 
   _adj.mode = mode; _adj.obj = obj;
   _adj.cleanSnap = cleanSnap;
   _adj.pinch = null;
 
-  // Erase old position immediately
   function drawClean() {
     _ned.ctx.putImageData(cleanSnap, 0, 0);
     _ncoDrawObj(obj);
   }
   drawClean();
-
-  // ── Coordinate helpers ──
-  // body.getBoundingClientRect() stays the same size (the visible box)
-  // body.scrollTop changes as user scrolls
-  // canvas internal: width=body.offsetWidth, height=body.scrollHeight, 1:1 CSS px
-  function clientToCanvas(clientX, clientY) {
-    var br = body.getBoundingClientRect();
-    var scX = canvas.width / br.width; // ≈ 1 (no horizontal scale)
-    return {
-      x: (clientX - br.left + body.scrollLeft) * scX,
-      y: (clientY - br.top  + body.scrollTop)          // vertical: 1 CSS px = 1 canvas px
-    };
-  }
 
   // OK button
   var okBtn = _adjMakeOkBtn(
@@ -14318,21 +14321,26 @@ function _adjStart(mode, obj) {
 
   // ── State ──
   var pts = {};
-  var dragStart = null; // {clientX, clientY, objX, objY} for drag
-  var fingerDown = false;
+  // dragStart resets on EVERY finger-down from current obj pos → no jump (Problem 3 fix)
+  var dragStart = null;
 
   function cnt() { return Object.keys(pts).length; }
 
   function onDown(e) {
+    // Always block events from reaching canvas/draw system (Problem 3 fix)
+    e.stopPropagation();
     if(e.target === okBtn) return;
     e.preventDefault();
+
     pts[e.pointerId] = { x: e.clientX, y: e.clientY };
-    fingerDown = true;
 
     if(mode === 'drag' && cnt() === 1) {
+      // KEY FIX: reset dragStart from CURRENT obj position on every finger-down
+      // After finger-up + finger-down, movement is relative to where obj is NOW
       dragStart = { cx: e.clientX, cy: e.clientY, ox: obj.x, oy: obj.y };
       _adj._lastClientY = e.clientY;
     }
+
     if(mode === 'resize' && cnt() === 2) {
       var ids=Object.keys(pts), t1=pts[ids[0]], t2=pts[ids[1]];
       _adj.pinch = {
@@ -14340,25 +14348,25 @@ function _adjStart(mode, obj) {
         w: obj.w, h: obj.h
       };
     }
+
     if(mode === 'rotate' && cnt() === 1) {
       dragStart = { cx: e.clientX, startAngle: obj.angle||0 };
     }
   }
 
   function onMove(e) {
-    if(!pts[e.pointerId] && !fingerDown) return;
+    e.stopPropagation();
+    if(!pts[e.pointerId]) return;
     pts[e.pointerId] = { x: e.clientX, y: e.clientY };
     _adj._lastClientY = e.clientY;
 
-    if(mode === 'drag' && dragStart) {
-      // Use clientToCanvas for accurate position
-      var br = body.getBoundingClientRect();
-      var dx = e.clientX - dragStart.cx;
-      var dy = e.clientY - dragStart.cy;
-      // 1 client px = 1 canvas px (no scale applied to canvas vertically)
-      var scX = canvas.width / br.width;
-      obj.x = dragStart.ox + dx * scX;
-      obj.y = dragStart.oy + dy;            // 1:1 vertical
+    if(mode === 'drag' && dragStart && cnt() === 1) {
+      // Correct scale: canvas BCR for accurate mapping
+      var cr = canvas.getBoundingClientRect();
+      var scX = canvas.width  / cr.width;
+      var scY = canvas.height / cr.height;
+      obj.x = dragStart.ox + (e.clientX - dragStart.cx) * scX;
+      obj.y = dragStart.oy + (e.clientY - dragStart.cy) * scY;
       drawClean();
       _ncoRefreshBoxes();
       _adjAutoScroll(e.clientY, body, canvas, obj, drawClean, dragStart);
@@ -14382,16 +14390,15 @@ function _adjStart(mode, obj) {
   }
 
   function onUp(e) {
+    e.stopPropagation();
     delete pts[e.pointerId];
     if(cnt() === 0) {
-      fingerDown = false;
       if(_adj.autoTimer) { clearInterval(_adj.autoTimer); _adj.autoTimer = null; }
       if(mode === 'resize') { _adj.pinch = null; }
-      // dragStart stays so next finger-down continues from last position
+      // dragStart intentionally NOT cleared — next onDown will reset from current pos
     }
-    if(mode === 'resize' && cnt() === 1) {
-      _adj.pinch = null;
-    }
+    if(mode === 'resize' && cnt() === 1) { _adj.pinch = null; }
+    if(mode === 'rotate' && cnt() === 0) { dragStart = null; }
   }
 
   okBtn.addEventListener('pointerdown', function(e) {
@@ -14402,12 +14409,12 @@ function _adjStart(mode, obj) {
 
   document.addEventListener('pointerdown', onDown, { capture:true, passive:false });
   document.addEventListener('pointermove', onMove, { capture:true, passive:false });
-  document.addEventListener('pointerup',   onUp,   { capture:true, passive:true  });
+  document.addEventListener('pointerup',   onUp,   { capture:true, passive:false });
 
   _adj._cleanup = function() {
-    document.removeEventListener('pointerdown', onDown, true);
-    document.removeEventListener('pointermove', onMove, true);
-    document.removeEventListener('pointerup',   onUp,   true);
+    document.removeEventListener('pointerdown', onDown, { capture:true });
+    document.removeEventListener('pointermove', onMove, { capture:true });
+    document.removeEventListener('pointerup',   onUp,   { capture:true });
   };
 }
 
