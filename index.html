@@ -1539,6 +1539,82 @@ body.night-mode #neWritePopup {
 .nco-dot-edit   { background: #2e7d32; top: -7px; left: -7px; cursor: pointer; }
 .nco-dot-del    { background: #c62828; top: -7px; right: -7px; cursor: pointer; }
 
+
+/* ===== ADJUST MODE — Animated Object Boxes ===== */
+@keyframes nco-dash-march {
+  to { stroke-dashoffset: -20; }
+}
+@keyframes nco-box-pulse {
+  0%,100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+
+.nco-adj-box {
+  position: fixed;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px dashed rgba(21,101,192,0.7);
+  border-radius: 6px;
+  z-index: 9881;
+  animation: nco-box-pulse 1.6s ease-in-out infinite;
+  background: rgba(21,101,192,0.04);
+}
+.nco-adj-box.active-box {
+  border-color: #e65100;
+  background: rgba(230,81,0,0.06);
+  animation: none;
+}
+
+/* Three-dot trigger button (top-right corner of each box) */
+.nco-3dot-btn {
+  position: absolute;
+  top: -14px; right: -14px;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: #1565c0;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; pointer-events: all;
+  z-index: 9882;
+  -webkit-tap-highlight-color: transparent;
+  font-size: 0.65rem; color: #fff; font-weight: 900;
+  letter-spacing: 0.5px;
+}
+.nco-adj-box.active-box .nco-3dot-btn {
+  background: #e65100;
+}
+
+/* Context menu that appears after 3-dot tap */
+.nco-ctx-menu {
+  position: fixed;
+  background: var(--surface, #fff);
+  border: 1.5px solid var(--border, #dde6f0);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  z-index: 9999;
+  overflow: hidden;
+  min-width: 170px;
+  animation: ncoMenuIn 0.15s ease;
+}
+@keyframes ncoMenuIn {
+  from { opacity:0; transform:scale(0.88) translateY(-6px); }
+  to   { opacity:1; transform:scale(1) translateY(0); }
+}
+.nco-ctx-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px;
+  font-size: 0.83rem; font-weight: 700;
+  color: var(--text, #0d1b2a);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border, #dde6f0);
+  -webkit-tap-highlight-color: transparent;
+  font-family: inherit;
+}
+.nco-ctx-item:last-child { border-bottom: none; }
+.nco-ctx-item:active { background: rgba(21,101,192,0.08); }
+.nco-ctx-item.danger { color: #c62828; }
+
 /* ===== NOTES PAGE DRAW OVERLAY (Creator Studio on Notes) ===== */
 
 /* Transparent canvas sits on top of notes body */
@@ -14016,28 +14092,120 @@ function neAdjustToggle() {
     _ned._toolBeforeAdjust = (_ned.tool !== 'none') ? _ned.tool : 'pen';
     _ned.tool = 'none';
     document.querySelectorAll('.ndt-btn[id^="ndt"]').forEach(function(b){ b.classList.remove('sel'); });
-    if(btn) {
-      btn.style.background = 'rgba(230,81,0,0.18)';
-      btn.style.fontWeight  = '900';
-      btn.textContent = '🎯 Adjust ON';
-    }
+    if(btn) { btn.style.background='rgba(230,81,0,0.18)'; btn.style.fontWeight='900'; btn.textContent='🎯 Adjust ON'; }
+    // Canvas pointer-events OFF → scrolling works
+    var cv=document.getElementById('neDrawCanvas'); if(cv) cv.style.pointerEvents='none';
     _ncoEnsureHandlers();
-    showToast('🎯 Adjust ON — tap objects freely · 2×=edit · 3×=rewrite', 'success');
+    _ncoShowAllBoxes();
+    showToast('🎯 Adjust ON — ⋯ tap karein object par', 'success');
   } else {
-    var restore = _ned._toolBeforeAdjust || 'pen';
-    _ned.tool = restore;
-    _ned._toolBeforeAdjust = null;
-    var map = {pen:'ndtPen', marker:'ndtMarker', eraser:'ndtEraser'};
-    var bid = map[restore];
-    if(bid) { var rb=document.getElementById(bid); if(rb) rb.classList.add('sel'); }
-    if(btn) {
-      btn.style.background = 'transparent';
-      btn.style.fontWeight  = '800';
-      btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>Adjust';
-    }
-    _ncoHideHandle();
+    var restore=_ned._toolBeforeAdjust||'pen'; _ned.tool=restore; _ned._toolBeforeAdjust=null;
+    var map={pen:'ndtPen',marker:'ndtMarker',eraser:'ndtEraser'};
+    var bid=map[restore]; if(bid){var rb=document.getElementById(bid);if(rb)rb.classList.add('sel');}
+    if(btn){btn.style.background='transparent';btn.style.fontWeight='800';btn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>Adjust';}
+    var cv=document.getElementById('neDrawCanvas'); if(cv) cv.style.pointerEvents='';
+    _ncoHideAllBoxes(); _ncoHideCtxMenu();
     showToast('Draw mode restored ✏️', 'success');
   }
+}
+
+function _ncoShowAllBoxes() {
+  _ncoHideAllBoxes();
+  var canvas=document.getElementById('neDrawCanvas');
+  if(!canvas||!_nco.list.length) return;
+  var r=canvas.getBoundingClientRect(), sx=r.width/canvas.width, sy=r.height/canvas.height;
+  _nco.list.forEach(function(obj){
+    var box=document.createElement('div');
+    box.className='nco-adj-box'; box.dataset.objId=obj.id;
+    var ang=obj.angle||0;
+    box.style.cssText=[
+      'left:'+(r.left+obj.x*sx-4)+'px',
+      'top:' +(r.top +obj.y*sy-4)+'px',
+      'width:'+(obj.w*sx+8)+'px',
+      'height:'+(obj.h*sy+8)+'px',
+      'transform:rotate('+ang+'deg)'
+    ].join(';');
+    var dot3=document.createElement('div');
+    dot3.className='nco-3dot-btn'; dot3.textContent='⋯';
+    dot3.addEventListener('pointerdown',function(e){e.preventDefault();e.stopPropagation();_ncoOnThreeDot(obj,dot3,box);});
+    box.appendChild(dot3);
+    document.body.appendChild(box);
+  });
+}
+
+function _ncoHideAllBoxes(){ document.querySelectorAll('.nco-adj-box').forEach(function(e){e.remove();}); }
+function _ncoRefreshBoxes(){ if(_nco.adjustMode) _ncoShowAllBoxes(); }
+
+function _ncoOnThreeDot(obj, dot3El, boxEl) {
+  document.querySelectorAll('.nco-adj-box').forEach(function(b){b.classList.remove('active-box');});
+  boxEl.classList.add('active-box');
+  _ncoHideCtxMenu();
+  var menu=document.createElement('div');
+  menu.className='nco-ctx-menu'; menu.id='ncoCtxMenu';
+  var dr=dot3El.getBoundingClientRect();
+  var left=Math.min(dr.left, window.innerWidth-185);
+  var top=dr.bottom+6; if(top+220>window.innerHeight) top=dr.top-226;
+  menu.style.left=left+'px'; menu.style.top=top+'px';
+
+  function item(icon,label,cls,cb){
+    var d=document.createElement('div');
+    d.className='nco-ctx-item'+(cls?' '+cls:'');
+    d.innerHTML='<span style="font-size:1rem;">'+icon+'</span>'+label;
+    d.addEventListener('pointerdown',function(e){e.stopPropagation();_ncoHideCtxMenu();cb();});
+    menu.appendChild(d);
+  }
+  item('↔️','Drag / Move','',function(){_ncoStartObjDrag(obj);});
+  item('⤢','Resize (2-finger)','',function(){_ncoStartObjResize(obj);});
+  item('🔄','Rotate','',function(){_ncoStartObjRotate(obj);});
+  item('🗑','Delete','danger',function(){_ncoDeleteObj(obj);_ncoRefreshBoxes();});
+  document.body.appendChild(menu);
+  setTimeout(function(){
+    function close(e){if(!menu.contains(e.target)&&e.target!==dot3El){_ncoHideCtxMenu();document.removeEventListener('pointerdown',close,true);}}
+    document.addEventListener('pointerdown',close,true);
+  },50);
+}
+
+function _ncoHideCtxMenu(){
+  var m=document.getElementById('ncoCtxMenu'); if(m) m.remove();
+  document.querySelectorAll('.nco-adj-box').forEach(function(b){b.classList.remove('active-box');});
+}
+
+function _ncoStartObjDrag(obj){
+  showToast('✋ Drag to move · Lift = set','success');
+  var canvas=document.getElementById('neDrawCanvas');
+  var origX,origY,startX,startY,active=false;
+  var r=canvas.getBoundingClientRect(), sx=canvas.width/r.width, sy=canvas.height/r.height;
+  function onDown(e){e.preventDefault();active=true;startX=e.clientX;startY=e.clientY;origX=obj.x;origY=obj.y;try{document.body.setPointerCapture(e.pointerId);}catch(x){}}
+  function onMove(e){if(!active)return;obj.x=origX+(e.clientX-startX)*sx;obj.y=origY+(e.clientY-startY)*sy;_ncoRedrawObj(obj);_ncoRefreshBoxes();}
+  function onUp(){if(!active)return;active=false;_nedSaveSnapshot();if(_ned.ctx)obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);document.removeEventListener('pointerdown',onDown,true);document.removeEventListener('pointermove',onMove,true);document.removeEventListener('pointerup',onUp,true);showToast('✅ Moved!','success');}
+  document.addEventListener('pointerdown',onDown,{capture:true,passive:false});
+  document.addEventListener('pointermove',onMove,{capture:true,passive:false});
+  document.addEventListener('pointerup',onUp,{capture:true,passive:true});
+}
+
+function _ncoStartObjResize(obj){
+  showToast('⤢ Pinch 2 fingers to resize · Lift = set','success');
+  var canvas=document.getElementById('neDrawCanvas');
+  var pts={},pinch={dist:null,w:null,h:null};
+  function cnt(){return Object.keys(pts).length;}
+  function onDown(e){e.preventDefault();pts[e.pointerId]={x:e.clientX,y:e.clientY};if(cnt()===2){var ids=Object.keys(pts),t1=pts[ids[0]],t2=pts[ids[1]];pinch={dist:Math.hypot(t2.x-t1.x,t2.y-t1.y),w:obj.w,h:obj.h};}}
+  function onMove(e){if(!pts[e.pointerId])return;pts[e.pointerId]={x:e.clientX,y:e.clientY};if(cnt()>=2&&pinch.dist){var ids=Object.keys(pts),t1=pts[ids[0]],t2=pts[ids[1]];var dist=Math.hypot(t2.x-t1.x,t2.y-t1.y),scale=dist/pinch.dist,cx=obj.x+obj.w/2,cy=obj.y+obj.h/2;obj.w=Math.max(30,pinch.w*scale);obj.h=Math.max(16,pinch.h*scale);obj.x=cx-obj.w/2;obj.y=cy-obj.h/2;_ncoRedrawObj(obj);_ncoRefreshBoxes();}}
+  function onUp(e){delete pts[e.pointerId];if(cnt()===0){_nedSaveSnapshot();if(_ned.ctx)obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);document.removeEventListener('pointerdown',onDown,true);document.removeEventListener('pointermove',onMove,true);document.removeEventListener('pointerup',onUp,true);showToast('✅ Resized!','success');}}
+  document.addEventListener('pointerdown',onDown,{capture:true,passive:false});
+  document.addEventListener('pointermove',onMove,{capture:true,passive:false});
+  document.addEventListener('pointerup',onUp,{capture:true,passive:true});
+}
+
+function _ncoStartObjRotate(obj){
+  showToast('🔄 Drag left/right to rotate · Lift = set','success');
+  var canvas=document.getElementById('neDrawCanvas');
+  var startX,startAngle,active=false;
+  function onDown(e){e.preventDefault();active=true;startX=e.clientX;startAngle=obj.angle||0;}
+  function onMove(e){if(!active)return;obj.angle=(startAngle+(e.clientX-startX)*0.5+360)%360;_ncoRedrawObj(obj);_ncoRefreshBoxes();}
+  function onUp(){if(!active)return;active=false;_nedSaveSnapshot();if(_ned.ctx)obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);document.removeEventListener('pointerdown',onDown,true);document.removeEventListener('pointermove',onMove,true);document.removeEventListener('pointerup',onUp,true);showToast('✅ Rotated!','success');}
+  document.addEventListener('pointerdown',onDown,{capture:true,passive:false});
+  document.addEventListener('pointermove',onMove,{capture:true,passive:false});
+  document.addEventListener('pointerup',onUp,{capture:true,passive:true});
 }
 
 function neDrawSetColor(color, dotEl) {
