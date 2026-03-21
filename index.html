@@ -4095,7 +4095,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     </div>
 
     <!-- BODY -->
-    <div class="notes-editor-body" id="neBody" onscroll="neUpdateProgress()" style="position:relative;">
+    <div class="notes-editor-body" id="neBody" onscroll="neUpdateProgress();if(_nco&&_nco.adjustMode)_ncoRefreshBoxes();" style="position:relative;">
       <div id="noteEditableArea"
         class="ne-editable"
         contenteditable="false"
@@ -14144,46 +14144,45 @@ function _ncoShowAllBoxes() {
   var body   = document.getElementById('neBody');
   if(!canvas || !_nco.list.length) return;
 
+  // canvas is position:absolute inside neBody (overflow:auto)
+  // getBoundingClientRect() on canvas already accounts for scroll
   var cr = canvas.getBoundingClientRect();
+
+  // Scale: canvas internal pixels → actual CSS pixels displayed
+  // canvas.width is internal resolution, cr.width is display size
   var sx = cr.width  / canvas.width;
   var sy = cr.height / canvas.height;
-  var scrollY = body ? body.scrollTop  : 0;
-  var scrollX = body ? body.scrollLeft : 0;
 
   _nco.list.forEach(function(obj) {
     var ang = obj.angle || 0;
-    // Canvas coords → viewport (accounting for scroll)
-    var vx = cr.left + (obj.x - scrollX) * sx;
-    var vy = cr.top  + (obj.y - scrollY) * sy;
+
+    // Object in canvas coordinates → viewport coordinates
+    // cr.left/top is already scroll-adjusted (viewport origin)
+    var vx = cr.left + obj.x * sx;
+    var vy = cr.top  + obj.y * sy;
     var vw = obj.w * sx;
     var vh = obj.h * sy;
-
-    // If object is out of view, don't show box (avoids confusion)
-    var margin = 20;
-    var inView = (vx + vw > margin && vx < window.innerWidth  - margin &&
-                  vy + vh > margin && vy < window.innerHeight - margin);
 
     var box = document.createElement('div');
     box.className = 'nco-adj-box';
     box.dataset.objId = obj.id;
     box.style.cssText = [
+      'position:fixed',
       'left:'  + (vx - 4) + 'px',
       'top:'   + (vy - 4) + 'px',
       'width:' + (vw + 8) + 'px',
       'height:'+ (vh + 8) + 'px',
       'transform-origin:center center',
       'transform:rotate(' + ang + 'deg)',
-      'display:' + (inView ? 'block' : 'block'),   // always show
-      'pointer-events:all'
+      'pointer-events:all',
+      'z-index:9881'
     ].join(';');
 
-    // Three-dot button — always top-right corner of box
     var dot3 = document.createElement('div');
     dot3.className = 'nco-3dot-btn';
     dot3.textContent = '⋯';
     dot3.addEventListener('pointerdown', function(e) {
       e.preventDefault(); e.stopPropagation();
-      // Don't open menu if already in drag/resize/rotate
       if(_adj.mode) return;
       _ncoOnThreeDot(obj, dot3, box);
     });
@@ -14337,6 +14336,7 @@ function _adjStart(mode, obj) {
   function onMove(e) {
     pts[e.pointerId] = { x: e.clientX, y: e.clientY };
     if(!_adj.active) return;
+    _adj._lastClientY = e.clientY; // for dynamic auto-scroll direction
 
     var cr = canvas.getBoundingClientRect();
     var sx = canvas.width / cr.width;
@@ -14410,14 +14410,21 @@ function _adjAutoScroll(clientY, body, canvas, obj, drawFn) {
   if(!body) return;
   var ZONE = 80, SPEED = 5;
   var atBottom = clientY > window.innerHeight - ZONE;
-  var atTop    = clientY < ZONE + 60;  // 60 = toolbar height approx
+  var atTop    = clientY < ZONE + 60;
 
   if(atBottom || atTop) {
     if(_adj.autoTimer) return; // already running
     _adj.autoTimer = setInterval(function() {
+      // Re-check direction from latest clientY stored in _adj
+      var cy = _adj._lastClientY || clientY;
+      var isBottom = cy > window.innerHeight - ZONE;
+      var isTop    = cy < ZONE + 60;
+      if(!isBottom && !isTop) {
+        clearInterval(_adj.autoTimer); _adj.autoTimer = null; return;
+      }
       var cr  = canvas.getBoundingClientRect();
       var csy = canvas.height / cr.height;
-      if(atBottom) {
+      if(isBottom) {
         body.scrollTop += SPEED;
         obj.y += SPEED * csy;
       } else {
@@ -14427,7 +14434,6 @@ function _adjAutoScroll(clientY, body, canvas, obj, drawFn) {
       drawFn(); _ncoRefreshBoxes();
     }, 16);
   } else {
-    // Not near edge — stop auto-scroll
     if(_adj.autoTimer) {
       clearInterval(_adj.autoTimer);
       _adj.autoTimer = null;
