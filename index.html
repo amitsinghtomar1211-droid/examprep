@@ -13877,6 +13877,7 @@ function _nedDown(e) {
 }
 
 function _nedMove(e) {
+  if(_nco.adjustMode) return;   // adjust mode — no drawing
   if(!_ned.drawing || !e.isPrimary) return;
   e.preventDefault();
 
@@ -13905,6 +13906,7 @@ function _nedMove(e) {
 }
 
 function _nedUp(e) {
+  if(_nco.adjustMode) return;   // adjust mode — no drawing
   if(!_ned.drawing) return;
   _ned.drawing = false;
   _ned.redoStack = [];
@@ -14112,50 +14114,77 @@ function neAdjustToggle() {
 // ═══════════════════════════════════════════════════════
 // SHOW ALL BOXES — positions account for neBody scroll
 // ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// ADJUST SYSTEM v3 — All problems fixed
+// ═══════════════════════════════════════════════════════════════
+
+// ── Global drag action state ──
+var _adj = {
+  mode:      null,   // 'drag'|'resize'|'rotate'|null
+  obj:       null,
+  cleanSnap: null,   // canvas WITHOUT the object
+  active:    false,
+  // drag
+  startClientX: 0, startClientY: 0,
+  startObjX: 0, startObjY: 0,
+  // resize
+  pinch: null,
+  // rotate
+  startAngle: 0,
+  // auto-scroll
+  autoTimer: null
+};
+
+// ─────────────────────────────────────────────────────────
+// SHOW/REFRESH ALL BOXES — always covering the drawn text
+// ─────────────────────────────────────────────────────────
 function _ncoShowAllBoxes() {
   _ncoHideAllBoxes();
   var canvas = document.getElementById('neDrawCanvas');
   var body   = document.getElementById('neBody');
   if(!canvas || !_nco.list.length) return;
 
-  var cr  = canvas.getBoundingClientRect();
-  // Scale: canvas pixels → viewport pixels
-  var sx  = cr.width  / canvas.width;
-  var sy  = cr.height / canvas.height;
-  // neBody scroll offset (canvas is absolute inside body)
+  var cr = canvas.getBoundingClientRect();
+  var sx = cr.width  / canvas.width;
+  var sy = cr.height / canvas.height;
   var scrollY = body ? body.scrollTop  : 0;
   var scrollX = body ? body.scrollLeft : 0;
 
   _nco.list.forEach(function(obj) {
-    var box = document.createElement('div');
-    box.className = 'nco-adj-box';
-    box.dataset.objId = obj.id;
     var ang = obj.angle || 0;
-
-    // Canvas coords → viewport: subtract scroll, multiply by scale, add canvas origin
+    // Canvas coords → viewport (accounting for scroll)
     var vx = cr.left + (obj.x - scrollX) * sx;
     var vy = cr.top  + (obj.y - scrollY) * sy;
     var vw = obj.w * sx;
     var vh = obj.h * sy;
 
-    // Clamp so box stays at least partially visible on screen
-    var minShow = 28;
-    vx = Math.max(-vw + minShow, Math.min(window.innerWidth  - minShow, vx));
-    vy = Math.max(-vh + minShow, Math.min(window.innerHeight - minShow, vy));
+    // If object is out of view, don't show box (avoids confusion)
+    var margin = 20;
+    var inView = (vx + vw > margin && vx < window.innerWidth  - margin &&
+                  vy + vh > margin && vy < window.innerHeight - margin);
 
+    var box = document.createElement('div');
+    box.className = 'nco-adj-box';
+    box.dataset.objId = obj.id;
     box.style.cssText = [
       'left:'  + (vx - 4) + 'px',
       'top:'   + (vy - 4) + 'px',
       'width:' + (vw + 8) + 'px',
       'height:'+ (vh + 8) + 'px',
-      'transform:rotate(' + ang + 'deg)'
+      'transform-origin:center center',
+      'transform:rotate(' + ang + 'deg)',
+      'display:' + (inView ? 'block' : 'block'),   // always show
+      'pointer-events:all'
     ].join(';');
 
+    // Three-dot button — always top-right corner of box
     var dot3 = document.createElement('div');
     dot3.className = 'nco-3dot-btn';
     dot3.textContent = '⋯';
     dot3.addEventListener('pointerdown', function(e) {
       e.preventDefault(); e.stopPropagation();
+      // Don't open menu if already in drag/resize/rotate
+      if(_adj.mode) return;
       _ncoOnThreeDot(obj, dot3, box);
     });
     box.appendChild(dot3);
@@ -14164,54 +14193,45 @@ function _ncoShowAllBoxes() {
 }
 
 function _ncoHideAllBoxes() {
-  document.querySelectorAll('.nco-adj-box').forEach(function(e){ e.remove(); });
+  document.querySelectorAll('.nco-adj-box').forEach(function(el){ el.remove(); });
 }
+
 function _ncoRefreshBoxes() {
   if(_nco.adjustMode) _ncoShowAllBoxes();
 }
 
-// ═══════════════════════════════════════════════════════
-// THREE-DOT CONTEXT MENU
-// ═══════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────
+// THREE-DOT MENU
+// ─────────────────────────────────────────────────────────
 function _ncoOnThreeDot(obj, dot3El, boxEl) {
   document.querySelectorAll('.nco-adj-box').forEach(function(b){ b.classList.remove('active-box'); });
   boxEl.classList.add('active-box');
   _ncoHideCtxMenu();
 
   var menu = document.createElement('div');
-  menu.className = 'nco-ctx-menu';
-  menu.id = 'ncoCtxMenu';
-
-  var dr = dot3El.getBoundingClientRect();
-  var left = Math.min(Math.max(dr.left - 10, 8), window.innerWidth - 185);
+  menu.className = 'nco-ctx-menu'; menu.id = 'ncoCtxMenu';
+  var dr   = dot3El.getBoundingClientRect();
+  var left = Math.min(Math.max(dr.left - 10, 8), window.innerWidth - 190);
   var top  = dr.bottom + 6;
-  if(top + 220 > window.innerHeight) top = Math.max(dr.top - 230, 8);
-  menu.style.left = left + 'px';
-  menu.style.top  = top  + 'px';
+  if(top + 230 > window.innerHeight) top = Math.max(dr.top - 235, 8);
+  menu.style.left = left + 'px'; menu.style.top = top + 'px';
 
   function item(icon, label, cls, cb) {
     var d = document.createElement('div');
     d.className = 'nco-ctx-item' + (cls ? ' '+cls : '');
-    d.innerHTML = '<span style="font-size:1.1rem;width:22px;text-align:center;">'
-      + icon + '</span><span>' + label + '</span>';
-    d.addEventListener('pointerdown', function(e) {
-      e.stopPropagation();
-      _ncoHideCtxMenu();
-      cb();
-    });
+    d.innerHTML = '<span style="font-size:1.1rem;width:24px;display:inline-block;text-align:center;">' + icon + '</span> ' + label;
+    d.addEventListener('pointerdown', function(e) { e.stopPropagation(); _ncoHideCtxMenu(); cb(); });
     menu.appendChild(d);
   }
-
-  item('↔️', 'Drag / Move',    '',       function(){ _ncoStartObjDrag(obj);   });
-  item('⤢',  'Resize',         '',       function(){ _ncoStartObjResize(obj); });
-  item('🔄', 'Rotate',         '',       function(){ _ncoStartObjRotate(obj); });
+  item('↔️', 'Drag / Move',    '',       function(){ _adjStart('drag',   obj); });
+  item('⤢',  'Resize',         '',       function(){ _adjStart('resize', obj); });
+  item('🔄', 'Rotate',         '',       function(){ _adjStart('rotate', obj); });
   item('🗑', 'Delete',         'danger', function(){ _ncoDeleteObj(obj); _ncoRefreshBoxes(); });
-
   document.body.appendChild(menu);
 
-  setTimeout(function() {
-    function closeMenu(e) {
-      if(!menu.contains(e.target) && e.target !== dot3El) {
+  setTimeout(function(){
+    function closeMenu(e){
+      if(!menu.contains(e.target) && e.target !== dot3El){
         _ncoHideCtxMenu();
         document.removeEventListener('pointerdown', closeMenu, true);
       }
@@ -14221,281 +14241,251 @@ function _ncoOnThreeDot(obj, dot3El, boxEl) {
 }
 
 function _ncoHideCtxMenu() {
-  var m = document.getElementById('ncoCtxMenu');
-  if(m) m.remove();
+  var m = document.getElementById('ncoCtxMenu'); if(m) m.remove();
   document.querySelectorAll('.nco-adj-box').forEach(function(b){ b.classList.remove('active-box'); });
 }
 
-// ═══════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────
 // CLEAN SNAPSHOT — canvas WITHOUT this object
-// ═══════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────
 function _ncoErasedSnap(obj) {
   var idx = _nco.list.indexOf(obj);
-  // Try previous object's baseSnapshot
-  for(var i = idx-1; i >= 0; i--) {
+  for(var i = idx - 1; i >= 0; i--) {
     if(_nco.list[i].baseSnapshot) return _nco.list[i].baseSnapshot;
   }
-  // Fallback: undo history
   if(_ned.history && _ned.history.length > 0)
     return _ned.history[_ned.history.length - 1];
-  // Last resort: blank (current canvas minus object area)
   return null;
 }
 
-// ═══════════════════════════════════════════════════════
-// DRAG — continuous until OK tapped, with auto-scroll
-// ═══════════════════════════════════════════════════════
-function _ncoStartObjDrag(obj) {
+// ─────────────────────────────────────────────────────────
+// UNIFIED ACTION START — drag | resize | rotate
+// ─────────────────────────────────────────────────────────
+function _adjStart(mode, obj) {
   var canvas = document.getElementById('neDrawCanvas');
   var body   = document.getElementById('neBody');
   if(!canvas || !_ned.ctx) return;
 
   var cleanSnap = _ncoErasedSnap(obj);
   if(!cleanSnap) {
-    // Fallback: take snapshot now (erase object manually)
-    _ned.ctx.putImageData(obj.baseSnapshot, 0, 0);
-    cleanSnap = _ned.ctx.getImageData(0,0,canvas.width,canvas.height);
-    _ned.ctx.putImageData(obj.baseSnapshot,0,0);
+    showToast('Snapshot error — try again', 'error'); return;
   }
 
-  // Show OK button
-  var okBtn = _ncoMakeOkBtn('Tap ✓ to SET position');
+  // Lock horizontal scroll completely
+  if(body) { body.style.overflowX = 'hidden'; }
 
-  var dragging = false;
-  var curClientX = 0, curClientY = 0;
-  var autoScrollInterval = null;
-  var AUTO_SCROLL_ZONE = 80; // px from edge to start auto-scroll
-  var AUTO_SCROLL_SPEED = 6;
-
-  function canvasPt(clientX, clientY) {
-    var r  = canvas.getBoundingClientRect();
-    var sx = canvas.width  / r.width;
-    var sy = canvas.height / r.height;
-    var scrollX = body ? body.scrollLeft : 0;
-    var scrollY = body ? body.scrollTop  : 0;
-    return {
-      x: (clientX - r.left) * sx + scrollX,
-      y: (clientY - r.top)  * sy + scrollY
-    };
+  // Prevent browser pinch-zoom during resize/rotate
+  var metaVP = document.querySelector('meta[name="viewport"]');
+  var origVP = metaVP ? metaVP.content : '';
+  if(mode === 'resize' || mode === 'rotate') {
+    if(metaVP) metaVP.content = 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no';
   }
 
-  function draw() {
+  _adj.mode      = mode;
+  _adj.obj       = obj;
+  _adj.cleanSnap = cleanSnap;
+  _adj.active    = false;
+  _adj.pinch     = null;
+
+  // Draw obj cleanly (erase duplicate first)
+  function drawClean() {
     _ned.ctx.putImageData(cleanSnap, 0, 0);
     _ncoDrawObj(obj);
-    _ncoRefreshBoxes();
   }
+  drawClean(); // Immediately erase old position
 
-  function startAutoScroll() {
-    stopAutoScroll();
-    autoScrollInterval = setInterval(function() {
-      if(!body) return;
-      var r = canvas.getBoundingClientRect();
-      var scrolled = false;
+  // Show OK button
+  var okBtn = _adjMakeOkBtn(
+    mode === 'drag'   ? '↔ Drag freely · ✓ Set' :
+    mode === 'resize' ? '⤢ Pinch 2-finger · ✓ Set' :
+                        '🔄 Drag ← → to rotate · ✓ Set'
+  );
 
-      if(curClientY > window.innerHeight - AUTO_SCROLL_ZONE) {
-        body.scrollTop += AUTO_SCROLL_SPEED;
-        // Move obj down as canvas scrolls
-        obj.y += AUTO_SCROLL_SPEED * (canvas.height / r.height);
-        scrolled = true;
-      } else if(curClientY < AUTO_SCROLL_ZONE + 60) {
-        body.scrollTop -= AUTO_SCROLL_SPEED;
-        obj.y -= AUTO_SCROLL_SPEED * (canvas.height / r.height);
-        scrolled = true;
-      }
-      if(scrolled) draw();
-    }, 16);
-  }
+  // ── POINTER HANDLERS ──
+  var pts = {};
+  function cnt() { return Object.keys(pts).length; }
 
-  function stopAutoScroll() {
-    if(autoScrollInterval) { clearInterval(autoScrollInterval); autoScrollInterval = null; }
+  function onDown(e) {
+    if(e.target === okBtn) return;
+    // Only intercept touches ON or near the object box
+    pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+
+    if(mode === 'drag' && cnt() === 1) {
+      _adj.active      = true;
+      _adj.startClientX = e.clientX;
+      _adj.startClientY = e.clientY;
+      _adj.startObjX   = obj.x;
+      _adj.startObjY   = obj.y;
+      try{ canvas.setPointerCapture(e.pointerId); } catch(x){}
+    }
+    if(mode === 'resize' && cnt() === 2) {
+      var ids = Object.keys(pts), t1 = pts[ids[0]], t2 = pts[ids[1]];
+      _adj.pinch = {
+        dist: Math.hypot(t2.x-t1.x, t2.y-t1.y),
+        ang:  Math.atan2(t2.y-t1.y, t2.x-t1.x) * 180/Math.PI,
+        w: obj.w, h: obj.h, objAngle: obj.angle||0
+      };
+      _adj.active = true;
+    }
+    if(mode === 'rotate' && cnt() === 1) {
+      _adj.active      = true;
+      _adj.startClientX = e.clientX;
+      _adj.startAngle  = obj.angle || 0;
+    }
   }
 
   function onMove(e) {
-    e.preventDefault();
-    if(!dragging) { dragging = true; }
-    curClientX = e.clientX; curClientY = e.clientY;
-    var pt = canvasPt(e.clientX, e.clientY);
-    obj.x = pt.x - obj.w/2;
-    obj.y = pt.y - obj.h/2;
-    draw();
+    pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+    if(!_adj.active) return;
 
-    // Auto-scroll logic
-    var r = canvas.getBoundingClientRect();
-    if(e.clientY > window.innerHeight - AUTO_SCROLL_ZONE ||
-       e.clientY < AUTO_SCROLL_ZONE + 60) {
-      startAutoScroll();
-    } else {
-      stopAutoScroll();
+    var cr = canvas.getBoundingClientRect();
+    var sx = canvas.width / cr.width;
+    var sy = canvas.height / cr.height;
+
+    if(mode === 'drag' && cnt() === 1) {
+      var dx = (e.clientX - _adj.startClientX) * sx;
+      var dy = (e.clientY - _adj.startClientY) * sy;
+      obj.x = _adj.startObjX + dx;
+      obj.y = _adj.startObjY + dy;
+      drawClean();
+      _ncoRefreshBoxes();
+
+      // Auto-scroll: only vertical, only when near edge
+      _adjAutoScroll(e.clientY, body, canvas, obj, drawClean);
+    }
+
+    if(mode === 'resize' && cnt() >= 2 && _adj.pinch) {
+      var ids = Object.keys(pts), t1 = pts[ids[0]], t2 = pts[ids[1]];
+      var dist  = Math.hypot(t2.x-t1.x, t2.y-t1.y);
+      var scale = dist / _adj.pinch.dist;
+      var cx = obj.x + obj.w/2, cy = obj.y + obj.h/2;
+      obj.w = Math.max(28, _adj.pinch.w * scale);
+      obj.h = Math.max(14, _adj.pinch.h * scale);
+      obj.x = cx - obj.w/2; obj.y = cy - obj.h/2;
+      drawClean(); _ncoRefreshBoxes();
+    }
+
+    if(mode === 'rotate' && cnt() === 1) {
+      obj.angle = (_adj.startAngle + (e.clientX - _adj.startClientX) * 0.6 + 360) % 360;
+      drawClean(); _ncoRefreshBoxes();
     }
   }
 
   function onUp(e) {
-    // Don't set on finger up — wait for OK button
-    stopAutoScroll();
-    // Show OK button near current position
-    _ncoUpdateOkBtn(okBtn, e.clientX, e.clientY);
+    delete pts[e.pointerId];
+    if(mode === 'drag' && cnt() === 0) {
+      // Stop auto-scroll
+      if(_adj.autoTimer) { clearInterval(_adj.autoTimer); _adj.autoTimer = null; }
+      _adj.active = false;
+      // Keep box updated, wait for OK
+    }
+    if(mode === 'resize') {
+      if(cnt() < 2) { _adj.pinch = null; _adj.active = false; }
+    }
+    if(mode === 'rotate' && cnt() === 0) { _adj.active = false; }
   }
 
-  // OK button sets the position
+  // OK = save and clean up
   okBtn.addEventListener('pointerdown', function(e) {
-    e.stopPropagation();
-    stopAutoScroll();
-    draw();
-    _nedSaveSnapshot();
-    obj.baseSnapshot = _ned.ctx.getImageData(0,0,canvas.width,canvas.height);
-    okBtn.remove();
-    document.removeEventListener('pointermove', onMove, true);
-    document.removeEventListener('pointerup',   onUp,   true);
-    showToast('✅ Position set!', 'success');
-    _ncoRefreshBoxes();
+    e.preventDefault(); e.stopPropagation();
+    _adjCleanup(canvas, body, metaVP, origVP, okBtn, drawClean, obj);
   });
 
+  document.addEventListener('pointerdown', onDown, { capture:true, passive:false });
   document.addEventListener('pointermove', onMove, { capture:true, passive:false });
   document.addEventListener('pointerup',   onUp,   { capture:true, passive:true  });
 
-  showToast('✋ Drag to move · Tap ✓ to set', 'success');
-}
-
-// ═══════════════════════════════════════════════════════
-// RESIZE — pinch, OK to set
-// ═══════════════════════════════════════════════════════
-function _ncoStartObjResize(obj) {
-  var canvas = document.getElementById('neDrawCanvas');
-  if(!canvas || !_ned.ctx) return;
-  var cleanSnap = _ncoErasedSnap(obj);
-  if(!cleanSnap) return;
-
-  var okBtn = _ncoMakeOkBtn('Pinch to resize · ✓ set');
-  var pts = {}, pinch = { dist:null, w:null, h:null };
-  function cnt() { return Object.keys(pts).length; }
-  function draw() { _ned.ctx.putImageData(cleanSnap,0,0); _ncoDrawObj(obj); _ncoRefreshBoxes(); }
-
-  okBtn.addEventListener('pointerdown', function(e) {
-    e.stopPropagation();
-    draw();
-    _nedSaveSnapshot();
-    obj.baseSnapshot = _ned.ctx.getImageData(0,0,canvas.width,canvas.height);
-    okBtn.remove();
+  // Store cleanup refs
+  _adj._cleanup = function() {
     document.removeEventListener('pointerdown', onDown, true);
     document.removeEventListener('pointermove', onMove, true);
     document.removeEventListener('pointerup',   onUp,   true);
-    showToast('✅ Resized!', 'success');
-    _ncoRefreshBoxes();
-  });
-
-  function onDown(e) {
-    if(e.target === okBtn) return;
-    e.preventDefault();
-    pts[e.pointerId] = {x:e.clientX, y:e.clientY};
-    if(cnt()===2) {
-      var ids=Object.keys(pts), t1=pts[ids[0]], t2=pts[ids[1]];
-      pinch = { dist:Math.hypot(t2.x-t1.x,t2.y-t1.y), w:obj.w, h:obj.h };
-    }
-  }
-  function onMove(e) {
-    if(!pts[e.pointerId]) return;
-    pts[e.pointerId] = {x:e.clientX, y:e.clientY};
-    if(cnt()>=2 && pinch.dist) {
-      var ids=Object.keys(pts), t1=pts[ids[0]], t2=pts[ids[1]];
-      var dist = Math.hypot(t2.x-t1.x, t2.y-t1.y), scale = dist/pinch.dist;
-      var cx=obj.x+obj.w/2, cy=obj.y+obj.h/2;
-      obj.w = Math.max(30, pinch.w*scale);
-      obj.h = Math.max(16, pinch.h*scale);
-      obj.x = cx-obj.w/2; obj.y = cy-obj.h/2;
-      draw();
-    }
-  }
-  function onUp(e) { delete pts[e.pointerId]; if(cnt()===1) pinch.dist=null; }
-
-  document.addEventListener('pointerdown', onDown, {capture:true, passive:false});
-  document.addEventListener('pointermove', onMove, {capture:true, passive:false});
-  document.addEventListener('pointerup',   onUp,   {capture:true, passive:true });
-  showToast('⤢ Pinch to resize · ✓ to set', 'success');
+  };
 }
 
-// ═══════════════════════════════════════════════════════
-// ROTATE — drag horizontally, OK to set
-// ═══════════════════════════════════════════════════════
-function _ncoStartObjRotate(obj) {
-  var canvas = document.getElementById('neDrawCanvas');
-  if(!canvas || !_ned.ctx) return;
-  var cleanSnap = _ncoErasedSnap(obj);
-  if(!cleanSnap) return;
+// ─────────────────────────────────────────────────────────
+// AUTO-SCROLL (drag only) — vertical only, bidirectional
+// ─────────────────────────────────────────────────────────
+function _adjAutoScroll(clientY, body, canvas, obj, drawFn) {
+  if(!body) return;
+  var ZONE = 80, SPEED = 5;
+  var atBottom = clientY > window.innerHeight - ZONE;
+  var atTop    = clientY < ZONE + 60;  // 60 = toolbar height approx
 
-  var okBtn = _ncoMakeOkBtn('← Drag to rotate · ✓ set');
-  var startX, startAngle, active = false;
-  function draw() { _ned.ctx.putImageData(cleanSnap,0,0); _ncoDrawObj(obj); _ncoRefreshBoxes(); }
-
-  okBtn.addEventListener('pointerdown', function(e) {
-    e.stopPropagation();
-    draw();
-    _nedSaveSnapshot();
-    obj.baseSnapshot = _ned.ctx.getImageData(0,0,canvas.width,canvas.height);
-    okBtn.remove();
-    document.removeEventListener('pointerdown', onDown, true);
-    document.removeEventListener('pointermove', onMove, true);
-    document.removeEventListener('pointerup',   onUp,   true);
-    showToast('✅ Rotated!', 'success');
-    _ncoRefreshBoxes();
-  });
-
-  function onDown(e) {
-    if(e.target===okBtn) return;
-    e.preventDefault(); active=true;
-    startX=e.clientX; startAngle=obj.angle||0;
+  if(atBottom || atTop) {
+    if(_adj.autoTimer) return; // already running
+    _adj.autoTimer = setInterval(function() {
+      var cr  = canvas.getBoundingClientRect();
+      var csy = canvas.height / cr.height;
+      if(atBottom) {
+        body.scrollTop += SPEED;
+        obj.y += SPEED * csy;
+      } else {
+        body.scrollTop -= SPEED;
+        obj.y -= SPEED * csy;
+      }
+      drawFn(); _ncoRefreshBoxes();
+    }, 16);
+  } else {
+    // Not near edge — stop auto-scroll
+    if(_adj.autoTimer) {
+      clearInterval(_adj.autoTimer);
+      _adj.autoTimer = null;
+    }
   }
-  function onMove(e) {
-    if(!active) return;
-    obj.angle = (startAngle + (e.clientX-startX)*0.6 + 360) % 360;
-    draw();
-  }
-  function onUp() { active=false; }
-
-  document.addEventListener('pointerdown', onDown, {capture:true, passive:false});
-  document.addEventListener('pointermove', onMove, {capture:true, passive:false});
-  document.addEventListener('pointerup',   onUp,   {capture:true, passive:true });
-  showToast('🔄 Drag to rotate · ✓ to set', 'success');
 }
 
-// ═══════════════════════════════════════════════════════
-// OK BUTTON — floating, auto-hide after 3s of no interaction
-// ═══════════════════════════════════════════════════════
-function _ncoMakeOkBtn(hint) {
-  var old = document.getElementById('ncoOkBtn');
-  if(old) old.remove();
-
+// ─────────────────────────────────────────────────────────
+// OK BUTTON + CLEANUP
+// ─────────────────────────────────────────────────────────
+function _adjMakeOkBtn(hint) {
+  var old = document.getElementById('ncoOkBtn'); if(old) old.remove();
   var btn = document.createElement('button');
   btn.id = 'ncoOkBtn';
-  btn.innerHTML = '✓';
-  btn.style.cssText = [
-    'position:fixed',
-    'bottom:170px',
-    'right:16px',
-    'z-index:99999',
-    'width:52px','height:52px',
-    'border-radius:50%',
-    'border:none',
-    'background:linear-gradient(135deg,#2e7d32,#43a047)',
-    'color:#fff',
-    'font-size:1.4rem',
-    'font-weight:900',
-    'box-shadow:0 4px 18px rgba(46,125,50,0.5)',
-    'cursor:pointer',
-    'display:flex','align-items:center','justify-content:center',
-    '-webkit-tap-highlight-color:transparent',
-    'touch-action:manipulation'
-  ].join(';');
+  btn.innerHTML = '<span style="font-size:1.3rem;line-height:1;">✓</span>';
   btn.title = hint;
+  btn.style.cssText = [
+    'position:fixed', 'bottom:175px', 'right:18px', 'z-index:99999',
+    'width:54px', 'height:54px', 'border-radius:50%', 'border:none',
+    'background:linear-gradient(135deg,#2e7d32,#43a047)',
+    'color:#fff', 'font-weight:900',
+    'box-shadow:0 4px 20px rgba(46,125,50,0.55)',
+    'cursor:pointer', 'display:flex', 'align-items:center', 'justify-content:center',
+    '-webkit-tap-highlight-color:transparent', 'touch-action:manipulation',
+    'animation:ncoOkPulse 1.2s ease-in-out infinite'
+  ].join(';');
+  // Add pulse keyframe if not already
+  if(!document.getElementById('ncoOkStyle')) {
+    var st = document.createElement('style');
+    st.id = 'ncoOkStyle';
+    st.textContent = '@keyframes ncoOkPulse{0%,100%{box-shadow:0 4px 20px rgba(46,125,50,0.55)}50%{box-shadow:0 4px 28px rgba(46,125,50,0.85),0 0 0 6px rgba(46,125,50,0.15)}}';
+    document.head.appendChild(st);
+  }
   document.body.appendChild(btn);
   return btn;
 }
 
-function _ncoUpdateOkBtn(btn, clientX, clientY) {
-  // Keep OK button in a fixed visible position (don't move it)
-  // Just ensure it's visible
-  if(btn && btn.parentNode) {
-    btn.style.opacity = '1';
-  }
+function _adjCleanup(canvas, body, metaVP, origVP, okBtn, drawFn, obj) {
+  // Stop auto-scroll
+  if(_adj.autoTimer) { clearInterval(_adj.autoTimer); _adj.autoTimer = null; }
+  // Draw final position
+  drawFn();
+  // Save snapshot
+  _nedSaveSnapshot();
+  obj.baseSnapshot = _ned.ctx.getImageData(0,0,canvas.width,canvas.height);
+  // Remove OK button
+  if(okBtn && okBtn.parentNode) okBtn.remove();
+  // Remove event listeners
+  if(_adj._cleanup) { _adj._cleanup(); _adj._cleanup = null; }
+  // Restore viewport meta
+  if(metaVP && origVP) metaVP.content = origVP;
+  // Restore body overflow
+  if(body) { body.style.overflowX = ''; }
+  // Reset state
+  _adj.mode = null; _adj.obj = null; _adj.active = false; _adj.pinch = null;
+  // Refresh boxes
+  _ncoRefreshBoxes();
+  showToast('✅ Saved!', 'success');
 }
 
 
