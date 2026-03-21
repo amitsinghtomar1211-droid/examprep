@@ -14109,128 +14109,395 @@ function neAdjustToggle() {
   }
 }
 
+// ═══════════════════════════════════════════════════════
+// SHOW ALL BOXES — positions account for neBody scroll
+// ═══════════════════════════════════════════════════════
 function _ncoShowAllBoxes() {
   _ncoHideAllBoxes();
-  var canvas=document.getElementById('neDrawCanvas');
-  if(!canvas||!_nco.list.length) return;
-  var r=canvas.getBoundingClientRect(), sx=r.width/canvas.width, sy=r.height/canvas.height;
-  _nco.list.forEach(function(obj){
-    var box=document.createElement('div');
-    box.className='nco-adj-box'; box.dataset.objId=obj.id;
-    var ang=obj.angle||0;
-    box.style.cssText=[
-      'left:'+(r.left+obj.x*sx-4)+'px',
-      'top:' +(r.top +obj.y*sy-4)+'px',
-      'width:'+(obj.w*sx+8)+'px',
-      'height:'+(obj.h*sy+8)+'px',
-      'transform:rotate('+ang+'deg)'
+  var canvas = document.getElementById('neDrawCanvas');
+  var body   = document.getElementById('neBody');
+  if(!canvas || !_nco.list.length) return;
+
+  var cr  = canvas.getBoundingClientRect();
+  // Scale: canvas pixels → viewport pixels
+  var sx  = cr.width  / canvas.width;
+  var sy  = cr.height / canvas.height;
+  // neBody scroll offset (canvas is absolute inside body)
+  var scrollY = body ? body.scrollTop  : 0;
+  var scrollX = body ? body.scrollLeft : 0;
+
+  _nco.list.forEach(function(obj) {
+    var box = document.createElement('div');
+    box.className = 'nco-adj-box';
+    box.dataset.objId = obj.id;
+    var ang = obj.angle || 0;
+
+    // Canvas coords → viewport: subtract scroll, multiply by scale, add canvas origin
+    var vx = cr.left + (obj.x - scrollX) * sx;
+    var vy = cr.top  + (obj.y - scrollY) * sy;
+    var vw = obj.w * sx;
+    var vh = obj.h * sy;
+
+    // Clamp so box stays at least partially visible on screen
+    var minShow = 28;
+    vx = Math.max(-vw + minShow, Math.min(window.innerWidth  - minShow, vx));
+    vy = Math.max(-vh + minShow, Math.min(window.innerHeight - minShow, vy));
+
+    box.style.cssText = [
+      'left:'  + (vx - 4) + 'px',
+      'top:'   + (vy - 4) + 'px',
+      'width:' + (vw + 8) + 'px',
+      'height:'+ (vh + 8) + 'px',
+      'transform:rotate(' + ang + 'deg)'
     ].join(';');
-    var dot3=document.createElement('div');
-    dot3.className='nco-3dot-btn'; dot3.textContent='⋯';
-    dot3.addEventListener('pointerdown',function(e){e.preventDefault();e.stopPropagation();_ncoOnThreeDot(obj,dot3,box);});
+
+    var dot3 = document.createElement('div');
+    dot3.className = 'nco-3dot-btn';
+    dot3.textContent = '⋯';
+    dot3.addEventListener('pointerdown', function(e) {
+      e.preventDefault(); e.stopPropagation();
+      _ncoOnThreeDot(obj, dot3, box);
+    });
     box.appendChild(dot3);
     document.body.appendChild(box);
   });
 }
 
-function _ncoHideAllBoxes(){ document.querySelectorAll('.nco-adj-box').forEach(function(e){e.remove();}); }
-function _ncoRefreshBoxes(){ if(_nco.adjustMode) _ncoShowAllBoxes(); }
+function _ncoHideAllBoxes() {
+  document.querySelectorAll('.nco-adj-box').forEach(function(e){ e.remove(); });
+}
+function _ncoRefreshBoxes() {
+  if(_nco.adjustMode) _ncoShowAllBoxes();
+}
 
+// ═══════════════════════════════════════════════════════
+// THREE-DOT CONTEXT MENU
+// ═══════════════════════════════════════════════════════
 function _ncoOnThreeDot(obj, dot3El, boxEl) {
-  document.querySelectorAll('.nco-adj-box').forEach(function(b){b.classList.remove('active-box');});
+  document.querySelectorAll('.nco-adj-box').forEach(function(b){ b.classList.remove('active-box'); });
   boxEl.classList.add('active-box');
   _ncoHideCtxMenu();
-  var menu=document.createElement('div');
-  menu.className='nco-ctx-menu'; menu.id='ncoCtxMenu';
-  var dr=dot3El.getBoundingClientRect();
-  var left=Math.min(dr.left, window.innerWidth-185);
-  var top=dr.bottom+6; if(top+220>window.innerHeight) top=dr.top-226;
-  menu.style.left=left+'px'; menu.style.top=top+'px';
 
-  function item(icon,label,cls,cb){
-    var d=document.createElement('div');
-    d.className='nco-ctx-item'+(cls?' '+cls:'');
-    d.innerHTML='<span style="font-size:1rem;">'+icon+'</span>'+label;
-    d.addEventListener('pointerdown',function(e){e.stopPropagation();_ncoHideCtxMenu();cb();});
+  var menu = document.createElement('div');
+  menu.className = 'nco-ctx-menu';
+  menu.id = 'ncoCtxMenu';
+
+  var dr = dot3El.getBoundingClientRect();
+  var left = Math.min(Math.max(dr.left - 10, 8), window.innerWidth - 185);
+  var top  = dr.bottom + 6;
+  if(top + 220 > window.innerHeight) top = Math.max(dr.top - 230, 8);
+  menu.style.left = left + 'px';
+  menu.style.top  = top  + 'px';
+
+  function item(icon, label, cls, cb) {
+    var d = document.createElement('div');
+    d.className = 'nco-ctx-item' + (cls ? ' '+cls : '');
+    d.innerHTML = '<span style="font-size:1.1rem;width:22px;text-align:center;">'
+      + icon + '</span><span>' + label + '</span>';
+    d.addEventListener('pointerdown', function(e) {
+      e.stopPropagation();
+      _ncoHideCtxMenu();
+      cb();
+    });
     menu.appendChild(d);
   }
-  item('↔️','Drag / Move','',function(){_ncoStartObjDrag(obj);});
-  item('⤢','Resize (2-finger)','',function(){_ncoStartObjResize(obj);});
-  item('🔄','Rotate','',function(){_ncoStartObjRotate(obj);});
-  item('🗑','Delete','danger',function(){_ncoDeleteObj(obj);_ncoRefreshBoxes();});
+
+  item('↔️', 'Drag / Move',    '',       function(){ _ncoStartObjDrag(obj);   });
+  item('⤢',  'Resize',         '',       function(){ _ncoStartObjResize(obj); });
+  item('🔄', 'Rotate',         '',       function(){ _ncoStartObjRotate(obj); });
+  item('🗑', 'Delete',         'danger', function(){ _ncoDeleteObj(obj); _ncoRefreshBoxes(); });
+
   document.body.appendChild(menu);
-  setTimeout(function(){
-    function close(e){if(!menu.contains(e.target)&&e.target!==dot3El){_ncoHideCtxMenu();document.removeEventListener('pointerdown',close,true);}}
-    document.addEventListener('pointerdown',close,true);
-  },50);
+
+  setTimeout(function() {
+    function closeMenu(e) {
+      if(!menu.contains(e.target) && e.target !== dot3El) {
+        _ncoHideCtxMenu();
+        document.removeEventListener('pointerdown', closeMenu, true);
+      }
+    }
+    document.addEventListener('pointerdown', closeMenu, true);
+  }, 60);
 }
 
-function _ncoHideCtxMenu(){
-  var m=document.getElementById('ncoCtxMenu'); if(m) m.remove();
-  document.querySelectorAll('.nco-adj-box').forEach(function(b){b.classList.remove('active-box');});
+function _ncoHideCtxMenu() {
+  var m = document.getElementById('ncoCtxMenu');
+  if(m) m.remove();
+  document.querySelectorAll('.nco-adj-box').forEach(function(b){ b.classList.remove('active-box'); });
 }
 
-// Helper: get canvas state WITHOUT this object (before it was drawn)
+// ═══════════════════════════════════════════════════════
+// CLEAN SNAPSHOT — canvas WITHOUT this object
+// ═══════════════════════════════════════════════════════
 function _ncoErasedSnap(obj) {
   var idx = _nco.list.indexOf(obj);
-  if(idx > 0) {
-    var prev = _nco.list[idx-1];
-    if(prev.baseSnapshot) return prev.baseSnapshot;
+  // Try previous object's baseSnapshot
+  for(var i = idx-1; i >= 0; i--) {
+    if(_nco.list[i].baseSnapshot) return _nco.list[i].baseSnapshot;
   }
+  // Fallback: undo history
   if(_ned.history && _ned.history.length > 0)
-    return _ned.history[_ned.history.length-1];
+    return _ned.history[_ned.history.length - 1];
+  // Last resort: blank (current canvas minus object area)
   return null;
 }
 
+// ═══════════════════════════════════════════════════════
+// DRAG — continuous until OK tapped, with auto-scroll
+// ═══════════════════════════════════════════════════════
 function _ncoStartObjDrag(obj) {
-  showToast('✋ Drag to move · Lift = set','success');
-  var canvas=document.getElementById('neDrawCanvas');
-  if(!canvas||!_ned.ctx) return;
-  var cleanSnap=_ncoErasedSnap(obj);
-  if(!cleanSnap){showToast('Pehle ek object place karo','error');return;}
-  var origX,origY,startX,startY,active=false;
-  var r=canvas.getBoundingClientRect(),sx=canvas.width/r.width,sy=canvas.height/r.height;
-  function draw(){_ned.ctx.putImageData(cleanSnap,0,0);_ncoDrawObj(obj);}
-  function onDown(e){e.preventDefault();active=true;startX=e.clientX;startY=e.clientY;origX=obj.x;origY=obj.y;try{document.body.setPointerCapture(e.pointerId);}catch(x){};draw();}
-  function onMove(e){if(!active)return;obj.x=origX+(e.clientX-startX)*sx;obj.y=origY+(e.clientY-startY)*sy;draw();_ncoRefreshBoxes();}
-  function onUp(){if(!active)return;active=false;draw();_nedSaveSnapshot();obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);document.removeEventListener('pointerdown',onDown,true);document.removeEventListener('pointermove',onMove,true);document.removeEventListener('pointerup',onUp,true);showToast('✅ Moved!','success');_ncoRefreshBoxes();}
-  document.addEventListener('pointerdown',onDown,{capture:true,passive:false});
-  document.addEventListener('pointermove',onMove,{capture:true,passive:false});
-  document.addEventListener('pointerup',  onUp,  {capture:true,passive:true});
+  var canvas = document.getElementById('neDrawCanvas');
+  var body   = document.getElementById('neBody');
+  if(!canvas || !_ned.ctx) return;
+
+  var cleanSnap = _ncoErasedSnap(obj);
+  if(!cleanSnap) {
+    // Fallback: take snapshot now (erase object manually)
+    _ned.ctx.putImageData(obj.baseSnapshot, 0, 0);
+    cleanSnap = _ned.ctx.getImageData(0,0,canvas.width,canvas.height);
+    _ned.ctx.putImageData(obj.baseSnapshot,0,0);
+  }
+
+  // Show OK button
+  var okBtn = _ncoMakeOkBtn('Tap ✓ to SET position');
+
+  var dragging = false;
+  var curClientX = 0, curClientY = 0;
+  var autoScrollInterval = null;
+  var AUTO_SCROLL_ZONE = 80; // px from edge to start auto-scroll
+  var AUTO_SCROLL_SPEED = 6;
+
+  function canvasPt(clientX, clientY) {
+    var r  = canvas.getBoundingClientRect();
+    var sx = canvas.width  / r.width;
+    var sy = canvas.height / r.height;
+    var scrollX = body ? body.scrollLeft : 0;
+    var scrollY = body ? body.scrollTop  : 0;
+    return {
+      x: (clientX - r.left) * sx + scrollX,
+      y: (clientY - r.top)  * sy + scrollY
+    };
+  }
+
+  function draw() {
+    _ned.ctx.putImageData(cleanSnap, 0, 0);
+    _ncoDrawObj(obj);
+    _ncoRefreshBoxes();
+  }
+
+  function startAutoScroll() {
+    stopAutoScroll();
+    autoScrollInterval = setInterval(function() {
+      if(!body) return;
+      var r = canvas.getBoundingClientRect();
+      var scrolled = false;
+
+      if(curClientY > window.innerHeight - AUTO_SCROLL_ZONE) {
+        body.scrollTop += AUTO_SCROLL_SPEED;
+        // Move obj down as canvas scrolls
+        obj.y += AUTO_SCROLL_SPEED * (canvas.height / r.height);
+        scrolled = true;
+      } else if(curClientY < AUTO_SCROLL_ZONE + 60) {
+        body.scrollTop -= AUTO_SCROLL_SPEED;
+        obj.y -= AUTO_SCROLL_SPEED * (canvas.height / r.height);
+        scrolled = true;
+      }
+      if(scrolled) draw();
+    }, 16);
+  }
+
+  function stopAutoScroll() {
+    if(autoScrollInterval) { clearInterval(autoScrollInterval); autoScrollInterval = null; }
+  }
+
+  function onMove(e) {
+    e.preventDefault();
+    if(!dragging) { dragging = true; }
+    curClientX = e.clientX; curClientY = e.clientY;
+    var pt = canvasPt(e.clientX, e.clientY);
+    obj.x = pt.x - obj.w/2;
+    obj.y = pt.y - obj.h/2;
+    draw();
+
+    // Auto-scroll logic
+    var r = canvas.getBoundingClientRect();
+    if(e.clientY > window.innerHeight - AUTO_SCROLL_ZONE ||
+       e.clientY < AUTO_SCROLL_ZONE + 60) {
+      startAutoScroll();
+    } else {
+      stopAutoScroll();
+    }
+  }
+
+  function onUp(e) {
+    // Don't set on finger up — wait for OK button
+    stopAutoScroll();
+    // Show OK button near current position
+    _ncoUpdateOkBtn(okBtn, e.clientX, e.clientY);
+  }
+
+  // OK button sets the position
+  okBtn.addEventListener('pointerdown', function(e) {
+    e.stopPropagation();
+    stopAutoScroll();
+    draw();
+    _nedSaveSnapshot();
+    obj.baseSnapshot = _ned.ctx.getImageData(0,0,canvas.width,canvas.height);
+    okBtn.remove();
+    document.removeEventListener('pointermove', onMove, true);
+    document.removeEventListener('pointerup',   onUp,   true);
+    showToast('✅ Position set!', 'success');
+    _ncoRefreshBoxes();
+  });
+
+  document.addEventListener('pointermove', onMove, { capture:true, passive:false });
+  document.addEventListener('pointerup',   onUp,   { capture:true, passive:true  });
+
+  showToast('✋ Drag to move · Tap ✓ to set', 'success');
 }
 
+// ═══════════════════════════════════════════════════════
+// RESIZE — pinch, OK to set
+// ═══════════════════════════════════════════════════════
 function _ncoStartObjResize(obj) {
-  showToast('⤢ Pinch 2 fingers to resize · Lift = set','success');
-  var canvas=document.getElementById('neDrawCanvas');
-  if(!canvas||!_ned.ctx) return;
-  var cleanSnap=_ncoErasedSnap(obj);
-  if(!cleanSnap){showToast('Snapshot nahi mila','error');return;}
-  var pts={},pinch={dist:null,w:null,h:null};
-  function cnt(){return Object.keys(pts).length;}
-  function draw(){_ned.ctx.putImageData(cleanSnap,0,0);_ncoDrawObj(obj);}
-  function onDown(e){e.preventDefault();pts[e.pointerId]={x:e.clientX,y:e.clientY};if(cnt()===2){var ids=Object.keys(pts),t1=pts[ids[0]],t2=pts[ids[1]];pinch={dist:Math.hypot(t2.x-t1.x,t2.y-t1.y),w:obj.w,h:obj.h};}}
-  function onMove(e){if(!pts[e.pointerId])return;pts[e.pointerId]={x:e.clientX,y:e.clientY};if(cnt()>=2&&pinch.dist){var ids=Object.keys(pts),t1=pts[ids[0]],t2=pts[ids[1]];var dist=Math.hypot(t2.x-t1.x,t2.y-t1.y),scale=dist/pinch.dist,cx=obj.x+obj.w/2,cy=obj.y+obj.h/2;obj.w=Math.max(30,pinch.w*scale);obj.h=Math.max(16,pinch.h*scale);obj.x=cx-obj.w/2;obj.y=cy-obj.h/2;draw();_ncoRefreshBoxes();}}
-  function onUp(e){delete pts[e.pointerId];if(cnt()===0){draw();_nedSaveSnapshot();obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);document.removeEventListener('pointerdown',onDown,true);document.removeEventListener('pointermove',onMove,true);document.removeEventListener('pointerup',onUp,true);showToast('✅ Resized!','success');_ncoRefreshBoxes();}}
-  document.addEventListener('pointerdown',onDown,{capture:true,passive:false});
-  document.addEventListener('pointermove',onMove,{capture:true,passive:false});
-  document.addEventListener('pointerup',  onUp,  {capture:true,passive:true});
+  var canvas = document.getElementById('neDrawCanvas');
+  if(!canvas || !_ned.ctx) return;
+  var cleanSnap = _ncoErasedSnap(obj);
+  if(!cleanSnap) return;
+
+  var okBtn = _ncoMakeOkBtn('Pinch to resize · ✓ set');
+  var pts = {}, pinch = { dist:null, w:null, h:null };
+  function cnt() { return Object.keys(pts).length; }
+  function draw() { _ned.ctx.putImageData(cleanSnap,0,0); _ncoDrawObj(obj); _ncoRefreshBoxes(); }
+
+  okBtn.addEventListener('pointerdown', function(e) {
+    e.stopPropagation();
+    draw();
+    _nedSaveSnapshot();
+    obj.baseSnapshot = _ned.ctx.getImageData(0,0,canvas.width,canvas.height);
+    okBtn.remove();
+    document.removeEventListener('pointerdown', onDown, true);
+    document.removeEventListener('pointermove', onMove, true);
+    document.removeEventListener('pointerup',   onUp,   true);
+    showToast('✅ Resized!', 'success');
+    _ncoRefreshBoxes();
+  });
+
+  function onDown(e) {
+    if(e.target === okBtn) return;
+    e.preventDefault();
+    pts[e.pointerId] = {x:e.clientX, y:e.clientY};
+    if(cnt()===2) {
+      var ids=Object.keys(pts), t1=pts[ids[0]], t2=pts[ids[1]];
+      pinch = { dist:Math.hypot(t2.x-t1.x,t2.y-t1.y), w:obj.w, h:obj.h };
+    }
+  }
+  function onMove(e) {
+    if(!pts[e.pointerId]) return;
+    pts[e.pointerId] = {x:e.clientX, y:e.clientY};
+    if(cnt()>=2 && pinch.dist) {
+      var ids=Object.keys(pts), t1=pts[ids[0]], t2=pts[ids[1]];
+      var dist = Math.hypot(t2.x-t1.x, t2.y-t1.y), scale = dist/pinch.dist;
+      var cx=obj.x+obj.w/2, cy=obj.y+obj.h/2;
+      obj.w = Math.max(30, pinch.w*scale);
+      obj.h = Math.max(16, pinch.h*scale);
+      obj.x = cx-obj.w/2; obj.y = cy-obj.h/2;
+      draw();
+    }
+  }
+  function onUp(e) { delete pts[e.pointerId]; if(cnt()===1) pinch.dist=null; }
+
+  document.addEventListener('pointerdown', onDown, {capture:true, passive:false});
+  document.addEventListener('pointermove', onMove, {capture:true, passive:false});
+  document.addEventListener('pointerup',   onUp,   {capture:true, passive:true });
+  showToast('⤢ Pinch to resize · ✓ to set', 'success');
 }
 
+// ═══════════════════════════════════════════════════════
+// ROTATE — drag horizontally, OK to set
+// ═══════════════════════════════════════════════════════
 function _ncoStartObjRotate(obj) {
-  showToast('🔄 Drag left/right to rotate · Lift = set','success');
-  var canvas=document.getElementById('neDrawCanvas');
-  if(!canvas||!_ned.ctx) return;
-  var cleanSnap=_ncoErasedSnap(obj);
-  if(!cleanSnap){showToast('Snapshot nahi mila','error');return;}
-  var startX,startAngle,active=false;
-  function draw(){_ned.ctx.putImageData(cleanSnap,0,0);_ncoDrawObj(obj);}
-  function onDown(e){e.preventDefault();active=true;startX=e.clientX;startAngle=obj.angle||0;}
-  function onMove(e){if(!active)return;obj.angle=(startAngle+(e.clientX-startX)*0.5+360)%360;draw();_ncoRefreshBoxes();}
-  function onUp(){if(!active)return;active=false;draw();_nedSaveSnapshot();obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);document.removeEventListener('pointerdown',onDown,true);document.removeEventListener('pointermove',onMove,true);document.removeEventListener('pointerup',onUp,true);showToast('✅ Rotated!','success');_ncoRefreshBoxes();}
-  document.addEventListener('pointerdown',onDown,{capture:true,passive:false});
-  document.addEventListener('pointermove',onMove,{capture:true,passive:false});
-  document.addEventListener('pointerup',  onUp,  {capture:true,passive:true});
+  var canvas = document.getElementById('neDrawCanvas');
+  if(!canvas || !_ned.ctx) return;
+  var cleanSnap = _ncoErasedSnap(obj);
+  if(!cleanSnap) return;
+
+  var okBtn = _ncoMakeOkBtn('← Drag to rotate · ✓ set');
+  var startX, startAngle, active = false;
+  function draw() { _ned.ctx.putImageData(cleanSnap,0,0); _ncoDrawObj(obj); _ncoRefreshBoxes(); }
+
+  okBtn.addEventListener('pointerdown', function(e) {
+    e.stopPropagation();
+    draw();
+    _nedSaveSnapshot();
+    obj.baseSnapshot = _ned.ctx.getImageData(0,0,canvas.width,canvas.height);
+    okBtn.remove();
+    document.removeEventListener('pointerdown', onDown, true);
+    document.removeEventListener('pointermove', onMove, true);
+    document.removeEventListener('pointerup',   onUp,   true);
+    showToast('✅ Rotated!', 'success');
+    _ncoRefreshBoxes();
+  });
+
+  function onDown(e) {
+    if(e.target===okBtn) return;
+    e.preventDefault(); active=true;
+    startX=e.clientX; startAngle=obj.angle||0;
+  }
+  function onMove(e) {
+    if(!active) return;
+    obj.angle = (startAngle + (e.clientX-startX)*0.6 + 360) % 360;
+    draw();
+  }
+  function onUp() { active=false; }
+
+  document.addEventListener('pointerdown', onDown, {capture:true, passive:false});
+  document.addEventListener('pointermove', onMove, {capture:true, passive:false});
+  document.addEventListener('pointerup',   onUp,   {capture:true, passive:true });
+  showToast('🔄 Drag to rotate · ✓ to set', 'success');
 }
+
+// ═══════════════════════════════════════════════════════
+// OK BUTTON — floating, auto-hide after 3s of no interaction
+// ═══════════════════════════════════════════════════════
+function _ncoMakeOkBtn(hint) {
+  var old = document.getElementById('ncoOkBtn');
+  if(old) old.remove();
+
+  var btn = document.createElement('button');
+  btn.id = 'ncoOkBtn';
+  btn.innerHTML = '✓';
+  btn.style.cssText = [
+    'position:fixed',
+    'bottom:170px',
+    'right:16px',
+    'z-index:99999',
+    'width:52px','height:52px',
+    'border-radius:50%',
+    'border:none',
+    'background:linear-gradient(135deg,#2e7d32,#43a047)',
+    'color:#fff',
+    'font-size:1.4rem',
+    'font-weight:900',
+    'box-shadow:0 4px 18px rgba(46,125,50,0.5)',
+    'cursor:pointer',
+    'display:flex','align-items:center','justify-content:center',
+    '-webkit-tap-highlight-color:transparent',
+    'touch-action:manipulation'
+  ].join(';');
+  btn.title = hint;
+  document.body.appendChild(btn);
+  return btn;
+}
+
+function _ncoUpdateOkBtn(btn, clientX, clientY) {
+  // Keep OK button in a fixed visible position (don't move it)
+  // Just ensure it's visible
+  if(btn && btn.parentNode) {
+    btn.style.opacity = '1';
+  }
+}
+
 
 
 function neDrawSetColor(color, dotEl) {
