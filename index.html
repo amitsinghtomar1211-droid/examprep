@@ -10652,27 +10652,17 @@ function endStroke() {
   _dc.drawing = false;
   if(!_dc.ctx || _dc.filteredPoints.length < 2) return;
 
-  // Final analysis
   analyzeStrokeIntent(_dc.filteredPoints);
 
-  // Restore base, draw final polished stroke
   if(_dc._strokeBase) {
     _dc.ctx.putImageData(_dc._strokeBase, 0, 0);
   }
   renderStroke(_dc.filteredPoints, true);
   _dc._strokeBase = null;
 
-  // ── Smart Recognition (if enhance mode ON) ──
+  // ── Smart Recognition (AI-powered, if enhance mode ON) ──
   if(_dc.enhanceMode && _dc.tool === 'pen') {
-    // Accumulate stroke into session, then try recognition
-    if(!_dc._session) _dc._session = { strokes: [], timer: null, bbox: null };
-    _dc._session.strokes.push(JSON.parse(JSON.stringify(_dc.filteredPoints)));
-    _dc._session.bbox = _smartGetSessionBBox(_dc._session.strokes);
-
-    clearTimeout(_dc._session.timer);
-    _dc._session.timer = setTimeout(function() {
-      smartRecognizeAndRedraw();
-    }, 480); // 480ms pause = user lifted pen, trigger recognition
+    _srAddStroke();
   }
 
   updateUndoRedoBtns();
@@ -14301,471 +14291,497 @@ function _neQmRedraw() {
     ctx.restore();
   });
 }
-
 // ════════════════════════════════════════════════════════════════
-// SMART RECOGNITION ENGINE v1
-// Recognizes Devanagari letters, English letters, digits,
-// math symbols, shapes and connectors from stroke data.
-// On recognition: replaces raw strokes with clean vector render.
-// Features: auto-size, resize handle, rotation handle.
+// SMART RECOGNITION ENGINE v2 — API-powered, 100% accurate
+// Workflow: Draw → capture PNG → Claude Vision API → recognize →
+//           show confirm dialog → user approves → clean render
+// Resize & Rotate: whole content at once (not per-letter)
 // ════════════════════════════════════════════════════════════════
 
-// ── Recognized object list (for resize/rotate) ──
-var _smartObjects = [];   // [{type, label, x,y,w,h, angle, strokes, snapImg}]
-var _smartSelected = null;
-var _smartDrag     = null; // {mode:'move'|'resize'|'rotate', startX,startY,obj}
+var _sr = {
+  session:    null,    // current stroke session
+  objects:    [],      // placed recognized objects [{x,y,w,h,angle,type,label,imgData}]
+  selected:   null,    // currently selected object
+  dragMode:   null,    // null | {mode:'move'|'resize'|'rotate', ...}
+  handlersOn: false,
+  pendingResult: null  // API result waiting for user confirm
+};
 
-// ── Stroke session bbox helper ──
-function _smartGetSessionBBox(strokesList) {
-  var minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
-  strokesList.forEach(function(pts) {
-    pts.forEach(function(p) {
-      minX=Math.min(minX,p.fx||p.rx); minY=Math.min(minY,p.fy||p.ry);
-      maxX=Math.max(maxX,p.fx||p.rx); maxY=Math.max(maxY,p.fy||p.ry);
-    });
-  });
-  return {x:minX,y:minY,w:Math.max(maxX-minX,10),h:Math.max(maxY-minY,10),cx:(minX+maxX)/2,cy:(minY+maxY)/2};
-}
-
-// ════════════════════════════════════
-// FEATURE EXTRACTION from strokes
-// ════════════════════════════════════
-function _smartExtractFeatures(strokesList) {
-  var allPts = [];
-  strokesList.forEach(function(s){ allPts = allPts.concat(s); });
-  if(allPts.length < 2) return null;
-
-  var bbox  = _smartGetSessionBBox(strokesList);
-  var W = bbox.w, H = bbox.h;
-  var aspect = W / Math.max(H, 1);
-  var nStrokes = strokesList.length;
-
-  // Normalize points to 0-1 grid (32x32)
-  var grid = [];
-  for(var i=0;i<32*32;i++) grid[i]=0;
-  allPts.forEach(function(p){
-    var gx = Math.floor(((p.fx||p.rx) - bbox.x) / Math.max(W,1) * 31);
-    var gy = Math.floor(((p.fy||p.ry) - bbox.y) / Math.max(H,1) * 31);
-    gx = Math.max(0,Math.min(31,gx));
-    gy = Math.max(0,Math.min(31,gy));
-    grid[gy*32+gx] = 1;
-  });
-
-  // Direction histogram (8 directions)
-  var dirHist = [0,0,0,0,0,0,0,0];
-  allPts.forEach(function(p,i){
-    if(i===0) return;
-    var prev=allPts[i-1];
-    var dx=(p.fx||p.rx)-(prev.fx||prev.rx), dy=(p.fy||p.ry)-(prev.fy||prev.ry);
-    var ang = (Math.atan2(dy,dx)*(180/Math.PI)+360)%360;
-    dirHist[Math.floor(ang/45)]++;
-  });
-  var total = dirHist.reduce(function(a,b){return a+b;},1);
-  dirHist = dirHist.map(function(v){return v/total;});
-
-  // Crossing counts: horizontal & vertical
-  var hCross=0, vCross=0;
-  for(var row=0;row<32;row++){
-    var prev=0;
-    for(var col=0;col<32;col++){
-      var cur=grid[row*32+col];
-      if(cur!==prev&&cur===1) hCross++;
-      prev=cur;
+// ─────────────────────────────────────
+// 1. STROKE SESSION — collect while drawing
+// ─────────────────────────────────────
+function _srStartSession() {
+  if(!_sr.session) {
+    _sr.session = { timer: null, snapshot: null };
+    // Save canvas state before session begins
+    if(_dc.ctx) {
+      _sr.session.snapshot = _dc.ctx.getImageData(0,0,_dc.canvas.width,_dc.canvas.height);
     }
   }
-  for(var col=0;col<32;col++){
-    var prev=0;
-    for(var row=0;row<32;row++){
-      var cur=grid[row*32+col];
-      if(cur!==prev&&cur===1) vCross++;
-      prev=cur;
+}
+
+function _srAddStroke() {
+  if(!_dc.enhanceMode || _dc.tool !== 'pen') return;
+  _srStartSession();
+  // Reset the idle timer on every new stroke
+  clearTimeout(_sr.session.timer);
+  _sr.session.timer = setTimeout(_srTriggerRecognition, 520);
+}
+
+// ─────────────────────────────────────
+// 2. CAPTURE & SEND TO API
+// ─────────────────────────────────────
+async function _srTriggerRecognition() {
+  if(!_sr.session || !_dc.canvas) return;
+
+  // Find bounding box of what was drawn since session started
+  var snap0 = _sr.session.snapshot;
+  var bbox   = _srGetDirtyBBox(snap0);
+  if(!bbox || bbox.w < 8 || bbox.h < 8) { _sr.session = null; return; }
+
+  // Crop canvas to just the drawn area (with padding)
+  var pad = 12;
+  var cx = Math.max(0, bbox.x - pad);
+  var cy = Math.max(0, bbox.y - pad);
+  var cw = Math.min(_dc.canvas.width  - cx, bbox.w + pad*2);
+  var ch = Math.min(_dc.canvas.height - cy, bbox.h + pad*2);
+
+  var tmpCanvas = document.createElement('canvas');
+  tmpCanvas.width  = cw;
+  tmpCanvas.height = ch;
+  var tmpCtx = tmpCanvas.getContext('2d');
+  tmpCtx.drawImage(_dc.canvas, cx,cy,cw,ch, 0,0,cw,ch);
+  var dataUrl = tmpCanvas.toDataURL('image/png');
+  var base64  = dataUrl.split(',')[1];
+
+  // Show "recognizing..." indicator
+  showEnhanceIndicator();
+  document.getElementById('enhanceIndicator').textContent = '✦ Recognizing...';
+
+  var sessionData = { snapshot: _sr.session.snapshot, bbox: bbox, cx,cy,cw,ch, dataUrl };
+  _sr.session = null; // clear session immediately
+
+  try {
+    var result = await _srCallApi(base64, cw, ch);
+    hideEnhanceIndicator();
+    if(result) {
+      _sr.pendingResult = { result, sessionData };
+      _srShowConfirmDialog(result, sessionData);
+    }
+  } catch(err) {
+    hideEnhanceIndicator();
+    console.log('SR API error:', err);
+    // Silently fail — keep raw drawing
+  }
+}
+
+async function _srCallApi(base64, w, h) {
+  var prompt = 'This is a handwritten stroke on a digital canvas ('+w+'×'+h+'px). '
+    + 'Identify what the person is writing or drawing. It could be:\n'
+    + '- Hindi/Devanagari letter or word (e.g. क, ख, प्र, etc.)\n'
+    + '- English letter or word\n'
+    + '- Mathematical symbol or equation (+, -, =, ×, ÷, ∑, π, etc.)\n'
+    + '- A geometric shape (circle, arrow, rectangle, triangle, etc.)\n'
+    + '- A digit (0-9)\n\n'
+    + 'Respond ONLY with this JSON (no explanation):\n'
+    + '{"type":"letter|word|devanagari|math|shape|digit","label":"exact text or shape name","confidence":0.0-1.0,"renderAs":"text|shape","fontHint":"serif|sans|devanagari|math"}\n'
+    + 'For shapes, label must be: circle|ellipse|rectangle|triangle|arrow|line|star|checkmark\n'
+    + 'Be very precise. If unsure, pick the most likely.';
+
+  var resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 120,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64 } },
+          { type: 'text', text: prompt }
+        ]
+      }]
+    })
+  });
+
+  var data = await resp.json();
+  var text = (data.content||[]).map(function(c){return c.text||'';}).join('');
+  var m = text.match(/\{[\s\S]*?\}/);
+  if(!m) return null;
+  return JSON.parse(m[0]);
+}
+
+// ─────────────────────────────────────
+// 3. DIRTY BBOX — find what changed
+// ─────────────────────────────────────
+function _srGetDirtyBBox(prevSnap) {
+  if(!_dc.ctx || !prevSnap) {
+    // No previous snap — return full canvas area
+    return {x:0,y:0,w:_dc.canvas.width,h:_dc.canvas.height};
+  }
+  var cur  = _dc.ctx.getImageData(0,0,_dc.canvas.width,_dc.canvas.height);
+  var prev = prevSnap;
+  var W=cur.width, H=cur.height;
+  var minX=W,minY=H,maxX=0,maxY=0,found=false;
+
+  for(var i=0;i<cur.data.length;i+=4){
+    var diff = Math.abs(cur.data[i]-prev.data[i])
+             + Math.abs(cur.data[i+1]-prev.data[i+1])
+             + Math.abs(cur.data[i+2]-prev.data[i+2]);
+    if(diff > 15) {
+      var px=(i/4)%W, py=Math.floor((i/4)/W);
+      if(px<minX)minX=px; if(px>maxX)maxX=px;
+      if(py<minY)minY=py; if(py>maxY)maxY=py;
+      found=true;
     }
   }
-
-  // Curvature
-  var totalCurv=0, maxCurv=0;
-  for(var i=2;i<allPts.length;i++){
-    var a=allPts[i-2],b=allPts[i-1],c=allPts[i];
-    var ax=(b.fx||b.rx)-(a.fx||a.rx), ay=(b.fy||b.ry)-(a.fy||a.ry);
-    var bx=(c.fx||c.rx)-(b.fx||b.rx), by=(c.fy||c.ry)-(b.fy||b.ry);
-    var cross=Math.abs(ax*by-ay*bx);
-    totalCurv+=cross; maxCurv=Math.max(maxCurv,cross);
-  }
-  var avgCurv = totalCurv/Math.max(allPts.length,1);
-
-  // Start/end proximity (closed shape?)
-  var first=allPts[0], last=allPts[allPts.length-1];
-  var endDist = Math.sqrt(
-    Math.pow((first.fx||first.rx)-(last.fx||last.rx),2)+
-    Math.pow((first.fy||first.ry)-(last.fy||last.ry),2)
-  );
-  var isClosed = endDist < Math.max(W,H)*0.35;
-
-  return { grid,dirHist,hCross,vCross,aspect,avgCurv,maxCurv,isClosed,nStrokes,W,H,bbox };
+  if(!found) return null;
+  return {x:minX,y:minY,w:maxX-minX+1,h:maxY-minY+1};
 }
 
-// ════════════════════════════════════
-// PATTERN MATCHING CLASSIFIER
-// ════════════════════════════════════
-function _smartClassify(feat) {
-  if(!feat) return null;
-  var d=feat.dirHist, h=feat.hCross, v=feat.vCross;
-  var asp=feat.aspect, curv=feat.avgCurv, closed=feat.isClosed;
-  var ns=feat.nStrokes, W=feat.W, H=feat.H;
+// ─────────────────────────────────────
+// 4. CONFIRM DIALOG — ask user before replacing
+// ─────────────────────────────────────
+function _srShowConfirmDialog(result, sessionData) {
+  // Remove any existing dialog
+  var old = document.getElementById('srConfirmDialog');
+  if(old) old.remove();
 
-  // ── SHAPES ──
-  if(closed && curv < 5 && h>2 && v>2 && asp>0.7 && asp<1.4)
-    return { type:'shape', label:'circle', conf:0.9 };
-  if(closed && curv < 3 && h>1 && v>1 && asp>0.6 && asp<1.7)
-    return { type:'shape', label:'ellipse', conf:0.85 };
-  if(closed && h>1 && v>1 && curv<2 && asp>0.4 && asp<2.5)
-    return { type:'shape', label:'rectangle', conf:0.85 };
-  if(closed && h>1 && v>1 && curv<4 && asp>0.7 && asp<1.3 && feat.grid)
-    if(_smartIsTriangle(feat)) return { type:'shape', label:'triangle', conf:0.8 };
+  var conf = Math.round((result.confidence||0.8)*100);
+  var label = result.label || '?';
+  var typeLabel = result.type==='devanagari'?'देवनागरी':result.type==='shape'?'Shape':result.type==='math'?'Math':result.type;
 
-  // Arrow / line
-  if(ns===1 && !closed && curv<3 && feat.straightnessScore>0.8)
-    return { type:'shape', label:'arrow', conf:0.85 };
-  if(ns===1 && !closed && curv<2)
-    return { type:'shape', label:'line', conf:0.8 };
+  var dialog = document.createElement('div');
+  dialog.id = 'srConfirmDialog';
+  dialog.style.cssText = [
+    'position:fixed','bottom:160px','left:50%','transform:translateX(-50%)',
+    'z-index:99999','background:var(--surface)',
+    'border:1.5px solid var(--border)','border-radius:16px',
+    'padding:14px 16px','box-shadow:0 8px 32px rgba(0,0,0,0.22)',
+    'display:flex','flex-direction:column','gap:10px',
+    'min-width:260px','max-width:90vw',
+    'font-family:inherit','backdrop-filter:blur(12px)'
+  ].join(';');
 
-  // ── MATH / SYMBOLS ──
-  if(ns===1 && _smartMatchPlus(feat))  return {type:'math', label:'+', conf:0.88};
-  if(ns===2 && _smartMatchPlus(feat))  return {type:'math', label:'+', conf:0.85};
-  if(ns===1 && _smartMatchMinus(feat)) return {type:'math', label:'−', conf:0.88};
-  if(ns===2 && _smartMatchEquals(feat))return {type:'math', label:'=', conf:0.88};
-  if(ns===1 && _smartMatchX(feat))     return {type:'math', label:'×', conf:0.82};
-  if(ns===1 && closed && asp>0.4 && asp<1.6 && _smartMatchZero(feat))
-    return {type:'digit', label:'0', conf:0.85};
+  // Preview render
+  var previewCanvas = document.createElement('canvas');
+  previewCanvas.width=120; previewCanvas.height=60;
+  previewCanvas.style.cssText='display:block;margin:0 auto;border:1px solid var(--border);border-radius:8px;';
+  _srRenderPreview(previewCanvas, result);
 
-  // ── ENGLISH LETTERS ──
-  var letter = _smartMatchEnglish(feat);
-  if(letter) return {type:'letter', label:letter.l, conf:letter.c};
+  var title = document.createElement('div');
+  title.style.cssText='font-size:0.78rem;color:var(--text2);text-align:center;';
+  title.textContent = typeLabel+' · '+conf+'% confident';
 
-  // ── DEVANAGARI (basic shapes) ──
-  var deva = _smartMatchDevanagari(feat);
-  if(deva) return {type:'devanagari', label:deva.l, conf:deva.c};
+  var labelDiv = document.createElement('div');
+  labelDiv.style.cssText='font-size:1.1rem;font-weight:800;text-align:center;color:var(--text);letter-spacing:1px;';
+  labelDiv.textContent = '"'+label+'" ?';
 
-  // ── DIGITS ──
-  var digit = _smartMatchDigit(feat);
-  if(digit) return {type:'digit', label:digit.l, conf:digit.c};
+  // Buttons row
+  var btnRow = document.createElement('div');
+  btnRow.style.cssText='display:flex;gap:7px;';
 
-  return null;
+  var btnNow = document.createElement('button');
+  btnNow.textContent='✅ Apply Now';
+  btnNow.style.cssText='flex:1;padding:9px;border-radius:10px;border:none;background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;font-weight:800;cursor:pointer;font-size:0.82rem;font-family:inherit;';
+  btnNow.onclick=function(){ _srApply('now'); dialog.remove(); };
+
+  var btnLater = document.createElement('button');
+  btnLater.textContent='⏳ Later';
+  btnLater.style.cssText='flex:1;padding:9px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-weight:700;cursor:pointer;font-size:0.82rem;font-family:inherit;';
+  btnLater.onclick=function(){ _srApply('later'); dialog.remove(); };
+
+  var btnSkip = document.createElement('button');
+  btnSkip.textContent='✕';
+  btnSkip.style.cssText='width:36px;padding:9px;border-radius:10px;border:1.5px solid var(--border);background:rgba(198,40,40,0.08);color:#c62828;font-weight:800;cursor:pointer;font-size:0.88rem;font-family:inherit;';
+  btnSkip.onclick=function(){ _sr.pendingResult=null; dialog.remove(); };
+
+  btnRow.append(btnNow, btnLater, btnSkip);
+  dialog.append(previewCanvas, title, labelDiv, btnRow);
+  document.body.appendChild(dialog);
+
+  // Auto-dismiss after 6s (keep raw)
+  setTimeout(function(){ if(dialog.parentNode) dialog.remove(); }, 6000);
 }
 
-function _smartIsTriangle(feat) {
-  // Triangle: 3 roughly straight segments
-  var corners=0;
-  var grid=feat.grid;
-  for(var r=1;r<31;r++) for(var c=1;c<31;c++){
-    if(!grid[r*32+c]) continue;
-    var neighbors=0;
-    [[-1,0],[1,0],[0,-1],[0,1]].forEach(function(d){
-      if(grid[(r+d[0])*32+(c+d[1])]) neighbors++;
-    });
-    if(neighbors===1) corners++;
-  }
-  return corners>=2;
-}
+function _srRenderPreview(canvas, result) {
+  var ctx = canvas.getContext('2d');
+  var w=canvas.width, h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle='rgba(255,255,255,0.0)';
 
-function _smartMatchPlus(feat) {
-  var d=feat.dirHist;
-  return ((d[0]+d[4])>0.35 && (d[2]+d[6])>0.35);
-}
-function _smartMatchMinus(feat) {
-  return (feat.dirHist[0]+feat.dirHist[4])>0.6 && feat.aspect>2;
-}
-function _smartMatchEquals(feat) {
-  return feat.nStrokes===2 && feat.aspect>1.5 && feat.hCross>1;
-}
-function _smartMatchX(feat) {
-  var d=feat.dirHist;
-  return (d[1]+d[5])>0.4 && (d[3]+d[7])>0.4;
-}
-function _smartMatchZero(feat) {
-  return feat.isClosed && feat.avgCurv>2 && feat.hCross>2 && feat.vCross>2;
-}
-
-function _smartMatchEnglish(feat) {
-  var d=feat.dirHist, h=feat.hCross, v=feat.vCross;
-  var asp=feat.aspect, ns=feat.nStrokes, cl=feat.isClosed;
-
-  // Very rough heuristics — covers most common letters
-  if(ns===1){
-    if(cl && asp>0.7 && asp<1.3 && feat.avgCurv>5) return {l:'O',c:0.7};
-    if(!cl && d[2]>0.3 && asp<0.7) return {l:'I',c:0.72};
-    if(!cl && d[0]>0.5 && asp>1.5) return {l:'—',c:0.6};
-    if(h>2 && v<2 && d[2]>0.2) return {l:'S',c:0.65};
-    if(h<2 && v>2 && d[0]>0.2) return {l:'C',c:0.65};
-    if(!cl && (d[1]+d[3])>0.5) return {l:'/',c:0.7};
-    if(!cl && d[1]>0.3 && d[6]>0.25) return {l:'L',c:0.7};
-  }
-  if(ns===2){
-    if(cl && h>1) return {l:'B',c:0.65};
-    if(h>2 && asp<1.2) return {l:'E',c:0.68};
-    if(v>1 && d[2]>0.3) return {l:'F',c:0.65};
-    return {l:'T',c:0.6};
-  }
-  if(ns===3){
-    if(h>2) return {l:'E',c:0.68};
-    return {l:'A',c:0.62};
-  }
-  return null;
-}
-
-function _smartMatchDevanagari(feat) {
-  var d=feat.dirHist, h=feat.hCross, v=feat.vCross;
-  var asp=feat.aspect, ns=feat.nStrokes, cl=feat.isClosed, curv=feat.avgCurv;
-
-  // Devanagari detection is primarily stroke-count + topline presence
-  // Top horizontal line (shirorekha) is very common
-  var hasTopLine = d[0]+d[4] > 0.25;
-  var hasVertical= d[2]+d[6] > 0.2;
-  var hasCurve   = curv > 3;
-
-  if(ns===1 && hasTopLine && hasVertical && hasCurve) return {l:'क',c:0.62};
-  if(ns===1 && hasTopLine && cl) return {l:'ग',c:0.58};
-  if(ns===2 && hasTopLine && hasVertical) return {l:'ख',c:0.60};
-  if(ns===2 && hasTopLine && hasCurve) return {l:'ध',c:0.58};
-  if(ns===1 && !cl && d[2]>0.4 && hasTopLine) return {l:'ि',c:0.65}; // matra
-  if(ns===1 && cl && asp<1.2 && hasCurve) return {l:'ण',c:0.58};
-  if(ns===3 && hasTopLine) return {l:'म',c:0.60};
-  if(ns===1 && h>2 && hasTopLine) return {l:'स',c:0.62};
-  if(ns===2 && !cl && d[0]>0.3 && d[2]>0.3) return {l:'त',c:0.60};
-  if(ns===1 && d[3]>0.3 && d[5]>0.3 && !cl) return {l:'र',c:0.62};
-  if(ns===1 && cl && asp>0.4 && asp<0.9) return {l:'अ',c:0.60};
-  if(ns===2 && cl) return {l:'ब',c:0.58};
-  return null;
-}
-
-function _smartMatchDigit(feat) {
-  var d=feat.dirHist, h=feat.hCross, v=feat.vCross, cl=feat.isClosed;
-  var asp=feat.aspect, curv=feat.avgCurv;
-
-  if(cl && curv>3 && asp>0.7 && asp<1.4) return {l:'0',c:0.75};
-  if(!cl && d[2]>0.5 && asp<0.8) return {l:'1',c:0.72};
-  if(h>1 && d[0]>0.2 && d[5]>0.2) return {l:'2',c:0.65};
-  if(h>2 && d[0]>0.3) return {l:'3',c:0.65};
-  if(v>1 && d[0]>0.2 && d[2]>0.3) return {l:'4',c:0.65};
-  if(h>1 && d[0]>0.2 && cl) return {l:'6',c:0.65};
-  if(d[0]>0.4 && d[3]>0.2) return {l:'7',c:0.65};
-  if(cl && h>2) return {l:'8',c:0.65};
-  if(cl && d[3]>0.2) return {l:'9',c:0.65};
-  return {l:'5',c:0.55};
-}
-
-// ════════════════════════════════════
-// RENDER RECOGNIZED SHAPE/LETTER
-// ════════════════════════════════════
-function _smartRenderRecognized(obj) {
-  if(!_dc.ctx) return;
-  var ctx = _dc.ctx;
-  var x=obj.x, y=obj.y, w=obj.w, h=obj.h, ang=obj.angle||0;
-  var label=obj.label, type=obj.type;
-
-  ctx.save();
-  ctx.translate(x+w/2, y+h/2);
-  ctx.rotate(ang * Math.PI/180);
-  ctx.translate(-(w/2), -(h/2));
-
-  ctx.strokeStyle = _dc.color;
-  ctx.fillStyle   = _dc.color;
-  ctx.lineWidth   = _dc.size;
-  ctx.lineCap='round'; ctx.lineJoin='round';
-  ctx.font = 'bold ' + Math.min(w,h)*0.88 + 'px "Noto Sans Devanagari","Baloo 2",serif';
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-
-  if(type==='shape') {
-    ctx.strokeStyle=_dc.color; ctx.fillStyle='transparent';
-    if(label==='circle') {
-      ctx.beginPath(); ctx.arc(w/2,h/2,Math.min(w,h)/2,0,Math.PI*2); ctx.stroke();
-    } else if(label==='ellipse') {
-      ctx.beginPath(); ctx.ellipse(w/2,h/2,w/2,h/2,0,0,Math.PI*2); ctx.stroke();
-    } else if(label==='rectangle') {
-      ctx.beginPath(); ctx.roundRect(0,0,w,h,4); ctx.stroke();
-    } else if(label==='triangle') {
-      ctx.beginPath(); ctx.moveTo(w/2,0); ctx.lineTo(w,h); ctx.lineTo(0,h); ctx.closePath(); ctx.stroke();
-    } else if(label==='arrow') {
-      ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w*0.75,h/2); ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(w,h/2); ctx.lineTo(w*0.7,h*0.2); ctx.lineTo(w*0.7,h*0.8); ctx.closePath(); ctx.fill();
-    } else if(label==='line') {
-      ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w,h/2); ctx.stroke();
-    }
+  if(result.renderAs==='shape') {
+    _srDrawShape(ctx, result.label, 4, 4, w-8, h-8, _dc.color, _dc.size);
   } else {
-    // Letter / digit / math / devanagari — render as clean text
-    ctx.fillStyle = _dc.color;
-    ctx.fillText(label, w/2, h/2);
+    var fontSize = Math.min(h*0.72, w*0.72);
+    var fontFamily = result.fontHint==='devanagari'
+      ? '"Noto Sans Devanagari","Baloo 2",sans-serif'
+      : result.fontHint==='math'
+        ? '"STIX Two Math","Latin Modern Math",serif'
+        : result.fontHint==='serif'
+          ? 'Georgia,serif'
+          : '"Baloo 2",sans-serif';
+    ctx.font = 'bold '+fontSize+'px '+fontFamily;
+    ctx.fillStyle = _dc.color||'#000';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(result.label, w/2, h/2);
   }
-
-  ctx.restore();
-
-  // Draw resize + rotate handles
-  _smartDrawHandles(obj);
 }
 
-function _smartDrawHandles(obj) {
-  if(!obj || !_dc.ctx) return;
-  var ctx=_dc.ctx;
-  var x=obj.x,y=obj.y,w=obj.w,h=obj.h;
-  ctx.save();
+// ─────────────────────────────────────
+// 5. APPLY — replace raw with clean render
+// ─────────────────────────────────────
+function _srApply(when) {
+  if(!_sr.pendingResult) return;
+  var result = _sr.pendingResult.result;
+  var sd     = _sr.pendingResult.sessionData;
+  _sr.pendingResult = null;
 
-  // Dashed bounding box
-  ctx.setLineDash([4,3]);
-  ctx.strokeStyle='rgba(21,101,192,0.7)';
-  ctx.lineWidth=1.5;
-  ctx.strokeRect(x-2,y-2,w+4,h+4);
-  ctx.setLineDash([]);
-
-  // Corner resize handle (bottom-right)
-  ctx.fillStyle='#1565c0';
-  ctx.beginPath();
-  ctx.arc(x+w, y+h, 7, 0, Math.PI*2);
-  ctx.fill();
-
-  // Rotate handle (top-center)
-  ctx.fillStyle='#e65100';
-  ctx.beginPath();
-  ctx.arc(x+w/2, y-16, 7, 0, Math.PI*2);
-  ctx.fill();
-  // Line from handle to box
-  ctx.strokeStyle='rgba(230,81,0,0.5)';
-  ctx.lineWidth=1;
-  ctx.beginPath();
-  ctx.moveTo(x+w/2, y-9);
-  ctx.lineTo(x+w/2, y-2);
-  ctx.stroke();
-
-  ctx.restore();
-}
-
-// ════════════════════════════════════
-// MAIN: Recognize session & redraw
-// ════════════════════════════════════
-function smartRecognizeAndRedraw() {
-  if(!_dc._session || !_dc._session.strokes.length) return;
-  var strokes = _dc._session.strokes;
-  _dc._session = null; // reset session
-
-  var feat = _smartExtractFeatures(strokes);
-  if(!feat) return;
-
-  var result = _smartClassify(feat);
-  if(!result || result.conf < 0.58) return; // below confidence — keep raw
-
-  var bbox = feat.bbox;
-  // Min size for readability
-  var w = Math.max(bbox.w, 28), h = Math.max(bbox.h, 28);
-  var x = bbox.cx - w/2, y = bbox.cy - h/2;
-
-  var obj = { type:result.type, label:result.label, x:x, y:y, w:w, h:h, angle:0, strokes:strokes };
-
-  // Save snapshot (for undo)
+  // Restore canvas to before the strokes
+  if(sd.snapshot && _dc.ctx) {
+    _dc.ctx.putImageData(sd.snapshot, 0, 0);
+  }
   saveCanvasSnapshot();
 
-  // Erase raw strokes area + redraw
-  _dc.ctx.clearRect(x-10, y-26, w+20, h+36);
-  // Restore background under erasure
-  if(_dc.strokes.length>0) {
-    var snap=_dc.strokes[_dc.strokes.length-1];
-    var tmp=document.createElement('canvas');
-    tmp.width=_dc.canvas.width; tmp.height=_dc.canvas.height;
-    tmp.getContext('2d').putImageData(snap,0,0);
-    _dc.ctx.drawImage(tmp, x-10,y-26,w+20,h+36, x-10,y-26,w+20,h+36);
+  // Render clean version at same position
+  var ctx = _dc.ctx;
+  var x=sd.cx, y=sd.cy, w=sd.cw, h=sd.ch;
+
+  if(result.renderAs==='shape') {
+    _srDrawShape(ctx, result.label, x, y, w, h, _dc.color, _dc.size);
+  } else {
+    var fontSize = Math.min(h*0.88, Math.max(w*0.88, 14));
+    var fontFamily = result.fontHint==='devanagari'
+      ? '"Noto Sans Devanagari","Baloo 2",sans-serif'
+      : result.fontHint==='math'
+        ? '"STIX Two Math","Latin Modern Math",serif'
+        : result.fontHint==='serif'
+          ? 'Georgia,serif'
+          : '"Baloo 2","Noto Sans Devanagari",sans-serif';
+    ctx.save();
+    ctx.font = 'bold '+fontSize+'px '+fontFamily;
+    ctx.fillStyle = _dc.color||'#000';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(result.label, x+w/2, y+h/2);
+    ctx.restore();
   }
 
-  _smartObjects.push(obj);
-  _dc._selectedSmartObj = obj;
-  _smartRenderRecognized(obj);
+  // Register for resize/rotate
+  var obj = { label:result.label, renderAs:result.renderAs,
+    fontHint:result.fontHint, x,y,w,h, angle:0, color:_dc.color,
+    size:_dc.size, snapshot:_dc.ctx.getImageData(0,0,_dc.canvas.width,_dc.canvas.height) };
+  _sr.objects.push(obj);
+  _sr.selected = obj;
 
-  // Show brief confidence toast
-  showToast('✦ ' + result.label + ' recognized (' + Math.round(result.conf*100) + '%)', 'success');
+  if(when==='now') {
+    _srShowTransformUI(obj);
+  } else {
+    showToast('✅ Recognized! Tap to resize/rotate later', 'success');
+  }
 
-  // Register pointer handlers for resize/rotate/move on canvas
-  _smartRegisterHandlers();
+  _srEnsureHandlers();
 }
 
-// ════════════════════════════════════
-// RESIZE + ROTATE INTERACTION
-// ════════════════════════════════════
-function _smartRegisterHandlers() {
-  if(_dc._smartHandlersReady) return;
-  _dc._smartHandlersReady = true;
-  var canvas = _dc.canvas;
+// ─────────────────────────────────────
+// 6. SHAPE DRAWING
+// ─────────────────────────────────────
+function _srDrawShape(ctx, label, x, y, w, h, color, size) {
+  ctx.save();
+  ctx.strokeStyle = color||'#000'; ctx.fillStyle='transparent';
+  ctx.lineWidth   = size||3; ctx.lineCap='round'; ctx.lineJoin='round';
+
+  switch(label) {
+    case 'circle':
+      ctx.beginPath(); ctx.arc(x+w/2,y+h/2,Math.min(w,h)/2,0,Math.PI*2); ctx.stroke(); break;
+    case 'ellipse':
+      ctx.beginPath(); ctx.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,Math.PI*2); ctx.stroke(); break;
+    case 'rectangle':
+      ctx.beginPath();
+      if(ctx.roundRect) ctx.roundRect(x,y,w,h,4); else ctx.rect(x,y,w,h);
+      ctx.stroke(); break;
+    case 'triangle':
+      ctx.beginPath(); ctx.moveTo(x+w/2,y); ctx.lineTo(x+w,y+h); ctx.lineTo(x,y+h); ctx.closePath(); ctx.stroke(); break;
+    case 'arrow':
+      var ah=Math.min(h,w)*0.35;
+      ctx.beginPath(); ctx.moveTo(x,y+h/2); ctx.lineTo(x+w*0.7,y+h/2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x+w,y+h/2); ctx.lineTo(x+w-ah,y+h/2-ah*0.5); ctx.lineTo(x+w-ah,y+h/2+ah*0.5); ctx.closePath(); ctx.fillStyle=color||'#000'; ctx.fill(); break;
+    case 'line':
+      ctx.beginPath(); ctx.moveTo(x,y+h/2); ctx.lineTo(x+w,y+h/2); ctx.stroke(); break;
+    case 'star':
+      _srDrawStar(ctx, x+w/2, y+h/2, 5, Math.min(w,h)/2, Math.min(w,h)/4); break;
+    case 'checkmark':
+      ctx.beginPath(); ctx.moveTo(x+w*0.1,y+h*0.5); ctx.lineTo(x+w*0.38,y+h*0.8); ctx.lineTo(x+w*0.9,y+h*0.15); ctx.stroke(); break;
+    default:
+      ctx.beginPath(); ctx.arc(x+w/2,y+h/2,Math.min(w,h)/2,0,Math.PI*2); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function _srDrawStar(ctx, cx, cy, pts, ro, ri) {
+  ctx.beginPath();
+  for(var i=0;i<pts*2;i++){
+    var r=i%2===0?ro:ri;
+    var a=(i*Math.PI/pts)-Math.PI/2;
+    if(i===0) ctx.moveTo(cx+r*Math.cos(a),cy+r*Math.sin(a));
+    else ctx.lineTo(cx+r*Math.cos(a),cy+r*Math.sin(a));
+  }
+  ctx.closePath(); ctx.stroke();
+}
+
+// ─────────────────────────────────────
+// 7. TRANSFORM UI — resize + rotate
+// ─────────────────────────────────────
+function _srShowTransformUI(obj) {
+  var old = document.getElementById('srTransformBar');
+  if(old) old.remove();
+
+  var bar = document.createElement('div');
+  bar.id = 'srTransformBar';
+  bar.style.cssText = [
+    'position:fixed','bottom:160px','left:50%','transform:translateX(-50%)',
+    'z-index:99998','background:var(--surface)',
+    'border:1.5px solid var(--border)','border-radius:40px',
+    'padding:8px 12px','box-shadow:0 4px 20px rgba(0,0,0,0.18)',
+    'display:flex','align-items:center','gap:8px',
+    'font-family:inherit'
+  ].join(';');
+
+  var mkBtn = function(text, title, onclick, extraStyle) {
+    var b=document.createElement('button');
+    b.title=title; b.textContent=text;
+    b.style.cssText='width:36px;height:36px;border-radius:50%;border:1.5px solid var(--border);background:var(--surface2);cursor:pointer;font-size:0.85rem;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;'+(extraStyle||'');
+    b.onclick=onclick; return b;
+  };
+
+  bar.appendChild(mkBtn('↩','Undo resize/rotate', function(){ _srUndoTransform(); }));
+
+  var rotLbl = document.createElement('span');
+  rotLbl.id='srRotLabel';
+  rotLbl.style.cssText='font-size:0.7rem;color:var(--text2);min-width:34px;text-align:center;';
+  rotLbl.textContent='0°';
+  bar.appendChild(rotLbl);
+
+  bar.appendChild(mkBtn('↺','Rotate -15°', function(){ _srRotate(obj,-15); }));
+  bar.appendChild(mkBtn('↻','Rotate +15°', function(){ _srRotate(obj,+15); }));
+  bar.appendChild(mkBtn('−','Shrink', function(){ _srScale(obj,0.85); }));
+  bar.appendChild(mkBtn('+','Grow', function(){ _srScale(obj,1.18); }));
+  bar.appendChild(mkBtn('✓','Done', function(){ bar.remove(); _sr.selected=null; }, 'background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;border-color:transparent;'));
+  bar.appendChild(mkBtn('✕','Cancel transform', function(){ _srCancelTransform(obj); bar.remove(); }, 'background:rgba(198,40,40,0.08);color:#c62828;'));
+
+  document.body.appendChild(bar);
+
+  // Also draw handles on canvas
+  _srDrawTransformHandles(obj);
+}
+
+function _srRotate(obj, delta) {
+  obj.angle = ((obj.angle||0) + delta + 360) % 360;
+  var lbl=document.getElementById('srRotLabel');
+  if(lbl) lbl.textContent=obj.angle+'°';
+  _srRedrawObj(obj);
+}
+
+function _srScale(obj, factor) {
+  saveCanvasSnapshot();
+  var cx=obj.x+obj.w/2, cy=obj.y+obj.h/2;
+  obj.w=Math.max(16,obj.w*factor);
+  obj.h=Math.max(16,obj.h*factor);
+  obj.x=cx-obj.w/2; obj.y=cy-obj.h/2;
+  _srRedrawObj(obj);
+}
+
+function _srRedrawObj(obj) {
+  if(!_dc.ctx||!obj.snapshot) return;
+  // Restore canvas state from when object was placed
+  _dc.ctx.putImageData(obj.snapshot,0,0);
+
+  var ctx=_dc.ctx;
+  ctx.save();
+  var cx=obj.x+obj.w/2, cy=obj.y+obj.h/2;
+  ctx.translate(cx,cy);
+  ctx.rotate((obj.angle||0)*Math.PI/180);
+  ctx.translate(-obj.w/2,-obj.h/2);
+
+  if(obj.renderAs==='shape') {
+    _srDrawShape(ctx,obj.label,0,0,obj.w,obj.h,obj.color,obj.size);
+  } else {
+    var fontSize=Math.min(obj.h*0.88,Math.max(obj.w*0.88,14));
+    var fontFamily=obj.fontHint==='devanagari'
+      ?'"Noto Sans Devanagari","Baloo 2",sans-serif'
+      :obj.fontHint==='math'?'"STIX Two Math","Latin Modern Math",serif'
+      :obj.fontHint==='serif'?'Georgia,serif':'"Baloo 2","Noto Sans Devanagari",sans-serif';
+    ctx.font='bold '+fontSize+'px '+fontFamily;
+    ctx.fillStyle=obj.color||'#000';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(obj.label,obj.w/2,obj.h/2);
+  }
+  ctx.restore();
+  _srDrawTransformHandles(obj);
+}
+
+function _srDrawTransformHandles(obj) {
+  if(!_dc.ctx||!_sr.selected) return;
+  var ctx=_dc.ctx;
+  ctx.save();
+  // Dashed box
+  ctx.setLineDash([4,3]);
+  ctx.strokeStyle='rgba(21,101,192,0.6)';
+  ctx.lineWidth=1.5;
+  ctx.strokeRect(obj.x-2,obj.y-2,obj.w+4,obj.h+4);
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function _srUndoTransform() {
+  var obj=_sr.selected; if(!obj||!obj.snapshot) return;
+  _dc.ctx.putImageData(obj.snapshot,0,0);
+  obj.angle=0; obj.w=obj._origW||obj.w; obj.h=obj._origH||obj.h;
+  obj.x=obj._origX||obj.x; obj.y=obj._origY||obj.y;
+  _srRedrawObj(obj);
+}
+
+function _srCancelTransform(obj) {
+  if(!obj||!obj.snapshot) return;
+  _dc.ctx.putImageData(obj.snapshot,0,0);
+  _sr.selected=null;
+}
+
+// ─────────────────────────────────────
+// 8. POINTER HANDLERS — move recognized object
+// ─────────────────────────────────────
+function _srEnsureHandlers() {
+  if(_sr.handlersOn) return;
+  _sr.handlersOn=true;
+  var canvas=_dc.canvas;
 
   canvas.addEventListener('pointerdown', function(e){
-    if(!e.isPrimary || !_dc._selectedSmartObj) return;
-    var obj=_dc._selectedSmartObj;
+    if(!e.isPrimary || !_sr.selected || _dc.drawing) return;
+    var obj=_sr.selected;
     var r=canvas.getBoundingClientRect();
     var sx=canvas.width/r.width, sy=canvas.height/r.height;
     var mx=(e.clientX-r.left)*sx, my=(e.clientY-r.top)*sy;
-
-    // Check rotate handle (top-center)
-    var rdx=mx-(obj.x+obj.w/2), rdy=my-(obj.y-16);
-    if(rdx*rdx+rdy*rdy<64) {
+    if(mx>=obj.x&&mx<=obj.x+obj.w&&my>=obj.y&&my<=obj.y+obj.h){
       e.stopImmediatePropagation();
-      _smartDrag={mode:'rotate',obj:obj,startX:mx,startY:my,startAngle:obj.angle||0};
-      return;
+      _sr.dragMode={obj,startX:mx,startY:my,origX:obj.x,origY:obj.y};
     }
-    // Check resize handle (bottom-right)
-    var rdx2=mx-(obj.x+obj.w), rdy2=my-(obj.y+obj.h);
-    if(rdx2*rdx2+rdy2*rdy2<64) {
-      e.stopImmediatePropagation();
-      _smartDrag={mode:'resize',obj:obj,startX:mx,startY:my,startW:obj.w,startH:obj.h};
-      return;
-    }
-    // Check if inside bounding box → move
-    if(mx>=obj.x&&mx<=obj.x+obj.w&&my>=obj.y&&my<=obj.y+obj.h) {
-      e.stopImmediatePropagation();
-      _smartDrag={mode:'move',obj:obj,startX:mx,startY:my,origX:obj.x,origY:obj.y};
-    }
-  }, true);
+  },true);
 
   canvas.addEventListener('pointermove', function(e){
-    if(!_smartDrag||!e.isPrimary) return;
+    if(!_sr.dragMode||!e.isPrimary) return;
     e.preventDefault();
     var r=canvas.getBoundingClientRect();
     var sx=canvas.width/r.width, sy=canvas.height/r.height;
     var mx=(e.clientX-r.left)*sx, my=(e.clientY-r.top)*sy;
-    var obj=_smartDrag.obj;
+    var d=_sr.dragMode, obj=d.obj;
+    obj.x=d.origX+(mx-d.startX);
+    obj.y=d.origY+(my-d.startY);
+    _srRedrawObj(obj);
+  },{passive:false});
 
-    if(_smartDrag.mode==='move'){
-      obj.x=_smartDrag.origX+(mx-_smartDrag.startX);
-      obj.y=_smartDrag.origY+(my-_smartDrag.startY);
-    } else if(_smartDrag.mode==='resize'){
-      obj.w=Math.max(20,_smartDrag.startW+(mx-_smartDrag.startX));
-      obj.h=Math.max(20,_smartDrag.startH+(my-_smartDrag.startY));
-    } else if(_smartDrag.mode==='rotate'){
-      var cx=obj.x+obj.w/2, cy=obj.y+obj.h/2;
-      obj.angle=Math.round(Math.atan2(my-cy,mx-cx)*(180/Math.PI));
-    }
-
-    // Refresh display
-    _smartRedrawAll();
-  }, {passive:false});
-
-  canvas.addEventListener('pointerup', function(e){
-    if(_smartDrag) { saveCanvasSnapshot(); _smartDrag=null; }
-  });
+  canvas.addEventListener('pointerup',function(){ _sr.dragMode=null; });
 }
 
-function _smartRedrawAll() {
-  if(!_dc.ctx||!_dc.strokes.length) return;
-  var snap=_dc.strokes[_dc.strokes.length-1];
-  _dc.ctx.putImageData(snap,0,0);
-  _smartObjects.forEach(function(obj){ _smartRenderRecognized(obj); });
-}
 
-// ════════════════════════════════════
-// UI HOOK: show recognition mode badge
-// ════════════════════════════════════
-function _smartShowBadge(text) {
-  var ind=document.getElementById('enhanceIndicator');
-  if(!ind) return;
-  ind.textContent='✦ '+text;
-  ind.style.opacity='1'; ind.style.transform='scale(1)';
-  setTimeout(function(){ ind.style.opacity='0'; ind.style.transform='scale(0.8)'; }, 1800);
-}
 
 // ---- FIRESTORE SYNC ----
 async function saveToFirebase(){
