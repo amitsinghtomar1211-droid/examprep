@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="hi">
 <head>
 <meta charset="UTF-8">
@@ -14144,24 +14144,30 @@ function _ncoShowAllBoxes() {
   var body   = document.getElementById('neBody');
   if(!canvas || !_nco.list.length) return;
 
-  // canvas is position:absolute inside neBody (overflow:auto)
-  // getBoundingClientRect() on canvas already accounts for scroll
-  var cr = canvas.getBoundingClientRect();
-
-  // Scale: canvas internal pixels → actual CSS pixels displayed
-  // canvas.width is internal resolution, cr.width is display size
-  var sx = cr.width  / canvas.width;
-  var sy = cr.height / canvas.height;
+  // Canvas internal size = body.offsetWidth × body.scrollHeight
+  // Canvas CSS size: width=100% of body, height=scrollHeight px
+  // When body scrolls, canvas moves up (it's position:absolute inside body)
+  //
+  // To convert canvas pixel (cx,cy) → viewport pixel:
+  //   body viewport rect
+  var br = body.getBoundingClientRect();
+  //   pixels per canvas-px (CSS scale factor - usually 1:1)
+  var scaleX = br.width  / canvas.width;   // ≈ 1
+  //   vertical: canvas height = scrollHeight, 1 canvas-px = 1 CSS-px (no scale)
+  var scaleY = scaleX;  // canvas is not scaled vertically differently
+  //   scroll offset
+  var scrollTop  = body.scrollTop;
+  var scrollLeft = body.scrollLeft;
 
   _nco.list.forEach(function(obj) {
     var ang = obj.angle || 0;
 
-    // Object in canvas coordinates → viewport coordinates
-    // cr.left/top is already scroll-adjusted (viewport origin)
-    var vx = cr.left + obj.x * sx;
-    var vy = cr.top  + obj.y * sy;
-    var vw = obj.w * sx;
-    var vh = obj.h * sy;
+    // Canvas-px → viewport-px
+    // canvas origin is at body's top-left MINUS scroll
+    var vx = br.left + (obj.x - scrollLeft) * scaleX;
+    var vy = br.top  + (obj.y - scrollTop)  * scaleY;
+    var vw = obj.w * scaleX;
+    var vh = obj.h * scaleY;
 
     var box = document.createElement('div');
     box.className = 'nco-adj-box';
@@ -14175,9 +14181,11 @@ function _ncoShowAllBoxes() {
       'transform-origin:center center',
       'transform:rotate(' + ang + 'deg)',
       'pointer-events:all',
-      'z-index:9881'
+      'z-index:9881',
+      'box-sizing:border-box'
     ].join(';');
 
+    // Three-dot at top-right corner OF THE BOX
     var dot3 = document.createElement('div');
     dot3.className = 'nco-3dot-btn';
     dot3.textContent = '⋯';
@@ -14266,128 +14274,129 @@ function _adjStart(mode, obj) {
   if(!canvas || !_ned.ctx) return;
 
   var cleanSnap = _ncoErasedSnap(obj);
-  if(!cleanSnap) {
-    showToast('Snapshot error — try again', 'error'); return;
-  }
+  if(!cleanSnap) { showToast('Snapshot error — try again', 'error'); return; }
 
-  // Lock horizontal scroll completely
-  if(body) { body.style.overflowX = 'hidden'; }
+  // Lock horizontal scroll
+  if(body) body.style.overflowX = 'hidden';
 
-  // Prevent browser pinch-zoom during resize/rotate
+  // Prevent browser pinch-zoom for resize/rotate
   var metaVP = document.querySelector('meta[name="viewport"]');
   var origVP = metaVP ? metaVP.content : '';
   if(mode === 'resize' || mode === 'rotate') {
     if(metaVP) metaVP.content = 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no';
   }
 
-  _adj.mode      = mode;
-  _adj.obj       = obj;
+  _adj.mode = mode; _adj.obj = obj;
   _adj.cleanSnap = cleanSnap;
-  _adj.active    = false;
-  _adj.pinch     = null;
+  _adj.pinch = null;
 
-  // Draw obj cleanly (erase duplicate first)
+  // Erase old position immediately
   function drawClean() {
     _ned.ctx.putImageData(cleanSnap, 0, 0);
     _ncoDrawObj(obj);
   }
-  drawClean(); // Immediately erase old position
+  drawClean();
 
-  // Show OK button
+  // ── Coordinate helpers ──
+  // body.getBoundingClientRect() stays the same size (the visible box)
+  // body.scrollTop changes as user scrolls
+  // canvas internal: width=body.offsetWidth, height=body.scrollHeight, 1:1 CSS px
+  function clientToCanvas(clientX, clientY) {
+    var br = body.getBoundingClientRect();
+    var scX = canvas.width / br.width; // ≈ 1 (no horizontal scale)
+    return {
+      x: (clientX - br.left + body.scrollLeft) * scX,
+      y: (clientY - br.top  + body.scrollTop)          // vertical: 1 CSS px = 1 canvas px
+    };
+  }
+
+  // OK button
   var okBtn = _adjMakeOkBtn(
-    mode === 'drag'   ? '↔ Drag freely · ✓ Set' :
-    mode === 'resize' ? '⤢ Pinch 2-finger · ✓ Set' :
-                        '🔄 Drag ← → to rotate · ✓ Set'
+    mode==='drag'  ? '↔ Drag · ✓ Set' :
+    mode==='resize'? '⤢ Pinch · ✓ Set' : '🔄 Rotate · ✓ Set'
   );
 
-  // ── POINTER HANDLERS ──
+  // ── State ──
   var pts = {};
+  var dragStart = null; // {clientX, clientY, objX, objY} for drag
+  var fingerDown = false;
+
   function cnt() { return Object.keys(pts).length; }
 
   function onDown(e) {
     if(e.target === okBtn) return;
-    // Only intercept touches ON or near the object box
+    e.preventDefault();
     pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+    fingerDown = true;
 
     if(mode === 'drag' && cnt() === 1) {
-      _adj.active      = true;
-      _adj.startClientX = e.clientX;
-      _adj.startClientY = e.clientY;
-      _adj.startObjX   = obj.x;
-      _adj.startObjY   = obj.y;
-      try{ canvas.setPointerCapture(e.pointerId); } catch(x){}
+      dragStart = { cx: e.clientX, cy: e.clientY, ox: obj.x, oy: obj.y };
+      _adj._lastClientY = e.clientY;
     }
     if(mode === 'resize' && cnt() === 2) {
-      var ids = Object.keys(pts), t1 = pts[ids[0]], t2 = pts[ids[1]];
+      var ids=Object.keys(pts), t1=pts[ids[0]], t2=pts[ids[1]];
       _adj.pinch = {
         dist: Math.hypot(t2.x-t1.x, t2.y-t1.y),
-        ang:  Math.atan2(t2.y-t1.y, t2.x-t1.x) * 180/Math.PI,
-        w: obj.w, h: obj.h, objAngle: obj.angle||0
+        w: obj.w, h: obj.h
       };
-      _adj.active = true;
     }
     if(mode === 'rotate' && cnt() === 1) {
-      _adj.active      = true;
-      _adj.startClientX = e.clientX;
-      _adj.startAngle  = obj.angle || 0;
+      dragStart = { cx: e.clientX, startAngle: obj.angle||0 };
     }
   }
 
   function onMove(e) {
+    if(!pts[e.pointerId] && !fingerDown) return;
     pts[e.pointerId] = { x: e.clientX, y: e.clientY };
-    if(!_adj.active) return;
-    _adj._lastClientY = e.clientY; // for dynamic auto-scroll direction
+    _adj._lastClientY = e.clientY;
 
-    var cr = canvas.getBoundingClientRect();
-    var sx = canvas.width / cr.width;
-    var sy = canvas.height / cr.height;
-
-    if(mode === 'drag' && cnt() === 1) {
-      var dx = (e.clientX - _adj.startClientX) * sx;
-      var dy = (e.clientY - _adj.startClientY) * sy;
-      obj.x = _adj.startObjX + dx;
-      obj.y = _adj.startObjY + dy;
+    if(mode === 'drag' && dragStart) {
+      // Use clientToCanvas for accurate position
+      var br = body.getBoundingClientRect();
+      var dx = e.clientX - dragStart.cx;
+      var dy = e.clientY - dragStart.cy;
+      // 1 client px = 1 canvas px (no scale applied to canvas vertically)
+      var scX = canvas.width / br.width;
+      obj.x = dragStart.ox + dx * scX;
+      obj.y = dragStart.oy + dy;            // 1:1 vertical
       drawClean();
       _ncoRefreshBoxes();
-
-      // Auto-scroll: only vertical, only when near edge
-      _adjAutoScroll(e.clientY, body, canvas, obj, drawClean);
+      _adjAutoScroll(e.clientY, body, canvas, obj, drawClean, dragStart);
     }
 
     if(mode === 'resize' && cnt() >= 2 && _adj.pinch) {
-      var ids = Object.keys(pts), t1 = pts[ids[0]], t2 = pts[ids[1]];
-      var dist  = Math.hypot(t2.x-t1.x, t2.y-t1.y);
+      var ids=Object.keys(pts), t1=pts[ids[0]], t2=pts[ids[1]];
+      var dist = Math.hypot(t2.x-t1.x, t2.y-t1.y);
       var scale = dist / _adj.pinch.dist;
-      var cx = obj.x + obj.w/2, cy = obj.y + obj.h/2;
+      var cx=obj.x+obj.w/2, cy=obj.y+obj.h/2;
       obj.w = Math.max(28, _adj.pinch.w * scale);
       obj.h = Math.max(14, _adj.pinch.h * scale);
-      obj.x = cx - obj.w/2; obj.y = cy - obj.h/2;
+      obj.x = cx-obj.w/2; obj.y = cy-obj.h/2;
       drawClean(); _ncoRefreshBoxes();
     }
 
-    if(mode === 'rotate' && cnt() === 1) {
-      obj.angle = (_adj.startAngle + (e.clientX - _adj.startClientX) * 0.6 + 360) % 360;
+    if(mode === 'rotate' && dragStart && cnt() === 1) {
+      obj.angle = (dragStart.startAngle + (e.clientX-dragStart.cx)*0.6 + 360)%360;
       drawClean(); _ncoRefreshBoxes();
     }
   }
 
   function onUp(e) {
     delete pts[e.pointerId];
-    if(mode === 'drag' && cnt() === 0) {
-      // Stop auto-scroll
+    if(cnt() === 0) {
+      fingerDown = false;
       if(_adj.autoTimer) { clearInterval(_adj.autoTimer); _adj.autoTimer = null; }
-      _adj.active = false;
-      // Keep box updated, wait for OK
+      if(mode === 'resize') { _adj.pinch = null; }
+      // dragStart stays so next finger-down continues from last position
     }
-    if(mode === 'resize') {
-      if(cnt() < 2) { _adj.pinch = null; _adj.active = false; }
+    if(mode === 'resize' && cnt() === 1) {
+      _adj.pinch = null;
     }
-    if(mode === 'rotate' && cnt() === 0) { _adj.active = false; }
   }
 
-  // OK = save and clean up
   okBtn.addEventListener('pointerdown', function(e) {
     e.preventDefault(); e.stopPropagation();
+    if(_adj.autoTimer) { clearInterval(_adj.autoTimer); _adj.autoTimer = null; }
     _adjCleanup(canvas, body, metaVP, origVP, okBtn, drawClean, obj);
   });
 
@@ -14395,7 +14404,6 @@ function _adjStart(mode, obj) {
   document.addEventListener('pointermove', onMove, { capture:true, passive:false });
   document.addEventListener('pointerup',   onUp,   { capture:true, passive:true  });
 
-  // Store cleanup refs
   _adj._cleanup = function() {
     document.removeEventListener('pointerdown', onDown, true);
     document.removeEventListener('pointermove', onMove, true);
@@ -14404,40 +14412,33 @@ function _adjStart(mode, obj) {
 }
 
 // ─────────────────────────────────────────────────────────
-// AUTO-SCROLL (drag only) — vertical only, bidirectional
+// AUTO-SCROLL — vertical only, bidirectional
 // ─────────────────────────────────────────────────────────
-function _adjAutoScroll(clientY, body, canvas, obj, drawFn) {
+function _adjAutoScroll(clientY, body, canvas, obj, drawFn, dragStart) {
   if(!body) return;
   var ZONE = 80, SPEED = 5;
   var atBottom = clientY > window.innerHeight - ZONE;
   var atTop    = clientY < ZONE + 60;
 
   if(atBottom || atTop) {
-    if(_adj.autoTimer) return; // already running
+    if(_adj.autoTimer) return;
     _adj.autoTimer = setInterval(function() {
-      // Re-check direction from latest clientY stored in _adj
       var cy = _adj._lastClientY || clientY;
       var isBottom = cy > window.innerHeight - ZONE;
       var isTop    = cy < ZONE + 60;
       if(!isBottom && !isTop) {
         clearInterval(_adj.autoTimer); _adj.autoTimer = null; return;
       }
-      var cr  = canvas.getBoundingClientRect();
-      var csy = canvas.height / cr.height;
-      if(isBottom) {
-        body.scrollTop += SPEED;
-        obj.y += SPEED * csy;
-      } else {
-        body.scrollTop -= SPEED;
-        obj.y -= SPEED * csy;
-      }
+      var delta = isBottom ? SPEED : -SPEED;
+      body.scrollTop += delta;
+      // Move object with scroll
+      obj.y += delta;
+      // Update dragStart origin so relative drag stays correct
+      if(dragStart) dragStart.oy += delta;
       drawFn(); _ncoRefreshBoxes();
     }, 16);
   } else {
-    if(_adj.autoTimer) {
-      clearInterval(_adj.autoTimer);
-      _adj.autoTimer = null;
-    }
+    if(_adj.autoTimer) { clearInterval(_adj.autoTimer); _adj.autoTimer = null; }
   }
 }
 
