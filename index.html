@@ -15024,29 +15024,17 @@ var _nco = {
 // WRITE MODE — activate, popup, confirm
 // ─────────────────────────────────────────
 function neWriteActivate() {
-  // Canvas tap handler to choose placement point
-  var canvas = document.getElementById('neDrawCanvas');
-  if(!canvas) return;
-
-  showToast('Canvas par tap karein — text wahan place hoga', 'success');
-  canvas.classList.add('draw-active');
-  canvas._writeTapMode = true;
-
-  function onTap(e) {
-    if(!canvas._writeTapMode) return;
-    e.preventDefault(); e.stopPropagation();
-    canvas._writeTapMode = false;
-    canvas.removeEventListener('pointerdown', onTap, true);
-
-    var r  = canvas.getBoundingClientRect();
-    var sx = canvas.width / r.width;
-    var sy = canvas.height / r.height;
-    _nw.tapX = (e.clientX - r.left) * sx;
-    _nw.tapY = (e.clientY - r.top)  * sy;
-
-    _neWriteShowPopup();
+  // Just open the popup directly — no tap needed first
+  // Text will be placed at center of visible canvas area
+  var body = document.getElementById('neBody');
+  if(body) {
+    var r = body.getBoundingClientRect();
+    _nw.tapX = (body.scrollLeft + r.width/2);
+    _nw.tapY = (body.scrollTop  + r.height/3);
+  } else {
+    _nw.tapX = 150; _nw.tapY = 120;
   }
-  canvas.addEventListener('pointerdown', onTap, { capture: true, passive: false });
+  _neWriteShowPopup();
 }
 
 function _neWriteShowPopup() {
@@ -15089,7 +15077,6 @@ function neWriteConfirm() {
   if(pop) pop.classList.remove('open');
   if(inp) inp.value = '';
 
-  // Render text object onto canvas
   _ncoPlaceText(txt, _nw.tapX, _nw.tapY, {
     font:   _nw.font,
     size:   _nw.size,
@@ -15124,359 +15111,456 @@ function _ncoRenderText(ctx, txt, x, y, opts) {
   ctx.font = fs;
   ctx.textBaseline = 'top';
 
-  // Multi-line split
   var lines  = txt.split('\n');
   var lh     = size * 1.3;
   var maxW   = lines.reduce(function(m,l){ return Math.max(m, ctx.measureText(l).width); }, 0);
   var totalH = lines.length * lh;
 
-  // Translate to position
   ctx.translate(x, y);
 
-  // Effects
   if(effect === 'shadow') {
-    ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 6; ctx.shadowOffsetX = 3; ctx.shadowOffsetY = 3;
+    ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 6;
+    ctx.shadowOffsetX = 3; ctx.shadowOffsetY = 3;
   }
   if(effect === 'fill') {
     ctx.fillStyle = color + '22';
-    ctx.fillRect(-4, -4, maxW + 8, totalH + 8);
+    ctx.fillRect(-6, -4, maxW + 12, totalH + 8);
     ctx.shadowColor = 'transparent';
   }
 
   lines.forEach(function(line, li) {
     var ly = li * lh;
-
     if(effect === 'arc') {
-      // Arc/curved text
       var radius = Math.max(maxW, 60) * 0.8;
-      var arcSpan = Math.min(Math.PI * 0.7, (maxW / radius));
-      var startAngle = -arcSpan / 2 - Math.PI/2;
-      ctx.save();
-      ctx.translate(maxW/2, radius);
+      var arcSpan = Math.min(Math.PI * 0.7, maxW / radius);
+      var startAngle = -arcSpan/2 - Math.PI/2;
+      ctx.save(); ctx.translate(maxW/2, radius);
       for(var ci=0; ci<line.length; ci++) {
-        var charAngle = startAngle + (ci / Math.max(line.length-1,1)) * arcSpan;
-        ctx.save();
-        ctx.rotate(charAngle);
-        ctx.translate(0, -radius);
-        if(effect==='outline') { ctx.strokeStyle=color; ctx.lineWidth=1; ctx.strokeText(line[ci], 0, ly); }
-        ctx.fillStyle = color; ctx.fillText(line[ci], 0, ly);
+        var ca = startAngle + (ci/Math.max(line.length-1,1))*arcSpan;
+        ctx.save(); ctx.rotate(ca); ctx.translate(0,-radius);
+        ctx.fillStyle=color; ctx.fillText(line[ci], 0, ly);
         ctx.restore();
       }
       ctx.restore();
     } else if(effect === 'wave') {
-      // Wave text — each char offset vertically
-      var charX = 0;
+      var charX=0;
       for(var ci=0; ci<line.length; ci++) {
-        var ch = line[ci];
-        var waveY = ly + Math.sin(ci * 0.7) * (size * 0.18);
-        if(effect==='outline') { ctx.strokeStyle=color; ctx.lineWidth=1; ctx.strokeText(ch, charX, waveY); }
-        ctx.fillStyle=color; ctx.fillText(ch, charX, waveY);
-        charX += ctx.measureText(ch).width;
+        var wY = ly + Math.sin(ci*0.7)*(size*0.18);
+        ctx.fillStyle=color; ctx.fillText(line[ci], charX, wY);
+        charX += ctx.measureText(line[ci]).width;
       }
     } else {
-      // Normal / shadow / outline / fill
-      if(effect === 'outline') {
-        ctx.strokeStyle = color; ctx.lineWidth = size * 0.06;
-        ctx.strokeText(line, 0, ly);
+      if(effect==='outline') {
+        ctx.strokeStyle=color; ctx.lineWidth=size*0.06; ctx.strokeText(line,0,ly);
       }
-      ctx.fillStyle = color;
-      ctx.fillText(line, 0, ly);
+      ctx.fillStyle=color; ctx.fillText(line,0,ly);
     }
   });
-
   ctx.restore();
-  return { w: maxW, h: totalH };
+  return { w:maxW, h:totalH };
 }
 
 // ─────────────────────────────────────────
-// PLACE TEXT OBJECT ON CANVAS
+// PLACE TEXT — immediately draggable
 // ─────────────────────────────────────────
-function _ncoPlaceText(txt, tapX, tapY, opts) {
-  var canvas = document.getElementById('neDrawCanvas');
-  if(!canvas) return;
-
-  var ctx    = _ned.ctx || canvas.getContext('2d');
-  var size   = opts.size || 24;
-  var fs     = _ncoGetFontString(opts.font||'normal', size);
-
-  // Measure
-  ctx.font = fs;
-  var lines  = txt.split('\n');
-  var lh     = size * 1.3;
-  var maxW   = lines.reduce(function(m,l){ return Math.max(m, ctx.measureText(l).width); }, 0) + 8;
-  var totalH = lines.length * lh + 8;
-
-  // Save snapshot before placing (for undo)
-  _nedSaveSnapshot();
-
-  // Render
-  _ncoRenderText(ctx, txt, tapX, tapY, opts);
-
-  // Register as canvas object
-  var obj = {
-    id:       'nco_' + Date.now(),
-    type:     'text',
-    txt:      txt,
-    opts:     JSON.parse(JSON.stringify(opts)),
-    x:        tapX, y: tapY,
-    w:        maxW, h: totalH,
-    angle:    0,
-    snapshot: null  // set after render
-  };
-  // Save state with object rendered
-  obj.snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  _nco.list.push(obj);
-
-  // Auto-select for immediate drag
-  _nco.selected = obj;
-  _ncoShowHandle(obj);
-  showToast('✅ Text placed! Drag to position, release to set', 'success');
-
-  // Enable drag on canvas immediately
-  _ncoEnsureHandlers();
-}
-
-// ─────────────────────────────────────────
-// HANDLE OVERLAY (selection box)
-// ─────────────────────────────────────────
-function _ncoShowHandle(obj) {
-  _ncoHideHandle();
-  if(!obj) return;
-
-  var body   = document.getElementById('neBody');
-  var canvas = document.getElementById('neDrawCanvas');
-  if(!body || !canvas) return;
-
-  var r  = canvas.getBoundingClientRect();
-  var sx = r.width  / canvas.width;
-  var sy = r.height / canvas.height;
-
-  var el = document.createElement('div');
-  el.className = 'nco-handle visible';
-  el.id        = 'ncoHandle';
-  el.style.left   = (r.left + obj.x * sx - 2)  + 'px';
-  el.style.top    = (r.top  + obj.y * sy - 2 + window.scrollY) + 'px';
-  el.style.width  = (obj.w * sx + 4) + 'px';
-  el.style.height = (obj.h * sy + 4) + 'px';
-  el.style.transform = 'rotate(' + (obj.angle||0) + 'deg)';
-  el.style.position  = 'fixed';  // fixed to viewport
-
-  // Corner dots
-  function mkDot(cls, onclick) {
-    var d = document.createElement('div');
-    d.className = 'nco-dot ' + cls;
-    d.onclick   = onclick;
-    return d;
-  }
-
-  el.appendChild(mkDot('nco-dot-edit', function(e){ e.stopPropagation(); _ncoEditObj(obj); }));
-  el.appendChild(mkDot('nco-dot-del',  function(e){ e.stopPropagation(); _ncoDeleteObj(obj); }));
-  el.appendChild(mkDot('nco-dot-resize', function(e){ e.stopPropagation(); }));
-  el.appendChild(mkDot('nco-dot-rotate', function(e){ e.stopPropagation(); }));
-
-  document.body.appendChild(el);
-  _nco.handleEl = el;
-
-  // Resize & rotate on dots
-  var resDot = el.querySelector('.nco-dot-resize');
-  var rotDot = el.querySelector('.nco-dot-rotate');
-
-  _ncoMakeDotDraggable(resDot, function(dx, dy){
-    obj.w = Math.max(20, obj.w + dx / sx);
-    obj.h = Math.max(10, obj.h + dy / sy);
-    _ncoRedrawObj(obj);
-    _ncoShowHandle(obj);
-  });
-  _ncoMakeDotDraggable(rotDot, function(dx, dy){
-    obj.angle = ((obj.angle||0) + dx * 0.5 + 360) % 360;
-    _ncoRedrawObj(obj);
-    _ncoShowHandle(obj);
-  });
-}
-
-function _ncoHideHandle() {
-  var h = document.getElementById('ncoHandle');
-  if(h) h.remove();
-  _nco.handleEl = null;
-}
-
-function _ncoMakeDotDraggable(dot, onMove) {
-  var startX, startY;
-  dot.addEventListener('pointerdown', function(e){
-    e.preventDefault(); e.stopPropagation();
-    startX = e.clientX; startY = e.clientY;
-    try{ dot.setPointerCapture(e.pointerId); } catch(x){}
-
-    function mm(ev){ onMove(ev.clientX-startX, ev.clientY-startY); startX=ev.clientX; startY=ev.clientY; }
-    function mu(){ dot.removeEventListener('pointermove',mm); dot.removeEventListener('pointerup',mu); }
-    dot.addEventListener('pointermove', mm);
-    dot.addEventListener('pointerup', mu);
-  }, { passive: false });
-}
-
-// ─────────────────────────────────────────
-// REDRAW OBJECT (after resize/rotate)
-// ─────────────────────────────────────────
-function _ncoRedrawObj(obj) {
+function _ncoPlaceText(txt, cx, cy, opts) {
   var canvas = document.getElementById('neDrawCanvas');
   if(!canvas || !_ned.ctx) return;
   var ctx = _ned.ctx;
 
-  // Restore snapshot before this object
-  var prevIdx = _nco.list.indexOf(obj) - 1;
-  if(prevIdx >= 0 && _nco.list[prevIdx].snapshot) {
-    ctx.putImageData(_nco.list[prevIdx].snapshot, 0, 0);
-  } else if(_ned.history.length > 0) {
-    ctx.putImageData(_ned.history[_ned.history.length-1], 0, 0);
-  } else {
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-  }
+  // Measure size
+  ctx.font = _ncoGetFontString(opts.font||'normal', opts.size||24);
+  var lines  = txt.split('\n');
+  var lh     = (opts.size||24) * 1.3;
+  var maxW   = lines.reduce(function(m,l){ return Math.max(m, ctx.measureText(l).width); },0) + 16;
+  var totalH = lines.length * lh + 16;
 
-  // Redraw with transform
+  // Center on placement point
+  var ox = cx - maxW/2;
+  var oy = cy - totalH/2;
+
+  var obj = {
+    id:     'nco_' + Date.now(),
+    type:   'text', txt: txt,
+    opts:   JSON.parse(JSON.stringify(opts)),
+    x: ox, y: oy, w: maxW, h: totalH,
+    angle:  0,
+    baseSnapshot: null   // canvas state before this obj
+  };
+
+  // Save snapshot BEFORE rendering (for undo)
+  _nedSaveSnapshot();
+  obj.baseSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+  // Draw it
+  _ncoDrawObj(obj);
+  _nco.list.push(obj);
+
+  // Enter "fresh place" mode — immediate drag+pinch, no long press needed
+  _nco.freshObj = obj;
+  _ncoStartFreshDrag(obj);
+
+  showToast('✋ Drag to position · 2 fingers to resize · Release = set', 'success');
+}
+
+// Draw one object onto canvas
+function _ncoDrawObj(obj) {
+  if(!_ned.ctx) return;
+  var ctx = _ned.ctx;
   ctx.save();
-  ctx.translate(obj.x + obj.w/2, obj.y + obj.h/2);
+  var cx = obj.x + obj.w/2, cy = obj.y + obj.h/2;
+  ctx.translate(cx, cy);
   ctx.rotate((obj.angle||0) * Math.PI/180);
   ctx.translate(-obj.w/2, -obj.h/2);
-
   if(obj.type === 'text') {
-    var scaledOpts = Object.assign({}, obj.opts, { size: obj.opts.size });
-    _ncoRenderText(ctx, obj.txt, 0, 0, scaledOpts);
+    _ncoRenderText(ctx, obj.txt, 0, 0, Object.assign({}, obj.opts, {
+      size: obj.opts.size * (obj.w / Math.max(obj._origW||obj.w, 1))
+    }));
   }
-
   ctx.restore();
-  obj.snapshot = ctx.getImageData(0,0,canvas.width,canvas.height);
+}
+
+// Restore canvas to before this obj, then redraw it
+function _ncoRedrawObj(obj) {
+  if(!_ned.ctx || !obj.baseSnapshot) return;
+  _ned.ctx.putImageData(obj.baseSnapshot, 0, 0);
+  _ncoDrawObj(obj);
 }
 
 // ─────────────────────────────────────────
-// EDIT / DELETE
+// FRESH DRAG — right after placing (no long press)
+// Single finger = move, 2 fingers = pinch resize
+// Release = set permanently
 // ─────────────────────────────────────────
-function _ncoEditObj(obj) {
-  if(obj.type !== 'text') return;
-  _ncoHideHandle();
+function _ncoStartFreshDrag(obj) {
+  var canvas = document.getElementById('neDrawCanvas');
+  if(!canvas) return;
 
-  // Re-open write popup with existing text
-  var inp = document.getElementById('neWriteInput');
-  if(inp) inp.value = obj.txt;
-  neWriteSetFont(obj.opts.font, document.getElementById('nwFont-'+obj.opts.font));
-  _nw.tapX = obj.x; _nw.tapY = obj.y;
+  // Block normal draw while fresh drag active
+  canvas._freshDragActive = true;
+  obj._origW = obj.w; obj._origH = obj.h;
 
-  // Remove old object
-  _nco.list = _nco.list.filter(function(o){ return o.id !== obj.id; });
-  // Restore canvas to before this object
-  if(_ned.history.length > 0) {
-    _ned.ctx.putImageData(_ned.history[_ned.history.length-1], 0,0);
+  var touches    = {};  // pointerId → {x,y}
+  var moveStartX = null, moveStartY = null;
+  var origObjX   = obj.x, origObjY = obj.y;
+  var pinchStartDist = null, pinchStartW = null, pinchStartH = null;
+
+  function ptCount() { return Object.keys(touches).length; }
+
+  function onDown(e) {
+    e.preventDefault(); e.stopPropagation();
+    try { canvas.setPointerCapture(e.pointerId); } catch(x) {}
+    touches[e.pointerId] = { x: e.clientX, y: e.clientY };
+
+    if(ptCount() === 1) {
+      moveStartX = e.clientX; moveStartY = e.clientY;
+      origObjX = obj.x; origObjY = obj.y;
+      pinchStartDist = null;
+    }
+    if(ptCount() === 2) {
+      // Start pinch
+      var ids = Object.keys(touches);
+      var t1  = touches[ids[0]], t2 = touches[ids[1]];
+      pinchStartDist = Math.hypot(t2.x-t1.x, t2.y-t1.y);
+      pinchStartW    = obj.w; pinchStartH = obj.h;
+      moveStartX = null; // disable move while pinching
+    }
   }
 
-  var pop = document.getElementById('neWritePopup');
-  if(pop) pop.classList.add('open');
-}
+  function onMove(e) {
+    e.preventDefault();
+    if(!touches[e.pointerId]) return;
+    touches[e.pointerId] = { x: e.clientX, y: e.clientY };
 
-function _ncoDeleteObj(obj) {
-  _ncoHideHandle();
-  _nco.list = _nco.list.filter(function(o){ return o.id !== obj.id; });
-  // Redraw from snapshot before this object
-  var idx = _nco.list.length - 1;
-  if(idx >= 0 && _nco.list[idx].snapshot) {
-    _ned.ctx.putImageData(_nco.list[idx].snapshot, 0,0);
-  } else if(_ned.history.length > 0) {
-    _ned.ctx.putImageData(_ned.history[_ned.history.length-1], 0,0);
+    var r  = canvas.getBoundingClientRect();
+    var sx = canvas.width/r.width, sy = canvas.height/r.height;
+
+    if(ptCount() === 2 && pinchStartDist) {
+      // Pinch = resize
+      var ids = Object.keys(touches);
+      var t1  = touches[ids[0]], t2 = touches[ids[1]];
+      var dist = Math.hypot(t2.x-t1.x, t2.y-t1.y);
+      var scale = dist / pinchStartDist;
+      var cx = obj.x + obj.w/2, cy = obj.y + obj.h/2;
+      obj.w = Math.max(30, pinchStartW  * scale);
+      obj.h = Math.max(16, pinchStartH * scale);
+      obj.x = cx - obj.w/2; obj.y = cy - obj.h/2;
+    } else if(ptCount() === 1 && moveStartX !== null) {
+      // Single finger = move
+      var dx = (e.clientX - moveStartX) * sx;
+      var dy = (e.clientY - moveStartY) * sy;
+      obj.x = origObjX + dx;
+      obj.y = origObjY + dy;
+    }
+    _ncoRedrawObj(obj);
   }
-  _nco.selected = null;
-  showToast('Deleted', 'success');
+
+  function onUp(e) {
+    delete touches[e.pointerId];
+    if(ptCount() === 0) {
+      // All fingers lifted — object is SET
+      cleanup();
+      _nedSaveSnapshot(); // save final position
+      // Update baseSnapshot to include final position
+      if(_ned.ctx) {
+        obj.baseSnapshot = _ned.ctx.getImageData(0, 0, canvas.width, canvas.height);
+      }
+      _nco.freshObj = null;
+      canvas._freshDragActive = false;
+      _ncoEnsureHandlers(); // enable long-press mode for future adjustments
+      showToast('✅ Set! Long press to adjust later', 'success');
+    }
+    if(ptCount() === 1) {
+      // Went from 2→1 finger: reset move start
+      var remaining = Object.keys(touches)[0];
+      moveStartX = touches[remaining].x;
+      moveStartY = touches[remaining].y;
+      origObjX = obj.x; origObjY = obj.y;
+      pinchStartDist = null;
+    }
+  }
+
+  function cleanup() {
+    canvas.removeEventListener('pointerdown', onDown, true);
+    canvas.removeEventListener('pointermove', onMove, true);
+    canvas.removeEventListener('pointerup',   onUp,   true);
+  }
+
+  canvas.addEventListener('pointerdown', onDown, { capture:true, passive:false });
+  canvas.addEventListener('pointermove', onMove, { capture:true, passive:false });
+  canvas.addEventListener('pointerup',   onUp,   { capture:true, passive:false });
 }
 
 // ─────────────────────────────────────────
-// PRESS+DRAG TO MOVE OBJECTS
+// LONG PRESS to re-adjust (after object is set)
 // ─────────────────────────────────────────
 function _ncoEnsureHandlers() {
   var canvas = document.getElementById('neDrawCanvas');
   if(!canvas || canvas._ncoHandlersOn) return;
   canvas._ncoHandlersOn = true;
 
-  var LONG_PRESS_MS = 320;
-  var lpTimer = null, lpObj = null, dragging = false;
-  var startX, startY;
+  var LONG_PRESS_MS = 500;
+  var lpTimer = null;
+  var adjustObj = null;
+  var adjustActive = false;
+  var touches = {};
+  var moveStartX, moveStartY, origObjX, origObjY;
+  var pinchStartDist, pinchStartW, pinchStartH;
 
   canvas.addEventListener('pointerdown', function(e){
-    if(!e.isPrimary || _ned.drawing) return;
+    if(canvas._freshDragActive) return;
+    if(!e.isPrimary) {
+      // Second finger during adjust = pinch
+      if(adjustActive && adjustObj) {
+        touches[e.pointerId] = { x:e.clientX, y:e.clientY };
+        var ids = Object.keys(touches);
+        if(ids.length === 2) {
+          var t1=touches[ids[0]], t2=touches[ids[1]];
+          pinchStartDist = Math.hypot(t2.x-t1.x, t2.y-t1.y);
+          pinchStartW = adjustObj.w; pinchStartH = adjustObj.h;
+        }
+      }
+      return;
+    }
+
+    touches = {};
+    touches[e.pointerId] = { x:e.clientX, y:e.clientY };
+
     var r  = canvas.getBoundingClientRect();
     var sx = canvas.width/r.width, sy = canvas.height/r.height;
     var cx = (e.clientX-r.left)*sx, cy = (e.clientY-r.top)*sy;
 
-    // Find object under tap (check in reverse order)
+    // Find object under tap
     var hit = null;
     for(var i=_nco.list.length-1; i>=0; i--) {
-      var o = _nco.list[i];
+      var o=_nco.list[i];
       if(cx>=o.x && cx<=o.x+o.w && cy>=o.y && cy<=o.y+o.h) { hit=o; break; }
     }
-    if(!hit) { _ncoHideHandle(); _nco.selected=null; return; }
+    if(!hit) { _ncoHideHandle(); adjustObj=null; adjustActive=false; return; }
 
-    // Long press to start drag
-    startX=e.clientX; startY=e.clientY; lpObj=hit;
+    // Start long press timer
     lpTimer = setTimeout(function(){
-      dragging=true;
-      lpObj.origX=lpObj.x; lpObj.origY=lpObj.y;
-      _nco.selected=lpObj;
+      adjustObj = hit; adjustActive = true;
+      moveStartX = e.clientX; moveStartY = e.clientY;
+      origObjX = hit.x; origObjY = hit.y;
+      pinchStartDist = null;
       try{ canvas.setPointerCapture(e.pointerId); } catch(x){}
-      showToast('Drag to move, release to set ✓', 'success');
+      // Vibrate feedback if available
+      if(navigator.vibrate) navigator.vibrate(40);
+      showToast('✋ Adjust mode — drag / pinch / rotate · Release = set', 'success');
+      _nco.selected = hit;
+      _ncoShowHandle(hit);
     }, LONG_PRESS_MS);
 
-  }, { passive: true });
+  }, { passive:true });
 
   canvas.addEventListener('pointermove', function(e){
-    if(!dragging || !lpObj) return;
+    if(canvas._freshDragActive) return;
+    touches[e.pointerId] = { x:e.clientX, y:e.clientY };
+    var ids = Object.keys(touches);
+
+    // Cancel long press if finger moved too much
+    if(lpTimer && !adjustActive) {
+      var t0 = touches[Object.keys(touches)[0]];
+      if(t0 && (Math.abs(e.clientX-moveStartX)>8 || Math.abs(e.clientY-moveStartY)>8)) {
+        clearTimeout(lpTimer); lpTimer=null;
+      }
+    }
+
+    if(!adjustActive || !adjustObj) return;
     var r  = canvas.getBoundingClientRect();
     var sx = canvas.width/r.width, sy = canvas.height/r.height;
-    var dx = (e.clientX-startX)*sx, dy = (e.clientY-startY)*sy;
-    lpObj.x = lpObj.origX + dx;
-    lpObj.y = lpObj.origY + dy;
-    _ncoRedrawObj(lpObj);
-    _ncoShowHandle(lpObj);
-  }, { passive: true });
+    var obj = adjustObj;
+
+    if(ids.length >= 2 && pinchStartDist) {
+      // Pinch resize
+      var t1=touches[ids[0]], t2=touches[ids[1]];
+      var dist = Math.hypot(t2.x-t1.x, t2.y-t1.y);
+      var scale = dist/pinchStartDist;
+      var cx=obj.x+obj.w/2, cy=obj.y+obj.h/2;
+      obj.w = Math.max(30, pinchStartW*scale);
+      obj.h = Math.max(16, pinchStartH*scale);
+      obj.x = cx-obj.w/2; obj.y = cy-obj.h/2;
+    } else if(ids.length === 1) {
+      // Single finger move
+      if(moveStartX === null) { moveStartX=e.clientX; moveStartY=e.clientY; origObjX=obj.x; origObjY=obj.y; }
+      var dx=(e.clientX-moveStartX)*sx, dy=(e.clientY-moveStartY)*sy;
+      obj.x = origObjX+dx; obj.y = origObjY+dy;
+    }
+    _ncoRedrawObj(obj);
+    _ncoShowHandle(obj);
+  }, { passive:true });
 
   canvas.addEventListener('pointerup', function(e){
-    clearTimeout(lpTimer);
-    if(dragging && lpObj) {
+    delete touches[e.pointerId];
+    clearTimeout(lpTimer); lpTimer=null;
+
+    if(adjustActive && adjustObj && Object.keys(touches).length===0) {
       _nedSaveSnapshot();
-      _ncoShowHandle(lpObj);
-      showToast('✅ Set!', 'success');
-    } else if(lpObj && !dragging) {
-      // Single tap = select
-      _nco.selected = lpObj;
-      _ncoShowHandle(lpObj);
+      if(_ned.ctx) adjustObj.baseSnapshot = _ned.ctx.getImageData(0,0,canvas.width,canvas.height);
+      adjustActive=false; adjustObj=null;
+      pinchStartDist=null; moveStartX=null;
+      showToast('✅ Position saved!', 'success');
     }
-    dragging=false; lpObj=null;
-  }, { passive: true });
+  }, { passive:true });
 }
 
 // ─────────────────────────────────────────
-// CLEAR: also clears text objects
+// HANDLE OVERLAY (selection box with dots)
 // ─────────────────────────────────────────
-var _nedOrigClear = window.neDrawClear;
-window.neDrawClear = function() {
-  // Call original clear (with confirm)
-  if(typeof _nedOrigClear === 'function') {
-    // We patch the confirm check
-    if(!confirm('Saari drawing aur text clear karein?')) return;
+function _ncoShowHandle(obj) {
+  _ncoHideHandle();
+  if(!obj) return;
+
+  var canvas = document.getElementById('neDrawCanvas');
+  if(!canvas) return;
+  var r  = canvas.getBoundingClientRect();
+  var sx = r.width/canvas.width, sy = r.height/canvas.height;
+
+  var el = document.createElement('div');
+  el.id  = 'ncoHandle';
+  el.style.cssText = [
+    'position:fixed',
+    'left:'+(r.left + obj.x*sx - 2)+'px',
+    'top:'+(r.top  + obj.y*sy - 2)+'px',
+    'width:'+(obj.w*sx+4)+'px',
+    'height:'+(obj.h*sy+4)+'px',
+    'border:1.5px dashed rgba(21,101,192,0.6)',
+    'border-radius:4px',
+    'z-index:9880',
+    'pointer-events:none',
+    'transform:rotate('+(obj.angle||0)+'deg)',
+    'box-sizing:border-box'
+  ].join(';');
+
+  // Edit dot (top-left, green)
+  function mkDot(css, clickFn) {
+    var d=document.createElement('div');
+    d.style.cssText='position:absolute;width:16px;height:16px;border-radius:50%;border:2px solid #fff;pointer-events:all;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,0.3);'+css;
+    d.addEventListener('pointerdown', function(e){ e.stopPropagation(); clickFn(); });
+    return d;
   }
-  // Clear canvas
+  el.appendChild(mkDot('background:#2e7d32;top:-8px;left:-8px;', function(){ _ncoEditObj(obj); }));
+  el.appendChild(mkDot('background:#c62828;top:-8px;right:-8px;', function(){ _ncoDeleteObj(obj); }));
+
+  document.body.appendChild(el);
+  _nco.handleEl = el;
+
+  // Auto-hide handle after 2.5s
+  setTimeout(function(){ _ncoHideHandle(); }, 2500);
+}
+
+function _ncoHideHandle() {
+  var h=document.getElementById('ncoHandle');
+  if(h) h.remove();
+  _nco.handleEl=null;
+}
+
+function _ncoEditObj(obj) {
+  if(obj.type!=='text') return;
+  _ncoHideHandle();
+  var inp=document.getElementById('neWriteInput');
+  if(inp) inp.value=obj.txt;
+  _nw.tapX=obj.x+obj.w/2; _nw.tapY=obj.y+obj.h/2;
+  _nw.font=obj.opts.font||'normal';
+  _nw.size=obj.opts.size||24;
+  _nw.effect=obj.opts.effect||'none';
+  _nco.list=_nco.list.filter(function(o){return o.id!==obj.id;});
+  if(_ned.ctx && obj.baseSnapshot) _ned.ctx.putImageData(obj.baseSnapshot,0,0);
+  var pop=document.getElementById('neWritePopup');
+  if(pop) pop.classList.add('open');
+}
+
+function _ncoDeleteObj(obj) {
+  _ncoHideHandle();
+  _nco.list=_nco.list.filter(function(o){return o.id!==obj.id;});
+  if(_ned.ctx && obj.baseSnapshot) _ned.ctx.putImageData(obj.baseSnapshot,0,0);
+  _nco.selected=null;
+  showToast('Deleted','success');
+}
+
+// Clear also removes text objects
+window.neDrawClear = function() {
+  if(!confirm('Saari drawing aur text clear karein?')) return;
   if(_ned.ctx && _ned.canvas) {
     _ned.ctx.clearRect(0,0,_ned.canvas.width,_ned.canvas.height);
-    _ned._savedImage=null;
-    _ned.history=[]; _ned.redoStack=[];
+    _ned._savedImage=null; _ned.history=[]; _ned.redoStack=[];
   }
-  // Clear text objects
-  _nco.list=[]; _nco.selected=null;
-  _ncoHideHandle();
-  showToast('Drawing clear ho gayi', 'success');
+  _nco.list=[]; _nco.selected=null; _ncoHideHandle();
+  showToast('Clear ho gaya','success');
 };
 
-// Hide handles when draw mode turns off
-var _nedOrigToggle = window.neDrawToggle;
 window.neDrawToggle = function() {
   _ncoHideHandle();
-  if(typeof _nedOrigToggle === 'function') _nedOrigToggle();
+  // Call original toggle logic
+  _ned.active = !_ned.active;
+  var canvas  = document.getElementById('neDrawCanvas');
+  var body    = document.getElementById('neBody');
+  var toolbar = document.getElementById('neDrawToolbar');
+  var toggleBtn = document.getElementById('neDrawToggleBtn');
+  if(_ned.active) {
+    neDrawInit();
+    if(canvas)    canvas.classList.add('draw-active');
+    if(body)      body.classList.add('draw-mode');
+    if(toolbar)   toolbar.classList.add('visible');
+    if(toggleBtn) toggleBtn.classList.add('draw-on');
+    showToast('✏️ Draw mode ON','success');
+    if(window.ResizeObserver) {
+      window._nedResizeObs = new ResizeObserver(neDrawResize);
+      if(body) window._nedResizeObs.observe(body);
+    }
+  } else {
+    if(_ned.canvas && _ned.history.length>0) _ned._savedImage=_ned.canvas.toDataURL('image/png');
+    if(canvas)    canvas.classList.remove('draw-active');
+    if(body)      body.classList.remove('draw-mode');
+    if(toolbar)   toolbar.classList.remove('visible');
+    if(toggleBtn) toggleBtn.classList.remove('draw-on');
+    if(window._nedResizeObs) window._nedResizeObs.disconnect();
+    showToast('Draw mode OFF','success');
+  }
 };
+
+
 
 // ---- FIRESTORE SYNC ----
 async function saveToFirebase(){
