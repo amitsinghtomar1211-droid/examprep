@@ -14170,43 +14170,68 @@ function _ncoHideCtxMenu(){
   document.querySelectorAll('.nco-adj-box').forEach(function(b){b.classList.remove('active-box');});
 }
 
-function _ncoStartObjDrag(obj){
+// Helper: get canvas state WITHOUT this object (before it was drawn)
+function _ncoErasedSnap(obj) {
+  var idx = _nco.list.indexOf(obj);
+  if(idx > 0) {
+    var prev = _nco.list[idx-1];
+    if(prev.baseSnapshot) return prev.baseSnapshot;
+  }
+  if(_ned.history && _ned.history.length > 0)
+    return _ned.history[_ned.history.length-1];
+  return null;
+}
+
+function _ncoStartObjDrag(obj) {
   showToast('✋ Drag to move · Lift = set','success');
   var canvas=document.getElementById('neDrawCanvas');
+  if(!canvas||!_ned.ctx) return;
+  var cleanSnap=_ncoErasedSnap(obj);
+  if(!cleanSnap){showToast('Pehle ek object place karo','error');return;}
   var origX,origY,startX,startY,active=false;
-  var r=canvas.getBoundingClientRect(), sx=canvas.width/r.width, sy=canvas.height/r.height;
-  function onDown(e){e.preventDefault();active=true;startX=e.clientX;startY=e.clientY;origX=obj.x;origY=obj.y;try{document.body.setPointerCapture(e.pointerId);}catch(x){}}
-  function onMove(e){if(!active)return;obj.x=origX+(e.clientX-startX)*sx;obj.y=origY+(e.clientY-startY)*sy;_ncoRedrawObj(obj);_ncoRefreshBoxes();}
-  function onUp(){if(!active)return;active=false;_nedSaveSnapshot();if(_ned.ctx)obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);document.removeEventListener('pointerdown',onDown,true);document.removeEventListener('pointermove',onMove,true);document.removeEventListener('pointerup',onUp,true);showToast('✅ Moved!','success');}
+  var r=canvas.getBoundingClientRect(),sx=canvas.width/r.width,sy=canvas.height/r.height;
+  function draw(){_ned.ctx.putImageData(cleanSnap,0,0);_ncoDrawObj(obj);}
+  function onDown(e){e.preventDefault();active=true;startX=e.clientX;startY=e.clientY;origX=obj.x;origY=obj.y;try{document.body.setPointerCapture(e.pointerId);}catch(x){};draw();}
+  function onMove(e){if(!active)return;obj.x=origX+(e.clientX-startX)*sx;obj.y=origY+(e.clientY-startY)*sy;draw();_ncoRefreshBoxes();}
+  function onUp(){if(!active)return;active=false;draw();_nedSaveSnapshot();obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);document.removeEventListener('pointerdown',onDown,true);document.removeEventListener('pointermove',onMove,true);document.removeEventListener('pointerup',onUp,true);showToast('✅ Moved!','success');_ncoRefreshBoxes();}
   document.addEventListener('pointerdown',onDown,{capture:true,passive:false});
   document.addEventListener('pointermove',onMove,{capture:true,passive:false});
-  document.addEventListener('pointerup',onUp,{capture:true,passive:true});
+  document.addEventListener('pointerup',  onUp,  {capture:true,passive:true});
 }
 
-function _ncoStartObjResize(obj){
+function _ncoStartObjResize(obj) {
   showToast('⤢ Pinch 2 fingers to resize · Lift = set','success');
   var canvas=document.getElementById('neDrawCanvas');
+  if(!canvas||!_ned.ctx) return;
+  var cleanSnap=_ncoErasedSnap(obj);
+  if(!cleanSnap){showToast('Snapshot nahi mila','error');return;}
   var pts={},pinch={dist:null,w:null,h:null};
   function cnt(){return Object.keys(pts).length;}
+  function draw(){_ned.ctx.putImageData(cleanSnap,0,0);_ncoDrawObj(obj);}
   function onDown(e){e.preventDefault();pts[e.pointerId]={x:e.clientX,y:e.clientY};if(cnt()===2){var ids=Object.keys(pts),t1=pts[ids[0]],t2=pts[ids[1]];pinch={dist:Math.hypot(t2.x-t1.x,t2.y-t1.y),w:obj.w,h:obj.h};}}
-  function onMove(e){if(!pts[e.pointerId])return;pts[e.pointerId]={x:e.clientX,y:e.clientY};if(cnt()>=2&&pinch.dist){var ids=Object.keys(pts),t1=pts[ids[0]],t2=pts[ids[1]];var dist=Math.hypot(t2.x-t1.x,t2.y-t1.y),scale=dist/pinch.dist,cx=obj.x+obj.w/2,cy=obj.y+obj.h/2;obj.w=Math.max(30,pinch.w*scale);obj.h=Math.max(16,pinch.h*scale);obj.x=cx-obj.w/2;obj.y=cy-obj.h/2;_ncoRedrawObj(obj);_ncoRefreshBoxes();}}
-  function onUp(e){delete pts[e.pointerId];if(cnt()===0){_nedSaveSnapshot();if(_ned.ctx)obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);document.removeEventListener('pointerdown',onDown,true);document.removeEventListener('pointermove',onMove,true);document.removeEventListener('pointerup',onUp,true);showToast('✅ Resized!','success');}}
+  function onMove(e){if(!pts[e.pointerId])return;pts[e.pointerId]={x:e.clientX,y:e.clientY};if(cnt()>=2&&pinch.dist){var ids=Object.keys(pts),t1=pts[ids[0]],t2=pts[ids[1]];var dist=Math.hypot(t2.x-t1.x,t2.y-t1.y),scale=dist/pinch.dist,cx=obj.x+obj.w/2,cy=obj.y+obj.h/2;obj.w=Math.max(30,pinch.w*scale);obj.h=Math.max(16,pinch.h*scale);obj.x=cx-obj.w/2;obj.y=cy-obj.h/2;draw();_ncoRefreshBoxes();}}
+  function onUp(e){delete pts[e.pointerId];if(cnt()===0){draw();_nedSaveSnapshot();obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);document.removeEventListener('pointerdown',onDown,true);document.removeEventListener('pointermove',onMove,true);document.removeEventListener('pointerup',onUp,true);showToast('✅ Resized!','success');_ncoRefreshBoxes();}}
   document.addEventListener('pointerdown',onDown,{capture:true,passive:false});
   document.addEventListener('pointermove',onMove,{capture:true,passive:false});
-  document.addEventListener('pointerup',onUp,{capture:true,passive:true});
+  document.addEventListener('pointerup',  onUp,  {capture:true,passive:true});
 }
 
-function _ncoStartObjRotate(obj){
+function _ncoStartObjRotate(obj) {
   showToast('🔄 Drag left/right to rotate · Lift = set','success');
   var canvas=document.getElementById('neDrawCanvas');
+  if(!canvas||!_ned.ctx) return;
+  var cleanSnap=_ncoErasedSnap(obj);
+  if(!cleanSnap){showToast('Snapshot nahi mila','error');return;}
   var startX,startAngle,active=false;
+  function draw(){_ned.ctx.putImageData(cleanSnap,0,0);_ncoDrawObj(obj);}
   function onDown(e){e.preventDefault();active=true;startX=e.clientX;startAngle=obj.angle||0;}
-  function onMove(e){if(!active)return;obj.angle=(startAngle+(e.clientX-startX)*0.5+360)%360;_ncoRedrawObj(obj);_ncoRefreshBoxes();}
-  function onUp(){if(!active)return;active=false;_nedSaveSnapshot();if(_ned.ctx)obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);document.removeEventListener('pointerdown',onDown,true);document.removeEventListener('pointermove',onMove,true);document.removeEventListener('pointerup',onUp,true);showToast('✅ Rotated!','success');}
+  function onMove(e){if(!active)return;obj.angle=(startAngle+(e.clientX-startX)*0.5+360)%360;draw();_ncoRefreshBoxes();}
+  function onUp(){if(!active)return;active=false;draw();_nedSaveSnapshot();obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);document.removeEventListener('pointerdown',onDown,true);document.removeEventListener('pointermove',onMove,true);document.removeEventListener('pointerup',onUp,true);showToast('✅ Rotated!','success');_ncoRefreshBoxes();}
   document.addEventListener('pointerdown',onDown,{capture:true,passive:false});
   document.addEventListener('pointermove',onMove,{capture:true,passive:false});
-  document.addEventListener('pointerup',onUp,{capture:true,passive:true});
+  document.addEventListener('pointerup',  onUp,  {capture:true,passive:true});
 }
+
 
 function neDrawSetColor(color, dotEl) {
   _ned.color = color;
