@@ -18989,10 +18989,29 @@ function _csWritePlace() {
   // Close creator panel
   closeCreatorPanel();
 
-  // Init canvas if needed
-  var neBody  = document.getElementById('neBody');
-  var neCanvas= document.getElementById('neDrawCanvas');
-  if(!neCanvas || !neCanvas.getContext) { showToast('Canvas ready nahi hai', 'error'); return; }
+  var neBody   = document.getElementById('neBody');
+  var neCanvas = document.getElementById('neDrawCanvas');
+  if(!neCanvas || !neBody) { showToast('Canvas ready nahi hai', 'error'); return; }
+
+  // ── CRITICAL: ensure canvas is properly sized to full scrollHeight ──
+  // If draw mode is not active, canvas may be un-initialized or wrong size
+  if(!_ned.active) {
+    // Activate draw mode silently (no toast)
+    _ned.active = true;
+    neDrawInit();
+    // Add draw-active class so pointer-events work
+    neCanvas.classList.add('draw-active');
+    neBody.classList.add('draw-mode');
+    var toolbar = document.getElementById('neDrawToolbar');
+    if(toolbar) toolbar.classList.add('visible');
+    var toggleBtn = document.getElementById('neDrawToggleBtn');
+    if(toggleBtn) toggleBtn.classList.add('draw-on');
+  } else {
+    // Already active — just make sure size is correct
+    neDrawResize();
+  }
+
+  // Now canvas is sized: width=body.offsetWidth, height=body.scrollHeight
   var ctx = neCanvas.getContext('2d');
 
   // Measure text dimensions
@@ -19002,10 +19021,10 @@ function _csWritePlace() {
   var maxW  = lines.reduce(function(m,l){ return Math.max(m, ctx.measureText(l).width); }, 0) + 16;
   var totalH= lines.length * lh + 16;
 
-  // Place at visible center of neBody
-  var br = neBody.getBoundingClientRect();
-  var scX = neCanvas.width / br.width;
-  var visibleCenterX = neCanvas.width / 2;
+  // Place at visible center of neBody (accounting for current scroll)
+  var br  = neBody.getBoundingClientRect();
+  var scX = neCanvas.width / br.width;  // ≈1 usually
+  var visibleCenterX = neBody.scrollLeft * scX + (br.width * scX) / 2;
   var visibleCenterY = neBody.scrollTop + br.height / 2;
   var ox = visibleCenterX - maxW / 2;
   var oy = visibleCenterY - totalH / 2;
@@ -19017,14 +19036,14 @@ function _csWritePlace() {
   };
 
   saveCanvasSnapshot();
-  obj.baseSnapshot = ctx.getImageData(0,0,neCanvas.width,neCanvas.height);
+  obj.baseSnapshot = ctx.getImageData(0, 0, neCanvas.width, neCanvas.height);
   _ncoDrawObjOnCtx(ctx, obj);
   _nco.list.push(obj);
   if(inp) inp.value = '';
 
-  // Start the full drag/rotate/resize session
+  // Start fresh drag session
   _csFreshDragSession(neCanvas, ctx, obj, neBody);
-  showToast('☝️ 1-finger=Drag · 2-finger=Rotate+Resize · ✓=Set', 'success');
+  showToast('☝️ 1-finger=Drag · 2-finger=Rotate+Resize · ✓ dabao=Set', 'success');
 }
 
 function _ncoDrawObjOnCtx(ctx, obj) {
@@ -19105,11 +19124,11 @@ function _csFreshDragSession(canvas, ctx, obj, body) {
   fd.canvas      = canvas;
   fd.ctx         = ctx;
   fd.body        = body;
-  fd.pts         = {};          // pointerId → {clientX, clientY}
-  fd.dragOffset  = null;        // {dx, dy} in canvas pixels from obj center
+  fd.pts         = {};
+  fd.dragOffset  = null;
   fd.pinchStart  = null;
   fd.lastClientY = 0;
-  fd.hasMovedOnce = false;      // track if user has dragged at all
+  fd.hasMovedOnce = false;
 
   // Block browser pinch-zoom & double-tap-zoom during session
   fd.metaVP = document.querySelector('meta[name="viewport"]');
@@ -19117,10 +19136,17 @@ function _csFreshDragSession(canvas, ctx, obj, body) {
   if(fd.metaVP) fd.metaVP.content =
     'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no';
 
+  // CRITICAL: body must be scrollable, canvas must NOT capture scroll
+  // body: keep overflow:auto (for scrolling)
+  // canvas: touch-action none so pointer events don't get eaten by scroll
+  canvas.style.touchAction = 'none';
+
   // Suspend draw tool
   _csFreshSetDrawEnabled(false);
 
-  // Make OK button (starts HIDDEN — only shown when fingers lift)
+  // ── OK button ──
+  // Starts VISIBLE immediately — so user can see it exists
+  // Hides when user touches screen, shows again when ALL fingers lift
   var oldOk = document.getElementById('csFreshOkBtn');
   if(oldOk) oldOk.remove();
   var okBtn = document.createElement('button');
@@ -19130,9 +19156,11 @@ function _csFreshDragSession(canvas, ctx, obj, body) {
     'position:fixed','bottom:160px','right:18px','z-index:99999',
     'width:60px','height:60px','border-radius:50%','border:none',
     'background:linear-gradient(135deg,#2e7d32,#43a047)',
-    'color:#fff','font-size:1.6rem','font-weight:900',
+    'color:#fff','font-size:1.7rem','font-weight:900',
     'box-shadow:0 4px 24px rgba(46,125,50,0.65)',
-    'cursor:pointer','display:none','align-items:center','justify-content:center',
+    'cursor:pointer',
+    // VISIBLE immediately on session start
+    'display:flex','align-items:center','justify-content:center',
     '-webkit-tap-highlight-color:transparent','touch-action:manipulation',
     'animation:ncoOkPulse 1.2s ease-in-out infinite'
   ].join(';');
@@ -19142,51 +19170,50 @@ function _csFreshDragSession(canvas, ctx, obj, body) {
   okBtn.addEventListener('pointerdown', function(e){
     e.preventDefault(); e.stopPropagation();
     _csFreshDragCommit();
-  }, {passive:false});
+  }, {passive: false, capture: true});
 
-  // Attach global pointer listeners
-  document.addEventListener('pointerdown',  _fdOnDown,  {capture:true, passive:false});
-  document.addEventListener('pointermove',  _fdOnMove,  {capture:true, passive:false});
-  document.addEventListener('pointerup',    _fdOnUp,    {capture:true, passive:false});
-  document.addEventListener('pointercancel',_fdOnUp,    {capture:true, passive:false});
+  // CRITICAL: ALL listeners passive:false so we can e.preventDefault()
+  // This prevents scroll from firing during drag in visible area
+  // AND allows us to track pointerup reliably (no passive block)
+  document.addEventListener('pointerdown',   _fdOnDown,  {capture:true, passive:false});
+  document.addEventListener('pointermove',   _fdOnMove,  {capture:true, passive:false});
+  document.addEventListener('pointerup',     _fdOnUp,    {capture:true, passive:false});
+  document.addEventListener('pointercancel', _fdOnUp,    {capture:true, passive:false});
 }
 
 function _fdCnt() { return Object.keys(_freshDrag.pts).length; }
 
 function _fdOkShow() {
   var fd = _freshDrag;
-  if(fd.okBtn) { fd.okBtn.style.display = 'flex'; }
+  if(fd.okBtn) fd.okBtn.style.display = 'flex';
 }
 function _fdOkHide() {
   var fd = _freshDrag;
-  if(fd.okBtn) { fd.okBtn.style.display = 'none'; }
+  if(fd.okBtn) fd.okBtn.style.display = 'none';
 }
 
 // ── pointerdown ──
 function _fdOnDown(e) {
   var fd = _freshDrag;
   if(!fd.active) return;
-  if(e.target === fd.okBtn) return;   // let okBtn handle itself
-  e.preventDefault();
+  if(e.target === fd.okBtn) return;
+  e.preventDefault();  // stop scroll / tap-highlight
 
-  // Hide OK when user touches screen again
-  _fdOkHide();
+  _fdOkHide();  // hide OK when user touches
 
   fd.pts[e.pointerId] = {x: e.clientX, y: e.clientY};
   fd.lastClientY = e.clientY;
   var cnt = _fdCnt();
 
   if(cnt === 1) {
-    // 1-finger mode: compute offset from object center in canvas coords
+    // Lock offset: canvas position of finger relative to obj center
     var cp = _fdBodyToCanvas(e.clientX, e.clientY);
     var cx = fd.obj.x + fd.obj.w / 2;
     var cy = fd.obj.y + fd.obj.h / 2;
     fd.dragOffset = { dx: cp.x - cx, dy: cp.y - cy };
     fd.pinchStart = null;
   }
-
   if(cnt === 2) {
-    // 2-finger mode: init pinch from current 2 pointer positions
     var ids = Object.keys(fd.pts);
     var p1  = fd.pts[ids[0]], p2 = fd.pts[ids[1]];
     fd.pinchStart = {
@@ -19196,7 +19223,7 @@ function _fdOnDown(e) {
       h:        fd.obj.h,
       objAngle: fd.obj.angle || 0
     };
-    fd.dragOffset = null;   // disable 1-finger drag while 2 fingers active
+    fd.dragOffset = null;
   }
 }
 
@@ -19205,7 +19232,7 @@ function _fdOnMove(e) {
   var fd = _freshDrag;
   if(!fd.active) return;
   if(!fd.pts[e.pointerId]) return;
-  e.preventDefault();
+  e.preventDefault();  // ALWAYS prevent — stops body scroll during drag
 
   fd.pts[e.pointerId] = {x: e.clientX, y: e.clientY};
   fd.lastClientY = e.clientY;
@@ -19214,37 +19241,30 @@ function _fdOnMove(e) {
   var cnt = _fdCnt();
 
   if(cnt >= 2 && fd.pinchStart) {
-    // ── 2-finger: rotate + resize simultaneously ──
+    // 2-finger: rotate + resize simultaneously
     var ids = Object.keys(fd.pts);
     var p1  = fd.pts[ids[0]], p2 = fd.pts[ids[1]];
     var dist  = Math.hypot(p2.x - p1.x, p2.y - p1.y);
     var angle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180 / Math.PI;
     var scale = dist / Math.max(1, fd.pinchStart.dist);
-
-    // Keep object center fixed while scaling
-    var cx = obj.x + obj.w / 2;
-    var cy = obj.y + obj.h / 2;
+    var cx = obj.x + obj.w / 2, cy = obj.y + obj.h / 2;
     obj.w = Math.max(30, fd.pinchStart.w * scale);
     obj.h = Math.max(16, fd.pinchStart.h * scale);
     obj.x = cx - obj.w / 2;
     obj.y = cy - obj.h / 2;
     obj.angle = fd.pinchStart.objAngle + (angle - fd.pinchStart.angle);
-
     _csRedrawFresh(ctx, obj);
 
   } else if(cnt === 1 && fd.dragOffset !== null) {
-    // ── 1-finger: drag locked to finger ──
-    var cp = _fdBodyToCanvas(e.clientX, e.clientY);
-    // New center = finger position - stored offset
+    // 1-finger: drag — finger position → canvas coords → place obj
+    var cp  = _fdBodyToCanvas(e.clientX, e.clientY);
     var newCx = cp.x - fd.dragOffset.dx;
     var newCy = cp.y - fd.dragOffset.dy;
     obj.x = newCx - obj.w / 2;
     obj.y = newCy - obj.h / 2;
-
     _csRedrawFresh(ctx, obj);
-    fd.hasMovedOnce = true;
 
-    // Auto-scroll check — only scrolls when finger near edge
+    // auto-scroll ONLY when finger is at screen edge
     _fdAutoScroll(e.clientY);
   }
 }
@@ -19259,17 +19279,16 @@ function _fdOnUp(e) {
   var cnt = _fdCnt();
 
   if(cnt === 0) {
-    // All fingers lifted
+    // All fingers lifted — stop auto-scroll + show OK
     if(fd.autoScrollTimer) {
       clearInterval(fd.autoScrollTimer);
       fd.autoScrollTimer = null;
     }
-    // Show OK button every time fingers lift
-    _fdOkShow();
+    _fdOkShow();   // ← ALWAYS show OK when all fingers lift
   }
 
   if(cnt === 1) {
-    // Went from 2→1 finger: re-init drag offset from remaining finger
+    // 2→1 finger: re-init drag offset from the remaining finger
     var remId = Object.keys(fd.pts)[0];
     var rem   = fd.pts[remId];
     var cp    = _fdBodyToCanvas(rem.x, rem.y);
@@ -19348,10 +19367,13 @@ function _csFreshDragCleanup(enableDraw) {
   if(fd.okBtn && fd.okBtn.parentNode) { fd.okBtn.remove(); fd.okBtn = null; }
   if(fd.metaVP && fd.origVP) fd.metaVP.content = fd.origVP;
 
-  document.removeEventListener('pointerdown',  _fdOnDown, true);
-  document.removeEventListener('pointermove',  _fdOnMove, true);
-  document.removeEventListener('pointerup',    _fdOnUp,   true);
-  document.removeEventListener('pointercancel',_fdOnUp,   true);
+  // Restore canvas touch-action
+  if(fd.canvas) fd.canvas.style.touchAction = '';
+
+  document.removeEventListener('pointerdown',   _fdOnDown, true);
+  document.removeEventListener('pointermove',   _fdOnMove, true);
+  document.removeEventListener('pointerup',     _fdOnUp,   true);
+  document.removeEventListener('pointercancel', _fdOnUp,   true);
 
   fd.active = false; fd.pts = {}; fd.dragOffset = null; fd.pinchStart = null;
   if(enableDraw) _csFreshSetDrawEnabled(true);
