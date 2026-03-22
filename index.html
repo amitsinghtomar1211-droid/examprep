@@ -4516,10 +4516,13 @@ function load(){
           if(t.masterNotesHTML === undefined) t.masterNotesHTML = null;
           if(t.masterExtraFacts === undefined) t.masterExtraFacts = [];
           if(t.masterNotesAt === undefined) t.masterNotesAt = null;
+          // Cleanup: remove old canvasPNG fields (too large for storage)
+          delete t.finalNotesCanvasPNG; delete t.smartNotesCanvasPNG;
+          delete t.masterNotesCanvasPNG;
           t.notes.forEach(n=>{
             if(!n.editorHighlights) n.editorHighlights=[];
-            // Ensure editorRichHTML is preserved on load (critical for highlight persistence)
             if(n.editorRichHTML === undefined) n.editorRichHTML = null;
+            delete n.canvasPNG;  // remove old PNG if exists
           });
         });
       });
@@ -7644,7 +7647,7 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   setTimeout(function(){
     showQmapFab && showQmapFab();
     // Restore canvas drawings if saved
-    _neRestoreCanvas(n.canvasPNG || null, n.canvasObjs || null);
+    _neRestoreCanvas(n.canvasObjs || null);
   }, 200);
 }
 
@@ -7786,40 +7789,32 @@ function _doSaveNoteData() {
   var plainText = neGetPlainText();
   var richHTML  = area.innerHTML;
 
-  // ── Canvas state: save PNG + objects list ──
-  var canvasPNG  = null;
+  // ── Canvas: save only object metadata (text, position, size, angle, font)
+  // NEVER save PNG/ImageData — too large for localStorage
   var canvasObjs = null;
-  var neCanvas   = document.getElementById('neDrawCanvas');
-  if(neCanvas && neCanvas.width > 0 && neCanvas.height > 0 &&
-     _ned && _ned.active && _ned.ctx && _nco && _nco.list.length > 0) {
-    try { canvasPNG = neCanvas.toDataURL('image/png'); } catch(e){}
+  if(_nco && _nco.list && _nco.list.length > 0) {
     canvasObjs = _nco.list.map(function(o){
       return { id:o.id, type:o.type, txt:o.txt, opts:o.opts,
                x:o.x, y:o.y, w:o.w, h:o.h, angle:o.angle };
     });
-  } else if(_ned && _ned._savedImage) {
-    canvasPNG = _ned._savedImage;
   }
 
   if(isSpecial === 'finalnotes') {
     t.finalNotes = plainText;
     t.finalNotesAt = new Date().toLocaleDateString('hi-IN');
     t.finalNotesHTML = richHTML;
-    if(canvasPNG)  t.finalNotesCanvasPNG  = canvasPNG;
     if(canvasObjs) t.finalNotesCanvasObjs = canvasObjs;
   } 
   else if(isSpecial === 'smartnotes') {
     t.smartNotesAI = plainText;
     t.smartNotesAt = new Date().toLocaleDateString('hi-IN');
     t.smartNotesHTML = richHTML;
-    if(canvasPNG)  t.smartNotesCanvasPNG  = canvasPNG;
     if(canvasObjs) t.smartNotesCanvasObjs = canvasObjs;
   }
   else if(isSpecial === 'masternotes') {
     t.masterNotes = plainText;
     t.masterNotesAt = new Date().toLocaleDateString('hi-IN');
     t.masterNotesHTML = richHTML;
-    if(canvasPNG)  t.masterNotesCanvasPNG  = canvasPNG;
     if(canvasObjs) t.masterNotesCanvasObjs = canvasObjs;
   }
   else if(isSpecial === 'factspage') {
@@ -7854,7 +7849,6 @@ function _doSaveNoteData() {
     
     n.editorHighlights = _editorState.highlights.slice();
     n.editorRichHTML   = area.innerHTML;
-    if(canvasPNG)  n.canvasPNG  = canvasPNG;
     if(canvasObjs) n.canvasObjs = canvasObjs;
   }
   
@@ -8202,76 +8196,68 @@ function openSpecialEditor(type, sid, secid, tid) {
   // Restore canvas for special notes types
   setTimeout(function(){
     var cvPNG=null, cvObjs=null;
-    if(type==='finalnotes'){ cvPNG=t.finalNotesCanvasPNG||null; cvObjs=t.finalNotesCanvasObjs||null; }
-    else if(type==='smartnotes'){ cvPNG=t.smartNotesCanvasPNG||null; cvObjs=t.smartNotesCanvasObjs||null; }
-    else if(type==='masternotes'){ cvPNG=t.masterNotesCanvasPNG||null; cvObjs=t.masterNotesCanvasObjs||null; }
-    _neRestoreCanvas(cvPNG, cvObjs);
+    if(type==='finalnotes'){ cvObjs=t.finalNotesCanvasObjs||null; }
+    else if(type==='smartnotes'){ cvObjs=t.smartNotesCanvasObjs||null; }
+    else if(type==='masternotes'){ cvObjs=t.masterNotesCanvasObjs||null; }
+    _neRestoreCanvas(cvObjs);
   }, 250);
 }
 
-// ── Restore canvas drawings when editor opens ──
-function _neRestoreCanvas(pngDataUrl, objsList) {
-  // Reset canvas state
+// ── Restore canvas: re-draw all saved text objects from metadata ──
+// No PNG needed — we re-render each object from its txt/opts/position
+function _neRestoreCanvas(objsList) {
   _nco.list = [];
-  _ned._savedImage = null;
 
-  if(!pngDataUrl && (!objsList || !objsList.length)) return;
+  if(!objsList || !objsList.length) return;
 
-  // Ensure draw mode is active
+  // Activate draw mode silently if not already active
+  var canvas = document.getElementById('neDrawCanvas');
+  var body   = document.getElementById('neBody');
+  if(!canvas || !body) return;
+
   if(!_ned.active) {
     _ned.active = true;
     neDrawInit();
-    var cv = document.getElementById('neDrawCanvas');
-    var body = document.getElementById('neBody');
-    if(cv) cv.classList.add('draw-active');
-    if(body) body.classList.add('draw-mode');
-    var tb = document.getElementById('neDrawToolbar');
-    if(tb) tb.classList.add('visible');
-    var tBtn = document.getElementById('neDrawToggleBtn');
-    if(tBtn) tBtn.classList.add('draw-on');
+    canvas.classList.add('draw-active');
+    body.classList.add('draw-mode');
+    var tb   = document.getElementById('neDrawToolbar');   if(tb)   tb.classList.add('visible');
+    var tBtn = document.getElementById('neDrawToggleBtn'); if(tBtn) tBtn.classList.add('draw-on');
   } else {
     neDrawResize();
   }
 
-  var canvas = document.getElementById('neDrawCanvas');
-  if(!canvas || !_ned.ctx) return;
+  if(!_ned.ctx || canvas.width <= 0 || canvas.height <= 0) return;
   var ctx = _ned.ctx;
 
-  if(pngDataUrl) {
-    var img = new Image();
-    img.onload = function(){
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0);
-      // Rebuild _nco.list from saved objects (for adjust mode)
-      if(objsList && objsList.length) {
-        _nco.list = objsList.map(function(o){
-          return {
-            id: o.id, type: o.type, txt: o.txt, opts: o.opts,
-            x: o.x, y: o.y, w: o.w, h: o.h, angle: o.angle,
-            baseSnapshot: null  // will be set on next save
-          };
-        });
-      }
-      _nedSaveSnapshot(); // put in undo history
+  // Clear canvas and re-draw all saved objects
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  _nco.list = objsList.map(function(o){
+    return {
+      id: o.id, type: o.type, txt: o.txt, opts: o.opts,
+      x: o.x, y: o.y, w: o.w, h: o.h, angle: o.angle,
+      baseSnapshot: null
     };
-    img.src = pngDataUrl;
-  }
+  });
+
+  // Draw each object, saving incremental snapshots for adjust mode
+  _nco.list.forEach(function(obj, i){
+    // baseSnapshot = state BEFORE this obj (for clean erase in adjust)
+    if(ctx.canvas.width > 0 && ctx.canvas.height > 0) {
+      obj.baseSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    }
+    _ncoDrawObjOnCtx(ctx, obj);
+  });
 }
 
 function neSaveSnapshot() {
   const area = document.getElementById('noteEditableArea');
   if(!area) return;
-  var canvasData = null;
-  var neCanvas = document.getElementById('neDrawCanvas');
-  // Guard: canvas must be initialized with non-zero dimensions
-  if(neCanvas && _ned && _ned.active && _ned.ctx &&
-     neCanvas.width > 0 && neCanvas.height > 0) {
-    try { canvasData = _ned.ctx.getImageData(0,0,neCanvas.width,neCanvas.height); } catch(e){}
-  }
+  // Store only HTML + highlights + object metadata in undo stack
+  // NO ImageData/PNG — too large, causes memory issues
   _htmlUndoStack.push({
     html: area.innerHTML,
     highlights: JSON.parse(JSON.stringify(_editorState.highlights)),
-    canvasData: canvasData,
     ncoList: JSON.parse(JSON.stringify(_nco.list.map(function(o){
       return {id:o.id,type:o.type,txt:o.txt,opts:o.opts,x:o.x,y:o.y,w:o.w,h:o.h,angle:o.angle};
     })))
@@ -8285,15 +8271,9 @@ function neUndo() {
   if(!area) return;
   if(_htmlUndoStack.length === 0) { showToast('Kuch undo nahi hai', 'error'); return; }
   var neCanvas = document.getElementById('neDrawCanvas');
-  var canvasNow = null;
-  if(neCanvas && _ned && _ned.active && _ned.ctx &&
-     neCanvas.width > 0 && neCanvas.height > 0) {
-    try { canvasNow = _ned.ctx.getImageData(0,0,neCanvas.width,neCanvas.height); } catch(e){}
-  }
   _htmlRedoStack.push({
     html: area.innerHTML,
     highlights: JSON.parse(JSON.stringify(_editorState.highlights)),
-    canvasData: canvasNow,
     ncoList: JSON.parse(JSON.stringify(_nco.list.map(function(o){
       return {id:o.id,type:o.type,txt:o.txt,opts:o.opts,x:o.x,y:o.y,w:o.w,h:o.h,angle:o.angle};
     })))
@@ -8302,11 +8282,8 @@ function neUndo() {
   area.innerHTML = prev.html;
   _editorState.highlights = prev.highlights;
   neAttachEraserToMarks();
-  if(prev.canvasData && neCanvas && _ned && _ned.active && _ned.ctx &&
-     neCanvas.width > 0 && neCanvas.height > 0) {
-    _ned.ctx.putImageData(prev.canvasData, 0, 0);
-  }
-  if(prev.ncoList) _nco.list = prev.ncoList.map(function(o){ return Object.assign({baseSnapshot:null},o); });
+  // Re-render canvas from object list
+  if(prev.ncoList) _neRestoreCanvas(prev.ncoList);
   markModified();
   showToast('Undo ✅', 'success');
 }
@@ -8317,15 +8294,9 @@ function neRedo() {
   if(!area) return;
   if(_htmlRedoStack.length === 0) { showToast('Kuch redo nahi hai', 'error'); return; }
   var neCanvas = document.getElementById('neDrawCanvas');
-  var canvasNow = null;
-  if(neCanvas && _ned && _ned.active && _ned.ctx &&
-     neCanvas.width > 0 && neCanvas.height > 0) {
-    try { canvasNow = _ned.ctx.getImageData(0,0,neCanvas.width,neCanvas.height); } catch(e){}
-  }
   _htmlUndoStack.push({
     html: area.innerHTML,
     highlights: JSON.parse(JSON.stringify(_editorState.highlights)),
-    canvasData: canvasNow,
     ncoList: JSON.parse(JSON.stringify(_nco.list.map(function(o){
       return {id:o.id,type:o.type,txt:o.txt,opts:o.opts,x:o.x,y:o.y,w:o.w,h:o.h,angle:o.angle};
     })))
@@ -8334,11 +8305,8 @@ function neRedo() {
   area.innerHTML = next.html;
   _editorState.highlights = next.highlights;
   neAttachEraserToMarks();
-  if(next.canvasData && neCanvas && _ned && _ned.active && _ned.ctx &&
-     neCanvas.width > 0 && neCanvas.height > 0) {
-    _ned.ctx.putImageData(next.canvasData, 0, 0);
-  }
-  if(next.ncoList) _nco.list = next.ncoList.map(function(o){ return Object.assign({baseSnapshot:null},o); });
+  // Re-render canvas from object list
+  if(next.ncoList) _neRestoreCanvas(next.ncoList);
   markModified();
   showToast('Redo ✅', 'success');
 }
@@ -14180,9 +14148,9 @@ function neDrawUndo() {
     showToast('Kuch undo nahi hai', 'error'); return;
   }
   if(_ned.canvas.width <= 0 || _ned.canvas.height <= 0) return;
-  _ned.redoStack.push(_ned.ctx.getImageData(0, 0, _ned.canvas.width, _ned.canvas.height));
+  if(_ned.canvas.width>0&&_ned.canvas.height>0) _ned.redoStack.push(_ned.ctx.getImageData(0, 0, _ned.canvas.width, _ned.canvas.height));
   var prev = _ned.history.pop();
-  _ned.ctx.putImageData(prev, 0, 0);
+  if(prev instanceof ImageData) _ned.ctx.putImageData(prev, 0, 0);
 }
 
 function neDrawRedo() {
@@ -14386,7 +14354,7 @@ function _adjStart(mode, obj) {
 
   // Erase old position immediately
   function drawClean() {
-    _ned.ctx.putImageData(cleanSnap, 0, 0);
+    if(cleanSnap instanceof ImageData) _ned.ctx.putImageData(cleanSnap, 0, 0);
     _ncoDrawObj(obj);
   }
   drawClean();
@@ -15879,7 +15847,7 @@ function _ncoDrawObj(obj) {
 // Restore canvas to before this obj, then redraw it
 function _ncoRedrawObj(obj) {
   if(!_ned.ctx || !obj.baseSnapshot) return;
-  _ned.ctx.putImageData(obj.baseSnapshot, 0, 0);
+  if(obj.baseSnapshot instanceof ImageData) _ned.ctx.putImageData(obj.baseSnapshot, 0, 0);
   _ncoDrawObj(obj);
 }
 
@@ -16330,35 +16298,65 @@ async function saveToFirebase(){
   setSyncStatus('syncing');
   try{
     const uid = _currentUser.uid;
-    // Deep copy subjects to ensure editorRichHTML, finalNotesHTML, smartNotesHTML are included
-    // These fields store user's highlights and must be persisted to cloud
-    const subjectsToSave = JSON.parse(JSON.stringify(S.subjects || []));
-    const data = {
-      subjects: subjectsToSave,
-      exams: S.exams,
-      activeExamId: S.activeExamId,
-      quizHistory: S.quizHistory.slice(0,60),
-      stats: S.stats,
-      questionVault: (S.questionVault||[]).slice(0,50),
-      savedQuestions: S.savedQuestions||[],
-      wrongedQuestions: S.wrongedQuestions||[],
+    const batch = _db.batch();
+
+    // ── 1. Meta document (small, fast) ──
+    // stats, settings, quiz history, vault — no notes content here
+    const metaRef = _db.collection('users').doc(uid);
+    batch.set(metaRef, {
+      activeExamId:      S.activeExamId || '',
+      model:             S.model || 'llama-3.1-8b-instant',
+      stats:             S.stats,
+      quizHistory:       S.quizHistory.slice(0,60),
+      questionVault:     (S.questionVault||[]).slice(0,50),
+      savedQuestions:    S.savedQuestions||[],
+      wrongedQuestions:  S.wrongedQuestions||[],
       reportedQuestions: S.reportedQuestions||[],
-      pausedQuiz: S.pausedQuiz||null,
-      model: S.model||'llama-3.1-8b-instant',
-      lastSync: firebase.firestore.FieldValue.serverTimestamp()
-    };
-    await _db.collection('users').doc(uid).set(data, {merge:true});
+      pausedQuiz:        S.pausedQuiz||null,
+      exams:             S.exams||[],
+      subjectIds:        (S.subjects||[]).map(s=>s.id),
+      lastSync:          firebase.firestore.FieldValue.serverTimestamp()
+    }, {merge:true});
+
+    // ── 2. Each subject = alag document ──
+    // Subject ke andar sections+topics+notes sab hain
+    // Ek subject ~50-300 KB hoga — 1MB se kabhi cross nahi
+    (S.subjects||[]).forEach(function(subj){
+      var subjRef = _db.collection('users').doc(uid)
+                       .collection('subjects').doc(String(subj.id));
+      // Deep copy — PNG fields already deleted in load()
+      var subjData = JSON.parse(JSON.stringify(subj));
+      batch.set(subjRef, { data: subjData, updatedAt: Date.now() });
+    });
+
+    await batch.commit();
     setSyncStatus('synced');
   }catch(e){
     console.error('Firebase save error:', e);
     setSyncStatus('error');
+    // Agar batch fail ho to legacy single-doc fallback try karo
+    try {
+      await _db.collection('users').doc(_currentUser.uid).set({
+        subjects: JSON.parse(JSON.stringify(S.subjects||[])),
+        exams: S.exams, activeExamId: S.activeExamId,
+        quizHistory: S.quizHistory.slice(0,60),
+        stats: S.stats,
+        questionVault: (S.questionVault||[]).slice(0,50),
+        savedQuestions: S.savedQuestions||[],
+        wrongedQuestions: S.wrongedQuestions||[],
+        reportedQuestions: S.reportedQuestions||[],
+        pausedQuiz: S.pausedQuiz||null,
+        model: S.model||'llama-3.1-8b-instant',
+        lastSync: firebase.firestore.FieldValue.serverTimestamp()
+      }, {merge:true});
+      setSyncStatus('synced');
+    } catch(e2){ console.error('Fallback save error:', e2); }
   }
 }
 
 async function loadFromFirebase(){
   if(!_db || !_currentUser) return;
 
-  // Agar abhi restore hua hai to load mat karo - upload karo
   if(_justRestored) {
     _justRestored = false;
     setSyncStatus('syncing');
@@ -16371,73 +16369,98 @@ async function loadFromFirebase(){
   setSyncStatus('syncing');
   try{
     const uid = _currentUser.uid;
-    const doc = await _db.collection('users').doc(uid).get();
 
-    const localSubjectCount = S.subjects ? S.subjects.length : 0;
-    const localTopicCount = S.subjects ? S.subjects.reduce((a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0),0) : 0;
+    // Local stats for comparison
+    const localTopicCount = (S.subjects||[]).reduce(
+      (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
 
-    if(doc.exists){
-      const d = doc.data();
-      const cloudSubjectCount = d.subjects ? d.subjects.length : 0;
-      const cloudTopicCount = d.subjects ? d.subjects.reduce((a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0),0) : 0;
+    // ── Try new split-doc format first ──
+    const metaDoc = await _db.collection('users').doc(uid).get();
+    var cloudTopicCount = 0;
+    var loadedSubjects = null;
 
-      // Smart decision: load woh jo zyada data hai
-      // Agar local mein restore hua data hai (zyada topics) toh cloud pe save karo
-      if(cloudTopicCount === 0 || localTopicCount > cloudTopicCount) {
-        // Local data zyada hai -- cloud pe upload karo
+    if(metaDoc.exists){
+      const meta = metaDoc.data();
+      const subjectIds = meta.subjectIds || [];
+
+      if(subjectIds.length > 0){
+        // New format — load each subject document
+        const subjDocs = await Promise.all(
+          subjectIds.map(id =>
+            _db.collection('users').doc(uid)
+               .collection('subjects').doc(String(id)).get()
+          )
+        );
+        loadedSubjects = subjDocs
+          .filter(d => d.exists)
+          .map(d => d.data().data)
+          .filter(Boolean);
+        cloudTopicCount = loadedSubjects.reduce(
+          (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
+      } else if(meta.subjects && meta.subjects.length > 0){
+        // Legacy format — single document
+        loadedSubjects = meta.subjects;
+        cloudTopicCount = loadedSubjects.reduce(
+          (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
+      }
+
+      if(!loadedSubjects || cloudTopicCount === 0 || localTopicCount > cloudTopicCount){
+        // Local zyada hai — cloud pe upload
         await saveToFirebase();
         showToast('Local data cloud pe sync ho gaya! ☁️ (' + localTopicCount + ' topics)', 'success');
-      } else if(cloudTopicCount > 0) {
-        // Cloud data load karo -- lekin editor data (richHTML, highlights) local se preserve karo
-        // Pehle local editor data backup karo (note ID -> editorRichHTML, editorHighlights map)
+      } else {
+        // Cloud data load karo
+        // Local editor HTML/highlights backup (latest local = authoritative)
         const localEditorData = {};
         (S.subjects||[]).forEach(sub=>sub.sections.forEach(sec=>sec.topics.forEach(t=>{
-          // Final/Smart notes HTML bhi preserve karo
           if(t.finalNotesHTML) localEditorData['fn_'+t.id] = t.finalNotesHTML;
           if(t.smartNotesHTML) localEditorData['sn_'+t.id] = t.smartNotesHTML;
+          if(t.masterNotesHTML) localEditorData['mn_'+t.id] = t.masterNotesHTML;
           (t.notes||[]).forEach(n=>{
-            if(n.editorRichHTML) localEditorData['n_'+n.id] = { richHTML: n.editorRichHTML, highlights: n.editorHighlights||[] };
+            if(n.editorRichHTML) localEditorData['n_'+n.id] = {
+              richHTML: n.editorRichHTML,
+              highlights: n.editorHighlights||[]
+            };
           });
         })));
 
-        // Cloud subjects load karo
-        S.subjects = d.subjects || [];
-        S.exams = d.exams || [];
-        S.activeExamId = d.activeExamId || '';
-        S.quizHistory = d.quizHistory || [];
-        S.stats = d.stats || {total:0,correct:0,wrong:0,topicStats:{}};
-        S.questionVault = d.questionVault || [];
-        S.savedQuestions = d.savedQuestions || [];
-        S.wrongedQuestions = d.wrongedQuestions || [];
-        S.reportedQuestions = d.reportedQuestions || [];
-        S.pausedQuiz = d.pausedQuiz || null;
-        S.model = d.model || 'llama-3.1-8b-instant';
+        S.subjects          = loadedSubjects;
+        S.exams             = meta.exams || [];
+        S.activeExamId      = meta.activeExamId || '';
+        S.quizHistory       = meta.quizHistory || [];
+        S.stats             = meta.stats || {total:0,correct:0,wrong:0,topicStats:{}};
+        S.questionVault     = meta.questionVault || [];
+        S.savedQuestions    = meta.savedQuestions || [];
+        S.wrongedQuestions  = meta.wrongedQuestions || [];
+        S.reportedQuestions = meta.reportedQuestions || [];
+        S.pausedQuiz        = meta.pausedQuiz || null;
+        S.model             = meta.model || 'llama-3.1-8b-instant';
 
-        // Migrate + local editor data wapas merge karo (refresh ke baad highlights nahi kho)
+        // Cleanup + local editor data merge
         S.subjects.forEach(sub=>sub.sections.forEach(sec=>sec.topics.forEach(t=>{
           if(!t.highlights) t.highlights=[];
           if(!t.savedFacts) t.savedFacts=[];
           if(!t.notes) t.notes=[];
-          // Restore editor HTML from local backup
-          // LOCAL data always prefer karo -- user ne jo last save kiya woh local mein fresh hai
+          // Remove stale PNG fields
+          delete t.finalNotesCanvasPNG; delete t.smartNotesCanvasPNG;
+          delete t.masterNotesCanvasPNG;
+          // Local HTML always prefer (latest save)
           if(localEditorData['fn_'+t.id]) t.finalNotesHTML = localEditorData['fn_'+t.id];
-          else if(!t.finalNotesHTML) t.finalNotesHTML = null;
           if(localEditorData['sn_'+t.id]) t.smartNotesHTML = localEditorData['sn_'+t.id];
-          else if(!t.smartNotesHTML) t.smartNotesHTML = null;
+          if(localEditorData['mn_'+t.id]) t.masterNotesHTML = localEditorData['mn_'+t.id];
           t.notes.forEach(n=>{
             if(!n.editorHighlights) n.editorHighlights=[];
             if(n.editorRichHTML === undefined) n.editorRichHTML = null;
-            // Local richHTML HAMESHA prefer karo -- yeh user ka latest saved data hai
-            const localND = localEditorData['n_'+n.id];
-            if(localND && localND.richHTML) {
-              n.editorRichHTML = localND.richHTML;
-              n.editorHighlights = localND.highlights || [];
+            delete n.canvasPNG;
+            const ld = localEditorData['n_'+n.id];
+            if(ld && ld.richHTML){
+              n.editorRichHTML = ld.richHTML;
+              n.editorHighlights = ld.highlights||[];
             }
           });
         })));
 
         try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
-        // Refresh UI
         renderExamSwitcher(); renderLibrarySelects(); renderLibraryTree();
         renderExamsList(); updateQuizSelects(); renderStats(); updateModePill();
         updateHistBadge(); updateSavedBadge(); updateVaultBadge();
@@ -16445,8 +16468,8 @@ async function loadFromFirebase(){
         showToast('Cloud se data load ho gaya! ☁️ (' + cloudTopicCount + ' topics)', 'success');
       }
     } else {
-      // Pehli baar -- local data cloud pe upload karo
-      if(localTopicCount > 0) {
+      // Pehli baar login — local data upload karo
+      if(localTopicCount > 0){
         await saveToFirebase();
         showToast('Data cloud pe save ho gaya! ☁️', 'success');
       }
@@ -16455,8 +16478,7 @@ async function loadFromFirebase(){
   }catch(e){
     console.error('Firebase load error:', e);
     setSyncStatus('error');
-    // Offline error silently handle karo
-    if(e.message && e.message.includes('offline')) {
+    if(e.message && e.message.includes('offline')){
       showToast('Offline hai -- local data use ho raha hai', 'success');
       setSyncStatus('synced');
     } else {
@@ -19170,7 +19192,7 @@ function _ncoDrawObjOnCtx(ctx, obj) {
 }
 
 function _csRedrawFresh(ctx, obj) {
-  if(!obj.baseSnapshot) return;
+  if(!(obj.baseSnapshot instanceof ImageData)) return;
   ctx.putImageData(obj.baseSnapshot,0,0);
   _ncoDrawObjOnCtx(ctx, obj);
 }
@@ -19238,7 +19260,7 @@ function _csFreshPlaceSession(obj) {
   var cleanSnap = obj.baseSnapshot;
 
   function drawClean() {
-    _ned.ctx.putImageData(cleanSnap, 0, 0);
+    if(cleanSnap instanceof ImageData) _ned.ctx.putImageData(cleanSnap, 0, 0);
     _ncoDrawObj(obj);
   }
   drawClean();
@@ -19612,7 +19634,7 @@ function _adjDoTeleportToVisibleCenter() {
   obj.y = centerY - obj.h / 2;
   obj.baseSnapshot = cleanSnap;
 
-  ctx.putImageData(cleanSnap, 0, 0);
+  if(cleanSnap instanceof ImageData) ctx.putImageData(cleanSnap, 0, 0);
   _ncoDrawObjOnCtx(ctx, obj);
 
   _csFreshPlaceSession(obj);
@@ -19659,7 +19681,7 @@ function _ncoRewriteObj(obj) {
   // Restore canvas to state before this obj
   var neCanvas = document.getElementById('neDrawCanvas');
   if(neCanvas && obj.baseSnapshot) {
-    neCanvas.getContext('2d').putImageData(obj.baseSnapshot, 0, 0);
+    if(obj.baseSnapshot instanceof ImageData) neCanvas.getContext('2d').putImageData(obj.baseSnapshot, 0, 0);
   }
 
   // Turn off adjust mode
@@ -19692,7 +19714,7 @@ function _ncoDeleteObj(obj) {
   }
   var neCanvas = document.getElementById('neDrawCanvas');
   if(neCanvas && obj.baseSnapshot) {
-    neCanvas.getContext('2d').putImageData(obj.baseSnapshot, 0, 0);
+    if(obj.baseSnapshot instanceof ImageData) neCanvas.getContext('2d').putImageData(obj.baseSnapshot, 0, 0);
   }
   _nco.list = _nco.list.filter(function(o){ return o.id !== obj.id; });
   _nedSaveSnapshot();
