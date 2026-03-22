@@ -1045,31 +1045,55 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 /* Text blocks on canvas */
 .sc-text-block {
   position: absolute;
-  min-width: 60px; min-height: 28px;
-  padding: 4px 8px;
-  border: 1.5px dashed rgba(21,101,192,0.4);
+  min-width: 80px;
+  /* height auto — content ke hisaab se grow karega */
+  padding: 6px 10px;
+  /* default: border invisible — sirf select/edit mein dikhega */
+  border: 1.5px solid transparent;
   border-radius: 6px;
-  background: rgba(255,255,255,0.7);
+  background: transparent;
   font-size: 15px;
-  line-height: 1.55;
+  line-height: 1.65;
   color: #1a1a1a;
-  cursor: move;
+  cursor: default;
   user-select: none;
   -webkit-user-select: none;
-  box-shadow: 0 1px 5px rgba(0,0,0,0.08);
+  box-shadow: none;
   word-break: break-word;
-  white-space: pre-wrap;
+  word-wrap: break-word;
+  white-space: normal;      /* normal wrap — vertical type fix */
+  overflow-wrap: break-word;
+  /* width fixed by JS but text wraps inside */
+  box-sizing: border-box;
 }
+/* Handles hidden by default */
+.sc-text-block .sc-block-resize,
+.sc-text-block .sc-block-rotate { display: none; }
+
+/* Selected — show border + handles */
 .sc-text-block.selected {
   border-color: #1565c0;
-  border-style: solid;
-  box-shadow: 0 0 0 2px rgba(21,101,192,0.18);
+  border-style: dashed;
+  background: rgba(255,255,255,0.7);
+  box-shadow: 0 0 0 2px rgba(21,101,192,0.15);
+  cursor: move;
 }
+.sc-text-block.selected .sc-block-resize,
+.sc-text-block.selected .sc-block-rotate { display: flex; }
+
+/* Edit mode */
 .sc-text-block[contenteditable="true"] {
   cursor: text;
-  background: rgba(255,255,255,0.9);
+  border-color: #1565c0;
+  border-style: solid;
+  background: rgba(255,255,255,0.92);
+  box-shadow: 0 2px 12px rgba(21,101,192,0.15);
   outline: none;
+  user-select: text;
+  -webkit-user-select: text;
 }
+.sc-text-block[contenteditable="true"] .sc-block-resize,
+.sc-text-block[contenteditable="true"] .sc-block-rotate { display: none; }
 /* Text block resize handle */
 .sc-block-resize {
   position: absolute;
@@ -1123,9 +1147,13 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   position: absolute;
   top: 0; left: 0;
   pointer-events: none;
-  display: none;
+  display: block;        /* hamesha visible — drawing transparent rahegi */
+  z-index: 5;            /* draw canvas ke upar */
 }
-#scQmCanvas.qm-active { pointer-events: all; }
+#scQmCanvas.qm-active {
+  pointer-events: all;
+  z-index: 10;
+}
 
 /* ── Footer bar ── */
 #scFooter {
@@ -20791,19 +20819,48 @@ function scSetMode(mode, el) {
   _sc.mode = mode;
   document.querySelectorAll('.sc-mode-tab').forEach(function(t){ t.classList.remove('active'); });
   if(el) el.classList.add('active');
+
   var cv = document.getElementById('scCanvas');
-  var qm = document.getElementById('scQmCanvas');
+  var qmcv = document.getElementById('scQmCanvas');
+  var wrap = document.getElementById('scCanvasWrap');
+
+  // Draw canvas: active only in draw mode
   if(cv) cv.style.pointerEvents = (mode === 'draw') ? 'all' : 'none';
-  if(qm) { if(mode==='qmap') qm.classList.add('qm-active'); else qm.classList.remove('qm-active'); }
+
+  // QMap canvas: init size + activate
+  if(qmcv && wrap) {
+    // Always match wrap size
+    if(!qmcv.width || qmcv.width < 10) {
+      qmcv.width  = wrap.offsetWidth  || (cv ? cv.width  : 340);
+      qmcv.height = wrap.offsetHeight || (cv ? cv.height : 480);
+      _sc.qmCanvas = qmcv;
+      _sc.qmCtx    = qmcv.getContext('2d');
+    }
+    if(mode === 'qmap') {
+      qmcv.classList.add('qm-active');
+      _scQmRender(); // re-render existing nodes
+    } else {
+      qmcv.classList.remove('qm-active');
+    }
+  }
+
+  // Text blocks: cursor=move in select mode, default in text mode
+  document.querySelectorAll('.sc-text-block').forEach(function(b){
+    if(mode === 'select') b.style.cursor = 'move';
+    else if(mode === 'text') b.style.cursor = 'default';
+    else b.style.cursor = 'default';
+  });
+
   scDeselectBlock();
   scRenderToolbar();
   scSetStatus();
+
   // Update inline hint
   var hints = {
-    text:   '✍️ Canvas par tap karo → text box add hoga · Double tap box = edit',
-    draw:   '✏️ Finger ghuma do → drawing hogi · Toolbar se tool/color/size choose karo',
-    qmap:   '🗺 Tap = node add · Double tap node = connect · Drag node = move',
-    select: '☝️ Box tap = select → B I U toolbar · Drag = move · Blue dot = resize · Purple = rotate'
+    text:   '✍️ Canvas par tap karo → text add · Double tap box = edit',
+    draw:   '✏️ Finger ghuma do → drawing hogi · Toolbar se tool/color/size',
+    qmap:   '🗺 Tap = node add · Double tap = connect · Drag = move',
+    select: '☝️ Box tap = select → toolbar aayega · Drag = move · Blue = resize · Purple = rotate'
   };
   var hint = document.getElementById('scModeHint');
   if(hint) hint.textContent = hints[mode] || '';
@@ -20833,11 +20890,18 @@ function scInitCanvas() {
   if(!wrap || !cv) return;
   cv.width  = wrap.offsetWidth  || 340;
   cv.height = wrap.offsetHeight || 480;
+  cv.style.width  = cv.width  + 'px';
+  cv.style.height = cv.height + 'px';
+  cv.style.zIndex = '2'; // draw canvas below qmap
   _sc.canvas = cv; _sc.ctx = cv.getContext('2d');
   if(qmcv) {
-    qmcv.width = cv.width; qmcv.height = cv.height;
-    qmcv.style.width = cv.width+'px'; qmcv.style.height = cv.height+'px';
-    _sc.qmCanvas = qmcv; _sc.qmCtx = qmcv.getContext('2d');
+    qmcv.width  = cv.width;
+    qmcv.height = cv.height;
+    qmcv.style.width  = cv.width  + 'px';
+    qmcv.style.height = cv.height + 'px';
+    qmcv.style.zIndex = '5';
+    _sc.qmCanvas = qmcv;
+    _sc.qmCtx    = qmcv.getContext('2d');
   }
   _sc.kfX = new KalmanFilter(); _sc.kfY = new KalmanFilter();
   cv.removeEventListener('pointerdown', _scDrawDown);
@@ -20857,6 +20921,12 @@ function scInitCanvas() {
     qmcv.addEventListener('pointerdown', _scQmDown, { passive:false });
     qmcv.addEventListener('pointermove', _scQmMove, { passive:false });
     qmcv.addEventListener('pointerup',   _scQmUp,   { passive:true  });
+  }
+  // Set initial draw canvas pointer-events based on current mode
+  cv.style.pointerEvents = (_sc.mode === 'draw') ? 'all' : 'none';
+  if(qmcv) {
+    if(_sc.mode === 'qmap') { qmcv.classList.add('qm-active'); _scQmRender(); }
+    else qmcv.classList.remove('qm-active');
   }
 }
 
@@ -21011,32 +21081,51 @@ function _scShowBlockActions(b, el) {
 }
 
 function scEditBlock(b, el) {
-  el.contentEditable='true'; el.focus();
-  var sel=window.getSelection(); var range=document.createRange();
-  range.selectNodeContents(el); range.collapse(false);
-  sel.removeAllRanges(); sel.addRange(range);
-  function onBlur(){
-    el.contentEditable='false'; scSnapshot();
-    var clone=el.cloneNode(true);
-    clone.querySelectorAll('.sc-block-resize,.sc-block-rotate,.sc-block-actions').forEach(function(h){h.remove();});
-    b.html=clone.innerHTML;
-    el.removeEventListener('blur',onBlur);
+  // Hide handles during edit
+  scHideAllBlockActions();
+  el.classList.remove('selected');
+  el.contentEditable = 'true';
+
+  // Focus + cursor at END
+  el.focus();
+  try {
+    var sel = window.getSelection();
+    var range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false); // false = end
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch(ex) {}
+
+  // On blur — save content, remove edit styling, back to plain text
+  function onBlur() {
+    el.contentEditable = 'false';
+    el.classList.remove('selected');
+    // Save HTML content
+    var clone = el.cloneNode(true);
+    clone.querySelectorAll('.sc-block-resize,.sc-block-rotate,.sc-block-actions').forEach(function(h){ h.remove(); });
+    b.html = clone.innerHTML;
+    b.x = parseFloat(el.style.left) || b.x;
+    b.y = parseFloat(el.style.top)  || b.y;
+    scSnapshot();
+    el.removeEventListener('blur', onBlur);
+    // Update active state
+    _sc.activeBlock = null; _sc.activeBlockId = null;
   }
-  el.addEventListener('blur',onBlur);
+  el.addEventListener('blur', onBlur);
 }
 
 function _scRefreshBlock(b) {
-  var el=document.getElementById('scBlock_'+b.id); if(!el) return;
-  el.style.fontWeight=b.bold?'800':'';
-  el.style.fontStyle=b.italic?'italic':'';
-  el.style.textDecoration=b.underline?'underline':'';
-  el.style.fontSize=(b.fontSize||15)+'px';
-  el.style.color=b.color||'#1a1a1a';
-  el.style.transform=b.angle?'rotate('+b.angle+'deg)':'';
-  _scShowBlockActions(b,el);
+  var el = document.getElementById('scBlock_'+b.id); if(!el) return;
+  el.style.fontWeight     = b.bold      ? '800' : '';
+  el.style.fontStyle      = b.italic    ? 'italic' : '';
+  el.style.textDecoration = b.underline ? 'underline' : '';
+  el.style.fontSize       = (b.fontSize||15) + 'px';
+  el.style.color          = b.color || '#1a1a1a';
+  el.style.transform      = b.angle ? 'rotate('+b.angle+'deg)' : '';
+  // Re-show action bar
+  scSelectBlock(b, el);
 }
-
-function _scBlockDrag(b,el) {
   var sx,sy,sbx,sby,drag=false;
   el.addEventListener('pointerdown',function(e){
     if(e.target.classList.contains('sc-block-resize')||e.target.classList.contains('sc-block-rotate')||e.target.classList.contains('sc-block-act-btn')||el.contentEditable==='true') return;
@@ -21082,16 +21171,41 @@ function _scBlockRotate(b,el,handle) {
 }
 
 function _scWrapTap(e) {
-  if(_sc.mode!=='text') return;
-  if(e.target.closest('.sc-text-block')||e.target.closest('.sc-block-actions')) return;
-  var wrap=document.getElementById('scCanvasWrap'); if(!wrap) return;
-  var cur=_scCur(); if(!cur) return;
-  var rect=wrap.getBoundingClientRect();
+  // In select mode — tap on empty area = deselect
+  if(_sc.mode === 'select') {
+    if(!e.target.closest('.sc-text-block') && !e.target.closest('.sc-block-actions')) {
+      scDeselectBlock();
+    }
+    return;
+  }
+  // Only add text block in text mode
+  if(_sc.mode !== 'text') return;
+  if(e.target.closest('.sc-text-block') || e.target.closest('.sc-block-actions')) return;
+
+  var wrap = document.getElementById('scCanvasWrap'); if(!wrap) return;
+  var cur  = _scCur(); if(!cur) return;
+  var rect = wrap.getBoundingClientRect();
+  var tapX = e.clientX - rect.left;
+  var tapY = e.clientY - rect.top;
+
+  // Width: min of 200 or remaining space from tap point
+  var blockW = Math.min(200, Math.max(100, rect.width - tapX - 10));
+  // Keep block within canvas horizontally
+  var blockX = Math.min(tapX, rect.width - blockW - 10);
+
   scSnapshot();
-  var b={id:'scb_'+Date.now(),x:e.clientX-rect.left,y:e.clientY-rect.top,w:160,html:'',fontSize:15,color:'#1a1a1a',bold:false,italic:false,underline:false,angle:0};
+  var b = {
+    id: 'scb_'+Date.now(),
+    x: Math.max(4, blockX),
+    y: Math.max(4, tapY - 10),
+    w: blockW,
+    html: '',
+    fontSize: 15, color: '#1a1a1a',
+    bold: false, italic: false, underline: false, angle: 0
+  };
   cur.textBlocks.push(b);
-  var el=_scCreateBlockDOM(b);
-  if(el) setTimeout(function(){scEditBlock(b,el);},50);
+  var el = _scCreateBlockDOM(b);
+  if(el) setTimeout(function(){ scEditBlock(b, el); }, 50);
 }
 
 function _scSyncTextBlocksDOM() {
