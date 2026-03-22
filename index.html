@@ -1770,8 +1770,9 @@ body.night-mode .creator-fab-label-new { color: #ce93d8; }
 /* FAB toggle button */
 #neQmToggleBtn {
   position: fixed;
-  left: 18px;
-  bottom: 205px;         /* above draw btn (150) and creator btn (205) */
+  right: 72px;
+  bottom: 90px;
+  left: auto;
   z-index: 9700;
   width: 46px; height: 46px;
   border-radius: 14px;
@@ -2248,8 +2249,9 @@ body.night-mode .ndt-sep { background: rgba(255,255,255,0.15); }
 /* Draw mode toggle FAB (on creator fab area) */
 #neDrawToggleBtn {
   position: fixed;
-  left: 18px;
-  bottom: 150px;
+  right: 18px;
+  bottom: 90px;
+  left: auto;
   z-index: 9700;
   width: 46px; height: 46px;
   border-radius: 14px;
@@ -17712,7 +17714,46 @@ initFirebase();
 
 <!-- Mobile Debugger -->
 <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-<script>eruda.init();</script>
+<script>
+// Eruda console — hidden by default, 10 rapid taps anywhere to show
+(function(){
+  eruda.init();
+  // Hide immediately after init
+  try { eruda.hide(); } catch(e){}
+  // Also hide the eruda button
+  var hideErudaBtn = function(){
+    var btn = document.querySelector('.eruda-entry-btn');
+    if(btn) { btn.style.display='none'; btn.style.visibility='hidden'; }
+  };
+  setTimeout(hideErudaBtn, 500);
+  setTimeout(hideErudaBtn, 1500);
+  // 10-tap to toggle
+  var _etaps=0, _etimer=null;
+  document.addEventListener('pointerdown', function(){
+    _etaps++;
+    clearTimeout(_etimer);
+    _etimer = setTimeout(function(){ _etaps=0; }, 1200);
+    if(_etaps >= 10) {
+      _etaps = 0;
+      try {
+        var btn = document.querySelector('.eruda-entry-btn');
+        if(btn) {
+          var visible = btn.style.display !== 'none';
+          btn.style.display = visible ? 'none' : '';
+          btn.style.visibility = visible ? 'hidden' : '';
+          if(!visible) {
+            eruda.show();
+            // Auto-hide after 30s
+            setTimeout(function(){
+              try { eruda.hide(); btn.style.display='none'; btn.style.visibility='hidden'; } catch(e){}
+            }, 30000);
+          }
+        }
+      } catch(e){}
+    }
+  }, { passive: true });
+})();
+</script>
 
 
 <!-- ==================== PDF EXTRACTOR MODAL ==================== -->
@@ -22976,6 +23017,848 @@ function neQmBarDelete() {
 
 // ═══════════════════════════════════════════════════════════════════
 // END QMap Node Bar
+// ═══════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════
+// FEATURE PACK v36
+// 1. QMap whole-map pan + pinch-zoom
+// 2. Study Canvas — PDF download
+// 3. Study Canvas — AI Chat + Quiz + Flashcard from canvas
+// ═══════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────
+// 1. QMap — Pan entire map + Pinch-to-zoom
+// ──────────────────────────────────────────
+(function(){
+  // Add pan/zoom state to _neQm
+  var _qmPan  = { x:0, y:0 };
+  var _qmZoom = 1.0;
+  var _qmPinchStart = null;  // { dist, zoom, midX, midY }
+  var _qmPanStart   = null;  // { x,y, panX,panY } — 2-finger pan
+
+  // Override _neQmPt to account for pan/zoom
+  var _origNeQmPt = window._neQmPt;
+  window._neQmPt = function(e) {
+    var r  = _neQm.canvas.getBoundingClientRect();
+    var sx = _neQm.canvas.width  / r.width;
+    var sy = _neQm.canvas.height / r.height;
+    // Transform screen → canvas → world
+    var cx = (e.clientX - r.left) * sx;
+    var cy = (e.clientY - r.top)  * sy;
+    return {
+      x: (cx - _qmPan.x) / _qmZoom,
+      y: (cy - _qmPan.y) / _qmZoom
+    };
+  };
+
+  // Override _neQmRedraw to apply transform
+  var _origRedraw = window._neQmRedraw;
+  window._neQmRedraw = function() {
+    if(!_neQm.canvas || !_neQm.ctx) return;
+    var ctx = _neQm.ctx;
+    var W   = _neQm.canvas.width;
+    var H   = _neQm.canvas.height;
+    ctx.clearRect(0,0,W,H);
+
+    ctx.save();
+    ctx.translate(_qmPan.x, _qmPan.y);
+    ctx.scale(_qmZoom, _qmZoom);
+
+    // Call original draw logic with transform applied
+    var isDark = document.body.classList.contains('night-mode');
+    // Draw edges
+    _neQm.edges.forEach(function(e){
+      var f=_neQm.nodes.find(function(n){return n.id===e.from;});
+      var t=_neQm.nodes.find(function(n){return n.id===e.to;});
+      if(!f||!t) return;
+      ctx.save();
+      ctx.beginPath(); ctx.moveTo(f.x,f.y); ctx.lineTo(t.x,t.y);
+      ctx.strokeStyle=e.color||'#888'; ctx.lineWidth=2.5/Math.max(_qmZoom,0.3);
+      ctx.setLineDash([]); ctx.stroke();
+      if(e.type!=='line'){
+        var ang=Math.atan2(t.y-f.y,t.x-f.x);
+        ctx.beginPath(); ctx.moveTo(t.x,t.y);
+        ctx.lineTo(t.x-13*Math.cos(ang-0.4),t.y-13*Math.sin(ang-0.4));
+        ctx.lineTo(t.x-13*Math.cos(ang+0.4),t.y-13*Math.sin(ang+0.4));
+        ctx.closePath(); ctx.fillStyle=e.color||'#888'; ctx.fill();
+      }
+      ctx.restore();
+    });
+    // Connector preview
+    if(_neQm.connecting && _neQm.previewPt){
+      ctx.save(); ctx.setLineDash([5,4]);
+      ctx.strokeStyle=_neQm.color; ctx.lineWidth=1.5/Math.max(_qmZoom,0.3);
+      ctx.beginPath(); ctx.moveTo(_neQm.connecting.x,_neQm.connecting.y);
+      ctx.lineTo(_neQm.previewPt.x,_neQm.previewPt.y);
+      ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+    }
+    // Draw nodes
+    var FONT="'Noto Sans Devanagari','Baloo 2',sans-serif";
+    _neQm.nodes.forEach(function(n){
+      ctx.save();
+      var x=n.x,y=n.y,hw=n.w/2,hh=n.h/2;
+      var fill=n.fill||(isDark?'rgba(28,33,40,0.88)':'rgba(255,248,225,0.92)');
+      var stroke=n.stroke||_neQm.color||'#e65100';
+      var sel=_neQm.selectedNode&&_neQm.selectedNode.id===n.id;
+      if(sel){ctx.shadowColor='rgba(230,81,0,0.5)';ctx.shadowBlur=14;}
+      ctx.fillStyle=fill; ctx.strokeStyle=sel?'#e65100':stroke;
+      ctx.lineWidth=(sel?2.8:2)/Math.max(_qmZoom,0.3);
+      ctx.beginPath();
+      if(n.shape==='circle'){ctx.arc(x,y,Math.max(hw,hh),0,Math.PI*2);}
+      else if(n.shape==='diamond'){ctx.moveTo(x,y-hh);ctx.lineTo(x+hw,y);ctx.lineTo(x,y+hh);ctx.lineTo(x-hw,y);ctx.closePath();}
+      else{var r2=Math.min(hh*0.55,14);if(ctx.roundRect)ctx.roundRect(x-hw,y-hh,n.w,n.h,r2);else ctx.rect(x-hw,y-hh,n.w,n.h);}
+      ctx.fill(); ctx.stroke();
+      if(n.text){
+        ctx.shadowBlur=0;
+        ctx.font='700 '+Math.round(13/Math.max(_qmZoom,0.3))+'px '+FONT;
+        ctx.fillStyle=n.textColor||(isDark?'#e8e8e8':'#1a1a2e');
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        var words=n.text.split(' '),lines=[],cur='';
+        words.forEach(function(w){if((cur+w).length>12&&cur){lines.push(cur.trim());cur=w+' ';}else cur+=w+' ';});
+        if(cur.trim())lines.push(cur.trim());
+        var lh=16/Math.max(_qmZoom,0.3);
+        lines.forEach(function(l,i){ctx.fillText(l,x,y+(i-(lines.length-1)/2)*lh);});
+      }
+      ctx.restore();
+    });
+
+    ctx.restore(); // end transform
+
+    // Zoom indicator (if not 1x)
+    if(Math.abs(_qmZoom-1)>0.05){
+      ctx.save();
+      ctx.font='bold 11px sans-serif'; ctx.fillStyle='rgba(0,0,0,0.35)';
+      ctx.fillText(Math.round(_qmZoom*100)+'%', 8, 18);
+      ctx.restore();
+    }
+  };
+
+  // Multi-touch: 2-finger pinch=zoom, 2-finger drag=pan whole map
+  var _qmTouches = {};
+  function _qmDist(t1,t2){ return Math.hypot(t2.x-t1.x,t2.y-t1.y); }
+
+  // Inject multi-touch on QMap canvas after init
+  var _qmMTInstalled = false;
+  function _installQmMultiTouch(){
+    var canvas = document.getElementById('neQmCanvas');
+    if(!canvas||_qmMTInstalled) return;
+    _qmMTInstalled = true;
+
+    canvas.addEventListener('pointerdown', function(e){
+      _qmTouches[e.pointerId] = {x:e.clientX, y:e.clientY};
+      var ids = Object.keys(_qmTouches);
+      if(ids.length === 2){
+        // Start pinch
+        var t1=_qmTouches[ids[0]], t2=_qmTouches[ids[1]];
+        _qmPinchStart = { dist:_qmDist(t1,t2), zoom:_qmZoom,
+          midX:(t1.x+t2.x)/2, midY:(t1.y+t2.y)/2,
+          panX:_qmPan.x, panY:_qmPan.y };
+        _qmPanStart = null;
+      } else if(ids.length === 1 && e.isPrimary){
+        // Could start single-finger pan — handled in pointermove
+      }
+    }, { passive:true });
+
+    canvas.addEventListener('pointermove', function(e){
+      if(!_qmTouches[e.pointerId]) return;
+      _qmTouches[e.pointerId] = {x:e.clientX, y:e.clientY};
+      var ids = Object.keys(_qmTouches);
+      if(ids.length >= 2 && _qmPinchStart){
+        var t1=_qmTouches[ids[0]], t2=_qmTouches[ids[1]];
+        var dist = _qmDist(t1,t2);
+        var newZoom = Math.max(0.25, Math.min(4.0, _qmPinchStart.zoom * (dist/_qmPinchStart.dist)));
+        // Pan to keep midpoint stable
+        var r = _neQm.canvas.getBoundingClientRect();
+        var sx = _neQm.canvas.width/r.width, sy = _neQm.canvas.height/r.height;
+        var midCx = ((t1.x+t2.x)/2 - r.left)*sx;
+        var midCy = ((t1.y+t2.y)/2 - r.top)*sy;
+        var origMidCx = (_qmPinchStart.midX - r.left)*sx;
+        var origMidCy = (_qmPinchStart.midY - r.top)*sy;
+        _qmPan.x = midCx - (origMidCx - _qmPinchStart.panX) * (newZoom/_qmPinchStart.zoom);
+        _qmPan.y = midCy - (origMidCy - _qmPinchStart.panY) * (newZoom/_qmPinchStart.zoom);
+        _qmZoom = newZoom;
+        _neQmRedraw();
+      }
+    }, { passive:true });
+
+    canvas.addEventListener('pointerup', function(e){
+      delete _qmTouches[e.pointerId];
+      if(Object.keys(_qmTouches).length < 2) _qmPinchStart = null;
+    }, { passive:true });
+    canvas.addEventListener('pointercancel', function(e){
+      delete _qmTouches[e.pointerId];
+      _qmPinchStart = null;
+    }, { passive:true });
+  }
+
+  // Add fit/reset button to QMap toolbar
+  var _qmFitBtn = document.createElement('button');
+  _qmFitBtn.className = 'neqm-btn';
+  _qmFitBtn.title = 'Fit / Reset zoom';
+  _qmFitBtn.textContent = '⊡';
+  _qmFitBtn.onclick = function(){
+    _qmZoom = 1.0; _qmPan.x = 0; _qmPan.y = 0;
+    _neQmRedraw();
+    showToast('Map reset to 1x','success');
+  };
+  // Insert into toolbar
+  document.addEventListener('DOMContentLoaded', function(){
+    var tb = document.getElementById('neQmToolbar');
+    if(tb) { var row=document.createElement('div'); row.className='neqm-row'; row.appendChild(_qmFitBtn); tb.appendChild(row); }
+    _installQmMultiTouch();
+  });
+  setTimeout(function(){
+    var tb = document.getElementById('neQmToolbar');
+    if(tb && !tb._fitAdded) {
+      tb._fitAdded=true;
+      var row=document.createElement('div'); row.className='neqm-row'; row.appendChild(_qmFitBtn); tb.appendChild(row);
+    }
+    _installQmMultiTouch();
+  }, 1000);
+
+  // Also install after QM toggle
+  var _origToggle = window.neQmToggle;
+  window.neQmToggle = function(){
+    _origToggle && _origToggle.apply(this,arguments);
+    setTimeout(_installQmMultiTouch, 100);
+  };
+})();
+
+
+// ──────────────────────────────────────────
+// 2. Study Canvas — PDF Download
+// ──────────────────────────────────────────
+function scDownloadPDF() {
+  if(!_sc.slides || !_sc.slides.length){
+    showToast('Canvas mein kuch nahi hai!','error'); return;
+  }
+  showToast('📄 PDF ban raha hai...','success');
+
+  // Sync current slide DOM
+  _scSyncCurrentSlideFromDOM && _scSyncCurrentSlideFromDOM();
+
+  // Use offscreen canvas to render each slide
+  var W = 595, H = 842; // A4 @ 72dpi points
+  var pdfLines = [];
+  // Build minimal PDF manually (no library needed)
+  var pages = [];
+
+  function renderSlideToDataURL(slide, cb){
+    var cvs = document.createElement('canvas');
+    cvs.width = W*2; cvs.height = H*2; // 2x for quality
+    var ctx = cvs.getContext('2d');
+    var scale = 2;
+
+    // Background
+    ctx.fillStyle = slide.bg || '#fffde7';
+    ctx.fillRect(0,0,cvs.width,cvs.height);
+
+    // Draw strokes
+    (slide.strokes||[]).forEach(function(s){
+      if(!s.pts||s.pts.length<2) return;
+      ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
+      if(s.tool==='marker'){ctx.globalAlpha=0.45;ctx.strokeStyle=s.color;ctx.lineWidth=s.size*2.5*scale;}
+      else if(s.tool==='eraser'){ctx.globalCompositeOperation='destination-out';ctx.lineWidth=s.size*4*scale;ctx.strokeStyle='rgba(0,0,0,1)';}
+      else{ctx.strokeStyle=s.color;ctx.lineWidth=s.size*scale;}
+      ctx.beginPath(); ctx.moveTo(s.pts[0].x*scale,s.pts[0].y*scale);
+      for(var i=1;i<s.pts.length-1;i++){
+        var mx=(s.pts[i].x+s.pts[i+1].x)/2*scale, my=(s.pts[i].y+s.pts[i+1].y)/2*scale;
+        ctx.quadraticCurveTo(s.pts[i].x*scale,s.pts[i].y*scale,mx,my);
+      }
+      ctx.lineTo(s.pts[s.pts.length-1].x*scale,s.pts[s.pts.length-1].y*scale);
+      ctx.stroke(); ctx.restore();
+    });
+
+    // QMap nodes
+    (slide.qmNodes||[]).forEach(function(n){
+      ctx.save();
+      ctx.fillStyle=n.fill||'#fff8e1'; ctx.strokeStyle=n.stroke||'#e65100'; ctx.lineWidth=2*scale;
+      ctx.beginPath();
+      if(n.shape==='circle')ctx.arc(n.x*scale,n.y*scale,Math.max(n.w,n.h)/2*scale,0,Math.PI*2);
+      else if(ctx.roundRect)ctx.roundRect((n.x-n.w/2)*scale,(n.y-n.h/2)*scale,n.w*scale,n.h*scale,8*scale);
+      else ctx.rect((n.x-n.w/2)*scale,(n.y-n.h/2)*scale,n.w*scale,n.h*scale);
+      ctx.fill(); ctx.stroke();
+      if(n.label||n.text){
+        ctx.font='bold '+(13*scale)+'px "Noto Sans Devanagari",sans-serif';
+        ctx.fillStyle='#1a1a2e'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText((n.label||n.text||'').substring(0,20),n.x*scale,n.y*scale);
+      }
+      ctx.restore();
+    });
+
+    // Text blocks
+    (slide.textBlocks||[]).forEach(function(b){
+      ctx.save();
+      ctx.translate((b.x+b.w/2)*scale,(b.y+(b.h||30)/2)*scale);
+      if(b.angle) ctx.rotate(b.angle*Math.PI/180);
+      ctx.translate(-(b.w/2)*scale,-((b.h||30)/2)*scale);
+      ctx.font=(b.bold?'800 ':'700 ')+(b.fontSize||15)*scale+'px "Noto Sans Devanagari","Baloo 2",sans-serif';
+      ctx.fillStyle=b.color||'#1a1a1a';
+      if(b.italic) ctx.font='italic '+ctx.font;
+      // Extract plain text from html
+      var tmp=document.createElement('div'); tmp.innerHTML=b.html||'';
+      var txt=tmp.textContent||'';
+      var lines=txt.split('\n');
+      lines.forEach(function(line,li){
+        ctx.fillText(line,0,(li+1)*(b.fontSize||15)*1.5*scale);
+      });
+      ctx.restore();
+    });
+
+    // Slide title watermark
+    ctx.save();
+    ctx.font='bold '+(10*scale)+'px sans-serif';
+    ctx.fillStyle='rgba(0,0,0,0.18)';
+    ctx.fillText(slide.title||'Slide', 10*scale, cvs.height-6*scale);
+    ctx.restore();
+
+    cb(cvs.toDataURL('image/jpeg',0.85));
+  }
+
+  // Build PDF with all slides
+  var slideIndex = 0;
+  var imgDataURLs = [];
+
+  function processNext(){
+    if(slideIndex >= _sc.slides.length){
+      buildAndDownloadPDF(imgDataURLs);
+      return;
+    }
+    renderSlideToDataURL(_sc.slides[slideIndex], function(dataURL){
+      imgDataURLs.push(dataURL);
+      slideIndex++;
+      processNext();
+    });
+  }
+  processNext();
+}
+
+function buildAndDownloadPDF(imgDataURLs){
+  // Minimal hand-crafted PDF with JPEG images
+  var W = 595.28, H = 841.89;
+  var objs = [];
+  var offsets = [];
+  var n = 0;
+
+  function addObj(str){
+    n++;
+    offsets.push(objs.join('').length);
+    objs.push(n+' 0 obj\n'+str+'\nendobj\n');
+    return n;
+  }
+
+  // Catalog & Pages placeholder
+  var catalogId = 1, pagesId = 2;
+  objs.push(''); offsets.push(0); // placeholder catalog
+  objs.push(''); offsets.push(0); // placeholder pages
+  n = 2;
+
+  var pageIds = [];
+  var imageIds = [];
+
+  imgDataURLs.forEach(function(dataURL, i){
+    // Strip header
+    var b64 = dataURL.replace(/^data:image\/jpeg;base64,/,'');
+    var imgBytes = atob(b64);
+    var imgLen   = imgBytes.length;
+
+    // Image object
+    var imgId = ++n;
+    imageIds.push(imgId);
+    offsets.push(objs.join('').length);
+    objs.push(imgId+' 0 obj\n<< /Type /XObject /Subtype /Image /Width '+W*2+' /Height '+H*2+
+      ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+imgLen+' >>\nstream\n'+imgBytes+'\nendstream\nendobj\n');
+
+    // Page content: draw image
+    var content = 'q '+W+' 0 0 '+H+' 0 0 cm /Im'+imgId+' Do Q';
+    var contId = ++n;
+    offsets.push(objs.join('').length);
+    objs.push(contId+' 0 obj\n<< /Length '+content.length+' >>\nstream\n'+content+'\nendstream\nendobj\n');
+
+    // Page object
+    var pageId = ++n;
+    pageIds.push(pageId);
+    offsets.push(objs.join('').length);
+    objs.push(pageId+' 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+W+' '+H+']'+
+      ' /Resources << /XObject << /Im'+imgId+' '+imgId+' 0 R >> >>'+
+      ' /Contents '+contId+' 0 R >>\nendobj\n');
+  });
+
+  // Finalize catalog & pages
+  var catalogStr = '<< /Type /Catalog /Pages 2 0 R >>';
+  var pagesStr   = '<< /Type /Pages /Kids ['+pageIds.join(' 0 R ')+' 0 R] /Count '+pageIds.length+' >>';
+  objs[0] = '1 0 obj\n'+catalogStr+'\nendobj\n';
+  objs[1] = '2 0 obj\n'+pagesStr+'\nendobj\n';
+  // Recalculate offsets
+  offsets = [];
+  var pos = 0;
+  var hdr = '%PDF-1.4\n';
+  pos = hdr.length;
+  for(var i=0;i<objs.length;i++){
+    offsets.push(pos);
+    pos += objs[i].length;
+  }
+
+  var xrefOffset = pos;
+  var xref = 'xref\n0 '+(objs.length+1)+'\n0000000000 65535 f \n';
+  offsets.forEach(function(o){ xref += ('0000000000'+o).slice(-10)+' 00000 n \n'; });
+  var trailer = 'trailer\n<< /Size '+(objs.length+1)+' /Root 1 0 R >>\nstartxref\n'+xrefOffset+'\n%%EOF';
+
+  var pdfContent = hdr + objs.join('') + xref + trailer;
+
+  // Download
+  var blob = new Blob([pdfContent], {type:'application/pdf'});
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href   = url;
+  var topicName = (_sc.tid && getTop&&getTop(_sc.sid,_sc.secid,_sc.tid)) ? getTop(_sc.sid,_sc.secid,_sc.tid).name : 'canvas';
+  a.download = 'StudyCanvas_'+topicName.replace(/[^a-z0-9\u0900-\u097F]/gi,'_')+'_'+Date.now()+'.pdf';
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+  showToast('✅ PDF download shuru ho gaya!','success');
+}
+
+
+// ──────────────────────────────────────────
+// 3. Study Canvas — AI Chat + Quiz + Flashcard
+// ──────────────────────────────────────────
+var _scAI = {
+  open:       false,
+  history:    [],
+  flashcards: [],   // [{id,front,back,difficulty:0-5,nextReview,correct,wrong}]
+  scanData:   null  // last scan of canvas
+};
+
+// Add AI panel HTML to Study Canvas
+(function(){
+  document.addEventListener('DOMContentLoaded', function(){
+    _scAIInjectPanel();
+  });
+  setTimeout(_scAIInjectPanel, 800);
+})();
+
+function _scAIInjectPanel(){
+  if(document.getElementById('scAIPanel')) return;
+  var panel = document.getElementById('studyCanvasPanel');
+  if(!panel) return;
+
+  // Inject CSS
+  var style = document.createElement('style');
+  style.textContent = `
+  #scAIPanel {
+    display:none; position:absolute; inset:0; z-index:55;
+    background:var(--surface,#fff); flex-direction:column;
+    border-radius:inherit; overflow:hidden;
+  }
+  #scAIPanel.open { display:flex; }
+  .scai-header {
+    display:flex; align-items:center; gap:8px; padding:8px 12px;
+    background:linear-gradient(135deg,#1565c0,#6a1b9a); flex-shrink:0;
+  }
+  .scai-title { color:#fff; font-size:0.82rem; font-weight:800; flex:1; }
+  .scai-hbtn { background:rgba(255,255,255,0.18); border:none; color:#fff;
+    border-radius:8px; padding:4px 10px; cursor:pointer; font-size:0.75rem; font-weight:700; }
+  .scai-tabs { display:flex; flex-shrink:0; border-bottom:1.5px solid var(--border,#ddd); }
+  .scai-tab {
+    flex:1; padding:7px 4px; font-size:0.68rem; font-weight:800; text-align:center;
+    cursor:pointer; color:rgba(0,0,0,0.45); border-bottom:2.5px solid transparent;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .scai-tab.active { color:#1565c0; border-bottom-color:#1565c0; }
+  .scai-body { flex:1; overflow-y:auto; padding:10px; display:flex; flex-direction:column; gap:8px; }
+  .scai-msg { padding:8px 10px; border-radius:10px; font-size:0.78rem; line-height:1.6; max-width:92%; }
+  .scai-msg.user { background:#1565c0; color:#fff; align-self:flex-end; }
+  .scai-msg.bot  { background:var(--surface2,#f4f9fe); border:1px solid var(--border,#ddd); align-self:flex-start; }
+  .scai-input-row { display:flex; gap:6px; padding:8px 10px; border-top:1px solid var(--border,#ddd); flex-shrink:0; }
+  .scai-input { flex:1; border:1.5px solid var(--border,#ddd); border-radius:10px; padding:7px 10px; font-family:inherit; font-size:0.8rem; resize:none; outline:none; }
+  .scai-send { background:#1565c0; color:#fff; border:none; border-radius:10px; padding:7px 12px; cursor:pointer; font-weight:800; }
+  .scai-action-row { display:flex; gap:6px; flex-wrap:wrap; padding:0 10px 8px; flex-shrink:0; }
+  .scai-action { padding:5px 10px; border-radius:20px; border:1.5px solid rgba(21,101,192,0.3);
+    background:rgba(21,101,192,0.06); color:#1565c0; font-size:0.68rem; font-weight:800;
+    cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  /* Flashcard styles */
+  .scai-fc { perspective:800px; cursor:pointer; margin-bottom:8px; }
+  .scai-fc-inner { position:relative; width:100%; min-height:100px; transform-style:preserve-3d; transition:transform 0.4s; }
+  .scai-fc.flipped .scai-fc-inner { transform:rotateY(180deg); }
+  .scai-fc-front, .scai-fc-back {
+    position:absolute; width:100%; min-height:100px; padding:12px; box-sizing:border-box;
+    backface-visibility:hidden; border-radius:12px; display:flex; align-items:center; justify-content:center;
+    font-size:0.82rem; font-weight:700; text-align:center; line-height:1.6;
+  }
+  .scai-fc-front { background:linear-gradient(135deg,#e3f2fd,#bbdefb); color:#0d47a1; }
+  .scai-fc-back  { background:linear-gradient(135deg,#e8f5e9,#c8e6c9); color:#1b5e20; transform:rotateY(180deg); }
+  .scai-fc-btns  { display:flex; gap:6px; justify-content:center; margin-top:6px; }
+  .scai-fc-easy  { background:#2e7d32; color:#fff; border:none; border-radius:20px; padding:5px 14px; cursor:pointer; font-size:0.72rem; font-weight:800; }
+  .scai-fc-hard  { background:#c62828; color:#fff; border:none; border-radius:20px; padding:5px 14px; cursor:pointer; font-size:0.72rem; font-weight:800; }
+  .scai-fc-skip  { background:#888;    color:#fff; border:none; border-radius:20px; padding:5px 10px; cursor:pointer; font-size:0.72rem; font-weight:800; }
+  `;
+  document.head.appendChild(style);
+
+  // Inject panel HTML
+  var div = document.createElement('div');
+  div.id = 'scAIPanel';
+  div.innerHTML = `
+    <div class="scai-header">
+      <span class="scai-title">🤖 AI — Canvas Study Assistant</span>
+      <button class="scai-hbtn" onclick="scAIRescan()">🔄 Scan</button>
+      <button class="scai-hbtn" onclick="scAIClose()">✕</button>
+    </div>
+    <div class="scai-tabs">
+      <div class="scai-tab active" onclick="scAISetTab('chat',this)">💬 Chat</div>
+      <div class="scai-tab" onclick="scAISetTab('quiz',this)">❓ Quiz</div>
+      <div class="scai-tab" onclick="scAISetTab('flashcard',this)">🃏 Cards</div>
+    </div>
+    <div class="scai-body" id="scAIBody"></div>
+    <div class="scai-action-row" id="scAIActions">
+      <button class="scai-action" onclick="scAIChat('Meri canvas notes ka summary do')">📋 Summary</button>
+      <button class="scai-action" onclick="scAIChat('Important points kya hain?')">⭐ Key Points</button>
+      <button class="scai-action" onclick="scAIChat('Quiz generate karo')">❓ Quiz</button>
+      <button class="scai-action" onclick="scAIGenerateFlashcards()">🃏 Flashcards</button>
+    </div>
+    <div class="scai-input-row" id="scAIChatRow">
+      <textarea class="scai-input" id="scAIInput" rows="1" placeholder="Canvas notes ke baare mein puchho..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();scAISend();}"></textarea>
+      <button class="scai-send" onclick="scAISend()">➤</button>
+    </div>
+  `;
+  panel.appendChild(div);
+
+  // Add AI button to SC header
+  var header = document.getElementById('scHeader');
+  if(header) {
+    var aiBtn = document.createElement('button');
+    aiBtn.className = 'sc-hbtn';
+    aiBtn.title = 'AI Chat — Canvas se quiz/flashcards';
+    aiBtn.innerHTML = '🤖';
+    aiBtn.style.cssText = 'background:rgba(21,101,192,0.12);color:#1565c0;border-color:rgba(21,101,192,0.3);font-weight:900;';
+    aiBtn.onclick = scAIOpen;
+    // Insert before expand button
+    var expandBtn = document.getElementById('scExpandBtn');
+    if(expandBtn) header.insertBefore(aiBtn, expandBtn);
+    else header.appendChild(aiBtn);
+  }
+
+  // Add download button to SC header
+  if(header) {
+    var dlBtn = document.createElement('button');
+    dlBtn.className = 'sc-hbtn';
+    dlBtn.title = 'PDF Download karo';
+    dlBtn.innerHTML = '⬇️';
+    dlBtn.onclick = scDownloadPDF;
+    var expandBtn2 = document.getElementById('scExpandBtn');
+    if(expandBtn2) header.insertBefore(dlBtn, expandBtn2);
+    else header.appendChild(dlBtn);
+  }
+}
+
+var _scAITab = 'chat';
+var _scAIQuizData = [];
+var _scAIQuizIdx  = 0;
+var _scAIFCIdx    = 0;
+
+function scAISetTab(tab, el) {
+  _scAITab = tab;
+  document.querySelectorAll('.scai-tab').forEach(function(t){ t.classList.remove('active'); });
+  if(el) el.classList.add('active');
+  var chatRow = document.getElementById('scAIChatRow');
+  var actions  = document.getElementById('scAIActions');
+  if(chatRow) chatRow.style.display = (tab==='chat') ? 'flex' : 'none';
+  if(actions) actions.style.display = 'flex';
+  if(tab==='quiz') scAIShowQuiz();
+  if(tab==='flashcard') scAIShowFlashcards();
+}
+
+function scAIOpen() {
+  var p = document.getElementById('scAIPanel');
+  if(p) { p.classList.add('open'); _scAI.open=true; }
+  if(!_scAI.scanData) scAIRescan();
+  else _scAIAddMsg('bot','👋 Canvas scan ready hai! Kuchh puchho ya Quiz/Flashcard tab try karo.');
+}
+function scAIClose() {
+  var p = document.getElementById('scAIPanel');
+  if(p) { p.classList.remove('open'); _scAI.open=false; }
+}
+
+// Scan all canvas slides → extract text for AI
+function scAIRescan() {
+  _scSyncCurrentSlideFromDOM && _scSyncCurrentSlideFromDOM();
+  var allText = [];
+  (_sc.slides||[]).forEach(function(s,i){
+    var parts = ['=== Slide '+(i+1)+(s.title?': '+s.title:'')+' ==='];
+    // Text blocks
+    (s.textBlocks||[]).forEach(function(b){
+      var tmp=document.createElement('div'); tmp.innerHTML=b.html||'';
+      var t=tmp.textContent.trim();
+      if(t) parts.push(t);
+    });
+    // QMap nodes
+    if((s.qmNodes||[]).length){
+      parts.push('[Mind Map: '+(s.qmNodes).map(function(n){return n.label||n.text||'';}).filter(Boolean).join(' → ')+']');
+    }
+    // Strokes note
+    if((s.strokes||[]).length) parts.push('['+s.strokes.length+' handwritten strokes]');
+    if(parts.length>1) allText.push(parts.join('\n'));
+  });
+  _scAI.scanData = allText.join('\n\n') || '(Canvas khali hai)';
+  _scAIAddMsg('bot','✅ Canvas scan ho gaya!\n\n📊 **'+(_sc.slides||[]).length+' slides** scan ki gayi\n\nAb kuchh puchho ya Quiz/Flashcard generate karo!');
+  showToast('Canvas scan complete!','success');
+}
+
+function _scAIAddMsg(role, text){
+  var body = document.getElementById('scAIBody');
+  if(!body) return;
+  _scAI.history.push({role,text});
+  var div = document.createElement('div');
+  div.className = 'scai-msg '+role;
+  div.textContent = text;
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+}
+
+function scAISend() {
+  var inp = document.getElementById('scAIInput');
+  var q = (inp?inp.value:'').trim();
+  if(!q) return;
+  if(inp) inp.value = '';
+  scAIChat(q);
+}
+
+async function scAIChat(question) {
+  if(!S.apiKey){ showToast('API Key daalo!','error'); return; }
+  if(!_scAI.scanData) scAIRescan();
+
+  _scAIAddMsg('user', question);
+  _scAIAddMsg('bot','⏳ Soch raha hoon...');
+
+  var systemPrompt = 'Tum ek study assistant ho. Neeche canvas notes ka content hai jo student ne banaya hai:\n\n'+_scAI.scanData+'\n\nInhi notes ke basis par jawab do. Hindi mein jawab do. Concise raho.';
+
+  try {
+    var resp = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:800,
+        system: systemPrompt,
+        messages:[{role:'user',content:question}]
+      })
+    });
+    var data = await resp.json();
+    var answer = (data.content||[]).map(function(c){return c.text||'';}).join('');
+    // Remove last "thinking" message
+    var body = document.getElementById('scAIBody');
+    if(body && body.lastChild) body.removeChild(body.lastChild);
+    _scAIAddMsg('bot', answer);
+  } catch(err){
+    var body = document.getElementById('scAIBody');
+    if(body && body.lastChild) body.removeChild(body.lastChild);
+    _scAIAddMsg('bot','Error: '+err.message);
+  }
+}
+
+// ── Quiz from canvas ──
+async function scAIGenerateQuiz(){
+  if(!S.apiKey){ showToast('API Key daalo!','error'); return; }
+  if(!_scAI.scanData) scAIRescan();
+  showToast('Quiz ban raha hai...','success');
+
+  var prompt = 'Neeche canvas notes hain. SIRF inhi notes ke content se 5 MCQ quiz questions banao.\n\n'+_scAI.scanData+'\n\nReturn ONLY valid JSON array:\n[{"q":"question","opts":["A","B","C","D"],"ans":0,"exp":"explanation"}]\nans = correct option index (0-3). Hindi mein. No markdown.';
+
+  try {
+    var resp = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1200,messages:[{role:'user',content:prompt}]})
+    });
+    var data = await resp.json();
+    var txt = (data.content||[]).map(function(c){return c.text||'';}).join('');
+    var m = txt.match(/\[[\s\S]*\]/);
+    if(!m) throw new Error('No JSON');
+    _scAIQuizData = JSON.parse(m[0]);
+    _scAIQuizIdx  = 0;
+    scAISetTab('quiz', document.querySelector('.scai-tab:nth-child(2)'));
+    showToast('Quiz ready! '+_scAIQuizData.length+' questions','success');
+  } catch(err){
+    showToast('Quiz error: '+err.message,'error');
+  }
+}
+
+function scAIShowQuiz(){
+  var body = document.getElementById('scAIBody');
+  if(!body) return;
+  body.innerHTML = '';
+
+  if(!_scAIQuizData.length){
+    body.innerHTML = '<div style="text-align:center;padding:20px;color:#888;font-size:0.8rem;">Quiz abhi nahi bana.<br><br></div>';
+    var btn=document.createElement('button');
+    btn.className='scai-action';btn.style.margin='0 auto';btn.textContent='🤖 Quiz Generate Karo';
+    btn.onclick=scAIGenerateQuiz; body.appendChild(btn);
+    return;
+  }
+
+  if(_scAIQuizIdx >= _scAIQuizData.length){
+    body.innerHTML='<div style="text-align:center;padding:20px;font-size:0.88rem;font-weight:800;">🎉 Quiz khatam! Sab questions ho gaye.</div>';
+    var rebtn=document.createElement('button'); rebtn.className='scai-action'; rebtn.style.margin='0 auto';
+    rebtn.textContent='🔄 Dobara karo'; rebtn.onclick=function(){ _scAIQuizIdx=0; scAIShowQuiz(); };
+    body.appendChild(rebtn); return;
+  }
+
+  var q = _scAIQuizData[_scAIQuizIdx];
+  var div = document.createElement('div');
+  div.innerHTML = '<div style="font-size:0.82rem;font-weight:800;margin-bottom:10px;">Q.'+(_scAIQuizIdx+1)+'/'+_scAIQuizData.length+'</div>'+
+    '<div style="font-size:0.8rem;margin-bottom:12px;line-height:1.6;">'+q.q+'</div>';
+  (q.opts||[]).forEach(function(opt,i){
+    var btn=document.createElement('button');
+    btn.style.cssText='width:100%;padding:8px 10px;margin-bottom:6px;border-radius:10px;border:1.5px solid #ddd;background:#f9f9f9;cursor:pointer;text-align:left;font-size:0.78rem;font-family:inherit;';
+    btn.textContent=(i===0?'A':i===1?'B':i===2?'C':'D')+'. '+opt;
+    btn.onclick=function(){
+      // Show result
+      var isCorrect=(i===q.ans);
+      btn.style.background=isCorrect?'#e8f5e9':'#ffebee';
+      btn.style.borderColor=isCorrect?'#2e7d32':'#c62828';
+      div.querySelectorAll('button').forEach(function(b){ b.disabled=true; });
+      // Show explanation
+      var exp=document.createElement('div');
+      exp.style.cssText='margin-top:8px;padding:8px;border-radius:8px;font-size:0.75rem;background:'+(isCorrect?'rgba(46,125,50,0.08)':'rgba(198,40,40,0.06)')+';line-height:1.5;';
+      exp.textContent=(isCorrect?'✅ Sahi! ':'❌ Galat! Sahi: '+(String.fromCharCode(65+q.ans))+'. ')+q.exp;
+      div.appendChild(exp);
+      // Next button
+      var nextBtn=document.createElement('button');
+      nextBtn.className='scai-action'; nextBtn.style.marginTop='8px';
+      nextBtn.textContent=(_scAIQuizIdx+1<_scAIQuizData.length)?'Agla →':'Finish 🎉';
+      nextBtn.onclick=function(){ _scAIQuizIdx++; scAIShowQuiz(); };
+      div.appendChild(nextBtn);
+    };
+    div.appendChild(btn);
+  });
+  body.appendChild(div);
+}
+
+// ── Flashcards from canvas ──
+async function scAIGenerateFlashcards(){
+  if(!S.apiKey){ showToast('API Key daalo!','error'); return; }
+  if(!_scAI.scanData) scAIRescan();
+  if(!confirm('Canvas notes se nayi flashcards banani hain? Purani replace ho jaayengi.')) return;
+  showToast('Flashcards ban rahe hain...','success');
+
+  var prompt = 'Neeche canvas notes hain. SIRF inhi se 8-10 flashcards banao.\n\n'+_scAI.scanData+'\n\nReturn ONLY valid JSON:\n[{"front":"question/term","back":"answer/definition"}]\nHindi mein. No markdown.';
+
+  try {
+    var resp = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:prompt}]})
+    });
+    var data = await resp.json();
+    var txt = (data.content||[]).map(function(c){return c.text||'';}).join('');
+    var m = txt.match(/\[[\s\S]*\]/);
+    if(!m) throw new Error('No JSON');
+    var raw = JSON.parse(m[0]);
+    // Create SRS flashcards
+    _scAI.flashcards = raw.map(function(fc,i){
+      return {
+        id:   'fc_'+Date.now()+'_'+i,
+        front: fc.front,
+        back:  fc.back,
+        difficulty: 2,   // 0=easy 5=hard
+        correct: 0, wrong: 0,
+        nextReview: Date.now()
+      };
+    });
+    // Save to localStorage with topic id
+    var key = 'scFlashcards_'+(_sc.tid||'default');
+    try { localStorage.setItem(key, JSON.stringify(_scAI.flashcards)); } catch(e){}
+    _scAIFCIdx = 0;
+    scAISetTab('flashcard', document.querySelector('.scai-tab:nth-child(3)'));
+    showToast(_scAI.flashcards.length+' flashcards ready!','success');
+  } catch(err){
+    showToast('Flashcard error: '+err.message,'error');
+  }
+}
+
+function scAIShowFlashcards(){
+  var body = document.getElementById('scAIBody'); if(!body) return;
+  body.innerHTML='';
+
+  // Load saved cards if none in memory
+  if(!_scAI.flashcards.length){
+    var key='scFlashcards_'+(_sc.tid||'default');
+    try { var saved=localStorage.getItem(key); if(saved) _scAI.flashcards=JSON.parse(saved); } catch(e){}
+  }
+
+  if(!_scAI.flashcards.length){
+    body.innerHTML='<div style="text-align:center;padding:20px;color:#888;font-size:0.8rem;">Flashcards abhi nahi hain.</div>';
+    var btn=document.createElement('button'); btn.className='scai-action'; btn.style.margin='0 auto';
+    btn.textContent='🤖 Flashcards Generate Karo'; btn.onclick=scAIGenerateFlashcards;
+    body.appendChild(btn); return;
+  }
+
+  // SRS: sort by due first, then by difficulty descending
+  var now = Date.now();
+  var due = _scAI.flashcards.filter(function(c){ return c.nextReview <= now; });
+  due.sort(function(a,b){ return b.difficulty-a.difficulty; });
+  var pending = due.length ? due : _scAI.flashcards.slice();
+
+  if(_scAIFCIdx >= pending.length){
+    body.innerHTML='<div style="text-align:center;padding:16px;font-size:0.82rem;font-weight:800;">🎉 Session done! '+_scAI.flashcards.length+' cards.</div>';
+    var rebtn=document.createElement('button'); rebtn.className='scai-action'; rebtn.style.margin='0 auto';
+    rebtn.textContent='🔄 Dobara'; rebtn.onclick=function(){ _scAIFCIdx=0; scAIShowFlashcards(); };
+    body.appendChild(rebtn); return;
+  }
+
+  var card = pending[_scAIFCIdx];
+  var progress = document.createElement('div');
+  progress.style.cssText='font-size:0.65rem;color:#888;text-align:right;margin-bottom:6px;';
+  progress.textContent=(due.length?due.length+' due':'All done')+' · Card '+(_scAIFCIdx+1)+'/'+pending.length+
+    ' · ✅'+card.correct+' ❌'+card.wrong;
+
+  var fcDiv = document.createElement('div');
+  fcDiv.className='scai-fc';
+  fcDiv.innerHTML='<div class="scai-fc-inner"><div class="scai-fc-front">'+card.front+'</div><div class="scai-fc-back">'+card.back+'</div></div>';
+  fcDiv.onclick=function(){ fcDiv.classList.toggle('flipped'); };
+
+  var hint=document.createElement('div');
+  hint.style.cssText='text-align:center;font-size:0.62rem;color:#aaa;margin-bottom:4px;';
+  hint.textContent='👆 Tap to flip';
+
+  var btns=document.createElement('div'); btns.className='scai-fc-btns';
+  var easyBtn=document.createElement('button'); easyBtn.className='scai-fc-easy'; easyBtn.textContent='✅ Easy';
+  var hardBtn=document.createElement('button'); hardBtn.className='scai-fc-hard'; hardBtn.textContent='❌ Hard';
+  var skipBtn=document.createElement('button'); skipBtn.className='scai-fc-skip'; skipBtn.textContent='⏭ Skip';
+
+  function respond(wasEasy){
+    card.correct += wasEasy ? 1 : 0;
+    card.wrong   += wasEasy ? 0 : 1;
+    // SRS spacing: easy = longer gap, hard = shorter gap
+    var baseMs = 60000; // 1 min base for demo (prod: use days)
+    if(wasEasy){
+      card.difficulty = Math.max(0, card.difficulty-1);
+      card.nextReview  = now + baseMs * Math.pow(2, 5-card.difficulty);
+    } else {
+      card.difficulty = Math.min(5, card.difficulty+1);
+      card.nextReview  = now + baseMs;
+    }
+    // Save
+    var key='scFlashcards_'+(_sc.tid||'default');
+    try { localStorage.setItem(key, JSON.stringify(_scAI.flashcards)); } catch(e){}
+    _scAIFCIdx++;
+    scAIShowFlashcards();
+  }
+
+  easyBtn.onclick=function(e){ e.stopPropagation(); respond(true); };
+  hardBtn.onclick=function(e){ e.stopPropagation(); respond(false); };
+  skipBtn.onclick=function(e){ e.stopPropagation(); _scAIFCIdx++; scAIShowFlashcards(); };
+
+  btns.appendChild(easyBtn); btns.appendChild(hardBtn); btns.appendChild(skipBtn);
+  body.appendChild(progress); body.appendChild(fcDiv); body.appendChild(hint); body.appendChild(btns);
+
+  // Rescan button if needed
+  var rsBtn=document.createElement('button'); rsBtn.className='scai-action'; rsBtn.style.marginTop='8px';
+  rsBtn.textContent='🔄 Rescan & Update Cards'; rsBtn.onclick=function(){ scAIRescan(); scAIGenerateFlashcards(); };
+  body.appendChild(rsBtn);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// END Feature Pack v36
 // ═══════════════════════════════════════════════════════════════════
 </script>
 </body>
