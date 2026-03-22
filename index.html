@@ -7790,14 +7790,14 @@ function _doSaveNoteData() {
   var canvasPNG  = null;
   var canvasObjs = null;
   var neCanvas   = document.getElementById('neDrawCanvas');
-  if(neCanvas && _ned && _ned.active && _nco && _nco.list.length > 0) {
+  if(neCanvas && neCanvas.width > 0 && neCanvas.height > 0 &&
+     _ned && _ned.active && _ned.ctx && _nco && _nco.list.length > 0) {
     try { canvasPNG = neCanvas.toDataURL('image/png'); } catch(e){}
-    // Save object metadata (txt, opts, x,y,w,h,angle) — no ImageData (too large)
     canvasObjs = _nco.list.map(function(o){
       return { id:o.id, type:o.type, txt:o.txt, opts:o.opts,
                x:o.x, y:o.y, w:o.w, h:o.h, angle:o.angle };
     });
-  } else if(neCanvas && _ned && _ned._savedImage) {
+  } else if(_ned && _ned._savedImage) {
     canvasPNG = _ned._savedImage;
   }
 
@@ -8261,10 +8261,11 @@ function _neRestoreCanvas(pngDataUrl, objsList) {
 function neSaveSnapshot() {
   const area = document.getElementById('noteEditableArea');
   if(!area) return;
-  // Include canvas state in undo snapshot
   var canvasData = null;
   var neCanvas = document.getElementById('neDrawCanvas');
-  if(neCanvas && _ned && _ned.active) {
+  // Guard: canvas must be initialized with non-zero dimensions
+  if(neCanvas && _ned && _ned.active && _ned.ctx &&
+     neCanvas.width > 0 && neCanvas.height > 0) {
     try { canvasData = _ned.ctx.getImageData(0,0,neCanvas.width,neCanvas.height); } catch(e){}
   }
   _htmlUndoStack.push({
@@ -8285,7 +8286,8 @@ function neUndo() {
   if(_htmlUndoStack.length === 0) { showToast('Kuch undo nahi hai', 'error'); return; }
   var neCanvas = document.getElementById('neDrawCanvas');
   var canvasNow = null;
-  if(neCanvas && _ned && _ned.active) {
+  if(neCanvas && _ned && _ned.active && _ned.ctx &&
+     neCanvas.width > 0 && neCanvas.height > 0) {
     try { canvasNow = _ned.ctx.getImageData(0,0,neCanvas.width,neCanvas.height); } catch(e){}
   }
   _htmlRedoStack.push({
@@ -8300,8 +8302,8 @@ function neUndo() {
   area.innerHTML = prev.html;
   _editorState.highlights = prev.highlights;
   neAttachEraserToMarks();
-  // Restore canvas
-  if(prev.canvasData && neCanvas && _ned && _ned.active) {
+  if(prev.canvasData && neCanvas && _ned && _ned.active && _ned.ctx &&
+     neCanvas.width > 0 && neCanvas.height > 0) {
     _ned.ctx.putImageData(prev.canvasData, 0, 0);
   }
   if(prev.ncoList) _nco.list = prev.ncoList.map(function(o){ return Object.assign({baseSnapshot:null},o); });
@@ -8316,7 +8318,8 @@ function neRedo() {
   if(_htmlRedoStack.length === 0) { showToast('Kuch redo nahi hai', 'error'); return; }
   var neCanvas = document.getElementById('neDrawCanvas');
   var canvasNow = null;
-  if(neCanvas && _ned && _ned.active) {
+  if(neCanvas && _ned && _ned.active && _ned.ctx &&
+     neCanvas.width > 0 && neCanvas.height > 0) {
     try { canvasNow = _ned.ctx.getImageData(0,0,neCanvas.width,neCanvas.height); } catch(e){}
   }
   _htmlUndoStack.push({
@@ -8331,7 +8334,8 @@ function neRedo() {
   area.innerHTML = next.html;
   _editorState.highlights = next.highlights;
   neAttachEraserToMarks();
-  if(next.canvasData && neCanvas && _ned && _ned.active) {
+  if(next.canvasData && neCanvas && _ned && _ned.active && _ned.ctx &&
+     neCanvas.width > 0 && neCanvas.height > 0) {
     _ned.ctx.putImageData(next.canvasData, 0, 0);
   }
   if(next.ncoList) _nco.list = next.ncoList.map(function(o){ return Object.assign({baseSnapshot:null},o); });
@@ -13873,7 +13877,7 @@ function neDrawResize() {
   var body = document.getElementById('neBody');
   if(!body) return;
   // Save current drawing
-  var savedData = _ned.history.length
+  var savedData = (_ned.history.length && _ned.canvas.width > 0 && _ned.canvas.height > 0)
     ? _ned.ctx.getImageData(0, 0, _ned.canvas.width, _ned.canvas.height)
     : null;
   _ned.canvas.width  = body.offsetWidth;
@@ -14165,7 +14169,8 @@ function _nedSmoothPath(ctx, pts) {
 
 // ── History ──
 function _nedSaveSnapshot() {
-  if(!_ned.ctx) return;
+  if(!_ned.ctx || !_ned.canvas) return;
+  if(_ned.canvas.width <= 0 || _ned.canvas.height <= 0) return;
   _ned.history.push(_ned.ctx.getImageData(0, 0, _ned.canvas.width, _ned.canvas.height));
   if(_ned.history.length > 30) _ned.history.shift();
 }
@@ -14174,7 +14179,7 @@ function neDrawUndo() {
   if(!_ned.ctx || _ned.history.length === 0) {
     showToast('Kuch undo nahi hai', 'error'); return;
   }
-  // Save current to redo
+  if(_ned.canvas.width <= 0 || _ned.canvas.height <= 0) return;
   _ned.redoStack.push(_ned.ctx.getImageData(0, 0, _ned.canvas.width, _ned.canvas.height));
   var prev = _ned.history.pop();
   _ned.ctx.putImageData(prev, 0, 0);
@@ -14568,7 +14573,7 @@ function _adjCleanup(canvas, body, metaVP, origVP, okBtn, drawFn, obj) {
   drawFn();
   // Save snapshot
   _nedSaveSnapshot();
-  obj.baseSnapshot = _ned.ctx.getImageData(0,0,canvas.width,canvas.height);
+  if(canvas.width>0&&canvas.height>0) obj.baseSnapshot = _ned.ctx.getImageData(0,0,canvas.width,canvas.height);
   // Remove OK button
   if(okBtn && okBtn.parentNode) okBtn.remove();
   // Remove event listeners
@@ -16170,7 +16175,7 @@ function _ncoEnsureHandlers() {
     if(adjustActive && adjustObj && cnt()===0) {
       // Save adjusted state
       _nedSaveSnapshot();
-      if(_ned.ctx) adjustObj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);
+      if(_ned.ctx&&canvas.width>0&&canvas.height>0) adjustObj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);
       pinchStart.dist=null; moveStartX=null;
       // Keep adjustActive=true so user can keep adjusting
       _ncoShowHandle(adjustObj);
@@ -19147,7 +19152,7 @@ function _csWritePlace() {
   };
 
   saveCanvasSnapshot();
-  obj.baseSnapshot = ctx.getImageData(0, 0, neCanvas.width, neCanvas.height);
+  if(neCanvas.width>0&&neCanvas.height>0) if(neCanvas.width>0&&neCanvas.height>0) obj.baseSnapshot = ctx.getImageData(0, 0, neCanvas.width, neCanvas.height);
   _ncoDrawObjOnCtx(ctx, obj);
   _nco.list.push(obj);
   if(inp) inp.value = '';
@@ -19364,7 +19369,7 @@ function _csFreshPlaceSession(obj) {
     // Save final state
     drawClean();
     _nedSaveSnapshot();
-    obj.baseSnapshot = _ned.ctx.getImageData(0, 0, canvas.width, canvas.height);
+    if(canvas.width>0&&canvas.height>0) obj.baseSnapshot = _ned.ctx.getImageData(0, 0, canvas.width, canvas.height);
     okBtn.remove();
     // Turn adjust mode OFF — restore draw tool
     _nco.adjustMode = false;
