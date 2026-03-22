@@ -2821,12 +2821,19 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         <!-- Canvas preview -->
         <canvas id="csWritePreview" height="80"
           style="width:100%;border:1.5px solid var(--border);border-radius:10px;background:#fff;display:block;"></canvas>
+        <!-- Hide popup button -->
+        <button onclick="_csHideWritePopup()"
+          id="csHidePopupBtn"
+          style="padding:10px;border-radius:12px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text2);font-size:0.82rem;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px;">
+          👁️ Hide Popup — Scroll to Position
+        </button>
         <!-- Place button -->
         <button onclick="_csWritePlace()"
+          id="csPlaceOnCanvasBtn"
           style="padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.88rem;font-weight:800;cursor:pointer;font-family:inherit;">
           ✓ Place on Canvas
         </button>
-        <div style="font-size:0.62rem;color:var(--text2);text-align:center;">Drag · 2-finger pinch+rotate · Double-tap=adjust · Triple-tap=rewrite</div>
+        <div style="font-size:0.62rem;color:var(--text2);text-align:center;">Drag · 2-finger=Rotate+Resize · OK=Set · Adjust Mode=Edit later</div>
       </div>
 
       <div id="creator-tab-insert" style="display:none;flex:1;align-items:center;justify-content:center;flex-direction:column;gap:8px;padding:20px;text-align:center;">
@@ -14207,45 +14214,7 @@ function _ncoRefreshBoxes() {
   if(_nco.adjustMode) _ncoShowAllBoxes();
 }
 
-// ─────────────────────────────────────────────────────────
-// THREE-DOT MENU
-// ─────────────────────────────────────────────────────────
-function _ncoOnThreeDot(obj, dot3El, boxEl) {
-  document.querySelectorAll('.nco-adj-box').forEach(function(b){ b.classList.remove('active-box'); });
-  boxEl.classList.add('active-box');
-  _ncoHideCtxMenu();
-
-  var menu = document.createElement('div');
-  menu.className = 'nco-ctx-menu'; menu.id = 'ncoCtxMenu';
-  var dr   = dot3El.getBoundingClientRect();
-  var left = Math.min(Math.max(dr.left - 10, 8), window.innerWidth - 190);
-  var top  = dr.bottom + 6;
-  if(top + 230 > window.innerHeight) top = Math.max(dr.top - 235, 8);
-  menu.style.left = left + 'px'; menu.style.top = top + 'px';
-
-  function item(icon, label, cls, cb) {
-    var d = document.createElement('div');
-    d.className = 'nco-ctx-item' + (cls ? ' '+cls : '');
-    d.innerHTML = '<span style="font-size:1.1rem;width:24px;display:inline-block;text-align:center;">' + icon + '</span> ' + label;
-    d.addEventListener('pointerdown', function(e) { e.stopPropagation(); _ncoHideCtxMenu(); cb(); });
-    menu.appendChild(d);
-  }
-  item('↔️', 'Drag / Move',    '',       function(){ _adjStart('drag',   obj); });
-  item('⤢',  'Resize',         '',       function(){ _adjStart('resize', obj); });
-  item('🔄', 'Rotate',         '',       function(){ _adjStart('rotate', obj); });
-  item('🗑', 'Delete',         'danger', function(){ _ncoDeleteObj(obj); _ncoRefreshBoxes(); });
-  document.body.appendChild(menu);
-
-  setTimeout(function(){
-    function closeMenu(e){
-      if(!menu.contains(e.target) && e.target !== dot3El){
-        _ncoHideCtxMenu();
-        document.removeEventListener('pointerdown', closeMenu, true);
-      }
-    }
-    document.addEventListener('pointerdown', closeMenu, true);
-  }, 60);
-}
+// THREE-DOT MENU — defined later in v31 improved section (search _ncoOnThreeDot)
 
 function _ncoHideCtxMenu() {
   var m = document.getElementById('ncoCtxMenu'); if(m) m.remove();
@@ -18916,10 +18885,13 @@ function fcDeleteFact(level, sid, secid, tid, factId) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// CREATOR STUDIO — WRITE TAB JS
-// Same engine as notes write mode, works on _dc canvas
+// CREATOR STUDIO — WRITE TAB JS  (v31 — Full Improved)
 // ═══════════════════════════════════════════════════════════════
 var _csW = { font:'normal', size:28, effect:'none', color:'#000000' };
+
+// Popup hide/show state
+var _csPopupHidden = false;
+var _csUnhideBtn   = null;
 
 function _csInitWriteTab() {
   _csUpdatePreview();
@@ -18964,26 +18936,79 @@ function _csUpdatePreview() {
     { font:_csW.font, size:previewSize, effect:_csW.effect, color:_csW.color });
 }
 
+// ── Hide popup so user can scroll & find placement position ──
+function _csHideWritePopup() {
+  var inp = document.getElementById('csWriteInput');
+  var txt = inp ? inp.value.trim() : '';
+  if(!txt) { showToast('Pehle text likhein!', 'error'); return; }
+
+  // Hide the Creator overlay
+  var ov = document.getElementById('creatorOverlay');
+  if(ov) ov.style.visibility = 'hidden';
+  _csPopupHidden = true;
+
+  // Show floating "Unhide" button
+  if(_csUnhideBtn) _csUnhideBtn.remove();
+  var btn = document.createElement('button');
+  btn.id = 'csUnhidePopupBtn';
+  _csUnhideBtn = btn;
+  btn.innerHTML = '✍️ Popup Wapas Lao';
+  btn.style.cssText = [
+    'position:fixed','bottom:100px','left:50%','transform:translateX(-50%)',
+    'z-index:99999','padding:12px 22px','border-radius:24px','border:none',
+    'background:linear-gradient(135deg,#1565c0,#1976d2)','color:#fff',
+    'font-size:0.88rem','font-weight:800','font-family:inherit',
+    'box-shadow:0 4px 20px rgba(21,101,192,0.5)',
+    'cursor:pointer','-webkit-tap-highlight-color:transparent',
+    'touch-action:manipulation'
+  ].join(';');
+  btn.addEventListener('pointerdown', function(e){
+    e.preventDefault();
+    _csShowWritePopup();
+  });
+  document.body.appendChild(btn);
+
+  showToast('📜 Scroll karein — phir "Popup Wapas Lao" dabayein', 'success');
+}
+
+function _csShowWritePopup() {
+  var ov = document.getElementById('creatorOverlay');
+  if(ov) ov.style.visibility = '';
+  _csPopupHidden = false;
+  if(_csUnhideBtn) { _csUnhideBtn.remove(); _csUnhideBtn = null; }
+}
+
+// ── Place text on canvas at cursor/center, then start drag ──
 function _csWritePlace() {
   var inp = document.getElementById('csWriteInput');
   var txt = inp ? inp.value.trim() : '';
   if(!txt) { showToast('Pehle text likhein!', 'error'); return; }
 
-  if(!_dc.canvas) {
-    initDrawCanvas();
-    setTimeout(_csWritePlace, 120);
-    return;
-  }
-  var canvas = _dc.canvas, ctx = _dc.ctx;
+  // Make sure popup is shown again
+  _csShowWritePopup();
+  // Close creator panel
+  closeCreatorPanel();
 
-  // Measure
+  // Init canvas if needed
+  var neBody  = document.getElementById('neBody');
+  var neCanvas= document.getElementById('neDrawCanvas');
+  if(!neCanvas || !neCanvas.getContext) { showToast('Canvas ready nahi hai', 'error'); return; }
+  var ctx = neCanvas.getContext('2d');
+
+  // Measure text dimensions
   ctx.font = _ncoGetFontString(_csW.font, _csW.size);
   var lines = txt.split('\n');
   var lh    = _csW.size * 1.3;
   var maxW  = lines.reduce(function(m,l){ return Math.max(m, ctx.measureText(l).width); }, 0) + 16;
   var totalH= lines.length * lh + 16;
-  var ox = canvas.width/2 - maxW/2;
-  var oy = canvas.height/2 - totalH/2;
+
+  // Place at visible center of neBody
+  var br = neBody.getBoundingClientRect();
+  var scX = neCanvas.width / br.width;
+  var visibleCenterX = neCanvas.width / 2;
+  var visibleCenterY = neBody.scrollTop + br.height / 2;
+  var ox = visibleCenterX - maxW / 2;
+  var oy = visibleCenterY - totalH / 2;
 
   var obj = {
     id:'nco_'+Date.now(), type:'text', txt:txt,
@@ -18992,13 +19017,14 @@ function _csWritePlace() {
   };
 
   saveCanvasSnapshot();
-  obj.baseSnapshot = ctx.getImageData(0,0,canvas.width,canvas.height);
+  obj.baseSnapshot = ctx.getImageData(0,0,neCanvas.width,neCanvas.height);
   _ncoDrawObjOnCtx(ctx, obj);
   _nco.list.push(obj);
   if(inp) inp.value = '';
 
-  _csStartFreshDrag(canvas, ctx, obj);
-  showToast('✋ Drag · 2-finger=pinch+rotate · Release=set', 'success');
+  // Start the full drag/rotate/resize session
+  _csFreshDragSession(neCanvas, ctx, obj, neBody);
+  showToast('☝️ 1-finger=Drag · 2-finger=Rotate+Resize · ✓=Set', 'success');
 }
 
 function _ncoDrawObjOnCtx(ctx, obj) {
@@ -19009,65 +19035,428 @@ function _ncoDrawObjOnCtx(ctx, obj) {
   ctx.restore();
 }
 
-function _csRedrawObj(ctx, canvas, obj) {
+function _csRedrawFresh(ctx, obj) {
   if(!obj.baseSnapshot) return;
   ctx.putImageData(obj.baseSnapshot,0,0);
-  _ncoDrawObjOnCtx(ctx,obj);
+  _ncoDrawObjOnCtx(ctx, obj);
 }
 
-function _csStartFreshDrag(canvas, ctx, obj) {
-  var pts = {}, moveStartX=null, moveStartY=null;
-  var origX=obj.x, origY=obj.y;
-  var pinch = { dist:null, angle:null, w:null, h:null, objAngle:null };
+// ═══════════════════════════════════════════════════════════════
+// FRESH DRAG SESSION — after "Place on Canvas"
+// 1-finger: drag (with edge auto-scroll)
+// 2-finger: rotate + resize simultaneously (no browser pinch-zoom)
+// finger→1: seamlessly switches to drag
+// OK button appears when fingers lift → click OK to commit
+// Draw mode features auto-disabled during this session
+// ═══════════════════════════════════════════════════════════════
+var _freshDrag = {
+  active: false,
+  pts: {},
+  obj: null,
+  canvas: null,
+  ctx: null,
+  body: null,
+  dragStart: null,      // {cx,cy,ox,oy}
+  pinchStart: null,     // {dist,angle,w,h,objAngle}
+  okBtn: null,
+  autoScrollTimer: null,
+  lastClientY: 0,
+  metaVP: null,
+  origVP: ''
+};
 
-  function cnt(){ return Object.keys(pts).length; }
+function _csFreshDragSession(canvas, ctx, obj, body) {
+  var fd = _freshDrag;
+  // Cleanup any previous
+  _csFreshDragCleanup(false);
 
-  function onDown(e) {
+  fd.active  = true;
+  fd.obj     = obj;
+  fd.canvas  = canvas;
+  fd.ctx     = ctx;
+  fd.body    = body;
+  fd.pts     = {};
+  fd.dragStart  = null;
+  fd.pinchStart = null;
+  fd.lastClientY= 0;
+
+  // Disable viewport pinch-zoom to avoid conflict with 2-finger rotate/resize
+  fd.metaVP = document.querySelector('meta[name="viewport"]');
+  fd.origVP = fd.metaVP ? fd.metaVP.content : '';
+  if(fd.metaVP) fd.metaVP.content = 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no';
+
+  // Disable draw-mode features while dragging
+  _csFreshSetDrawEnabled(false);
+
+  // OK button (hidden initially — shows when all fingers lift)
+  var okBtn = document.getElementById('csFreshOkBtn');
+  if(okBtn) okBtn.remove();
+  okBtn = document.createElement('button');
+  okBtn.id = 'csFreshOkBtn';
+  okBtn.innerHTML = '<span style="font-size:1.4rem;line-height:1;">✓</span>';
+  okBtn.style.cssText = [
+    'position:fixed','bottom:160px','right:18px','z-index:99999',
+    'width:58px','height:58px','border-radius:50%','border:none',
+    'background:linear-gradient(135deg,#2e7d32,#43a047)',
+    'color:#fff','font-weight:900',
+    'box-shadow:0 4px 24px rgba(46,125,50,0.6)',
+    'cursor:pointer','display:none','align-items:center','justify-content:center',
+    '-webkit-tap-highlight-color:transparent','touch-action:manipulation',
+    'animation:ncoOkPulse 1.2s ease-in-out infinite'
+  ].join(';');
+  document.body.appendChild(okBtn);
+  fd.okBtn = okBtn;
+
+  okBtn.addEventListener('pointerdown', function(e){
     e.preventDefault(); e.stopPropagation();
-    try{ canvas.setPointerCapture(e.pointerId); } catch(x){}
-    pts[e.pointerId] = {x:e.clientX, y:e.clientY};
-    if(cnt()===1){ moveStartX=e.clientX; moveStartY=e.clientY; origX=obj.x; origY=obj.y; pinch.dist=null; }
-    if(cnt()===2){
-      var ids=Object.keys(pts), t1=pts[ids[0]], t2=pts[ids[1]];
-      pinch = { dist:Math.hypot(t2.x-t1.x,t2.y-t1.y), angle:Math.atan2(t2.y-t1.y,t2.x-t1.x)*180/Math.PI, w:obj.w, h:obj.h, objAngle:obj.angle||0 };
-      moveStartX=null;
+    _csFreshDragCommit();
+  });
+
+  document.addEventListener('pointerdown', _fdOnDown, {capture:true, passive:false});
+  document.addEventListener('pointermove', _fdOnMove, {capture:true, passive:false});
+  document.addEventListener('pointerup',   _fdOnUp,   {capture:true, passive:true});
+  document.addEventListener('pointercancel',_fdOnUp,  {capture:true, passive:true});
+}
+
+function _fdCnt() { return Object.keys(_freshDrag.pts).length; }
+
+function _fdOnDown(e) {
+  var fd = _freshDrag;
+  if(!fd.active) return;
+  if(e.target === fd.okBtn) return;
+  e.preventDefault();
+
+  fd.pts[e.pointerId] = {x: e.clientX, y: e.clientY};
+  fd.lastClientY = e.clientY;
+
+  // Hide OK button when touching again
+  if(fd.okBtn) fd.okBtn.style.display = 'none';
+
+  var cnt = _fdCnt();
+  if(cnt === 1) {
+    // Single finger → drag mode
+    fd.dragStart = {cx: e.clientX, cy: e.clientY, ox: fd.obj.x, oy: fd.obj.y};
+    fd.pinchStart = null;
+  }
+  if(cnt === 2) {
+    // Two fingers → rotate+resize mode, keep drag data for fallback
+    var ids = Object.keys(fd.pts);
+    var t1 = fd.pts[ids[0]], t2 = fd.pts[ids[1]];
+    var dist  = Math.hypot(t2.x-t1.x, t2.y-t1.y);
+    var angle = Math.atan2(t2.y-t1.y, t2.x-t1.x) * 180 / Math.PI;
+    fd.pinchStart = {dist: dist, angle: angle, w: fd.obj.w, h: fd.obj.h, objAngle: fd.obj.angle||0};
+    fd.dragStart = null; // disable drag while 2 fingers active
+  }
+}
+
+function _fdOnMove(e) {
+  var fd = _freshDrag;
+  if(!fd.active) return;
+  if(!fd.pts[e.pointerId]) return;
+  e.preventDefault();
+
+  fd.pts[e.pointerId] = {x: e.clientX, y: e.clientY};
+  fd.lastClientY = e.clientY;
+
+  var canvas = fd.canvas, ctx = fd.ctx, obj = fd.obj, body = fd.body;
+  var cnt = _fdCnt();
+
+  if(cnt >= 2 && fd.pinchStart) {
+    // ── 2-finger: rotate + resize ──
+    var ids = Object.keys(fd.pts);
+    var t1 = fd.pts[ids[0]], t2 = fd.pts[ids[1]];
+    var dist  = Math.hypot(t2.x-t1.x, t2.y-t1.y);
+    var angle = Math.atan2(t2.y-t1.y, t2.x-t1.x) * 180 / Math.PI;
+    var scale = dist / fd.pinchStart.dist;
+    var cx = obj.x + obj.w/2, cy = obj.y + obj.h/2;
+    obj.w = Math.max(30, fd.pinchStart.w * scale);
+    obj.h = Math.max(16, fd.pinchStart.h * scale);
+    obj.x = cx - obj.w/2;
+    obj.y = cy - obj.h/2;
+    obj.angle = fd.pinchStart.objAngle + (angle - fd.pinchStart.angle);
+    _csRedrawFresh(ctx, obj);
+
+  } else if(cnt === 1 && fd.dragStart) {
+    // ── 1-finger: drag ──
+    var br  = body.getBoundingClientRect();
+    var scX = canvas.width / br.width;
+    var dx  = e.clientX - fd.dragStart.cx;
+    var dy  = e.clientY - fd.dragStart.cy;
+    obj.x = fd.dragStart.ox + dx * scX;
+    obj.y = fd.dragStart.oy + dy;  // 1:1 vertical
+    _csRedrawFresh(ctx, obj);
+
+    // Auto-scroll at edges
+    _fdAutoScroll(e.clientY);
+  }
+}
+
+function _fdOnUp(e) {
+  var fd = _freshDrag;
+  if(!fd.active) return;
+
+  delete fd.pts[e.pointerId];
+  var cnt = _fdCnt();
+
+  // Stop auto-scroll
+  if(cnt === 0 && fd.autoScrollTimer) {
+    clearInterval(fd.autoScrollTimer);
+    fd.autoScrollTimer = null;
+  }
+
+  if(cnt === 1) {
+    // Went from 2→1 finger: switch to drag mode seamlessly
+    var remId = Object.keys(fd.pts)[0];
+    var remPt = fd.pts[remId];
+    fd.dragStart = {cx: remPt.x, cy: remPt.y, ox: fd.obj.x, oy: fd.obj.y};
+    fd.pinchStart = null;
+  }
+
+  if(cnt === 0) {
+    // All fingers lifted → show OK button
+    if(fd.okBtn) {
+      fd.okBtn.style.display = 'flex';
     }
   }
-  function onMove(e) {
-    e.preventDefault();
-    if(!pts[e.pointerId]) return;
-    pts[e.pointerId] = {x:e.clientX, y:e.clientY};
-    var r=canvas.getBoundingClientRect(), sx=canvas.width/r.width, sy=canvas.height/r.height;
-    if(cnt()>=2 && pinch.dist) {
-      var ids=Object.keys(pts), t1=pts[ids[0]], t2=pts[ids[1]];
-      var dist=Math.hypot(t2.x-t1.x,t2.y-t1.y), ang=Math.atan2(t2.y-t1.y,t2.x-t1.x)*180/Math.PI;
-      var scale=dist/pinch.dist, cx=obj.x+obj.w/2, cy=obj.y+obj.h/2;
-      obj.w=Math.max(30,pinch.w*scale); obj.h=Math.max(16,pinch.h*scale);
-      obj.x=cx-obj.w/2; obj.y=cy-obj.h/2;
-      obj.angle=pinch.objAngle+(ang-pinch.angle);
-    } else if(cnt()===1 && moveStartX!==null) {
-      obj.x=origX+(e.clientX-moveStartX)*sx;
-      obj.y=origY+(e.clientY-moveStartY)*sy;
+}
+
+function _fdAutoScroll(clientY) {
+  var fd   = _freshDrag;
+  var body = fd.body;
+  if(!body) return;
+
+  var EDGE_ZONE = 80;  // px from top/bottom edge
+  var atBottom  = clientY > window.innerHeight - EDGE_ZONE;
+  var atTop     = clientY < EDGE_ZONE + 56; // 56 = topbar approx height
+
+  if(atBottom || atTop) {
+    if(fd.autoScrollTimer) return; // already running
+    fd.autoScrollTimer = setInterval(function(){
+      var cy      = fd.lastClientY;
+      var isBtm   = cy > window.innerHeight - EDGE_ZONE;
+      var isTop   = cy < EDGE_ZONE + 56;
+      if(!isBtm && !isTop) {
+        clearInterval(fd.autoScrollTimer); fd.autoScrollTimer = null; return;
+      }
+      // Speed proportional to how far past the edge
+      var overshot = isBtm ? (cy - (window.innerHeight - EDGE_ZONE)) : ((EDGE_ZONE + 56) - cy);
+      var speed    = Math.min(2 + overshot * 0.15, 18);
+      var delta    = isBtm ? speed : -speed;
+
+      body.scrollTop += delta;
+      // Move object with scroll so it stays under finger
+      fd.obj.y += delta;
+      // Update drag origin so relative movement stays correct
+      if(fd.dragStart) fd.dragStart.oy += delta;
+      _csRedrawFresh(fd.ctx, fd.obj);
+    }, 16);
+  } else {
+    if(fd.autoScrollTimer) {
+      clearInterval(fd.autoScrollTimer);
+      fd.autoScrollTimer = null;
     }
-    _csRedrawObj(ctx,canvas,obj);
   }
-  function onUp(e) {
-    delete pts[e.pointerId];
-    if(cnt()===0){
-      canvas.removeEventListener('pointerdown',onDown,true);
-      canvas.removeEventListener('pointermove',onMove,true);
-      canvas.removeEventListener('pointerup',  onUp,  true);
-      saveCanvasSnapshot();
-      obj.baseSnapshot=ctx.getImageData(0,0,canvas.width,canvas.height);
-      showToast('✅ Set! Double-tap=adjust · Triple-tap=rewrite','success');
-    }
-    if(cnt()===1){
-      var rem=Object.keys(pts)[0]; moveStartX=pts[rem].x; moveStartY=pts[rem].y;
-      origX=obj.x; origY=obj.y; pinch.dist=null;
+}
+
+function _csFreshDragCommit() {
+  var fd = _freshDrag;
+  if(!fd.active) return;
+
+  // Save final state
+  _nedSaveSnapshot();
+  fd.obj.baseSnapshot = fd.ctx.getImageData(0,0,fd.canvas.width,fd.canvas.height);
+
+  _csFreshDragCleanup(true);
+  showToast('✅ Set ho gaya! Adjust Mode se badal sakte hain.', 'success');
+}
+
+function _csFreshDragCleanup(enableDraw) {
+  var fd = _freshDrag;
+  if(fd.autoScrollTimer) { clearInterval(fd.autoScrollTimer); fd.autoScrollTimer = null; }
+  if(fd.okBtn && fd.okBtn.parentNode) { fd.okBtn.remove(); fd.okBtn = null; }
+  if(fd.metaVP && fd.origVP) { fd.metaVP.content = fd.origVP; }
+
+  document.removeEventListener('pointerdown', _fdOnDown, true);
+  document.removeEventListener('pointermove', _fdOnMove, true);
+  document.removeEventListener('pointerup',   _fdOnUp,   true);
+  document.removeEventListener('pointercancel',_fdOnUp,  true);
+
+  fd.active = false; fd.pts = {}; fd.dragStart = null; fd.pinchStart = null;
+  if(enableDraw) _csFreshSetDrawEnabled(true);
+}
+
+// Enable/disable draw mode features during fresh drag
+function _csFreshSetDrawEnabled(enabled) {
+  // neDrawCanvas pointer events
+  var cv = document.getElementById('neDrawCanvas');
+  if(cv) {
+    // In freshDrag, canvas events are managed by document listeners
+    // Just block accidental drawing by suspending _ned if exists
+    if(typeof _ned !== 'undefined' && _ned) {
+      if(!enabled) {
+        _ned._freshDragSavedTool = _ned.tool;
+        _ned.tool = 'none';
+      } else {
+        if(_ned._freshDragSavedTool !== undefined) {
+          _ned.tool = _ned._freshDragSavedTool;
+          delete _ned._freshDragSavedTool;
+        }
+      }
     }
   }
-  canvas.addEventListener('pointerdown',onDown,{capture:true,passive:false});
-  canvas.addEventListener('pointermove',onMove,{capture:true,passive:false});
-  canvas.addEventListener('pointerup',  onUp,  {capture:true,passive:false});
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ADJUST MODE — Three-dot → menu with improved options:
+//   1. Adjust with previous text (same feel as fresh place)
+//   2. Rewrite (open write popup prefilled)
+//   3. Delete (confirm)
+// ═══════════════════════════════════════════════════════════════
+
+// Override _ncoOnThreeDot to use improved menu
+function _ncoOnThreeDot(obj, dot3El, boxEl) {
+  document.querySelectorAll('.nco-adj-box').forEach(function(b){ b.classList.remove('active-box'); });
+  boxEl.classList.add('active-box');
+  _ncoHideCtxMenu();
+
+  var menu = document.createElement('div');
+  menu.className = 'nco-ctx-menu'; menu.id = 'ncoCtxMenu';
+  var dr   = dot3El.getBoundingClientRect();
+  var left = Math.min(Math.max(dr.left - 10, 8), window.innerWidth - 210);
+  var top  = Math.min(dr.bottom + 4, window.innerHeight - 160);
+
+  menu.style.cssText = [
+    'position:fixed','left:'+left+'px','top:'+top+'px',
+    'z-index:99990','background:#fff','border-radius:14px',
+    'box-shadow:0 8px 32px rgba(0,0,0,0.22)',
+    'overflow:hidden','min-width:195px',
+    'animation:ncoCtxIn 0.15s ease'
+  ].join(';');
+
+  function makeItem(icon, label, color, fn) {
+    var d = document.createElement('div');
+    d.style.cssText = 'padding:13px 16px;font-size:0.85rem;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:10px;color:'+(color||'#0d1b2a')+';border-bottom:1px solid #f0f0f0;-webkit-tap-highlight-color:transparent;';
+    d.innerHTML = '<span style="font-size:1.1rem;">'+icon+'</span>'+label;
+    d.addEventListener('pointerdown', function(e){ e.preventDefault(); menu.remove(); fn(); });
+    return d;
+  }
+
+  // 1. Adjust with previous text
+  menu.appendChild(makeItem('↔️', 'Adjust (Drag/Rotate/Resize)', '#1565c0', function(){
+    _ncoStartAdjustFresh(obj);
+  }));
+
+  // 2. Rewrite
+  menu.appendChild(makeItem('✏️', 'Rewrite Text', '#6a1b9a', function(){
+    _ncoRewriteObj(obj);
+  }));
+
+  // 3. Delete
+  var delItem = makeItem('🗑️', 'Delete', '#c62828', function(){
+    _ncoDeleteObj(obj);
+  });
+  delItem.style.borderBottom = 'none';
+  menu.appendChild(delItem);
+
+  document.body.appendChild(menu);
+
+  // Close on outside tap
+  setTimeout(function(){
+    function closeMenu(e){
+      if(!menu.contains(e.target)){ menu.remove(); document.removeEventListener('pointerdown',closeMenu,true); }
+    }
+    document.addEventListener('pointerdown', closeMenu, {capture:true});
+  }, 50);
+}
+
+// ── Adjust: same feel as fresh place ──
+function _ncoStartAdjustFresh(obj) {
+  // Turn off adjust mode UI (boxes) but keep logic active
+  _ncoHideAllBoxes();
+  _ncoHideCtxMenu();
+
+  var neBody   = document.getElementById('neBody');
+  var neCanvas = document.getElementById('neDrawCanvas');
+  if(!neCanvas) return;
+  var ctx = neCanvas.getContext('2d');
+
+  // Rebuild baseSnapshot EXCLUDING this object
+  // Find snapshot just before this object was drawn
+  // Use the previous object's baseSnapshot if available
+  var idx = _nco.list.indexOf(obj);
+  var cleanSnap;
+  if(idx > 0 && _nco.list[idx-1].baseSnapshot) {
+    cleanSnap = _nco.list[idx-1].baseSnapshot;
+  } else if(idx === 0) {
+    // First object — use blank (or initial snapshot from _ned history)
+    cleanSnap = (_ned && _ned.history && _ned.history.length > 0)
+      ? _ned.history[0]
+      : ctx.createImageData(neCanvas.width, neCanvas.height);
+  } else {
+    cleanSnap = obj.baseSnapshot; // fallback
+  }
+
+  // Set obj baseSnapshot to cleanSnap so redraw works correctly
+  obj.baseSnapshot = cleanSnap;
+  // Redraw: clean + object
+  ctx.putImageData(cleanSnap, 0, 0);
+  _ncoDrawObjOnCtx(ctx, obj);
+
+  // Start fresh drag session on this existing obj
+  _csFreshDragSession(neCanvas, ctx, obj, neBody);
+  showToast('☝️ Drag · 2-finger=Rotate+Resize · ✓=Set', 'success');
+}
+
+// ── Rewrite: open write popup prefilled ──
+function _ncoRewriteObj(obj) {
+  _ncoHideAllBoxes();
+  _ncoHideCtxMenu();
+
+  // Remove obj from list temporarily (will re-add on Place)
+  _nco.list = _nco.list.filter(function(o){ return o.id !== obj.id; });
+
+  // Restore canvas to state before this obj
+  var neCanvas = document.getElementById('neDrawCanvas');
+  if(neCanvas && obj.baseSnapshot) {
+    neCanvas.getContext('2d').putImageData(obj.baseSnapshot, 0, 0);
+  }
+
+  // Turn off adjust mode
+  if(_nco.adjustMode) neAdjustToggle();
+
+  // Open write tab in Creator Studio prefilled
+  openCreatorPanel();
+  switchCreatorTab('write', null);
+  setTimeout(function(){
+    var inp = document.getElementById('csWriteInput');
+    if(inp) {
+      inp.value = obj.txt;
+      _csUpdatePreview();
+      inp.focus();
+      showToast('✏️ Text edit karein phir Place on Canvas dabayein', 'success');
+    }
+    // Prefill style settings
+    _csW.font   = (obj.opts && obj.opts.font)   || _csW.font;
+    _csW.size   = (obj.opts && obj.opts.size)   || _csW.size;
+    _csW.effect = (obj.opts && obj.opts.effect) || _csW.effect;
+    _csW.color  = (obj.opts && obj.opts.color)  || _csW.color;
+    _csUpdatePreview();
+  }, 80);
+}
+
+// ── Delete with confirmation ──
+function _ncoDeleteObj(obj) {
+  if(!confirm('Yeh drawn text delete karein?')) {
+    // Re-show boxes if cancelled
+    _ncoShowAllBoxes(); return;
+  }
+  var neCanvas = document.getElementById('neDrawCanvas');
+  if(neCanvas && obj.baseSnapshot) {
+    neCanvas.getContext('2d').putImageData(obj.baseSnapshot, 0, 0);
+  }
+  _nco.list = _nco.list.filter(function(o){ return o.id !== obj.id; });
+  _nedSaveSnapshot();
+  _ncoRefreshBoxes();
+  showToast('🗑️ Delete ho gaya!', 'success');
 }
 </script>
