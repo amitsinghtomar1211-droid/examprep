@@ -4502,6 +4502,8 @@ function load(){
     S.questionVault=d.questionVault||[];
     S.savedQuestions=d.savedQuestions||[];
     S.wrongedQuestions=d.wrongedQuestions||[];
+
+    var _needsClean = false;
     S.subjects.forEach(s=>{
       if(!s.facts) s.facts=[];
       s.sections.forEach(sec=>{
@@ -4509,24 +4511,36 @@ function load(){
         sec.topics.forEach(t=>{
           if(!t.highlights) t.highlights=[];
           if(!t.savedFacts) t.savedFacts=[];
-          // Ensure finalNotesHTML and smartNotesHTML are preserved
           if(t.finalNotesHTML === undefined) t.finalNotesHTML = null;
           if(t.smartNotesHTML === undefined) t.smartNotesHTML = null;
           if(t.masterNotes === undefined) t.masterNotes = null;
           if(t.masterNotesHTML === undefined) t.masterNotesHTML = null;
           if(t.masterExtraFacts === undefined) t.masterExtraFacts = [];
           if(t.masterNotesAt === undefined) t.masterNotesAt = null;
-          // Cleanup: remove old canvasPNG fields (too large for storage)
+          // Cleanup old PNG fields — mark for re-save if found
+          if(t.finalNotesCanvasPNG || t.smartNotesCanvasPNG || t.masterNotesCanvasPNG) _needsClean = true;
           delete t.finalNotesCanvasPNG; delete t.smartNotesCanvasPNG;
           delete t.masterNotesCanvasPNG;
           t.notes.forEach(n=>{
             if(!n.editorHighlights) n.editorHighlights=[];
             if(n.editorRichHTML === undefined) n.editorRichHTML = null;
-            delete n.canvasPNG;  // remove old PNG if exists
+            if(n.canvasPNG) _needsClean = true;
+            delete n.canvasPNG;
           });
         });
       });
     });
+
+    // Agar PNG fields mili thi to clean data localStorage + Firebase mein save karo
+    if(_needsClean){
+      try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+      // Firebase sync thodi der baad (login hone ka wait karo)
+      setTimeout(function(){
+        if(typeof saveToFirebase === 'function' && window._currentUser && window._db){
+          saveToFirebase();
+        }
+      }, 5000);
+    }
   }catch(e){}
 }
 
@@ -16298,66 +16312,98 @@ async function saveToFirebase(){
   setSyncStatus('syncing');
   try{
     const uid = _currentUser.uid;
-    const batch = _db.batch();
 
-    // ── 1. Meta document (small, fast) ──
-    // stats, settings, quiz history, vault — no notes content here
-    const metaRef = _db.collection('users').doc(uid);
-    batch.set(metaRef, {
-      activeExamId:      S.activeExamId || '',
-      model:             S.model || 'llama-3.1-8b-instant',
-      stats:             S.stats,
-      quizHistory:       S.quizHistory.slice(0,60),
-      questionVault:     (S.questionVault||[]).slice(0,50),
-      savedQuestions:    S.savedQuestions||[],
-      wrongedQuestions:  S.wrongedQuestions||[],
-      reportedQuestions: S.reportedQuestions||[],
-      pausedQuiz:        S.pausedQuiz||null,
-      exams:             S.exams||[],
-      subjectIds:        (S.subjects||[]).map(s=>s.id),
-      lastSync:          firebase.firestore.FieldValue.serverTimestamp()
-    }, {merge:true});
+    // Firebase batch limit = 500 ops. Split into chunks if needed.
+    // Structure:
+    //   users/{uid}                     ← meta (stats, quiz, settings)
+    //   users/{uid}/subjects/{sid}      ← subject shell (name, sections shell)
+    //   users/{uid}/topics/{tid}        ← one topic = one doc (~50KB max)
 
-    // ── 2. Each subject = alag document ──
-    // Subject ke andar sections+topics+notes sab hain
-    // Ek subject ~50-300 KB hoga — 1MB se kabhi cross nahi
-    (S.subjects||[]).forEach(function(subj){
-      var subjRef = _db.collection('users').doc(uid)
-                       .collection('subjects').doc(String(subj.id));
-      // Deep copy — PNG fields already deleted in load()
-      var subjData = JSON.parse(JSON.stringify(subj));
-      batch.set(subjRef, { data: subjData, updatedAt: Date.now() });
+    var allOps = []; // {ref, data}
+
+    // ── 1. Meta doc ──
+    allOps.push({
+      ref: _db.collection('users').doc(uid),
+      data: {
+        activeExamId:      S.activeExamId||'',
+        model:             S.model||'llama-3.1-8b-instant',
+        stats:             S.stats,
+        quizHistory:       S.quizHistory.slice(0,60),
+        questionVault:     (S.questionVault||[]).slice(0,50),
+        savedQuestions:    S.savedQuestions||[],
+        wrongedQuestions:  S.wrongedQuestions||[],
+        reportedQuestions: S.reportedQuestions||[],
+        pausedQuiz:        S.pausedQuiz||null,
+        exams:             S.exams||[],
+        subjectIds:        (S.subjects||[]).map(s=>s.id),
+        topicFormat:       'v2',  // flag: per-topic format
+        lastSync:          firebase.firestore.FieldValue.serverTimestamp()
+      }
     });
 
-    await batch.commit();
+    // ── 2. Subject shell docs (name, facts only — no topics array) ──
+    (S.subjects||[]).forEach(function(subj){
+      var shell = {
+        id:   subj.id,
+        name: subj.name,
+        facts: subj.facts||[],
+        sectionMeta: (subj.sections||[]).map(function(sec){
+          return {
+            id:    sec.id,
+            name:  sec.name,
+            facts: sec.facts||[],
+            topicIds: (sec.topics||[]).map(function(t){ return t.id; })
+          };
+        })
+      };
+      allOps.push({
+        ref: _db.collection('users').doc(uid).collection('subjects').doc(String(subj.id)),
+        data: { shell: shell, updatedAt: Date.now() }
+      });
+
+      // ── 3. One doc per topic ──
+      (subj.sections||[]).forEach(function(sec){
+        (sec.topics||[]).forEach(function(t){
+          var topicData = JSON.parse(JSON.stringify(t));
+          // Clean PNG fields just in case
+          delete topicData.finalNotesCanvasPNG;
+          delete topicData.smartNotesCanvasPNG;
+          delete topicData.masterNotesCanvasPNG;
+          (topicData.notes||[]).forEach(function(n){ delete n.canvasPNG; });
+
+          allOps.push({
+            ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)),
+            data: {
+              topic:    topicData,
+              subjId:   subj.id,
+              secId:    sec.id,
+              updatedAt: Date.now()
+            }
+          });
+        });
+      });
+    });
+
+    // Commit in chunks of 499
+    for(var i=0; i<allOps.length; i+=499){
+      var chunk = allOps.slice(i, i+499);
+      var batch = _db.batch();
+      chunk.forEach(function(op){ batch.set(op.ref, op.data, {merge:true}); });
+      await batch.commit();
+    }
+
     setSyncStatus('synced');
   }catch(e){
     console.error('Firebase save error:', e);
     setSyncStatus('error');
-    // Agar batch fail ho to legacy single-doc fallback try karo
-    try {
-      await _db.collection('users').doc(_currentUser.uid).set({
-        subjects: JSON.parse(JSON.stringify(S.subjects||[])),
-        exams: S.exams, activeExamId: S.activeExamId,
-        quizHistory: S.quizHistory.slice(0,60),
-        stats: S.stats,
-        questionVault: (S.questionVault||[]).slice(0,50),
-        savedQuestions: S.savedQuestions||[],
-        wrongedQuestions: S.wrongedQuestions||[],
-        reportedQuestions: S.reportedQuestions||[],
-        pausedQuiz: S.pausedQuiz||null,
-        model: S.model||'llama-3.1-8b-instant',
-        lastSync: firebase.firestore.FieldValue.serverTimestamp()
-      }, {merge:true});
-      setSyncStatus('synced');
-    } catch(e2){ console.error('Fallback save error:', e2); }
+    showToast('Sync error — data local mein safe hai', 'error');
   }
 }
 
 async function loadFromFirebase(){
   if(!_db || !_currentUser) return;
 
-  if(_justRestored) {
+  if(_justRestored){
     _justRestored = false;
     setSyncStatus('syncing');
     await saveToFirebase();
@@ -16369,120 +16415,145 @@ async function loadFromFirebase(){
   setSyncStatus('syncing');
   try{
     const uid = _currentUser.uid;
-
-    // Local stats for comparison
     const localTopicCount = (S.subjects||[]).reduce(
       (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
 
-    // ── Try new split-doc format first ──
     const metaDoc = await _db.collection('users').doc(uid).get();
+    if(!metaDoc.exists){
+      // Pehli baar — local upload karo
+      if(localTopicCount > 0){ await saveToFirebase(); showToast('Data cloud pe save ho gaya! ☁️','success'); }
+      setSyncStatus('synced'); return;
+    }
+
+    const meta = metaDoc.data();
+    const isV2 = meta.topicFormat === 'v2';
+    const subjectIds = meta.subjectIds || [];
+
     var cloudTopicCount = 0;
     var loadedSubjects = null;
 
-    if(metaDoc.exists){
-      const meta = metaDoc.data();
-      const subjectIds = meta.subjectIds || [];
+    if(isV2 && subjectIds.length > 0){
+      // ── New per-topic format ──
+      // Load subject shells
+      const shellDocs = await Promise.all(
+        subjectIds.map(id =>
+          _db.collection('users').doc(uid).collection('subjects').doc(String(id)).get()
+        )
+      );
 
-      if(subjectIds.length > 0){
-        // New format — load each subject document
-        const subjDocs = await Promise.all(
-          subjectIds.map(id =>
-            _db.collection('users').doc(uid)
-               .collection('subjects').doc(String(id)).get()
-          )
-        );
-        loadedSubjects = subjDocs
-          .filter(d => d.exists)
-          .map(d => d.data().data)
-          .filter(Boolean);
-        cloudTopicCount = loadedSubjects.reduce(
-          (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
-      } else if(meta.subjects && meta.subjects.length > 0){
-        // Legacy format — single document
-        loadedSubjects = meta.subjects;
-        cloudTopicCount = loadedSubjects.reduce(
-          (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
-      }
+      // Load all topics
+      const topicDocs = await _db.collection('users').doc(uid).collection('topics').get();
+      var topicMap = {};
+      topicDocs.forEach(function(d){
+        var td = d.data();
+        if(td && td.topic) topicMap[String(td.topic.id)] = { topic: td.topic, subjId: td.subjId, secId: td.secId };
+      });
 
-      if(!loadedSubjects || cloudTopicCount === 0 || localTopicCount > cloudTopicCount){
-        // Local zyada hai — cloud pe upload
-        await saveToFirebase();
-        showToast('Local data cloud pe sync ho gaya! ☁️ (' + localTopicCount + ' topics)', 'success');
-      } else {
-        // Cloud data load karo
-        // Local editor HTML/highlights backup (latest local = authoritative)
-        const localEditorData = {};
-        (S.subjects||[]).forEach(sub=>sub.sections.forEach(sec=>sec.topics.forEach(t=>{
-          if(t.finalNotesHTML) localEditorData['fn_'+t.id] = t.finalNotesHTML;
-          if(t.smartNotesHTML) localEditorData['sn_'+t.id] = t.smartNotesHTML;
-          if(t.masterNotesHTML) localEditorData['mn_'+t.id] = t.masterNotesHTML;
-          (t.notes||[]).forEach(n=>{
-            if(n.editorRichHTML) localEditorData['n_'+n.id] = {
-              richHTML: n.editorRichHTML,
-              highlights: n.editorHighlights||[]
-            };
+      // Reassemble subjects from shells + topics
+      loadedSubjects = shellDocs
+        .filter(function(d){ return d.exists; })
+        .map(function(d){
+          var shell = d.data().shell;
+          if(!shell) return null;
+          shell.sections = (shell.sectionMeta||[]).map(function(sm){
+            sm.topics = (sm.topicIds||[]).map(function(tid){
+              var td = topicMap[String(tid)];
+              return td ? td.topic : null;
+            }).filter(Boolean);
+            delete sm.topicIds;
+            return sm;
           });
-        })));
+          delete shell.sectionMeta;
+          return shell;
+        }).filter(Boolean);
 
-        S.subjects          = loadedSubjects;
-        S.exams             = meta.exams || [];
-        S.activeExamId      = meta.activeExamId || '';
-        S.quizHistory       = meta.quizHistory || [];
-        S.stats             = meta.stats || {total:0,correct:0,wrong:0,topicStats:{}};
-        S.questionVault     = meta.questionVault || [];
-        S.savedQuestions    = meta.savedQuestions || [];
-        S.wrongedQuestions  = meta.wrongedQuestions || [];
-        S.reportedQuestions = meta.reportedQuestions || [];
-        S.pausedQuiz        = meta.pausedQuiz || null;
-        S.model             = meta.model || 'llama-3.1-8b-instant';
+      cloudTopicCount = loadedSubjects.reduce(
+        (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
 
-        // Cleanup + local editor data merge
-        S.subjects.forEach(sub=>sub.sections.forEach(sec=>sec.topics.forEach(t=>{
-          if(!t.highlights) t.highlights=[];
-          if(!t.savedFacts) t.savedFacts=[];
-          if(!t.notes) t.notes=[];
-          // Remove stale PNG fields
-          delete t.finalNotesCanvasPNG; delete t.smartNotesCanvasPNG;
-          delete t.masterNotesCanvasPNG;
-          // Local HTML always prefer (latest save)
-          if(localEditorData['fn_'+t.id]) t.finalNotesHTML = localEditorData['fn_'+t.id];
-          if(localEditorData['sn_'+t.id]) t.smartNotesHTML = localEditorData['sn_'+t.id];
-          if(localEditorData['mn_'+t.id]) t.masterNotesHTML = localEditorData['mn_'+t.id];
-          t.notes.forEach(n=>{
-            if(!n.editorHighlights) n.editorHighlights=[];
-            if(n.editorRichHTML === undefined) n.editorRichHTML = null;
-            delete n.canvasPNG;
-            const ld = localEditorData['n_'+n.id];
-            if(ld && ld.richHTML){
-              n.editorRichHTML = ld.richHTML;
-              n.editorHighlights = ld.highlights||[];
-            }
-          });
-        })));
+    } else if(!isV2 && subjectIds.length > 0){
+      // ── v1 per-subject format ──
+      const subjDocs = await Promise.all(
+        subjectIds.map(id =>
+          _db.collection('users').doc(uid).collection('subjects').doc(String(id)).get()
+        )
+      );
+      loadedSubjects = subjDocs.filter(function(d){ return d.exists; })
+        .map(function(d){ return d.data().data; }).filter(Boolean);
+      cloudTopicCount = loadedSubjects.reduce(
+        (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
 
-        try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
-        renderExamSwitcher(); renderLibrarySelects(); renderLibraryTree();
-        renderExamsList(); updateQuizSelects(); renderStats(); updateModePill();
-        updateHistBadge(); updateSavedBadge(); updateVaultBadge();
-        checkPausedQuiz();
-        showToast('Cloud se data load ho gaya! ☁️ (' + cloudTopicCount + ' topics)', 'success');
-      }
-    } else {
-      // Pehli baar login — local data upload karo
-      if(localTopicCount > 0){
-        await saveToFirebase();
-        showToast('Data cloud pe save ho gaya! ☁️', 'success');
-      }
+    } else if(meta.subjects && meta.subjects.length > 0){
+      // ── Legacy: single doc format ──
+      loadedSubjects = meta.subjects;
+      cloudTopicCount = loadedSubjects.reduce(
+        (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
     }
+
+    // Local zyada → upload
+    if(!loadedSubjects || cloudTopicCount === 0 || localTopicCount > cloudTopicCount){
+      await saveToFirebase();
+      showToast('Local data cloud pe sync ho gaya! ☁️ (' + localTopicCount + ' topics)', 'success');
+      setSyncStatus('synced'); return;
+    }
+
+    // Cloud data load + local editor HTML merge
+    var localEditorData = {};
+    (S.subjects||[]).forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
+      if(t.finalNotesHTML) localEditorData['fn_'+t.id] = t.finalNotesHTML;
+      if(t.smartNotesHTML) localEditorData['sn_'+t.id] = t.smartNotesHTML;
+      if(t.masterNotesHTML) localEditorData['mn_'+t.id] = t.masterNotesHTML;
+      (t.notes||[]).forEach(function(n){
+        if(n.editorRichHTML) localEditorData['n_'+n.id] = { richHTML:n.editorRichHTML, highlights:n.editorHighlights||[] };
+      });
+    }); }); });
+
+    S.subjects          = loadedSubjects;
+    S.exams             = meta.exams||[];
+    S.activeExamId      = meta.activeExamId||'';
+    S.quizHistory       = meta.quizHistory||[];
+    S.stats             = meta.stats||{total:0,correct:0,wrong:0,topicStats:{}};
+    S.questionVault     = meta.questionVault||[];
+    S.savedQuestions    = meta.savedQuestions||[];
+    S.wrongedQuestions  = meta.wrongedQuestions||[];
+    S.reportedQuestions = meta.reportedQuestions||[];
+    S.pausedQuiz        = meta.pausedQuiz||null;
+    S.model             = meta.model||'llama-3.1-8b-instant';
+
+    S.subjects.forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
+      if(!t.highlights) t.highlights=[];
+      if(!t.savedFacts) t.savedFacts=[];
+      if(!t.notes) t.notes=[];
+      delete t.finalNotesCanvasPNG; delete t.smartNotesCanvasPNG; delete t.masterNotesCanvasPNG;
+      if(localEditorData['fn_'+t.id]) t.finalNotesHTML  = localEditorData['fn_'+t.id];
+      if(localEditorData['sn_'+t.id]) t.smartNotesHTML  = localEditorData['sn_'+t.id];
+      if(localEditorData['mn_'+t.id]) t.masterNotesHTML = localEditorData['mn_'+t.id];
+      t.notes.forEach(function(n){
+        if(!n.editorHighlights) n.editorHighlights=[];
+        if(n.editorRichHTML===undefined) n.editorRichHTML=null;
+        delete n.canvasPNG;
+        var ld = localEditorData['n_'+n.id];
+        if(ld && ld.richHTML){ n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[]; }
+      });
+    }); }); });
+
+    try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+    renderExamSwitcher(); renderLibrarySelects(); renderLibraryTree();
+    renderExamsList(); updateQuizSelects(); renderStats(); updateModePill();
+    updateHistBadge(); updateSavedBadge(); updateVaultBadge(); checkPausedQuiz();
+    showToast('Cloud se data load ho gaya! ☁️ (' + cloudTopicCount + ' topics)', 'success');
     setSyncStatus('synced');
+
+    // Agar purana format tha to naye format mein re-save karo
+    if(!isV2){ setTimeout(function(){ saveToFirebase(); }, 2000); }
+
   }catch(e){
     console.error('Firebase load error:', e);
     setSyncStatus('error');
     if(e.message && e.message.includes('offline')){
-      showToast('Offline hai -- local data use ho raha hai', 'success');
+      showToast('Offline — local data use ho raha hai','success');
       setSyncStatus('synced');
     } else {
-      showToast('Sync error: ' + e.message, 'error');
+      showToast('Sync error: '+e.message,'error');
     }
   }
 }
