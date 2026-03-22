@@ -2928,7 +2928,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
   <!-- Row 1: Tools + Sizes + Colors -->
   <div style="display:flex;align-items:center;gap:5px;flex-wrap:nowrap;">
     <!-- Pen -->
-    <button class="ndt-btn sel" id="ndtPen" onclick="neDrawSetTool('pen',this)" title="Pen">
+    <button class="ndt-btn" id="ndtPen" onclick="neDrawSetTool('pen',this)" title="Pen">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
         <path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/>
@@ -8351,6 +8351,12 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
     showQmapFab && showQmapFab();
     // Restore canvas drawings if saved
     _neRestoreCanvas(n.canvasObjs || null);
+    // Restore draw strokes from JSON (new system)
+    _ned.strokes   = JSON.parse(JSON.stringify(n.drawStrokes || []));
+    _ned.redoStack = [];
+    _ned.tool      = 'none'; // No tool active by default
+    // Deselect all tool buttons
+    document.querySelectorAll('.ndt-btn[id^="ndt"]').forEach(function(b){ b.classList.remove('sel'); });
     // Show Study Canvas pull tab
     scOnEditorOpen(sid, secid, tid);
   }, 200);
@@ -8507,23 +8513,40 @@ function _doSaveNoteData() {
     });
   }
 
+  // ── Draw strokes: save JSON (not PNG) ──
+  var drawStrokes = (_ned.strokes && _ned.strokes.length)
+    ? JSON.parse(JSON.stringify(_ned.strokes))
+    : null;
+
+  // ── QMap: save JSON nodes/edges ──
+  var qmapData = (_neQm && _neQm.nodes && _neQm.nodes.length)
+    ? { nodes: JSON.parse(JSON.stringify(_neQm.nodes)),
+        edges: JSON.parse(JSON.stringify(_neQm.edges)) }
+    : null;
+
   if(isSpecial === 'finalnotes') {
     t.finalNotes = plainText;
     t.finalNotesAt = new Date().toLocaleDateString('hi-IN');
     t.finalNotesHTML = richHTML;
-    if(canvasObjs) t.finalNotesCanvasObjs = canvasObjs;
+    if(canvasObjs)  t.finalNotesCanvasObjs = canvasObjs;
+    if(drawStrokes) t.finalNotesDrawStrokes = drawStrokes;
+    if(qmapData)    t.finalNotesQmapData    = qmapData;
   } 
   else if(isSpecial === 'smartnotes') {
     t.smartNotesAI = plainText;
     t.smartNotesAt = new Date().toLocaleDateString('hi-IN');
     t.smartNotesHTML = richHTML;
-    if(canvasObjs) t.smartNotesCanvasObjs = canvasObjs;
+    if(canvasObjs)  t.smartNotesCanvasObjs = canvasObjs;
+    if(drawStrokes) t.smartNotesDrawStrokes = drawStrokes;
+    if(qmapData)    t.smartNotesQmapData    = qmapData;
   }
   else if(isSpecial === 'masternotes') {
     t.masterNotes = plainText;
     t.masterNotesAt = new Date().toLocaleDateString('hi-IN');
     t.masterNotesHTML = richHTML;
-    if(canvasObjs) t.masterNotesCanvasObjs = canvasObjs;
+    if(canvasObjs)  t.masterNotesCanvasObjs = canvasObjs;
+    if(drawStrokes) t.masterNotesDrawStrokes = drawStrokes;
+    if(qmapData)    t.masterNotesQmapData    = qmapData;
   }
   else if(isSpecial === 'factspage') {
     const fp = _fpState || {};
@@ -8557,7 +8580,9 @@ function _doSaveNoteData() {
     
     n.editorHighlights = _editorState.highlights.slice();
     n.editorRichHTML   = area.innerHTML;
-    if(canvasObjs) n.canvasObjs = canvasObjs;
+    if(canvasObjs)  n.canvasObjs  = canvasObjs;
+    if(drawStrokes) n.drawStrokes = drawStrokes;
+    if(qmapData)    n.qmapData    = qmapData;
   }
   
   return true;
@@ -8903,11 +8928,34 @@ function openSpecialEditor(type, sid, secid, tid) {
   showQmapFab && showQmapFab();
   // Restore canvas for special notes types
   setTimeout(function(){
-    var cvPNG=null, cvObjs=null;
-    if(type==='finalnotes'){ cvObjs=t.finalNotesCanvasObjs||null; }
-    else if(type==='smartnotes'){ cvObjs=t.smartNotesCanvasObjs||null; }
-    else if(type==='masternotes'){ cvObjs=t.masterNotesCanvasObjs||null; }
+    var cvObjs=null, drawStrokes=null, qmapData=null;
+    if(type==='finalnotes'){
+      cvObjs=t.finalNotesCanvasObjs||null;
+      drawStrokes=t.finalNotesDrawStrokes||null;
+      qmapData=t.finalNotesQmapData||null;
+    } else if(type==='smartnotes'){
+      cvObjs=t.smartNotesCanvasObjs||null;
+      drawStrokes=t.smartNotesDrawStrokes||null;
+      qmapData=t.smartNotesQmapData||null;
+    } else if(type==='masternotes'){
+      cvObjs=t.masterNotesCanvasObjs||null;
+      drawStrokes=t.masterNotesDrawStrokes||null;
+      qmapData=t.masterNotesQmapData||null;
+    }
     _neRestoreCanvas(cvObjs);
+    // Restore draw strokes
+    _ned.strokes   = JSON.parse(JSON.stringify(drawStrokes || []));
+    _ned.redoStack = [];
+    _ned.tool      = 'none';
+    document.querySelectorAll('.ndt-btn[id^="ndt"]').forEach(function(b){ b.classList.remove('sel'); });
+    // Restore QMap
+    if(qmapData && qmapData.nodes && qmapData.nodes.length) {
+      _neQm.nodes = JSON.parse(JSON.stringify(qmapData.nodes));
+      _neQm.edges = JSON.parse(JSON.stringify(qmapData.edges||[]));
+      _neQm._savedState = { nodes: _neQm.nodes, edges: _neQm.edges };
+    }
+    // Show Study Canvas pull tab
+    scOnEditorOpen(sid, secid, tid);
   }, 250);
 }
 
@@ -14502,12 +14550,13 @@ var _ned = {
   active:   false,       // draw mode on/off
   canvas:   null,
   ctx:      null,
-  tool:     'pen',       // 'pen' | 'marker' | 'eraser'
+  tool:     'none',      // 'none' | 'pen' | 'marker' | 'eraser' — none = no drawing until tool selected
   color:    '#000000',
   size:     2,
   drawing:  false,
-  history:  [],          // ImageData snapshots for undo
+  history:  [],          // stroke JSON arrays for undo (not PNG)
   redoStack:[],
+  strokes:  [],          // [{points,color,size,tool}] — JSON storage
   lastX:    0,
   lastY:    0,
   pointerId:null
@@ -14519,7 +14568,6 @@ function neDrawInit() {
   var canvas = document.getElementById('neDrawCanvas');
   if(!canvas || !body) return;
 
-  // Size canvas to body scroll area
   canvas.width  = body.offsetWidth  || body.clientWidth;
   canvas.height = body.scrollHeight || body.clientHeight;
   canvas.style.width  = '100%';
@@ -14528,13 +14576,6 @@ function neDrawInit() {
   _ned.canvas = canvas;
   _ned.ctx    = canvas.getContext('2d');
   _ned.ctx.imageSmoothingEnabled = true;
-
-  // Restore last drawing if exists
-  if(_ned._savedImage) {
-    var img = new Image();
-    img.onload = function(){ _ned.ctx.drawImage(img, 0, 0); };
-    img.src = _ned._savedImage;
-  }
 
   // Pointer events
   canvas.removeEventListener('pointerdown', _nedDown);
@@ -14552,14 +14593,11 @@ function neDrawResize() {
   if(!_ned.active || !_ned.canvas) return;
   var body = document.getElementById('neBody');
   if(!body) return;
-  // Save current drawing
-  var savedData = (_ned.history.length && _ned.canvas.width > 0 && _ned.canvas.height > 0)
-    ? _ned.ctx.getImageData(0, 0, _ned.canvas.width, _ned.canvas.height)
-    : null;
   _ned.canvas.width  = body.offsetWidth;
   _ned.canvas.height = body.scrollHeight;
   _ned.canvas.style.height = body.scrollHeight + 'px';
-  if(savedData) _ned.ctx.putImageData(savedData, 0, 0);
+  // Re-render from JSON strokes
+  if(_ned.strokes && _ned.strokes.length) _nedRenderAllStrokes();
 }
 
 // ── Toggle draw mode ON/OFF ──
@@ -14571,25 +14609,30 @@ function neDrawToggle() {
   var toggleBtn = document.getElementById('neDrawToggleBtn');
 
   if(_ned.active) {
-    // ON
+    // ON — reset tool to 'none' so nothing draws until user picks a tool
+    _ned.tool = 'none';
+    // Deselect all tool buttons
+    document.querySelectorAll('.ndt-btn[id^="ndt"]').forEach(function(b){ b.classList.remove('sel'); });
+
     neDrawInit();
+    // Restore saved strokes from JSON
+    if(_ned.strokes && _ned.strokes.length && _ned.ctx) {
+      _nedRenderAllStrokes();
+    }
     if(canvas)    canvas.classList.add('draw-active');
     if(body)      body.classList.add('draw-mode');
     if(toolbar)   toolbar.classList.add('visible');
     if(toggleBtn) toggleBtn.classList.add('draw-on');
-    showToast('✏️ Draw mode ON — notes pe draw karo!', 'success');
+    showToast('✏️ Draw mode ON — pen/marker/eraser choose karo!', 'success');
 
-    // Observe body resize for canvas resize
     if(window._nedResizeObs) window._nedResizeObs.disconnect();
     if(window.ResizeObserver) {
       window._nedResizeObs = new ResizeObserver(neDrawResize);
       if(body) window._nedResizeObs.observe(body);
     }
   } else {
-    // OFF — save drawing as dataURL so it persists
-    if(_ned.canvas && _ned.history.length > 0) {
-      _ned._savedImage = _ned.canvas.toDataURL('image/png');
-    }
+    // OFF — save strokes as JSON (not PNG)
+    // strokes already in _ned.strokes array — no extra work needed
     if(canvas)    canvas.classList.remove('draw-active');
     if(body)      body.classList.remove('draw-mode');
     if(toolbar)   toolbar.classList.remove('visible');
@@ -14713,7 +14756,7 @@ function _nedMove(e) {
 }
 
 function _nedUp(e) {
-  if(_nco.adjustMode) return;   // adjust mode — no drawing
+  if(_nco.adjustMode) return;
   if(!_ned.drawing) return;
   _ned.drawing = false;
   _ned.redoStack = [];
@@ -14727,9 +14770,90 @@ function _nedUp(e) {
   }
   _nedRenderStroke(_nedStrokeState.filteredPoints, true);
   _nedStrokeState.strokeBase = null;
+
+  // ── JSON stroke save ──
+  var pts = _nedStrokeState.filteredPoints.map(function(p){
+    return { x: Math.round(p.fx*10)/10, y: Math.round(p.fy*10)/10 };
+  });
+  _ned.strokes.push({
+    pts:   pts,
+    color: _ned.color,
+    size:  _ned.size,
+    tool:  _ned.tool
+  });
+  // Snapshot = stroke index (for undo)
+  _ned.history.push(_ned.strokes.length); // store count before this stroke
+  if(_ned.history.length > 40) _ned.history.shift();
 }
 
-// ── Stroke intent analysis (same logic as Creator Studio) ──
+// ── Render all JSON strokes onto canvas ──
+function _nedRenderAllStrokes() {
+  if(!_ned.ctx || !_ned.canvas) return;
+  _ned.ctx.clearRect(0, 0, _ned.canvas.width, _ned.canvas.height);
+  (_ned.strokes || []).forEach(function(s) {
+    if(!s.pts || s.pts.length < 2) return;
+    var ctx = _ned.ctx;
+    ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if(s.tool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.strokeStyle = 'rgba(0,0,0,1)';
+      ctx.lineWidth = s.size * 4;
+      ctx.globalAlpha = 1;
+    } else if(s.tool === 'marker') {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.size * 2.5;
+      ctx.globalAlpha = 0.38;
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.size;
+    }
+    ctx.beginPath();
+    ctx.moveTo(s.pts[0].x, s.pts[0].y);
+    for(var i=1; i<s.pts.length-1; i++) {
+      var mx = (s.pts[i].x + s.pts[i+1].x)/2;
+      var my = (s.pts[i].y + s.pts[i+1].y)/2;
+      ctx.quadraticCurveTo(s.pts[i].x, s.pts[i].y, mx, my);
+    }
+    ctx.lineTo(s.pts[s.pts.length-1].x, s.pts[s.pts.length-1].y);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+// ── History (JSON-based) ──
+function _nedSaveSnapshot() {
+  // Snapshot stored implicitly via _ned.strokes length in _nedUp
+  // This function kept for compatibility — no-op here
+}
+
+function neDrawUndo() {
+  if(!_ned.strokes.length) { showToast('Kuch undo nahi hai', 'error'); return; }
+  var removed = _ned.strokes.pop();
+  _ned.redoStack.push(removed);
+  _nedRenderAllStrokes();
+  showToast('↩ Undo', 'success');
+}
+
+function neDrawRedo() {
+  if(!_ned.redoStack.length) { showToast('Kuch redo nahi hai', 'error'); return; }
+  var stroke = _ned.redoStack.pop();
+  _ned.strokes.push(stroke);
+  _nedRenderAllStrokes();
+  showToast('↪ Redo', 'success');
+}
+
+function neDrawClear() {
+  if(!_ned.ctx) return;
+  if(!confirm('Saari drawing clear karein?')) return;
+  _ned.redoStack = _ned.redoStack.concat(_ned.strokes.reverse());
+  _ned.strokes = [];
+  _ned.ctx.clearRect(0, 0, _ned.canvas.width, _ned.canvas.height);
+  showToast('Drawing clear ho gayi', 'success');
+}
 function _nedAnalyzeIntent(pts) {
   if(pts.length < 4) return;
   var first = pts[0], last = pts[pts.length-1];
@@ -14841,42 +14965,6 @@ function _nedSmoothPath(ctx, pts) {
     );
   }
   ctx.lineTo(pts[pts.length-1].fx, pts[pts.length-1].fy);
-}
-
-// ── History ──
-function _nedSaveSnapshot() {
-  if(!_ned.ctx || !_ned.canvas) return;
-  if(_ned.canvas.width <= 0 || _ned.canvas.height <= 0) return;
-  _ned.history.push(_ned.ctx.getImageData(0, 0, _ned.canvas.width, _ned.canvas.height));
-  if(_ned.history.length > 30) _ned.history.shift();
-}
-
-function neDrawUndo() {
-  if(!_ned.ctx || _ned.history.length === 0) {
-    showToast('Kuch undo nahi hai', 'error'); return;
-  }
-  if(_ned.canvas.width <= 0 || _ned.canvas.height <= 0) return;
-  if(_ned.canvas.width>0&&_ned.canvas.height>0) _ned.redoStack.push(_ned.ctx.getImageData(0, 0, _ned.canvas.width, _ned.canvas.height));
-  var prev = _ned.history.pop();
-  if(prev instanceof ImageData) _ned.ctx.putImageData(prev, 0, 0);
-}
-
-function neDrawRedo() {
-  if(!_ned.ctx || _ned.redoStack.length === 0) {
-    showToast('Kuch redo nahi hai', 'error'); return;
-  }
-  _nedSaveSnapshot();
-  var next = _ned.redoStack.pop();
-  _ned.ctx.putImageData(next, 0, 0);
-}
-
-function neDrawClear() {
-  if(!_ned.ctx) return;
-  if(!confirm('Saari drawing clear karein?')) return;
-  _nedSaveSnapshot();
-  _ned.ctx.clearRect(0, 0, _ned.canvas.width, _ned.canvas.height);
-  _ned._savedImage = null;
-  showToast('Drawing clear ho gayi', 'success');
 }
 
 // ── Tool / color / size setters ──
@@ -16960,41 +17048,47 @@ function _ncoDeleteObj(obj){
 }
 
 // Clear resets text objects too
-window.neDrawClear=function(){
+window.neDrawClear = function(){
   if(!confirm('Saari drawing aur text clear karein?')) return;
-  if(_ned.ctx&&_ned.canvas){
+  if(_ned.ctx && _ned.canvas){
     _ned.ctx.clearRect(0,0,_ned.canvas.width,_ned.canvas.height);
-    _ned._savedImage=null; _ned.history=[]; _ned.redoStack=[];
+    _ned.redoStack = _ned.redoStack.concat((_ned.strokes||[]).slice().reverse());
+    _ned.strokes = [];
+    _ned.history = [];
   }
   _nco.list=[]; _nco.selected=null; _ncoHideHandle();
   showToast('Clear ho gaya','success');
 };
 
 // Toggle preserves object handles
-window.neDrawToggle=function(){
+window.neDrawToggle = function(){
   _ncoHideHandle();
-  _ned.active=!_ned.active;
-  var canvas=document.getElementById('neDrawCanvas');
-  var body=document.getElementById('neBody');
-  var toolbar=document.getElementById('neDrawToolbar');
-  var btn=document.getElementById('neDrawToggleBtn');
+  _ned.active = !_ned.active;
+  var canvas  = document.getElementById('neDrawCanvas');
+  var body    = document.getElementById('neBody');
+  var toolbar = document.getElementById('neDrawToolbar');
+  var btn     = document.getElementById('neDrawToggleBtn');
   if(_ned.active){
+    // Reset tool to none — user must pick
+    _ned.tool = 'none';
+    document.querySelectorAll('.ndt-btn[id^="ndt"]').forEach(function(b){ b.classList.remove('sel'); });
     neDrawInit();
-    if(canvas) canvas.classList.add('draw-active');
-    if(body) body.classList.add('draw-mode');
+    if(_ned.strokes && _ned.strokes.length) _nedRenderAllStrokes();
+    if(canvas)  canvas.classList.add('draw-active');
+    if(body)    body.classList.add('draw-mode');
     if(toolbar) toolbar.classList.add('visible');
-    if(btn) btn.classList.add('draw-on');
-    showToast('✏️ Draw mode ON','success');
+    if(btn)     btn.classList.add('draw-on');
+    showToast('✏️ Draw mode ON — pen/marker/eraser choose karo!','success');
     if(window.ResizeObserver){
-      window._nedResizeObs=new ResizeObserver(neDrawResize);
+      window._nedResizeObs = new ResizeObserver(neDrawResize);
       if(body) window._nedResizeObs.observe(body);
     }
   } else {
-    if(_ned.canvas&&_ned.history.length>0) _ned._savedImage=_ned.canvas.toDataURL('image/png');
-    if(canvas) canvas.classList.remove('draw-active');
-    if(body) body.classList.remove('draw-mode');
+    // Strokes already in _ned.strokes — no PNG needed
+    if(canvas)  canvas.classList.remove('draw-active');
+    if(body)    body.classList.remove('draw-mode');
     if(toolbar) toolbar.classList.remove('visible');
-    if(btn) btn.classList.remove('draw-on');
+    if(btn)     btn.classList.remove('draw-on');
     if(window._nedResizeObs) window._nedResizeObs.disconnect();
     showToast('Draw mode OFF','success');
   }
