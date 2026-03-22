@@ -19076,176 +19076,196 @@ var _freshDrag = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// FRESH PLACE SESSION — uses EXACT same working engine as adjust mode
-// Scrolling, OK button, drag, rotate+resize all identical to adjust mode
+// FRESH PLACE SESSION — ONE engine for both fresh place AND adjust
+// Called after: (1) _csWritePlace, (2) _adjTapHandler teleport
+// obj.baseSnapshot must be set to clean state BEFORE calling this
 // ═══════════════════════════════════════════════════════════════════════
 function _csFreshPlaceSession(obj) {
   var canvas = document.getElementById('neDrawCanvas');
   var body   = document.getElementById('neBody');
   if(!canvas || !body || !_ned.ctx) return;
 
-  // Turn on adjust mode silently
-  if(!_nco.adjustMode) {
-    _nco.adjustMode = true;
-    _ned._toolBeforeAdjust = (_ned.tool !== 'none') ? _ned.tool : 'pen';
-    _ned.tool = 'none';
-    canvas.style.pointerEvents = 'none';
-    _ncoEnsureHandlers();
+  // Exit any existing adjust mode state cleanly first
+  if(_nco.adjustMode) {
+    _nco.adjustMode = false;
+    canvas.style.pointerEvents = '';
+    _ncoHideAllBoxes(); _ncoHideCtxMenu();
   }
 
-  // Dotted box for this object only
-  _ncoHideAllBoxes();
-  _ncoShowSingleBox(obj);
+  // Remove any lingering OK button
+  var oldOk = document.getElementById('ncoOkBtn');
+  if(oldOk) oldOk.remove();
 
-  // Block pinch-zoom
+  // Turn on adjust mode silently (enables scrolling + _ncoEnsureHandlers)
+  _nco.adjustMode = true;
+  _ned._toolBeforeAdjust = (_ned.tool !== 'none') ? _ned.tool : 'pen';
+  _ned.tool = 'none';
+  canvas.style.pointerEvents = 'none';  // body scrolls freely
+  _ncoEnsureHandlers();
+
+  // Block browser pinch-zoom
   var metaVP = document.querySelector('meta[name="viewport"]');
   var origVP = metaVP ? metaVP.content : '';
   if(metaVP) metaVP.content = 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no';
 
-  // Clean snapshot = state before obj drawn
-  var cleanSnap = _ncoErasedSnap(obj) || obj.baseSnapshot;
+  // cleanSnap = obj.baseSnapshot — MUST be set before calling this function
+  // It represents canvas state WITHOUT this obj drawn
+  var cleanSnap = obj.baseSnapshot;
 
   function drawClean() {
     _ned.ctx.putImageData(cleanSnap, 0, 0);
     _ncoDrawObj(obj);
   }
+  drawClean();
 
-  // OK button — starts visible
+  // Dotted box for this object only (visual, no three-dot)
+  _ncoShowSingleBox(obj);
+
+  // OK button — visible immediately
   var okBtn = _adjMakeOkBtn('✓ Set');
 
-  // Pointer state
+  // Pointer state — self-contained, no global _freshDrag needed
   var pts={}, dragOff=null, pinchSt=null, lastCY=0, autoTimer=null;
+
   function cnt(){ return Object.keys(pts).length; }
 
   function bodyToCanvas(cx, cy) {
     var br = body.getBoundingClientRect();
     var scX = canvas.width / br.width;
-    return { x:(cx-br.left+body.scrollLeft)*scX, y:cy-br.top+body.scrollTop };
+    return { x:(cx - br.left + body.scrollLeft)*scX, y: cy - br.top + body.scrollTop };
   }
 
-  function autoScroll(clientY) {
+  function doAutoScroll(clientY) {
     var EDGE=72, TOP=56;
-    var atB = clientY > window.innerHeight-EDGE;
-    var atT = clientY < EDGE+TOP;
-    if(atB||atT) {
+    var atB = clientY > window.innerHeight - EDGE;
+    var atT = clientY < EDGE + TOP;
+    if(atB || atT) {
       if(autoTimer) return;
       autoTimer = setInterval(function(){
         var cy=lastCY;
-        var iB=cy>window.innerHeight-EDGE, iT=cy<EDGE+TOP;
-        if(!iB&&!iT){clearInterval(autoTimer);autoTimer=null;return;}
-        var over=iB?cy-(window.innerHeight-EDGE):(EDGE+TOP)-cy;
-        var spd=Math.min(3+over*0.18,22);
-        var delta=iB?spd:-spd;
-        var prev=body.scrollTop;
-        body.scrollTop+=delta;
-        var actual=body.scrollTop-prev;
-        obj.y+=actual;
-        if(dragOff) dragOff.dy+=actual;
-        drawClean(); _ncoShowSingleBox(obj);
-      },16);
+        var iB=cy > window.innerHeight-EDGE, iT=cy < EDGE+TOP;
+        if(!iB && !iT){ clearInterval(autoTimer); autoTimer=null; return; }
+        var over = iB ? cy-(window.innerHeight-EDGE) : (EDGE+TOP)-cy;
+        var spd  = Math.min(3 + over*0.18, 22);
+        var delta = iB ? spd : -spd;
+        var prev = body.scrollTop;
+        body.scrollTop += delta;
+        var actual = body.scrollTop - prev;
+        obj.y += actual;
+        if(dragOff) dragOff.dy += actual;
+        drawClean();
+        _ncoShowSingleBox(obj);
+      }, 16);
     } else {
-      if(autoTimer){clearInterval(autoTimer);autoTimer=null;}
+      if(autoTimer){ clearInterval(autoTimer); autoTimer=null; }
     }
   }
 
-  function onDown(e){
-    if(e.target===okBtn) return;
+  function onDown(e) {
+    if(e.target === okBtn) return;
     e.preventDefault();
-    okBtn.style.display='none';
-    pts[e.pointerId]={x:e.clientX,y:e.clientY};
-    lastCY=e.clientY;
-    var c=cnt();
-    if(c===1){
-      var cp=bodyToCanvas(e.clientX,e.clientY);
-      dragOff={dx:cp.x-(obj.x+obj.w/2), dy:cp.y-(obj.y+obj.h/2)};
-      pinchSt=null;
+    okBtn.style.display = 'none';   // hide OK while touching
+    pts[e.pointerId] = {x:e.clientX, y:e.clientY};
+    lastCY = e.clientY;
+    var c = cnt();
+    if(c === 1) {
+      var cp = bodyToCanvas(e.clientX, e.clientY);
+      dragOff = { dx: cp.x - (obj.x + obj.w/2), dy: cp.y - (obj.y + obj.h/2) };
+      pinchSt = null;
     }
-    if(c===2){
-      var ids=Object.keys(pts),p1=pts[ids[0]],p2=pts[ids[1]];
-      pinchSt={dist:Math.hypot(p2.x-p1.x,p2.y-p1.y),
-               angle:Math.atan2(p2.y-p1.y,p2.x-p1.x)*180/Math.PI,
-               w:obj.w,h:obj.h,objAngle:obj.angle||0};
-      dragOff=null;
+    if(c === 2) {
+      var ids=Object.keys(pts), p1=pts[ids[0]], p2=pts[ids[1]];
+      pinchSt = {
+        dist:  Math.hypot(p2.x-p1.x, p2.y-p1.y),
+        angle: Math.atan2(p2.y-p1.y, p2.x-p1.x)*180/Math.PI,
+        w: obj.w, h: obj.h, objAngle: obj.angle||0
+      };
+      dragOff = null;
     }
   }
 
-  function onMove(e){
+  function onMove(e) {
     if(!pts[e.pointerId]) return;
     e.preventDefault();
-    pts[e.pointerId]={x:e.clientX,y:e.clientY};
-    lastCY=e.clientY;
-    var c=cnt();
-    if(c>=2&&pinchSt){
-      var ids=Object.keys(pts),p1=pts[ids[0]],p2=pts[ids[1]];
-      var dist=Math.hypot(p2.x-p1.x,p2.y-p1.y);
-      var ang=Math.atan2(p2.y-p1.y,p2.x-p1.x)*180/Math.PI;
-      var scale=dist/Math.max(1,pinchSt.dist);
-      var cx=obj.x+obj.w/2,cy=obj.y+obj.h/2;
-      obj.w=Math.max(30,pinchSt.w*scale); obj.h=Math.max(16,pinchSt.h*scale);
-      obj.x=cx-obj.w/2; obj.y=cy-obj.h/2;
-      obj.angle=pinchSt.objAngle+(ang-pinchSt.angle);
+    pts[e.pointerId] = {x:e.clientX, y:e.clientY};
+    lastCY = e.clientY;
+    var c = cnt();
+    if(c >= 2 && pinchSt) {
+      // 2-finger: rotate + resize simultaneously
+      var ids=Object.keys(pts), p1=pts[ids[0]], p2=pts[ids[1]];
+      var dist  = Math.hypot(p2.x-p1.x, p2.y-p1.y);
+      var ang   = Math.atan2(p2.y-p1.y, p2.x-p1.x)*180/Math.PI;
+      var scale = dist / Math.max(1, pinchSt.dist);
+      var cx=obj.x+obj.w/2, cy=obj.y+obj.h/2;
+      obj.w = Math.max(30, pinchSt.w*scale);
+      obj.h = Math.max(16, pinchSt.h*scale);
+      obj.x = cx-obj.w/2; obj.y = cy-obj.h/2;
+      obj.angle = pinchSt.objAngle + (ang - pinchSt.angle);
       drawClean(); _ncoShowSingleBox(obj);
-    } else if(c===1&&dragOff){
-      var cp=bodyToCanvas(e.clientX,e.clientY);
-      obj.x=cp.x-dragOff.dx-obj.w/2;
-      obj.y=cp.y-dragOff.dy-obj.h/2;
+    } else if(c === 1 && dragOff) {
+      // 1-finger: drag
+      var cp = bodyToCanvas(e.clientX, e.clientY);
+      obj.x = cp.x - dragOff.dx - obj.w/2;
+      obj.y = cp.y - dragOff.dy - obj.h/2;
       drawClean(); _ncoShowSingleBox(obj);
-      autoScroll(e.clientY);
+      doAutoScroll(e.clientY);
     }
   }
 
-  function onUp(e){
+  function onUp(e) {
     e.preventDefault();
     delete pts[e.pointerId];
-    var c=cnt();
-    if(c===0){
-      if(autoTimer){clearInterval(autoTimer);autoTimer=null;}
-      okBtn.style.display='flex';  // show OK every time all fingers lift
+    var c = cnt();
+    if(c === 0) {
+      if(autoTimer){ clearInterval(autoTimer); autoTimer=null; }
+      okBtn.style.display = 'flex';  // show OK every time all fingers lift
     }
-    if(c===1){
-      var remId=Object.keys(pts)[0],rem=pts[remId];
-      var cp=bodyToCanvas(rem.x,rem.y);
-      dragOff={dx:cp.x-(obj.x+obj.w/2), dy:cp.y-(obj.y+obj.h/2)};
-      pinchSt=null;
+    if(c === 1) {
+      // 2→1: reinit drag from remaining finger
+      var remId=Object.keys(pts)[0], rem=pts[remId];
+      var cp=bodyToCanvas(rem.x, rem.y);
+      dragOff = { dx: cp.x-(obj.x+obj.w/2), dy: cp.y-(obj.y+obj.h/2) };
+      pinchSt = null;
     }
   }
 
-  function cleanup(){
-    if(autoTimer){clearInterval(autoTimer);autoTimer=null;}
-    document.removeEventListener('pointerdown',onDown,true);
-    document.removeEventListener('pointermove',onMove,true);
-    document.removeEventListener('pointerup',  onUp,  true);
-    document.removeEventListener('pointercancel',onUp,true);
-    if(metaVP&&origVP) metaVP.content=origVP;
+  function doCleanup() {
+    if(autoTimer){ clearInterval(autoTimer); autoTimer=null; }
+    document.removeEventListener('pointerdown',  onDown, true);
+    document.removeEventListener('pointermove',  onMove, true);
+    document.removeEventListener('pointerup',    onUp,   true);
+    document.removeEventListener('pointercancel',onUp,   true);
+    if(metaVP && origVP) metaVP.content = origVP;
   }
 
-  okBtn.addEventListener('pointerdown',function(e){
+  okBtn.addEventListener('pointerdown', function(e){
     e.preventDefault(); e.stopPropagation();
-    cleanup();
+    doCleanup();
+    // Save final state
     drawClean();
     _nedSaveSnapshot();
-    obj.baseSnapshot=_ned.ctx.getImageData(0,0,canvas.width,canvas.height);
+    obj.baseSnapshot = _ned.ctx.getImageData(0, 0, canvas.width, canvas.height);
     okBtn.remove();
-    // Turn adjust mode OFF
-    _nco.adjustMode=false;
-    var restore=_ned._toolBeforeAdjust||'pen';
-    _ned.tool=restore; _ned._toolBeforeAdjust=null;
-    canvas.style.pointerEvents='';
+    // Turn adjust mode OFF — restore draw tool
+    _nco.adjustMode = false;
+    var restore = _ned._toolBeforeAdjust || 'pen';
+    _ned.tool = restore; _ned._toolBeforeAdjust = null;
+    canvas.style.pointerEvents = '';
     _ncoHideAllBoxes(); _ncoHideCtxMenu();
     var map={pen:'ndtPen',marker:'ndtMarker',eraser:'ndtEraser'};
-    var bid=map[restore]; if(bid){var rb=document.getElementById(bid);if(rb)rb.classList.add('sel');}
+    var bid=map[restore]; if(bid){var rb=document.getElementById(bid); if(rb) rb.classList.add('sel');}
     var adjBtn=document.getElementById('ndtAdjust');
     if(adjBtn){
-      adjBtn.style.background='transparent';adjBtn.style.fontWeight='800';
+      adjBtn.style.background='transparent'; adjBtn.style.fontWeight='800';
       adjBtn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>Adjust';
     }
-    showToast('✅ Set! Adjust Mode se baad mein badal sakte hain.','success');
-  },{passive:false,capture:true});
+    showToast('✅ Set! Adjust Mode se baad mein badal sakte hain.', 'success');
+  }, {passive:false, capture:true});
 
-  document.addEventListener('pointerdown',  onDown,{capture:true,passive:false});
-  document.addEventListener('pointermove',  onMove,{capture:true,passive:false});
-  document.addEventListener('pointerup',    onUp,  {capture:true,passive:false});
-  document.addEventListener('pointercancel',onUp,  {capture:true,passive:false});
+  document.addEventListener('pointerdown',  onDown, {capture:true, passive:false});
+  document.addEventListener('pointermove',  onMove, {capture:true, passive:false});
+  document.addEventListener('pointerup',    onUp,   {capture:true, passive:false});
+  document.addEventListener('pointercancel',onUp,   {capture:true, passive:false});
 }
 
 // Show dotted box for a single object (no three-dot — fresh session only)
@@ -19399,9 +19419,7 @@ function _ncoStartAdjustFresh(obj) {
 }
 
 function _adjTapHandler(e) {
-  // Ignore if it's the cancel button or OK button
   if(e.target.id === 'adjTapCancel' || e.target.id === 'ncoOkBtn') return;
-
   e.preventDefault(); e.stopPropagation();
 
   var neBody   = document.getElementById('neBody');
@@ -19413,45 +19431,33 @@ function _adjTapHandler(e) {
   var obj = _adjTapObj;
   var ctx = neCanvas.getContext('2d');
 
-  // Remove instruction UI
-  var bar = document.getElementById('adjTapBar');
-  if(bar) bar.remove();
-  var cb  = document.getElementById('adjTapCancel');
-  if(cb)  cb.remove();
-
+  var bar = document.getElementById('adjTapBar');   if(bar) bar.remove();
+  var cb  = document.getElementById('adjTapCancel'); if(cb)  cb.remove();
   _adjTapPending = false;
   _adjTapObj     = null;
 
-  // Build clean snapshot
+  // Get clean snapshot (canvas state WITHOUT this obj)
   var idx       = _nco.list.indexOf(obj);
   var cleanSnap = _adjGetCleanSnap(obj, idx, neCanvas, ctx);
 
-  // Teleport: obj center at tap point
+  // Teleport obj center to tap point
   var br   = neBody.getBoundingClientRect();
   var scX  = neCanvas.width / br.width;
   var tapX = (e.clientX - br.left + neBody.scrollLeft) * scX;
-  var tapY = (e.clientY - br.top  + neBody.scrollTop);
+  var tapY =  e.clientY - br.top  + neBody.scrollTop;
   obj.x = tapX - obj.w / 2;
   obj.y = tapY - obj.h / 2;
+
+  // CRITICAL: set baseSnapshot to cleanSnap BEFORE calling _csFreshPlaceSession
+  // _csFreshPlaceSession reads obj.baseSnapshot as the clean background
   obj.baseSnapshot = cleanSnap;
 
   // Draw at new position
   ctx.putImageData(cleanSnap, 0, 0);
   _ncoDrawObjOnCtx(ctx, obj);
 
-  // Exit old adjust mode first (if active from three-dot)
-  if(_nco.adjustMode) {
-    _nco.adjustMode = false;
-    canvas_pe_restore();
-  }
-
-  // Start fresh place session (same dotted box + drag/rotate/resize + OK)
+  // _csFreshPlaceSession will handle adjustMode ON/OFF itself
   _csFreshPlaceSession(obj);
-}
-
-function canvas_pe_restore(){
-  var cv=document.getElementById('neDrawCanvas');
-  if(cv) cv.style.pointerEvents='';
 }
 
 function _adjTapCancel() {
