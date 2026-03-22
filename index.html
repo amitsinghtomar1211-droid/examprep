@@ -7641,7 +7641,11 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesEditor'}, '');
   showFloatBack('‹');
-  setTimeout(function(){ showQmapFab && showQmapFab(); }, 200);
+  setTimeout(function(){
+    showQmapFab && showQmapFab();
+    // Restore canvas drawings if saved
+    _neRestoreCanvas(n.canvasPNG || null, n.canvasObjs || null);
+  }, 200);
 }
 
 
@@ -7779,29 +7783,46 @@ function _doSaveNoteData() {
   var isSpecial = _editorState.specialType;
   var area = document.getElementById('noteEditableArea');
   
-  // IMPORTANT: Plain text nikaalo aur HTML save karo
   var plainText = neGetPlainText();
-  var richHTML = area.innerHTML; // Current HTML with all highlight marks
-  
-  // Agar plainText empty hai to bhi save allow karo (user ne sab delete kiya)
-  
+  var richHTML  = area.innerHTML;
+
+  // ── Canvas state: save PNG + objects list ──
+  var canvasPNG  = null;
+  var canvasObjs = null;
+  var neCanvas   = document.getElementById('neDrawCanvas');
+  if(neCanvas && _ned && _ned.active && _nco && _nco.list.length > 0) {
+    try { canvasPNG = neCanvas.toDataURL('image/png'); } catch(e){}
+    // Save object metadata (txt, opts, x,y,w,h,angle) — no ImageData (too large)
+    canvasObjs = _nco.list.map(function(o){
+      return { id:o.id, type:o.type, txt:o.txt, opts:o.opts,
+               x:o.x, y:o.y, w:o.w, h:o.h, angle:o.angle };
+    });
+  } else if(neCanvas && _ned && _ned._savedImage) {
+    canvasPNG = _ned._savedImage;
+  }
+
   if(isSpecial === 'finalnotes') {
     t.finalNotes = plainText;
     t.finalNotesAt = new Date().toLocaleDateString('hi-IN');
-    t.finalNotesHTML = richHTML; // Save full HTML including highlights
+    t.finalNotesHTML = richHTML;
+    if(canvasPNG)  t.finalNotesCanvasPNG  = canvasPNG;
+    if(canvasObjs) t.finalNotesCanvasObjs = canvasObjs;
   } 
   else if(isSpecial === 'smartnotes') {
     t.smartNotesAI = plainText;
     t.smartNotesAt = new Date().toLocaleDateString('hi-IN');
     t.smartNotesHTML = richHTML;
+    if(canvasPNG)  t.smartNotesCanvasPNG  = canvasPNG;
+    if(canvasObjs) t.smartNotesCanvasObjs = canvasObjs;
   }
   else if(isSpecial === 'masternotes') {
     t.masterNotes = plainText;
     t.masterNotesAt = new Date().toLocaleDateString('hi-IN');
     t.masterNotesHTML = richHTML;
+    if(canvasPNG)  t.masterNotesCanvasPNG  = canvasPNG;
+    if(canvasObjs) t.masterNotesCanvasObjs = canvasObjs;
   }
   else if(isSpecial === 'factspage') {
-    // Facts page HTML save karo (highlights preserve karne ke liye)
     const fp = _fpState || {};
     if(fp.level === 'subject') {
       const subj = getSubj(fp.sid);
@@ -7818,25 +7839,24 @@ function _doSaveNoteData() {
     var n = t.notes[_editorState.noteIdx];
     if(!n) return false;
     
-    n.content = plainText;
-    n.wordCount = plainText.trim() ? plainText.trim().split(/\s+/).length : 0;
+    n.content    = plainText;
+    n.wordCount  = plainText.trim() ? plainText.trim().split(/\s+/).length : 0;
     n.lastEditedAt = new Date().toLocaleDateString('hi-IN');
     
-    // Collect current highlights from DOM
     _editorState.highlights = [];
     area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green').forEach(function(mark) {
-      var cls = mark.className;
+      var cls   = mark.className;
       var color = cls.includes('pink') ? 'pink' : cls.includes('green') ? 'green' : 'yellow';
-      var uid = mark.getAttribute('data-hlid') || ('hl_' + Date.now() + '_' + Math.random().toString(36).slice(2));
+      var uid   = mark.getAttribute('data-hlid') || ('hl_' + Date.now() + '_' + Math.random().toString(36).slice(2));
       mark.setAttribute('data-hlid', uid);
       _editorState.highlights.push({ id: uid, text: mark.textContent, color: color });
     });
     
     n.editorHighlights = _editorState.highlights.slice();
-    n.editorRichHTML = area.innerHTML; // Save complete HTML with all mark elements
+    n.editorRichHTML   = area.innerHTML;
+    if(canvasPNG)  n.canvasPNG  = canvasPNG;
+    if(canvasObjs) n.canvasObjs = canvasObjs;
   }
-  
-  // Save caller function mein hoga
   
   return true;
 }
@@ -8179,16 +8199,83 @@ function openSpecialEditor(type, sid, secid, tid) {
   history.pushState({type:'notesEditor'}, '');
   showCreatorFab && showCreatorFab();
   showQmapFab && showQmapFab();
+  // Restore canvas for special notes types
+  setTimeout(function(){
+    var cvPNG=null, cvObjs=null;
+    if(type==='finalnotes'){ cvPNG=t.finalNotesCanvasPNG||null; cvObjs=t.finalNotesCanvasObjs||null; }
+    else if(type==='smartnotes'){ cvPNG=t.smartNotesCanvasPNG||null; cvObjs=t.smartNotesCanvasObjs||null; }
+    else if(type==='masternotes'){ cvPNG=t.masterNotesCanvasPNG||null; cvObjs=t.masterNotesCanvasObjs||null; }
+    _neRestoreCanvas(cvPNG, cvObjs);
+  }, 250);
+}
+
+// ── Restore canvas drawings when editor opens ──
+function _neRestoreCanvas(pngDataUrl, objsList) {
+  // Reset canvas state
+  _nco.list = [];
+  _ned._savedImage = null;
+
+  if(!pngDataUrl && (!objsList || !objsList.length)) return;
+
+  // Ensure draw mode is active
+  if(!_ned.active) {
+    _ned.active = true;
+    neDrawInit();
+    var cv = document.getElementById('neDrawCanvas');
+    var body = document.getElementById('neBody');
+    if(cv) cv.classList.add('draw-active');
+    if(body) body.classList.add('draw-mode');
+    var tb = document.getElementById('neDrawToolbar');
+    if(tb) tb.classList.add('visible');
+    var tBtn = document.getElementById('neDrawToggleBtn');
+    if(tBtn) tBtn.classList.add('draw-on');
+  } else {
+    neDrawResize();
+  }
+
+  var canvas = document.getElementById('neDrawCanvas');
+  if(!canvas || !_ned.ctx) return;
+  var ctx = _ned.ctx;
+
+  if(pngDataUrl) {
+    var img = new Image();
+    img.onload = function(){
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      // Rebuild _nco.list from saved objects (for adjust mode)
+      if(objsList && objsList.length) {
+        _nco.list = objsList.map(function(o){
+          return {
+            id: o.id, type: o.type, txt: o.txt, opts: o.opts,
+            x: o.x, y: o.y, w: o.w, h: o.h, angle: o.angle,
+            baseSnapshot: null  // will be set on next save
+          };
+        });
+      }
+      _nedSaveSnapshot(); // put in undo history
+    };
+    img.src = pngDataUrl;
+  }
 }
 
 function neSaveSnapshot() {
   const area = document.getElementById('noteEditableArea');
   if(!area) return;
+  // Include canvas state in undo snapshot
+  var canvasData = null;
+  var neCanvas = document.getElementById('neDrawCanvas');
+  if(neCanvas && _ned && _ned.active) {
+    try { canvasData = _ned.ctx.getImageData(0,0,neCanvas.width,neCanvas.height); } catch(e){}
+  }
   _htmlUndoStack.push({
     html: area.innerHTML,
-    highlights: JSON.parse(JSON.stringify(_editorState.highlights))
+    highlights: JSON.parse(JSON.stringify(_editorState.highlights)),
+    canvasData: canvasData,
+    ncoList: JSON.parse(JSON.stringify(_nco.list.map(function(o){
+      return {id:o.id,type:o.type,txt:o.txt,opts:o.opts,x:o.x,y:o.y,w:o.w,h:o.h,angle:o.angle};
+    })))
   });
-  if(_htmlUndoStack.length > 40) _htmlUndoStack.shift();
+  if(_htmlUndoStack.length > 30) _htmlUndoStack.shift();
   _htmlRedoStack = [];
 }
 
@@ -8196,11 +8283,28 @@ function neUndo() {
   const area = document.getElementById('noteEditableArea');
   if(!area) return;
   if(_htmlUndoStack.length === 0) { showToast('Kuch undo nahi hai', 'error'); return; }
-  _htmlRedoStack.push({ html: area.innerHTML, highlights: JSON.parse(JSON.stringify(_editorState.highlights)) });
+  var neCanvas = document.getElementById('neDrawCanvas');
+  var canvasNow = null;
+  if(neCanvas && _ned && _ned.active) {
+    try { canvasNow = _ned.ctx.getImageData(0,0,neCanvas.width,neCanvas.height); } catch(e){}
+  }
+  _htmlRedoStack.push({
+    html: area.innerHTML,
+    highlights: JSON.parse(JSON.stringify(_editorState.highlights)),
+    canvasData: canvasNow,
+    ncoList: JSON.parse(JSON.stringify(_nco.list.map(function(o){
+      return {id:o.id,type:o.type,txt:o.txt,opts:o.opts,x:o.x,y:o.y,w:o.w,h:o.h,angle:o.angle};
+    })))
+  });
   const prev = _htmlUndoStack.pop();
   area.innerHTML = prev.html;
   _editorState.highlights = prev.highlights;
   neAttachEraserToMarks();
+  // Restore canvas
+  if(prev.canvasData && neCanvas && _ned && _ned.active) {
+    _ned.ctx.putImageData(prev.canvasData, 0, 0);
+  }
+  if(prev.ncoList) _nco.list = prev.ncoList.map(function(o){ return Object.assign({baseSnapshot:null},o); });
   markModified();
   showToast('Undo ✅', 'success');
 }
@@ -8210,11 +8314,27 @@ function neRedo() {
   const area = document.getElementById('noteEditableArea');
   if(!area) return;
   if(_htmlRedoStack.length === 0) { showToast('Kuch redo nahi hai', 'error'); return; }
-  _htmlUndoStack.push({ html: area.innerHTML, highlights: JSON.parse(JSON.stringify(_editorState.highlights)) });
+  var neCanvas = document.getElementById('neDrawCanvas');
+  var canvasNow = null;
+  if(neCanvas && _ned && _ned.active) {
+    try { canvasNow = _ned.ctx.getImageData(0,0,neCanvas.width,neCanvas.height); } catch(e){}
+  }
+  _htmlUndoStack.push({
+    html: area.innerHTML,
+    highlights: JSON.parse(JSON.stringify(_editorState.highlights)),
+    canvasData: canvasNow,
+    ncoList: JSON.parse(JSON.stringify(_nco.list.map(function(o){
+      return {id:o.id,type:o.type,txt:o.txt,opts:o.opts,x:o.x,y:o.y,w:o.w,h:o.h,angle:o.angle};
+    })))
+  });
   const next = _htmlRedoStack.pop();
   area.innerHTML = next.html;
   _editorState.highlights = next.highlights;
   neAttachEraserToMarks();
+  if(next.canvasData && neCanvas && _ned && _ned.active) {
+    _ned.ctx.putImageData(next.canvasData, 0, 0);
+  }
+  if(next.ncoList) _nco.list = next.ncoList.map(function(o){ return Object.assign({baseSnapshot:null},o); });
   markModified();
   showToast('Redo ✅', 'success');
 }
@@ -19260,6 +19380,9 @@ function _csFreshPlaceSession(obj) {
       adjBtn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>Adjust';
     }
     showToast('✅ Set! Adjust Mode se baad mein badal sakte hain.', 'success');
+    // Mark editor as modified so save prompt appears on close
+    neSaveSnapshot();
+    markModified();
   }, {passive:false, capture:true});
 
   document.addEventListener('pointerdown',  onDown, {capture:true, passive:false});
@@ -19376,35 +19499,49 @@ function _ncoStartAdjustFresh(obj) {
   _adjTapPending = true;
   _adjTapObj     = obj;
 
-  // Remove any old UI
-  ['adjTapBar','adjTapCancel','adjSetHereBtn'].forEach(function(id){
+  ['adjTapBar','adjTapCancel','adjSetHereBtn','adjCrosshair'].forEach(function(id){
     var el=document.getElementById(id); if(el) el.remove();
   });
+
+  // ── Crosshair target at screen center ──
+  // This shows user EXACTLY where text will land
+  var cross = document.createElement('div');
+  cross.id = 'adjCrosshair';
+  cross.innerHTML = [
+    '<div style="position:absolute;top:50%;left:0;right:0;height:2px;background:rgba(21,101,192,0.7);transform:translateY(-50%);"></div>',
+    '<div style="position:absolute;left:50%;top:0;bottom:0;width:2px;background:rgba(21,101,192,0.7);transform:translateX(-50%);"></div>',
+    '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:22px;height:22px;border:2.5px solid #1565c0;border-radius:50%;background:rgba(21,101,192,0.18);"></div>',
+    '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,10px);font-size:0.65rem;font-weight:800;color:#1565c0;white-space:nowrap;background:rgba(255,255,255,0.85);padding:2px 7px;border-radius:8px;">Text yahan aayega</div>'
+  ].join('');
+  cross.style.cssText = [
+    'position:fixed','top:0','left:0','right:0','bottom:0',
+    'z-index:9998','pointer-events:none'
+  ].join(';');
+  document.body.appendChild(cross);
 
   // ── Instruction bar ──
   var bar = document.createElement('div');
   bar.id = 'adjTapBar';
-  bar.innerHTML = '📜 Scroll karein aur neeche "📍 Yahan Rakho" dabayein';
+  bar.innerHTML = '🎯 Scroll karo — text crosshair par aayega';
   bar.style.cssText = [
     'position:fixed','top:58px','left:50%','transform:translateX(-50%)',
-    'z-index:99999','padding:11px 20px','border-radius:22px',
+    'z-index:99999','padding:10px 18px','border-radius:22px',
     'background:linear-gradient(135deg,#6a1b9a,#8e24aa)','color:#fff',
     'font-size:0.78rem','font-weight:800','font-family:inherit',
-    'box-shadow:0 4px 20px rgba(106,27,154,0.55)',
-    'white-space:nowrap','pointer-events:none',
-    'animation:ncoOkPulse 1.8s ease-in-out infinite'
+    'box-shadow:0 4px 18px rgba(106,27,154,0.5)',
+    'white-space:nowrap','pointer-events:none'
   ].join(';');
   document.body.appendChild(bar);
 
-  // ── "📍 Yahan Rakho" button — user presses this when at destination ──
+  // ── "✓ Yahan Set Karo" button ──
   var setBtn = document.createElement('button');
   setBtn.id = 'adjSetHereBtn';
-  setBtn.innerHTML = '📍 Yahan Rakho';
+  setBtn.innerHTML = '✓ Yahan Set Karo';
   setBtn.style.cssText = [
-    'position:fixed','bottom:100px','left:50%','transform:translateX(-50%)',
-    'z-index:99999','padding:14px 30px','border-radius:28px','border:none',
+    'position:fixed','bottom:90px','left:50%','transform:translateX(-50%)',
+    'z-index:99999','padding:16px 36px','border-radius:32px','border:none',
     'background:linear-gradient(135deg,#1565c0,#1976d2)','color:#fff',
-    'font-size:0.92rem','font-weight:900','font-family:inherit',
+    'font-size:0.95rem','font-weight:900','font-family:inherit',
     'box-shadow:0 6px 24px rgba(21,101,192,0.55)',
     'cursor:pointer','-webkit-tap-highlight-color:transparent',
     'touch-action:manipulation',
@@ -19417,27 +19554,26 @@ function _ncoStartAdjustFresh(obj) {
   cancelBtn.id = 'adjTapCancel';
   cancelBtn.innerHTML = '✕ Cancel';
   cancelBtn.style.cssText = [
-    'position:fixed','bottom:56px','left:50%','transform:translateX(-50%)',
-    'z-index:99999','padding:9px 22px','border-radius:20px',
-    'border:1.5px solid rgba(255,255,255,0.25)',
-    'background:rgba(0,0,0,0.5)','color:#fff',
-    'font-size:0.76rem','font-weight:700','font-family:inherit',
+    'position:fixed','bottom:50px','left:50%','transform:translateX(-50%)',
+    'z-index:99999','padding:8px 20px','border-radius:18px',
+    'border:1.5px solid rgba(0,0,0,0.15)',
+    'background:rgba(0,0,0,0.45)','color:#fff',
+    'font-size:0.75rem','font-weight:700','font-family:inherit',
     'cursor:pointer','-webkit-tap-highlight-color:transparent',
     'touch-action:manipulation'
   ].join(';');
   document.body.appendChild(cancelBtn);
 
-  // "📍 Yahan Rakho" — teleport text to visible center of neBody
   setBtn.addEventListener('pointerdown', function(e){
     e.preventDefault(); e.stopPropagation();
     _adjDoTeleportToVisibleCenter();
-  }, {passive:false});
+  }, {passive:false, capture:true});
 
   cancelBtn.addEventListener('pointerdown', function(e){
     e.preventDefault(); e.stopPropagation();
     _adjTapCancel();
     if(!_nco.adjustMode) neAdjustToggle();
-  }, {passive:false});
+  }, {passive:false, capture:true});
 }
 
 function _adjDoTeleportToVisibleCenter() {
@@ -19448,40 +19584,37 @@ function _adjDoTeleportToVisibleCenter() {
   var obj = _adjTapObj;
   var ctx = neCanvas.getContext('2d');
 
+  // Capture scroll position RIGHT NOW before removing anything
+  var br      = neBody.getBoundingClientRect();
+  var scX     = neCanvas.width / br.width;
+  // crosshair = fixed center of viewport where neBody is visible
+  var centerX = (neBody.scrollLeft + br.width  / 2) * scX;
+  var centerY =  neBody.scrollTop  + br.height / 2;
+
   // Remove all UI
-  ['adjTapBar','adjTapCancel','adjSetHereBtn'].forEach(function(id){
+  ['adjTapBar','adjTapCancel','adjSetHereBtn','adjCrosshair'].forEach(function(id){
     var el=document.getElementById(id); if(el) el.remove();
   });
   _adjTapPending = false;
   _adjTapObj     = null;
 
-  // Clean snapshot (canvas without this obj)
+  // Clean snapshot
   var idx       = _nco.list.indexOf(obj);
   var cleanSnap = _adjGetCleanSnap(obj, idx, neCanvas, ctx);
 
-  // Teleport to VISIBLE CENTER of neBody (wherever user has scrolled to)
-  var br   = neBody.getBoundingClientRect();
-  var scX  = neCanvas.width / br.width;
-  var centerX = (neBody.scrollLeft + br.width / 2) * scX;
-  var centerY =  neBody.scrollTop  + br.height / 2;
+  // Place obj center exactly at crosshair position
   obj.x = centerX - obj.w / 2;
   obj.y = centerY - obj.h / 2;
-
-  // Set baseSnapshot = cleanSnap before _csFreshPlaceSession
   obj.baseSnapshot = cleanSnap;
 
-  // Draw at new position
   ctx.putImageData(cleanSnap, 0, 0);
   _ncoDrawObjOnCtx(ctx, obj);
 
-  // Start fresh place session (same as first-time place)
   _csFreshPlaceSession(obj);
 }
 
 function _adjTapCancel() {
-  var neBody = document.getElementById('neBody');
-  if(neBody) neBody.removeEventListener('pointerdown', _adjTapHandler, true);
-  ['adjTapBar','adjTapCancel','adjSetHereBtn'].forEach(function(id){
+  ['adjTapBar','adjTapCancel','adjSetHereBtn','adjCrosshair'].forEach(function(id){
     var el=document.getElementById(id); if(el) el.remove();
   });
   _adjTapPending = false;
@@ -19550,7 +19683,6 @@ function _ncoRewriteObj(obj) {
 // ── Delete with confirmation ──
 function _ncoDeleteObj(obj) {
   if(!confirm('Yeh drawn text delete karein?')) {
-    // Re-show boxes if cancelled
     _ncoShowAllBoxes(); return;
   }
   var neCanvas = document.getElementById('neDrawCanvas');
@@ -19560,6 +19692,8 @@ function _ncoDeleteObj(obj) {
   _nco.list = _nco.list.filter(function(o){ return o.id !== obj.id; });
   _nedSaveSnapshot();
   _ncoRefreshBoxes();
+  neSaveSnapshot();
+  markModified();
   showToast('🗑️ Delete ho gaya!', 'success');
 }
 </script>
