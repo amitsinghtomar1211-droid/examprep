@@ -842,6 +842,415 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .notes-editor-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:500;display:none;align-items:stretch;justify-content:stretch;}
 .notes-editor-overlay.show{display:flex;}
 .notes-editor-modal{background:var(--surface);width:100%;height:100%;max-width:100%;max-height:100%;display:flex;flex-direction:column;border-radius:0;}
+
+/* ═══════════════════════════════════════════════════════
+   📋 STUDY CANVAS — Slide-in Revision Panel
+   ═══════════════════════════════════════════════════════ */
+#scPullTab {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1200;
+  width: 22px;
+  height: 72px;
+  background: linear-gradient(180deg,#6a1b9a,#1565c0);
+  border-radius: 10px 0 0 10px;
+  display: none; /* shown when notes editor open */
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: -2px 0 12px rgba(0,0,0,0.18);
+  -webkit-tap-highlight-color: transparent;
+  flex-direction: column;
+  gap: 3px;
+}
+#scPullTab.visible { display: flex; }
+#scPullTab span {
+  color: #fff;
+  font-size: 0.58rem;
+  font-weight: 900;
+  writing-mode: vertical-rl;
+  letter-spacing: 1px;
+  opacity: 0.9;
+}
+
+/* ── Main Panel ── */
+#studyCanvasPanel {
+  position: fixed;
+  top: 10px;
+  right: 0;
+  bottom: 0;
+  width: min(88vw, 420px);
+  z-index: 1201;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px 0 0 0;
+  box-shadow: -4px 0 32px rgba(0,0,0,0.22);
+  transform: translateX(100%);
+  transition: transform 0.32s cubic-bezier(0.4,0,0.2,1);
+  overflow: hidden;
+  /* Default bg — overridden by color picker */
+  background: #fffde7;
+}
+#studyCanvasPanel.sc-open {
+  transform: translateX(0);
+}
+#studyCanvasPanel.sc-fullscreen {
+  top: 0 !important;
+  right: 0 !important;
+  left: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  border-radius: 0 !important;
+  transform: translateX(0) !important;
+}
+
+/* ── Header ── */
+#scHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 6px;
+  flex-shrink: 0;
+  background: rgba(0,0,0,0.06);
+  border-bottom: 1.5px solid rgba(0,0,0,0.08);
+}
+#scHeader .sc-title {
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: rgba(0,0,0,0.7);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sc-hbtn {
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  border: 1.5px solid rgba(0,0,0,0.12);
+  background: rgba(255,255,255,0.5);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+  color: rgba(0,0,0,0.65);
+  font-weight: 700;
+}
+.sc-hbtn:hover { background: rgba(255,255,255,0.75); }
+.sc-hbtn.active { background: rgba(21,101,192,0.15); color: #1565c0; border-color: rgba(21,101,192,0.3); }
+
+/* ── Color palette row ── */
+#scBgRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  flex-shrink: 0;
+  background: rgba(0,0,0,0.04);
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  flex-wrap: wrap;
+}
+.sc-bg-dot {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2.5px solid transparent;
+  transition: border 0.15s, transform 0.15s;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.sc-bg-dot.sel, .sc-bg-dot:hover { border-color: rgba(0,0,0,0.5); transform: scale(1.18); }
+#scBgRow .sc-sep { width: 1px; height: 16px; background: rgba(0,0,0,0.12); margin: 0 2px; }
+#scBgLabel { font-size: 0.62rem; color: rgba(0,0,0,0.45); font-weight: 700; margin-right: 2px; }
+
+/* ── Toolbar row ── */
+#scToolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  flex-shrink: 0;
+  background: rgba(0,0,0,0.04);
+  border-bottom: 1px solid rgba(0,0,0,0.07);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+#scToolbar::-webkit-scrollbar { display: none; }
+.sc-tbtn {
+  min-width: 30px; height: 30px;
+  padding: 0 5px;
+  border-radius: 7px;
+  border: 1.5px solid rgba(0,0,0,0.12);
+  background: rgba(255,255,255,0.55);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.78rem; font-weight: 700;
+  color: rgba(0,0,0,0.65);
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+}
+.sc-tbtn:hover { background: rgba(255,255,255,0.85); }
+.sc-tbtn.active { background: rgba(21,101,192,0.15); color: #1565c0; border-color: rgba(21,101,192,0.35); }
+.sc-tbtn.danger.active { background: rgba(198,40,40,0.12); color: #c62828; border-color: rgba(198,40,40,0.3); }
+.sc-sep { width:1px; height:20px; background:rgba(0,0,0,0.1); margin:0 2px; flex-shrink:0; }
+.sc-color-dot {
+  width: 18px; height: 18px; border-radius: 50%;
+  cursor: pointer; border: 2px solid transparent;
+  flex-shrink: 0; -webkit-tap-highlight-color: transparent;
+}
+.sc-color-dot.sel, .sc-color-dot:hover { border-color: rgba(0,0,0,0.55); }
+
+/* ── Mode tab strip ── */
+#scModeStrip {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  background: rgba(0,0,0,0.04);
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+}
+.sc-mode-tab {
+  flex: 1;
+  padding: 6px 2px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-align: center;
+  cursor: pointer;
+  color: rgba(0,0,0,0.45);
+  border-bottom: 2.5px solid transparent;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  letter-spacing: 0.2px;
+}
+.sc-mode-tab.active {
+  color: #1565c0;
+  border-bottom-color: #1565c0;
+  background: rgba(21,101,192,0.06);
+}
+
+/* ── Canvas area ── */
+#scCanvasWrap {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+#scCanvas {
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+/* Text blocks on canvas */
+.sc-text-block {
+  position: absolute;
+  min-width: 60px; min-height: 28px;
+  padding: 4px 8px;
+  border: 1.5px dashed rgba(21,101,192,0.4);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.7);
+  font-size: 15px;
+  line-height: 1.55;
+  color: #1a1a1a;
+  cursor: move;
+  user-select: none;
+  -webkit-user-select: none;
+  box-shadow: 0 1px 5px rgba(0,0,0,0.08);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.sc-text-block.selected {
+  border-color: #1565c0;
+  border-style: solid;
+  box-shadow: 0 0 0 2px rgba(21,101,192,0.18);
+}
+.sc-text-block[contenteditable="true"] {
+  cursor: text;
+  background: rgba(255,255,255,0.9);
+  outline: none;
+}
+/* Text block resize handle */
+.sc-block-resize {
+  position: absolute;
+  right: -5px; bottom: -5px;
+  width: 14px; height: 14px;
+  background: #1565c0;
+  border-radius: 50%;
+  cursor: se-resize;
+  opacity: 0.75;
+  touch-action: none;
+}
+/* Text block rotate handle */
+.sc-block-rotate {
+  position: absolute;
+  right: -5px; top: -5px;
+  width: 14px; height: 14px;
+  background: #6a1b9a;
+  border-radius: 50%;
+  cursor: grab;
+  opacity: 0.75;
+  touch-action: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.5rem; color: #fff;
+}
+/* Text block action buttons */
+.sc-block-actions {
+  position: absolute;
+  top: -30px; left: 0;
+  display: flex; gap: 3px;
+  background: rgba(255,255,255,0.95);
+  border: 1px solid rgba(0,0,0,0.12);
+  border-radius: 8px;
+  padding: 2px 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.14);
+  z-index: 10;
+}
+.sc-block-act-btn {
+  width: 22px; height: 22px;
+  border: none; background: transparent;
+  cursor: pointer; border-radius: 5px;
+  font-size: 0.72rem; font-weight: 800;
+  color: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+.sc-block-act-btn:hover { background: rgba(0,0,0,0.07); }
+.sc-block-act-btn.active { color: #1565c0; background: rgba(21,101,192,0.1); }
+
+/* ── QMap inside Study Canvas ── */
+#scQmCanvas {
+  position: absolute;
+  top: 0; left: 0;
+  pointer-events: none;
+  display: none;
+}
+#scQmCanvas.qm-active { pointer-events: all; }
+
+/* ── Footer bar ── */
+#scFooter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  flex-shrink: 0;
+  background: rgba(0,0,0,0.05);
+  border-top: 1px solid rgba(0,0,0,0.08);
+}
+#scFooter .sc-status {
+  font-size: 0.65rem;
+  color: rgba(0,0,0,0.45);
+  font-weight: 600;
+  flex: 1;
+}
+.sc-save-btn {
+  padding: 5px 14px;
+  border-radius: 10px;
+  border: none;
+  background: linear-gradient(135deg,#2e7d32,#43a047);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 2px 8px rgba(46,125,50,0.3);
+}
+
+/* ── Drop zone highlight ── */
+#scCanvasWrap.sc-drop-active::after {
+  content: '📋 Yahan drop karo!';
+  position: absolute; inset: 0;
+  background: rgba(21,101,192,0.1);
+  border: 3px dashed #1565c0;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; font-weight: 800; color: #1565c0;
+  pointer-events: none; z-index: 20;
+}
+
+/* ── Drag-from-notes highlight ── */
+.sc-drag-source {
+  background: rgba(21,101,192,0.08) !important;
+  cursor: grab !important;
+}
+/* Night mode */
+body.night-mode #studyCanvasPanel { box-shadow: -4px 0 32px rgba(0,0,0,0.5); }
+body.night-mode .sc-text-block { background: rgba(30,30,50,0.8); color: #e0e0e0; border-color: rgba(100,140,255,0.35); }
+body.night-mode .sc-block-actions { background: rgba(30,30,50,0.95); border-color: rgba(255,255,255,0.1); }
+body.night-mode .sc-tbtn { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.75); border-color: rgba(255,255,255,0.12); }
+body.night-mode .sc-tbtn:hover { background: rgba(255,255,255,0.15); }
+
+/* ── Slide Navigator ── */
+.sc-nav-btn {
+  min-width: 28px; height: 28px;
+  border-radius: 7px;
+  border: 1.5px solid rgba(0,0,0,0.14);
+  background: rgba(255,255,255,0.55);
+  cursor: pointer; color: rgba(0,0,0,0.65);
+  font-size: 0.9rem; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; padding: 0 5px;
+  -webkit-tap-highlight-color: transparent;
+}
+.sc-nav-btn:hover:not(:disabled) { background: rgba(255,255,255,0.85); }
+.sc-nav-btn:disabled { opacity: 0.3; cursor: default; }
+.sc-nav-btn.sc-nav-add { background: rgba(21,101,192,0.12); color: #1565c0; border-color: rgba(21,101,192,0.3); font-size: 1rem; }
+.sc-nav-btn.sc-nav-add:hover { background: rgba(21,101,192,0.22); }
+
+.sc-slide-dots {
+  display: flex; align-items: center; gap: 5px;
+  padding: 0 4px; flex-wrap: nowrap; overflow-x: auto;
+  max-width: 140px;
+}
+.sc-slide-dots::-webkit-scrollbar { display: none; }
+.sc-slide-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: rgba(0,0,0,0.2);
+  cursor: pointer; flex-shrink: 0;
+  transition: all 0.15s;
+  border: 1.5px solid rgba(0,0,0,0.1);
+  -webkit-tap-highlight-color: transparent;
+}
+.sc-slide-dot.active {
+  background: #1565c0;
+  width: 20px; border-radius: 4px;
+  border-color: #1565c0;
+}
+.sc-slide-dot:hover:not(.active) { background: rgba(0,0,0,0.35); transform: scale(1.2); }
+
+/* ── Status bar ── */
+#scStatus {
+  font-size: 0.62rem; color: rgba(0,0,0,0.42); font-weight: 600;
+  padding: 2px 8px; flex-shrink: 0; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 120px;
+}
+
+/* ── Grid cards ── */
+.sc-grid-card {
+  width: calc(50% - 5px);
+  min-height: 90px;
+  border-radius: 10px;
+  border: 2px solid rgba(255,255,255,0.2);
+  padding: 8px;
+  cursor: pointer;
+  display: flex; flex-direction: column; gap: 6px;
+  transition: border 0.15s, transform 0.12s;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+}
+.sc-grid-card:hover { border-color: rgba(255,255,255,0.6); transform: scale(1.02); }
+.sc-grid-card.active { border-color: #fff; border-width: 2.5px; }
+.sc-grid-preview {
+  flex: 1; font-size: 0.68rem; color: rgba(0,0,0,0.55);
+  line-height: 1.45; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+.sc-grid-label {
+  font-size: 0.62rem; font-weight: 800; color: rgba(0,0,0,0.6);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* END STUDY CANVAS CSS */
 .notes-editor-header{padding:14px 18px;border-bottom:1.5px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
 .notes-editor-title{font-size:0.95rem;font-weight:800;color:var(--accent);}
 .notes-editor-toolbar{padding:10px 14px;border-bottom:1.5px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;background:var(--surface2);}
@@ -956,201 +1365,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 @supports(padding-top: env(safe-area-inset-top)){
   .pwa-banner{padding-bottom:calc(14px + env(safe-area-inset-bottom));}
 }
-
-/* ═══════════════════════════════════════════════════════════════
-   📖 BOOK MODE — Complete Eye-Comfort System
-   Warm paper tone, serif font, optimal line-height,
-   reduced blue-light, soft contrast, paper texture
-   ═══════════════════════════════════════════════════════════════ */
-body.book-mode {
-  --bg:#f5edd6; --bg2:#eedec0; --surface:#fdf6e3; --surface2:#f0e6c8;
-  --accent:#6b4c11; --accent2:#b5451b; --accent3:#7c5c1e;
-  --green:#4a6741; --red:#9b3a2a; --purple:#6b4c8a; --teal:#3a7068;
-  --text:#2c1e0f; --text2:#6b5640; --border:#d4b896;
-  --card:#fdf6e3; --shadow:0 2px 12px rgba(107,76,17,0.10);
-  --highlight:#fef3cd; --new-bg:rgba(74,103,65,0.10); --new-border:rgba(74,103,65,0.25);
-  --user-highlight:rgba(255,243,200,0.6); --user-highlight-border:rgba(212,184,150,0.8);
-  --save-color:#7c5c1e; --radius:4px; --radius-lg:6px;
-}
-body.book-mode {
-  background-color: var(--bg) !important;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E") !important;
-  font-family:'Georgia','Palatino Linotype','Noto Sans Devanagari',serif !important;
-  filter: sepia(8%) brightness(0.98) !important;
-  color: var(--text) !important;
-}
-body.book-mode .topbar {
-  background:#eedec0 !important; border-bottom:1.5px solid #d4b896 !important;
-  box-shadow:0 1px 6px rgba(107,76,17,0.08) !important;
-}
-body.book-mode .topbar-title { color:#3d2b0e !important; font-family:Georgia,serif !important; }
-body.book-mode .hamburger { color:#6b4c11 !important; }
-body.book-mode .sidebar {
-  background:linear-gradient(180deg,#2a1f0e 0%,#3d2b0e 60%,#4a3515 100%) !important;
-}
-body.book-mode .sidebar .sb-group-title { color:rgba(245,237,214,0.45) !important; }
-body.book-mode .sidebar .nav-item { color:rgba(245,237,214,0.82) !important; }
-body.book-mode .sidebar .nav-item:hover,
-body.book-mode .sidebar .nav-item.active { background:rgba(245,237,214,0.12) !important; }
-body.book-mode .sb-night-btn { border-color:rgba(255,255,255,0.12) !important; }
-body.book-mode .card,
-body.book-mode .question-card,
-body.book-mode .subject-block,
-body.book-mode .section-block,
-body.book-mode .topic-item,
-body.book-mode .hist-item {
-  background:#fdf6e3 !important; border-color:#d4b896 !important;
-  box-shadow:0 1px 6px rgba(107,76,17,0.07) !important;
-}
-body.book-mode p, body.book-mode .card-title, body.book-mode .page-title,
-body.book-mode .topic-name-el, body.book-mode .section-name, body.book-mode .subject-name,
-body.book-mode li, body.book-mode td, body.book-mode th {
-  font-family:'Georgia','Palatino Linotype','Noto Sans Devanagari',serif !important;
-  color:var(--text) !important;
-}
-body.book-mode textarea, body.book-mode .inp, body.book-mode select.inp {
-  background:#f0e6c8 !important; color:#2c1e0f !important; border-color:#d4b896 !important;
-  font-family:'Georgia','Noto Sans Devanagari',serif !important;
-}
-body.book-mode .btn-primary {
-  background:linear-gradient(135deg,#7c5c1e,#6b4c11) !important;
-  border-color:#6b4c11 !important; color:#fdf6e3 !important;
-}
-body.book-mode .btn-outline {
-  border-color:#d4b896 !important; color:#6b4c11 !important; background:transparent !important;
-}
-body.book-mode .btn-outline:hover {
-  border-color:#7c5c1e !important; background:rgba(107,76,17,0.08) !important;
-}
-body.book-mode .modal { background:#fdf6e3 !important; border-color:#d4b896 !important; }
-body.book-mode .modal-overlay { background:rgba(44,30,15,0.6) !important; }
-body.book-mode .option {
-  background:#f0e6c8 !important; border-color:#d4b896 !important; color:#2c1e0f !important;
-  font-family:Georgia,serif !important;
-}
-body.book-mode .option.correct { background:rgba(74,103,65,0.15) !important; border-color:#4a6741 !important; }
-body.book-mode .option.wrong   { background:rgba(155,58,42,0.12) !important; border-color:#9b3a2a !important; }
-body.book-mode .ai-chat-panel { background:#fdf6e3 !important; }
-body.book-mode .ai-chat-header { background:linear-gradient(135deg,#7c5c1e,#6b4c11) !important; }
-body.book-mode .ai-msg.bot { background:#eedec0 !important; border-color:#d4b896 !important; color:#2c1e0f !important; }
-body.book-mode .collapsible-header { background:#eedec0 !important; border-color:#d4b896 !important; }
-body.book-mode .collapsible-body   { background:#fdf6e3 !important; }
-body.book-mode .progress-fill,
-body.book-mode .hist-progress-fill { background:linear-gradient(90deg,#7c5c1e,#b5872a) !important; }
-body.book-mode ::-webkit-scrollbar { width:7px; height:7px; }
-body.book-mode ::-webkit-scrollbar-track { background:#eedec0; }
-body.book-mode ::-webkit-scrollbar-thumb { background:#c4a882; border-radius:4px; }
-body.book-mode .nav-badge     { background:#7c5c1e !important; }
-body.book-mode .nav-badge.red { background:#9b3a2a !important; }
-body.book-mode .badge-blue    { background:rgba(107,76,17,0.12) !important; color:#7c5c1e !important; }
-body.book-mode .badge-green   { background:rgba(74,103,65,0.12) !important; color:#4a6741 !important; }
-body.book-mode .tv-cat-card   { background:#fdf6e3 !important; border-color:#d4b896 !important; }
-body.book-mode .tv-cat-icon   { filter:sepia(30%) !important; }
-body.book-mode .question-card { border-left:3px solid #c4a882 !important; }
-body.book-mode mark, body.book-mode .user-highlight-text {
-  background:rgba(255,220,100,0.45) !important; color:inherit !important;
-}
-body.book-mode .reading-overlay.show { background:#f5edd6 !important; filter:sepia(6%) brightness(0.99) !important; }
-body, body.book-mode, body.book-mode .card, body.book-mode .topbar,
-body.book-mode .sidebar, body.book-mode .modal, body.book-mode .inp,
-body.book-mode textarea, body.book-mode .option, body.book-mode .ai-chat-panel {
-  transition:background-color 0.35s ease,color 0.25s ease,border-color 0.25s ease,filter 0.35s ease !important;
-}
-
-/* ── NOTES EDITOR — Book Mode (ne-book) ── */
-.ne-book { background:#f5edd6 !important; }
-.ne-book .notes-editor-header, .ne-book .notes-editor-modes,
-.ne-book .notes-editor-toolbar, .ne-book .notes-editor-footer {
-  background:#eedec0 !important; border-color:#d4b896 !important;
-}
-.ne-book .notes-editor-title { color:#4a3010 !important; font-family:Georgia,serif !important; }
-.ne-book .notesEditorMeta, .ne-book .editor-status { color:#9b7d5e !important; }
-.ne-book .note-read-area  { color:#2c1e0f !important; background:#fdf6e3 !important; }
-.ne-book .note-edit-area  { background:#f5edd6 !important; color:#2c1e0f !important; border-color:#d4b896 !important; }
-.ne-book .toolbar-btn     { background:#eedec0 !important; color:#6b4c11 !important; border-color:#d4b896 !important; }
-.ne-book .toolbar-btn:hover,
-.ne-book .toolbar-btn.active { background:#7c5c1e !important; color:#fdf6e3 !important; border-color:#7c5c1e !important; }
-.ne-book .mode-tab        { background:transparent !important; color:#9b7d5e !important; border-color:#d4b896 !important; }
-.ne-book .mode-tab.active { background:#7c5c1e !important; color:#fdf6e3 !important; border-color:#7c5c1e !important; }
-.ne-book #neProgressFill  { background:#8b5e3c !important; }
-.ne-book #readSettingsBar { background:#eedec0 !important; }
-/* THE KEY — BOOK READING TYPOGRAPHY */
-.ne-book .ne-editable {
-  font-family:'Georgia','Palatino Linotype','Noto Sans Devanagari',serif !important;
-  font-size:18px !important;
-  line-height:2.1 !important;
-  letter-spacing:0.018em !important;
-  word-spacing:0.06em !important;
-  color:#2c1e0f !important;
-  background:#fdf6e3 !important;
-  max-width:680px !important;
-  margin:0 auto !important;
-  padding:18px 22px !important;
-  border-radius:4px !important;
-}
-.ne-book .ne-editable[contenteditable="true"] { background:#f0e6c8 !important; }
-.ne-book .ne-editable b, .ne-book .ne-editable strong { color:#5c3d15 !important; font-weight:700 !important; }
-.ne-book .ne-editable i,  .ne-book .ne-editable em    { color:#7c5c1e !important; }
-.ne-book .ne-editable td, .ne-book .ne-editable th    { border-color:#d4b896 !important; }
-.ne-book .ne-editable th  { background:#eedec0 !important; color:#5c3d15 !important; }
-.ne-book .ne-editable tr:nth-child(even) td { background:#f5edd6 !important; }
-.ne-book mark[data-hl-color="yellow"] { background:rgba(255,220,100,0.50) !important; }
-.ne-book mark[data-hl-color="green"]  { background:rgba(140,195,130,0.45) !important; }
-.ne-book mark[data-hl-color="pink"]   { background:rgba(240,150,150,0.40) !important; }
-
-/* ── Book Mode Sidebar Toggle Button ── */
-.sb-book-btn {
-  display:flex; align-items:center; gap:9px;
-  width:100%; padding:9px 12px; margin-top:4px;
-  background:rgba(245,237,214,0.08); border:1px solid rgba(245,237,214,0.15);
-  border-radius:10px; cursor:pointer; color:rgba(245,237,214,0.75);
-  font-size:0.82rem; font-weight:700; font-family:inherit;
-  transition:all 0.18s; -webkit-tap-highlight-color:transparent; text-align:left;
-}
-.sb-book-btn:hover { background:rgba(245,237,214,0.15); color:#fff; }
-.sb-book-btn.active {
-  background:linear-gradient(135deg,rgba(124,92,30,0.6),rgba(107,76,17,0.5)) !important;
-  border-color:rgba(212,184,150,0.4) !important; color:#f5edd6 !important;
-}
-.sb-book-icon { font-size:1.1rem; line-height:1; flex-shrink:0; }
-.sb-book-sub  { font-size:0.62rem; color:rgba(245,237,214,0.42); margin-top:1px; display:block; font-weight:400; }
-/* Book mode pill in topbar */
-.book-mode-pill {
-  display:none; align-items:center; gap:5px;
-  background:linear-gradient(135deg,#7c5c1e,#6b4c11);
-  color:#fdf6e3; border-radius:20px;
-  padding:3px 10px; font-size:0.68rem; font-weight:800; letter-spacing:0.3px;
-}
-body.book-mode .book-mode-pill { display:flex !important; }
-/* Font size row inside sidebar (visible in book mode) */
-.bm-font-row {
-  display:none; align-items:center; gap:6px;
-  padding:6px 12px 4px; margin-top:2px;
-  border-top:1px solid rgba(245,237,214,0.1);
-}
-body.book-mode .bm-font-row { display:flex !important; }
-.bm-font-btn {
-  background:rgba(245,237,214,0.12); border:1px solid rgba(245,237,214,0.18);
-  border-radius:7px; color:rgba(245,237,214,0.8); cursor:pointer;
-  font-size:0.82rem; font-weight:800; padding:3px 9px;
-  font-family:inherit; -webkit-tap-highlight-color:transparent;
-}
-.bm-font-btn:hover { background:rgba(245,237,214,0.22); color:#fff; }
-.bm-font-label { font-size:0.7rem; color:rgba(245,237,214,0.5); flex:1; text-align:center; }
-/* Reading overlay — book mode */
-.reading-overlay.book .reading-title  { color:#3d2b0e !important; font-family:Georgia,serif !important; }
-.reading-overlay.book .reading-content {
-  color:#2c1e0f !important; font-family:'Georgia','Noto Sans Devanagari',serif !important;
-  font-size:18px !important; line-height:2.05 !important; letter-spacing:0.015em !important;
-  max-width:660px !important; margin:0 auto !important;
-}
-.reading-overlay.book .reading-controls-bar { background:#eedec0 !important; border-color:#d4b896 !important; }
-.reading-overlay.book .reading-bottombar     { background:#eedec0 !important; color:#9b7d5e !important; }
-.reading-overlay.book .reading-progress-fill { background:#8b5e3c !important; }
-.reading-overlay.book .rd-btn  { border-color:#d4b896 !important; color:#6b4c11 !important; }
-.reading-overlay.book .rd-btn.active,
-.reading-overlay.book .rd-btn:hover { background:#7c5c1e !important; color:#fdf6e3 !important; border-color:#7c5c1e !important; }
-/* END BOOK MODE CSS */
 
 /* ===== RESPONSIVE BREAKPOINTS ===== */
 
@@ -3290,20 +3504,6 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
       <span id="nightModeIcon">🌙</span>
       <span id="nightModeLabel">Night Mode</span>
     </button>
-    <!-- Book Mode Toggle -->
-    <button id="bookModeBtn" onclick="toggleBookMode()" class="sb-book-btn" title="📖 Book Mode — Eyes ke liye friendly">
-      <span class="sb-book-icon">📖</span>
-      <div style="flex:1;">
-        <span id="bookModeLabel">Book Mode</span>
-        <span class="sb-book-sub" id="bookModeSub">Warm paper · Eyes friendly</span>
-      </div>
-    </button>
-    <!-- Font Size Controls (visible in Book Mode) -->
-    <div class="bm-font-row" id="bmFontRow">
-      <button class="bm-font-btn" onclick="bmChangeFontSize(-1)" title="Font Chhota karo">A−</button>
-      <span class="bm-font-label" id="bmFontLabel">18px</span>
-      <button class="bm-font-btn" onclick="bmChangeFontSize(+1)" title="Font Bada karo">A+</button>
-    </div>
     <div class="mode-pill" id="modePill">Free Mode</div>
   </div>
 
@@ -3317,7 +3517,6 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <div style="display:flex;align-items:center;gap:10px;">
       <button class="hamburger" onclick="toggleSidebar()">☰</button>
       <div class="topbar-title" id="topbarTitle">📚 Library</div>
-      <div class="book-mode-pill" id="bookModePill">📖 Book Mode</div>
     </div>
     <div class="topbar-right">
       <!-- Night mode moved to sidebar settings -->
@@ -4323,6 +4522,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         ontouchend="onNETouchEnd(event)"
         oninput="onNEInput()"
         onkeydown="onNEKeydown(event)"
+        ondragstart="scNoteDragStart(event)"
         style="outline:none;min-height:100%;padding:4px 2px;">
       </div>
       <textarea id="noteEditContent" style="display:none;" oninput="onEditInput()"></textarea>
@@ -4412,6 +4612,92 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
       </div>
     </div>
   </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     📋 STUDY CANVAS — Pull Tab
+     ═══════════════════════════════════════════════════════ -->
+<div id="scPullTab" onclick="scTogglePanel()" title="Study Canvas kholo">
+  <span>📋</span>
+  <span>S·C</span>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     📋 STUDY CANVAS — Main Panel
+     ═══════════════════════════════════════════════════════ -->
+<div id="studyCanvasPanel">
+
+  <!-- Header -->
+  <div id="scHeader">
+    <span class="sc-title" id="scTitle">📋 Study Canvas</span>
+    <!-- Undo -->
+    <button class="sc-hbtn" onclick="scUndo()" title="Undo">↩</button>
+    <!-- Redo -->
+    <button class="sc-hbtn" onclick="scRedo()" title="Redo">↪</button>
+    <!-- Expand / Collapse -->
+    <button class="sc-hbtn" id="scExpandBtn" onclick="scToggleFullscreen()" title="Full Screen">⛶</button>
+    <!-- Close -->
+    <button class="sc-hbtn" onclick="scTogglePanel()" title="Band karo" style="color:#c62828;">✕</button>
+  </div>
+
+  <!-- Background color row -->
+  <div id="scBgRow">
+    <span id="scBgLabel">BG:</span>
+    <div class="sc-bg-dot sel" style="background:#fffde7;" onclick="scSetBg('#fffde7',this)" title="Cream" data-bg="#fffde7"></div>
+    <div class="sc-bg-dot" style="background:#fce4ec;" onclick="scSetBg('#fce4ec',this)" title="Pink" data-bg="#fce4ec"></div>
+    <div class="sc-bg-dot" style="background:#e8f5e9;" onclick="scSetBg('#e8f5e9',this)" title="Mint" data-bg="#e8f5e9"></div>
+    <div class="sc-bg-dot" style="background:#e3f2fd;" onclick="scSetBg('#e3f2fd',this)" title="Sky" data-bg="#e3f2fd"></div>
+    <div class="sc-bg-dot" style="background:#f3e5f5;" onclick="scSetBg('#f3e5f5',this)" title="Lavender" data-bg="#f3e5f5"></div>
+    <div class="sc-bg-dot" style="background:#fff8e1;" onclick="scSetBg('#fff8e1',this)" title="Warm" data-bg="#fff8e1"></div>
+    <div class="sc-bg-dot" style="background:#e0f7fa;" onclick="scSetBg('#e0f7fa',this)" title="Aqua" data-bg="#e0f7fa"></div>
+    <div class="sc-bg-dot" style="background:#f1f8e9;" onclick="scSetBg('#f1f8e9',this)" title="Light green" data-bg="#f1f8e9"></div>
+    <div class="sc-sep"></div>
+    <!-- Drag from notes instruction -->
+    <span style="font-size:0.58rem;color:rgba(0,0,0,0.4);font-weight:600;white-space:nowrap;">✋ Notes se drag karo</span>
+  </div>
+
+  <!-- Mode tab strip -->
+  <div id="scModeStrip">
+    <div class="sc-mode-tab active" onclick="scSetMode('text',this)" data-mode="text">✍️ Text</div>
+    <div class="sc-mode-tab" onclick="scSetMode('draw',this)" data-mode="draw">✏️ Draw</div>
+    <div class="sc-mode-tab" onclick="scSetMode('qmap',this)" data-mode="qmap">🗺 Map</div>
+    <div class="sc-mode-tab" onclick="scSetMode('select',this)" data-mode="select">☝️ Select</div>
+  </div>
+
+  <!-- Dynamic Toolbar (changes with mode) -->
+  <div id="scToolbar">
+    <!-- Filled by JS based on active mode -->
+  </div>
+
+  <!-- Canvas area -->
+  <div id="scCanvasWrap"
+    ondragover="scDragOver(event)"
+    ondrop="scDrop(event)"
+    ondragleave="scDragLeave(event)">
+    <!-- Draw canvas -->
+    <canvas id="scCanvas"></canvas>
+    <!-- QMap canvas layer -->
+    <canvas id="scQmCanvas"></canvas>
+    <!-- Text blocks rendered as DOM elements here -->
+  </div>
+
+  <!-- Footer -->
+  <div id="scFooter">
+    <!-- Slide navigator -->
+    <div id="scSlideNav" style="display:flex;align-items:center;gap:4px;flex:1;overflow-x:auto;min-width:0;"></div>
+    <span class="sc-status" id="scStatus" style="font-size:0.6rem;color:rgba(0,0,0,0.4);white-space:nowrap;flex-shrink:0;padding:0 4px;"></span>
+    <button class="sc-save-btn" onclick="scSave()">💾 Save</button>
+  </div>
+
+  <!-- Grid overview overlay -->
+  <div id="scGridOverlay" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,0.7);z-index:50;flex-direction:column;border-radius:inherit;overflow:hidden;">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(0,0,0,0.4);flex-shrink:0;">
+      <span style="color:#fff;font-size:0.8rem;font-weight:800;">⊞ Saari Slides</span>
+      <button onclick="scToggleGrid()" style="background:rgba(255,255,255,0.15);border:none;color:#fff;border-radius:8px;padding:4px 10px;cursor:pointer;font-size:0.8rem;font-weight:700;">✕ Band</button>
+    </div>
+    <div id="scGridContainer" style="flex:1;overflow-y:auto;padding:10px;display:flex;flex-wrap:wrap;gap:10px;align-content:flex-start;"></div>
+  </div>
+
 </div>
 
 <!-- AI NOTE ADD MODAL -->
@@ -4771,7 +5057,6 @@ function init(){
   if(!S.aiChatSessions) S.aiChatSessions = [];
   updateAiChatBadge();
   initNightMode(); // Restore night mode preference
-  initBookMode();  // Restore book mode preference
 }
 
 // ==================== PAUSED QUIZ SYSTEM ====================
@@ -7873,6 +8158,8 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
     showQmapFab && showQmapFab();
     // Restore canvas drawings if saved
     _neRestoreCanvas(n.canvasObjs || null);
+    // Show Study Canvas pull tab
+    scOnEditorOpen(sid, secid, tid);
   }, 200);
 }
 
@@ -7919,6 +8206,9 @@ function _forceCloseEditor() {
     ov.style.display = '';
   }
   document.body.style.overflow = '';
+  
+  // Study Canvas bhi band karo
+  scOnEditorClose();
   
   // Koi bhi pending unsaved popup bhi hatao
   var popup = document.getElementById('unsavedPopupOverlay');
@@ -9789,8 +10079,6 @@ function rdToggleFullscreen() {
 }
 
 function rdSetTheme(theme, skipSave) {
-  // Book mode active hai to theme override mat karo
-  if(window._bookMode) { _bmApplyToReadingOverlay(true); return; }
   _rdState.theme = theme;
   if(!skipSave) localStorage.setItem('rdTheme', theme);
 
@@ -9863,8 +10151,6 @@ function neChangeFontSize(delta) {
 
 // Theme change for editor
 function neSetTheme(theme, skipSave) {
-  // Book mode active hai to theme override mat karo
-  if(window._bookMode) { setTimeout(function(){ _bmApplyToNotesEditor(true); }, 10); return; }
   _neState.theme = theme;
   if(!skipSave) localStorage.setItem('neTheme', theme);
 
@@ -10822,180 +11108,6 @@ function initNightMode() {
     if(saved === '1') applyNightMode(true);
   } catch(e) {}
 }
-
-// ═══════════════════════════════════════════════════════════════
-// 📖 BOOK MODE SYSTEM — Complete eye-comfort for long reading
-// ═══════════════════════════════════════════════════════════════
-var _bookMode   = false;
-var _bmFontSize = parseInt(localStorage.getItem('bmFontSize') || '18');
-
-function toggleBookMode() {
-  _bookMode = !_bookMode;
-  applyBookMode(_bookMode);
-  try { localStorage.setItem('bookMode', _bookMode ? '1' : '0'); } catch(e) {}
-}
-
-function applyBookMode(on) {
-  _bookMode = on;
-  var body = document.body;
-
-  if(on) {
-    // Night mode se conflict nahi hoga — book mode override karta hai
-    body.classList.add('book-mode');
-    // Notes editor mein bhi apply karo
-    _bmApplyToNotesEditor(true);
-    // Reading overlay mein bhi
-    _bmApplyToReadingOverlay(true);
-    if(typeof showToast === 'function')
-      showToast('📖 Book Mode ON — Warm paper, serif font, eye-friendly reading!', 'success');
-  } else {
-    body.classList.remove('book-mode');
-    _bmApplyToNotesEditor(false);
-    _bmApplyToReadingOverlay(false);
-    if(typeof showToast === 'function')
-      showToast('📖 Book Mode OFF', 'success');
-  }
-
-  // Update button state
-  var btn   = document.getElementById('bookModeBtn');
-  var label = document.getElementById('bookModeLabel');
-  var sub   = document.getElementById('bookModeSub');
-  if(btn)   btn.classList.toggle('active', on);
-  if(label) label.textContent = on ? 'Book Mode ON' : 'Book Mode';
-  if(sub)   sub.textContent   = on ? 'Tap to turn off' : 'Warm paper · Eyes friendly';
-
-  // Update font size label
-  _bmUpdateFontLabel();
-}
-
-// Apply book theme to notes editor modal
-function _bmApplyToNotesEditor(on) {
-  var modal = document.getElementById('notesEditorModalEl');
-  if(!modal) return;
-  if(on) {
-    // Remove other themes first, add book
-    modal.classList.remove('ne-light','ne-dark','ne-sepia');
-    modal.classList.add('ne-book');
-    // Apply book font size to editable area
-    var area = document.getElementById('noteEditableArea');
-    if(area) {
-      area.style.fontSize    = _bmFontSize + 'px';
-      area.style.lineHeight  = '2.1';
-      area.style.fontFamily  = 'Georgia,"Palatino Linotype","Noto Sans Devanagari",serif';
-      area.style.letterSpacing = '0.018em';
-    }
-    // Update theme buttons to show book selected
-    ['Light','Sepia','Dark'].forEach(function(t) {
-      var b = document.getElementById('neTheme' + t);
-      if(b) b.classList.remove('active');
-    });
-  } else {
-    modal.classList.remove('ne-book');
-    // Restore last saved theme
-    var lastTheme = (window._neState && _neState.theme) || localStorage.getItem('neTheme') || 'light';
-    modal.classList.add('ne-' + lastTheme);
-    // Restore original font size
-    var area = document.getElementById('noteEditableArea');
-    if(area) {
-      var origSz = (window._neState && _neState.fontSize) || parseInt(localStorage.getItem('neFontSize') || '17');
-      area.style.fontSize    = origSz + 'px';
-      area.style.lineHeight  = '';
-      area.style.fontFamily  = '';
-      area.style.letterSpacing = '';
-    }
-  }
-}
-
-// Apply book theme to reading overlay
-function _bmApplyToReadingOverlay(on) {
-  var overlay = document.getElementById('readingOverlay');
-  if(!overlay) return;
-  if(on) {
-    overlay.classList.add('book');
-    var content = document.getElementById('rdContent');
-    if(content) {
-      content.style.fontSize     = _bmFontSize + 'px';
-      content.style.lineHeight   = '2.05';
-      content.style.fontFamily   = 'Georgia,"Palatino Linotype","Noto Sans Devanagari",serif';
-      content.style.letterSpacing = '0.015em';
-    }
-  } else {
-    overlay.classList.remove('book');
-    var content = document.getElementById('rdContent');
-    if(content) {
-      var rdSz = (window._rdState && _rdState.fontSize) || parseInt(localStorage.getItem('rdFontSize') || '18');
-      content.style.fontSize     = rdSz + 'px';
-      content.style.lineHeight   = '';
-      content.style.fontFamily   = '';
-      content.style.letterSpacing = '';
-    }
-  }
-}
-
-// Book Mode font size control
-function bmChangeFontSize(delta) {
-  _bmFontSize = Math.min(28, Math.max(14, _bmFontSize + delta));
-  try { localStorage.setItem('bmFontSize', _bmFontSize); } catch(e) {}
-  _bmUpdateFontLabel();
-
-  // Apply immediately to open editor / reading overlay
-  var area    = document.getElementById('noteEditableArea');
-  var content = document.getElementById('rdContent');
-  if(_bookMode) {
-    if(area)    area.style.fontSize    = _bmFontSize + 'px';
-    if(content) content.style.fontSize = _bmFontSize + 'px';
-  }
-  // Also update ne-book editable via CSS variable trick
-  document.documentElement.style.setProperty('--bm-font-size', _bmFontSize + 'px');
-}
-
-function _bmUpdateFontLabel() {
-  var lbl = document.getElementById('bmFontLabel');
-  if(lbl) lbl.textContent = _bmFontSize + 'px';
-}
-
-// Init book mode on load + auto-apply to newly opened notes editor
-function initBookMode() {
-  try {
-    var saved = localStorage.getItem('bookMode');
-    if(saved === '1') applyBookMode(true);
-    _bmUpdateFontLabel();
-  } catch(e) {}
-}
-
-// Book mode: neSetTheme aur rdSetTheme ke andar directly _bookMode check inject karo
-// (function redeclaration se infinite recursion hota tha — ab nahi hoga)
-// Yeh kaam MutationObserver aur _bmApplyToNotesEditor se hoga — hooks hata diye
-
-// Auto-apply book mode when notes editor opens
-var _origOpenNotesEditor = typeof openNotesEditor === 'function' ? openNotesEditor : null;
-// We hook via a MutationObserver on the modal instead (more reliable)
-(function() {
-  var _bmObserver = null;
-  function _bmWatchEditor() {
-    var modal = document.getElementById('notesEditorModalEl');
-    if(!modal || _bmObserver) return;
-    _bmObserver = new MutationObserver(function(mutations) {
-      mutations.forEach(function(m) {
-        if(m.type === 'attributes' && m.attributeName === 'class') {
-          var isOpen = modal.classList.contains('show') || modal.style.display !== 'none';
-          if(isOpen && _bookMode) {
-            // Small delay to let other theme logic settle first
-            setTimeout(function() { _bmApplyToNotesEditor(true); }, 30);
-          }
-        }
-      });
-    });
-    _bmObserver.observe(modal, { attributes: true, attributeFilter: ['class','style'] });
-  }
-  // Try immediately and after DOMContentLoaded
-  _bmWatchEditor();
-  if(document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _bmWatchEditor);
-  } else {
-    setTimeout(_bmWatchEditor, 600);
-  }
-})();
 
 
 // ==================== PERSONAL AI STUDY COACH ====================
@@ -20183,4 +20295,1978 @@ function _ncoDeleteObj(obj) {
   markModified();
   showToast('🗑️ Delete ho gaya!', 'success');
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// 📋 STUDY CANVAS SYSTEM v2 — Multi-Slide, Topic-wide
+// ═══════════════════════════════════════════════════════════════════
+var _sc = {
+  open:        false,
+  fullscreen:  false,
+  mode:        'text',
+  tid:         null,
+  sid:         null,
+  secid:       null,
+
+  // SLIDES array — each slide = one "page"
+  // [{id, title, bg, textBlocks, strokes, qmNodes, qmEdges}]
+  slides:      [],
+  curSlide:    0,   // active slide index
+
+  // Unified undo/redo per slide (stores full slides array snapshot)
+  undoStack:   [],
+  redoStack:   [],
+
+  // Runtime (not saved)
+  canvas:    null, ctx:     null,
+  qmCanvas:  null, qmCtx:   null,
+  drawColor: '#1565c0', drawSize: 3, drawTool: 'pen',
+  isDrawing: false, drawPoints: [],
+  kfX: null, kfY: null,
+  activeBlock: null, activeBlockId: null,
+  dragText: ''
+};
+
+// ── Slide default factory ──
+function _scNewSlide(title) {
+  return {
+    id:         'slide_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+    title:      title || ('Slide ' + (_sc.slides.length + 1)),
+    bg:         '#fffde7',
+    textBlocks: [],
+    strokes:    [],
+    qmNodes:    [],
+    qmEdges:    []
+  };
+}
+
+// ── Current slide getter ──
+function _scCur() {
+  return _sc.slides[_sc.curSlide] || null;
+}
+
+// ══════════════════════════════════════
+// OPEN / CLOSE
+// ══════════════════════════════════════
+function scOnEditorOpen(sid, secid, tid) {
+  _sc.sid = sid; _sc.secid = secid; _sc.tid = tid;
+  var t = getTop(sid, secid, tid);
+
+  // Load saved slides
+  if(t && t.studyCanvas && t.studyCanvas.slides && t.studyCanvas.slides.length) {
+    _sc.slides   = JSON.parse(JSON.stringify(t.studyCanvas.slides));
+    _sc.curSlide = Math.min(t.studyCanvas.curSlide || 0, _sc.slides.length - 1);
+  } else {
+    // Migrate old single-canvas format
+    if(t && t.studyCanvas && (t.studyCanvas.textBlocks || t.studyCanvas.strokes)) {
+      var old = t.studyCanvas;
+      var s = _scNewSlide('Slide 1');
+      s.bg          = old.bg || '#fffde7';
+      s.textBlocks  = old.textBlocks || [];
+      s.strokes     = old.strokes    || [];
+      s.qmNodes     = old.qmNodes    || [];
+      s.qmEdges     = old.qmEdges    || [];
+      _sc.slides = [s];
+    } else {
+      _sc.slides = [_scNewSlide('Slide 1')];
+    }
+    _sc.curSlide = 0;
+  }
+
+  _sc.undoStack = []; _sc.redoStack = [];
+
+  // Show pull tab
+  var tab = document.getElementById('scPullTab');
+  if(tab) tab.classList.add('visible');
+
+  // Update title
+  _scUpdateTitle(t);
+}
+
+function scOnEditorClose() {
+  var tab = document.getElementById('scPullTab');
+  if(tab) tab.classList.remove('visible');
+  var panel = document.getElementById('studyCanvasPanel');
+  if(panel) panel.classList.remove('sc-open','sc-fullscreen');
+  _sc.open = false; _sc.fullscreen = false;
+  _sc.activeBlock = null; _sc.activeBlockId = null;
+}
+
+function _scUpdateTitle(t) {
+  var ti = document.getElementById('scTitle');
+  if(!ti) return;
+  var topicName = t ? t.name : '';
+  var slideIdx  = _sc.curSlide + 1;
+  var total     = _sc.slides.length;
+  ti.textContent = '📋 ' + (topicName ? topicName + ' · ' : '') + 'Slide ' + slideIdx + '/' + total;
+}
+
+// ══════════════════════════════════════
+// PANEL TOGGLE
+// ══════════════════════════════════════
+function scTogglePanel() {
+  _sc.open = !_sc.open;
+  var panel = document.getElementById('studyCanvasPanel');
+  if(!panel) return;
+  if(_sc.open) {
+    panel.classList.add('sc-open');
+    var cur = _scCur();
+    if(cur) panel.style.background = cur.bg;
+    scInitCanvas();
+    scRenderAll();
+    scRenderToolbar();
+    _scRenderSlideNav();
+    setTimeout(scFitCanvas, 50);
+  } else {
+    panel.classList.remove('sc-open','sc-fullscreen');
+    _sc.fullscreen = false;
+    _sc.activeBlock = null;
+    scHideAllBlockActions();
+  }
+}
+
+function scToggleFullscreen() {
+  _sc.fullscreen = !_sc.fullscreen;
+  var panel = document.getElementById('studyCanvasPanel');
+  var btn   = document.getElementById('scExpandBtn');
+  if(!panel) return;
+  if(_sc.fullscreen) {
+    panel.classList.add('sc-fullscreen');
+    if(btn) btn.textContent = '⊡';
+  } else {
+    panel.classList.remove('sc-fullscreen');
+    if(btn) btn.textContent = '⛶';
+  }
+  setTimeout(function(){ scFitCanvas(); scRenderAll(); }, 60);
+}
+
+// ══════════════════════════════════════
+// SLIDE NAVIGATION
+// ══════════════════════════════════════
+function scGoToSlide(idx) {
+  // Save current DOM state first
+  _scSyncCurrentSlideFromDOM();
+
+  _sc.curSlide = Math.max(0, Math.min(idx, _sc.slides.length - 1));
+  var cur = _scCur();
+  if(!cur) return;
+
+  // Update background
+  var panel = document.getElementById('studyCanvasPanel');
+  if(panel) panel.style.background = cur.bg;
+
+  // Re-render
+  _sc.activeBlock = null; _sc.activeBlockId = null;
+  scHideAllBlockActions();
+  scRenderAll();
+  _scRenderSlideNav();
+  _scUpdateTitle(getTop(_sc.sid, _sc.secid, _sc.tid));
+}
+
+function scPrevSlide() {
+  if(_sc.curSlide > 0) scGoToSlide(_sc.curSlide - 1);
+  else showToast('Yeh pehli slide hai!', 'error');
+}
+
+function scNextSlide() {
+  if(_sc.curSlide < _sc.slides.length - 1) scGoToSlide(_sc.curSlide + 1);
+  else showToast('Yeh aakhri slide hai! Nayi slide add karo ＋', 'error');
+}
+
+function scAddSlide() {
+  _scSyncCurrentSlideFromDOM();
+  scSnapshot();
+  var s = _scNewSlide('Slide ' + (_sc.slides.length + 1));
+  _sc.slides.push(s);
+  _sc.curSlide = _sc.slides.length - 1;
+  var panel = document.getElementById('studyCanvasPanel');
+  if(panel) panel.style.background = s.bg;
+  _sc.activeBlock = null; _sc.activeBlockId = null;
+  scHideAllBlockActions();
+  scRenderAll();
+  _scRenderSlideNav();
+  _scUpdateTitle(getTop(_sc.sid, _sc.secid, _sc.tid));
+  showToast('📋 Nayi slide add ho gayi! (Slide ' + (_sc.curSlide+1) + ')', 'success');
+}
+
+function scDeleteSlide() {
+  if(_sc.slides.length <= 1) { showToast('Sirf ek slide hai, delete nahi kar sakte!', 'error'); return; }
+  if(!confirm('Slide ' + (_sc.curSlide+1) + ' delete karein?')) return;
+  scSnapshot();
+  _sc.slides.splice(_sc.curSlide, 1);
+  _sc.curSlide = Math.max(0, _sc.curSlide - 1);
+  _sc.activeBlock = null; _sc.activeBlockId = null;
+  scHideAllBlockActions();
+  scRenderAll();
+  _scRenderSlideNav();
+  _scUpdateTitle(getTop(_sc.sid, _sc.secid, _sc.tid));
+  showToast('🗑 Slide delete ho gayi!', 'success');
+}
+
+// ── Render bottom slide navigator ──
+function _scRenderSlideNav() {
+  var nav = document.getElementById('scSlideNav');
+  if(!nav) return;
+  nav.innerHTML = '';
+
+  // Prev arrow
+  var prev = document.createElement('button');
+  prev.className = 'sc-nav-btn';
+  prev.textContent = '‹';
+  prev.title = 'Previous slide';
+  prev.disabled = _sc.curSlide === 0;
+  prev.onclick = scPrevSlide;
+  nav.appendChild(prev);
+
+  // Slide dots
+  var dotsWrap = document.createElement('div');
+  dotsWrap.className = 'sc-slide-dots';
+  _sc.slides.forEach(function(s, i) {
+    var dot = document.createElement('div');
+    dot.className = 'sc-slide-dot' + (i === _sc.curSlide ? ' active' : '');
+    dot.title = s.title || ('Slide ' + (i+1));
+    dot.onclick = (function(idx){ return function(){ scGoToSlide(idx); }; })(i);
+    dotsWrap.appendChild(dot);
+  });
+  nav.appendChild(dotsWrap);
+
+  // Next arrow
+  var next = document.createElement('button');
+  next.className = 'sc-nav-btn';
+  next.textContent = '›';
+  next.title = 'Next slide';
+  next.disabled = _sc.curSlide === _sc.slides.length - 1;
+  next.onclick = scNextSlide;
+  nav.appendChild(next);
+
+  // Add slide button
+  var add = document.createElement('button');
+  add.className = 'sc-nav-btn sc-nav-add';
+  add.textContent = '＋';
+  add.title = 'Nayi slide add karo';
+  add.onclick = scAddSlide;
+  nav.appendChild(add);
+
+  // Grid view button
+  var grid = document.createElement('button');
+  grid.className = 'sc-nav-btn';
+  grid.textContent = '⊞';
+  grid.title = 'Saari slides ek saath dekho';
+  grid.onclick = scToggleGrid;
+  nav.appendChild(grid);
+}
+
+// ── Grid overview ──
+var _scGridOpen = false;
+function scToggleGrid() {
+  _scGridOpen = !_scGridOpen;
+  var overlay = document.getElementById('scGridOverlay');
+  if(!overlay) { _scGridOpen = false; return; }
+
+  if(_scGridOpen) {
+    _scSyncCurrentSlideFromDOM();
+    _scRenderGrid();
+    overlay.style.display = 'flex';
+  } else {
+    overlay.style.display = 'none';
+  }
+}
+
+function _scRenderGrid() {
+  var container = document.getElementById('scGridContainer');
+  if(!container) return;
+  container.innerHTML = '';
+
+  _sc.slides.forEach(function(s, i) {
+    var card = document.createElement('div');
+    card.className = 'sc-grid-card' + (i === _sc.curSlide ? ' active' : '');
+    card.style.background = s.bg || '#fffde7';
+    card.title = s.title || ('Slide ' + (i+1));
+
+    // Mini preview — show text block labels
+    var preview = document.createElement('div');
+    preview.className = 'sc-grid-preview';
+    var textPreview = (s.textBlocks || []).map(function(b){
+      var tmp = document.createElement('div');
+      tmp.innerHTML = b.html || '';
+      return tmp.textContent.substring(0,30);
+    }).filter(Boolean).slice(0,4).join(' · ');
+    preview.textContent = textPreview || (s.strokes && s.strokes.length ? '✏️ Drawing' : '') || (s.qmNodes && s.qmNodes.length ? '🗺 Map' : '(empty)');
+
+    var label = document.createElement('div');
+    label.className = 'sc-grid-label';
+    label.textContent = (i+1) + '. ' + (s.title || 'Slide '+(i+1));
+
+    card.appendChild(preview);
+    card.appendChild(label);
+    card.onclick = (function(idx){ return function(){
+      scGoToSlide(idx);
+      _scGridOpen = false;
+      document.getElementById('scGridOverlay').style.display = 'none';
+    }; })(i);
+
+    container.appendChild(card);
+  });
+}
+
+// ══════════════════════════════════════
+// BACKGROUND per slide
+// ══════════════════════════════════════
+function scSetBg(color, el) {
+  var cur = _scCur();
+  if(cur) cur.bg = color;
+  document.getElementById('studyCanvasPanel').style.background = color;
+  document.querySelectorAll('.sc-bg-dot').forEach(function(d){ d.classList.remove('sel'); });
+  if(el) el.classList.add('sel');
+}
+
+// ══════════════════════════════════════
+// MODE
+// ══════════════════════════════════════
+function scSetMode(mode, el) {
+  _sc.mode = mode;
+  document.querySelectorAll('.sc-mode-tab').forEach(function(t){ t.classList.remove('active'); });
+  if(el) el.classList.add('active');
+  var cv = document.getElementById('scCanvas');
+  var qm = document.getElementById('scQmCanvas');
+  if(cv) cv.style.pointerEvents = (mode === 'draw') ? 'all' : 'none';
+  if(qm) { if(mode==='qmap') qm.classList.add('qm-active'); else qm.classList.remove('qm-active'); }
+  scDeselectBlock();
+  scRenderToolbar();
+  scSetStatus();
+}
+
+function scSetStatus() {
+  var el = document.getElementById('scStatus');
+  if(!el) return;
+  var cur = _sc.curSlide + 1;
+  var tot = _sc.slides.length;
+  var msgs = {
+    text:   '✍️ Tap=text · Drag from notes · Slide '+cur+'/'+tot,
+    draw:   '✏️ Draw karo · Slide '+cur+'/'+tot,
+    qmap:   '🗺 Tap=node · DoubleTap=connect · Slide '+cur+'/'+tot,
+    select: '☝️ Select & edit · Slide '+cur+'/'+tot
+  };
+  el.textContent = msgs[_sc.mode] || '';
+}
+
+// ══════════════════════════════════════
+// CANVAS INIT
+// ══════════════════════════════════════
+function scInitCanvas() {
+  var wrap = document.getElementById('scCanvasWrap');
+  var cv   = document.getElementById('scCanvas');
+  var qmcv = document.getElementById('scQmCanvas');
+  if(!wrap || !cv) return;
+  cv.width  = wrap.offsetWidth  || 340;
+  cv.height = wrap.offsetHeight || 480;
+  _sc.canvas = cv; _sc.ctx = cv.getContext('2d');
+  if(qmcv) {
+    qmcv.width = cv.width; qmcv.height = cv.height;
+    qmcv.style.width = cv.width+'px'; qmcv.style.height = cv.height+'px';
+    _sc.qmCanvas = qmcv; _sc.qmCtx = qmcv.getContext('2d');
+  }
+  _sc.kfX = new KalmanFilter(); _sc.kfY = new KalmanFilter();
+  cv.removeEventListener('pointerdown', _scDrawDown);
+  cv.removeEventListener('pointermove', _scDrawMove);
+  cv.removeEventListener('pointerup',   _scDrawUp);
+  cv.removeEventListener('pointercancel',_scDrawUp);
+  cv.addEventListener('pointerdown',  _scDrawDown,  { passive:false });
+  cv.addEventListener('pointermove',  _scDrawMove,  { passive:false });
+  cv.addEventListener('pointerup',    _scDrawUp,    { passive:true  });
+  cv.addEventListener('pointercancel',_scDrawUp,    { passive:true  });
+  wrap.removeEventListener('pointerdown', _scWrapTap);
+  wrap.addEventListener('pointerdown', _scWrapTap, { passive:false });
+  if(qmcv) {
+    qmcv.removeEventListener('pointerdown', _scQmDown);
+    qmcv.removeEventListener('pointermove', _scQmMove);
+    qmcv.removeEventListener('pointerup',   _scQmUp);
+    qmcv.addEventListener('pointerdown', _scQmDown, { passive:false });
+    qmcv.addEventListener('pointermove', _scQmMove, { passive:false });
+    qmcv.addEventListener('pointerup',   _scQmUp,   { passive:true  });
+  }
+}
+
+function scFitCanvas() {
+  var wrap = document.getElementById('scCanvasWrap');
+  var cv   = document.getElementById('scCanvas');
+  var qmcv = document.getElementById('scQmCanvas');
+  if(!wrap||!cv) return;
+  var w = wrap.offsetWidth, h = wrap.offsetHeight;
+  if(w<10||h<10) return;
+  cv.width = w; cv.height = h;
+  if(qmcv) { qmcv.width=w; qmcv.height=h; }
+  scRenderAll();
+}
+
+// ══════════════════════════════════════
+// RENDER ALL (current slide)
+// ══════════════════════════════════════
+function scRenderAll() {
+  _scRenderStrokes();
+  _scRenderTextBlocks();
+  _scQmRender();
+}
+
+// ══════════════════════════════════════
+// UNDO / REDO
+// ══════════════════════════════════════
+function scSnapshot() {
+  _sc.undoStack.push(JSON.stringify(_sc.slides));
+  if(_sc.undoStack.length > 25) _sc.undoStack.shift();
+  _sc.redoStack = [];
+}
+
+function scUndo() {
+  if(!_sc.undoStack.length) { showToast('Kuch nahi undo karne ko!','error'); return; }
+  _sc.redoStack.push(JSON.stringify(_sc.slides));
+  _sc.slides = JSON.parse(_sc.undoStack.pop());
+  _sc.curSlide = Math.min(_sc.curSlide, _sc.slides.length-1);
+  _sc.activeBlock = null; _sc.activeBlockId = null;
+  scRenderAll(); _scSyncTextBlocksDOM(); _scRenderSlideNav();
+  showToast('↩ Undo', 'success');
+}
+
+function scRedo() {
+  if(!_sc.redoStack.length) { showToast('Kuch nahi redo karne ko!','error'); return; }
+  _sc.undoStack.push(JSON.stringify(_sc.slides));
+  _sc.slides = JSON.parse(_sc.redoStack.pop());
+  _sc.curSlide = Math.min(_sc.curSlide, _sc.slides.length-1);
+  _sc.activeBlock = null; _sc.activeBlockId = null;
+  scRenderAll(); _scSyncTextBlocksDOM(); _scRenderSlideNav();
+  showToast('↪ Redo', 'success');
+}
+
+// ══════════════════════════════════════
+// TEXT BLOCKS
+// ══════════════════════════════════════
+function _scRenderTextBlocks() {
+  var wrap = document.getElementById('scCanvasWrap');
+  if(!wrap) return;
+  wrap.querySelectorAll('.sc-text-block').forEach(function(el){ el.remove(); });
+  var cur = _scCur();
+  if(!cur) return;
+  (cur.textBlocks || []).forEach(function(b){ _scCreateBlockDOM(b); });
+}
+
+function _scCreateBlockDOM(b) {
+  var wrap = document.getElementById('scCanvasWrap');
+  if(!wrap) return null;
+  var el = document.createElement('div');
+  el.className = 'sc-text-block';
+  el.id = 'scBlock_' + b.id;
+  el.style.left   = b.x + 'px';
+  el.style.top    = b.y + 'px';
+  el.style.width  = (b.w || 140) + 'px';
+  el.style.fontSize     = (b.fontSize||15) + 'px';
+  el.style.color        = b.color || '#1a1a1a';
+  el.style.transform    = b.angle ? 'rotate('+b.angle+'deg)' : '';
+  el.style.fontWeight   = b.bold      ? '800' : '';
+  el.style.fontStyle    = b.italic    ? 'italic' : '';
+  el.style.textDecoration = b.underline ? 'underline' : '';
+  el.innerHTML = b.html || '';
+  var resizeH = document.createElement('div');
+  resizeH.className = 'sc-block-resize';
+  el.appendChild(resizeH);
+  var rotH = document.createElement('div');
+  rotH.className = 'sc-block-rotate';
+  rotH.textContent = '↻';
+  el.appendChild(rotH);
+  el.addEventListener('pointerdown', function(e) {
+    if(e.target===resizeH||e.target===rotH) return;
+    e.stopPropagation();
+    if(_sc.mode==='select'||_sc.mode==='text') scSelectBlock(b,el);
+  });
+  var _lt = 0;
+  el.addEventListener('pointerdown', function(e) {
+    if(e.target===resizeH||e.target===rotH) return;
+    var now = Date.now();
+    if(now-_lt<320){ e.stopPropagation(); scEditBlock(b,el); }
+    _lt = now;
+  });
+  _scBlockDrag(b,el); _scBlockResize(b,el,resizeH); _scBlockRotate(b,el,rotH);
+  wrap.appendChild(el);
+  return el;
+}
+
+function scSelectBlock(b, el) {
+  scDeselectBlock();
+  _sc.activeBlock=el; _sc.activeBlockId=b.id;
+  el.classList.add('selected');
+  _scShowBlockActions(b,el);
+}
+function scDeselectBlock() {
+  if(_sc.activeBlock) _sc.activeBlock.classList.remove('selected');
+  _sc.activeBlock=null; _sc.activeBlockId=null;
+  scHideAllBlockActions();
+}
+function scHideAllBlockActions() {
+  document.querySelectorAll('.sc-block-actions').forEach(function(a){ a.remove(); });
+}
+
+function _scShowBlockActions(b, el) {
+  scHideAllBlockActions();
+  var bar = document.createElement('div');
+  bar.className = 'sc-block-actions';
+  function mkBtn(icon,title,fn){
+    var btn=document.createElement('button');
+    btn.className='sc-block-act-btn'; btn.title=title; btn.textContent=icon;
+    btn.addEventListener('pointerdown',function(e){e.stopPropagation();fn()});
+    return btn;
+  }
+  bar.appendChild(mkBtn('B','Bold',function(){ scSnapshot();b.bold=!b.bold;_scRefreshBlock(b); }));
+  var ib=mkBtn('I','Italic',function(){ scSnapshot();b.italic=!b.italic;_scRefreshBlock(b); });
+  ib.style.fontStyle='italic'; bar.appendChild(ib);
+  var ub=mkBtn('U','Underline',function(){ scSnapshot();b.underline=!b.underline;_scRefreshBlock(b); });
+  ub.style.textDecoration='underline'; bar.appendChild(ub);
+  bar.appendChild(mkBtn('A−','Font chhota',function(){ scSnapshot();b.fontSize=Math.max(10,(b.fontSize||15)-2);_scRefreshBlock(b); }));
+  bar.appendChild(mkBtn('A+','Font bada',function(){ scSnapshot();b.fontSize=Math.min(40,(b.fontSize||15)+2);_scRefreshBlock(b); }));
+  ['#1a1a1a','#1565c0','#c62828','#2e7d32','#6a1b9a','#e65100'].forEach(function(c){
+    var dot=document.createElement('div');
+    dot.style.cssText='width:14px;height:14px;border-radius:50%;background:'+c+';cursor:pointer;flex-shrink:0;border:1.5px solid rgba(0,0,0,0.15);';
+    dot.addEventListener('pointerdown',function(e){ e.stopPropagation();scSnapshot();b.color=c;_scRefreshBlock(b); });
+    bar.appendChild(dot);
+  });
+  bar.appendChild(mkBtn('🗑','Delete',function(){
+    scSnapshot();
+    var cur=_scCur(); if(!cur) return;
+    cur.textBlocks=cur.textBlocks.filter(function(x){return x.id!==b.id;});
+    el.remove(); bar.remove();
+    _sc.activeBlock=null; _sc.activeBlockId=null;
+  }));
+  el.appendChild(bar);
+}
+
+function scEditBlock(b, el) {
+  el.contentEditable='true'; el.focus();
+  var sel=window.getSelection(); var range=document.createRange();
+  range.selectNodeContents(el); range.collapse(false);
+  sel.removeAllRanges(); sel.addRange(range);
+  function onBlur(){
+    el.contentEditable='false'; scSnapshot();
+    var clone=el.cloneNode(true);
+    clone.querySelectorAll('.sc-block-resize,.sc-block-rotate,.sc-block-actions').forEach(function(h){h.remove();});
+    b.html=clone.innerHTML;
+    el.removeEventListener('blur',onBlur);
+  }
+  el.addEventListener('blur',onBlur);
+}
+
+function _scRefreshBlock(b) {
+  var el=document.getElementById('scBlock_'+b.id); if(!el) return;
+  el.style.fontWeight=b.bold?'800':'';
+  el.style.fontStyle=b.italic?'italic':'';
+  el.style.textDecoration=b.underline?'underline':'';
+  el.style.fontSize=(b.fontSize||15)+'px';
+  el.style.color=b.color||'#1a1a1a';
+  el.style.transform=b.angle?'rotate('+b.angle+'deg)':'';
+  _scShowBlockActions(b,el);
+}
+
+function _scBlockDrag(b,el) {
+  var sx,sy,sbx,sby,drag=false;
+  el.addEventListener('pointerdown',function(e){
+    if(e.target.classList.contains('sc-block-resize')||e.target.classList.contains('sc-block-rotate')||e.target.classList.contains('sc-block-act-btn')||el.contentEditable==='true') return;
+    if(_sc.mode!=='select'&&_sc.mode!=='text') return;
+    e.preventDefault(); try{el.setPointerCapture(e.pointerId);}catch(x){}
+    sx=e.clientX;sy=e.clientY;sbx=b.x;sby=b.y;drag=true;scSnapshot();
+  },{passive:false});
+  el.addEventListener('pointermove',function(e){
+    if(!drag) return; b.x=sbx+(e.clientX-sx); b.y=sby+(e.clientY-sy);
+    el.style.left=b.x+'px'; el.style.top=b.y+'px';
+  },{passive:true});
+  el.addEventListener('pointerup',function(){drag=false;},{passive:true});
+}
+
+function _scBlockResize(b,el,handle) {
+  var sx,sw,r=false;
+  handle.addEventListener('pointerdown',function(e){
+    e.stopPropagation();e.preventDefault();try{handle.setPointerCapture(e.pointerId);}catch(x){}
+    sx=e.clientX;sw=b.w||140;r=true;scSnapshot();
+  },{passive:false});
+  handle.addEventListener('pointermove',function(e){
+    if(!r) return; b.w=Math.max(60,sw+(e.clientX-sx)); el.style.width=b.w+'px';
+  },{passive:true});
+  handle.addEventListener('pointerup',function(){r=false;},{passive:true});
+}
+
+function _scBlockRotate(b,el,handle) {
+  var sa,sr,r=false;
+  handle.addEventListener('pointerdown',function(e){
+    e.stopPropagation();e.preventDefault();try{handle.setPointerCapture(e.pointerId);}catch(x){}
+    var rect=el.getBoundingClientRect();
+    var cx=rect.left+rect.width/2,cy=rect.top+rect.height/2;
+    sa=Math.atan2(e.clientY-cy,e.clientX-cx)*180/Math.PI;sr=b.angle||0;r=true;scSnapshot();
+  },{passive:false});
+  handle.addEventListener('pointermove',function(e){
+    if(!r) return;
+    var rect=el.getBoundingClientRect();
+    var cx=rect.left+rect.width/2,cy=rect.top+rect.height/2;
+    var a=Math.atan2(e.clientY-cy,e.clientX-cx)*180/Math.PI;
+    b.angle=(sr+(a-sa))%360; el.style.transform='rotate('+b.angle+'deg)';
+  },{passive:true});
+  handle.addEventListener('pointerup',function(){r=false;},{passive:true});
+}
+
+function _scWrapTap(e) {
+  if(_sc.mode!=='text') return;
+  if(e.target.closest('.sc-text-block')||e.target.closest('.sc-block-actions')) return;
+  var wrap=document.getElementById('scCanvasWrap'); if(!wrap) return;
+  var cur=_scCur(); if(!cur) return;
+  var rect=wrap.getBoundingClientRect();
+  scSnapshot();
+  var b={id:'scb_'+Date.now(),x:e.clientX-rect.left,y:e.clientY-rect.top,w:160,html:'',fontSize:15,color:'#1a1a1a',bold:false,italic:false,underline:false,angle:0};
+  cur.textBlocks.push(b);
+  var el=_scCreateBlockDOM(b);
+  if(el) setTimeout(function(){scEditBlock(b,el);},50);
+}
+
+function _scSyncTextBlocksDOM() {
+  var wrap=document.getElementById('scCanvasWrap'); if(!wrap) return;
+  wrap.querySelectorAll('.sc-text-block').forEach(function(el){el.remove();});
+  var cur=_scCur(); if(!cur) return;
+  (cur.textBlocks||[]).forEach(function(b){_scCreateBlockDOM(b);});
+}
+
+// Sync DOM state back into current slide's textBlocks
+function _scSyncCurrentSlideFromDOM() {
+  var cur=_scCur(); if(!cur) return;
+  (cur.textBlocks||[]).forEach(function(b){
+    var el=document.getElementById('scBlock_'+b.id); if(!el) return;
+    var clone=el.cloneNode(true);
+    clone.querySelectorAll('.sc-block-resize,.sc-block-rotate,.sc-block-actions').forEach(function(h){h.remove();});
+    b.html=clone.innerHTML;
+    b.x=parseFloat(el.style.left)||b.x;
+    b.y=parseFloat(el.style.top)||b.y;
+  });
+}
+
+// ══════════════════════════════════════
+// DRAW ENGINE
+// ══════════════════════════════════════
+function _scRenderStrokes() {
+  var cv=_sc.canvas,ctx=_sc.ctx; if(!cv||!ctx) return;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  var cur=_scCur(); if(!cur) return;
+  (cur.strokes||[]).forEach(function(stroke){
+    if(!stroke.points||stroke.points.length<2) return;
+    ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
+    if(stroke.tool==='eraser'){ctx.globalCompositeOperation='destination-out';ctx.lineWidth=stroke.size*4;ctx.strokeStyle='rgba(0,0,0,1)';}
+    else if(stroke.tool==='marker'){ctx.globalAlpha=0.45;ctx.strokeStyle=stroke.color||'#1565c0';ctx.lineWidth=stroke.size*2.5;}
+    else{ctx.strokeStyle=stroke.color||'#1565c0';ctx.lineWidth=stroke.size;}
+    ctx.beginPath();ctx.moveTo(stroke.points[0].x,stroke.points[0].y);
+    for(var i=1;i<stroke.points.length;i++){
+      var p=stroke.points[i],pp=stroke.points[i-1];
+      ctx.quadraticCurveTo(pp.x,pp.y,(p.x+pp.x)/2,(p.y+pp.y)/2);
+    }
+    ctx.stroke(); ctx.restore();
+  });
+}
+
+function _scDrawDown(e) {
+  if(_sc.mode!=='draw') return; e.preventDefault(); if(!e.isPrimary) return;
+  try{_sc.canvas.setPointerCapture(e.pointerId);}catch(x){}
+  _sc.isDrawing=true; _sc.kfX=new KalmanFilter(); _sc.kfY=new KalmanFilter();
+  _sc.drawPoints=[_scGetPt(e)]; scSnapshot();
+}
+function _scDrawMove(e) {
+  if(!_sc.isDrawing||_sc.mode!=='draw') return; e.preventDefault(); if(!e.isPrimary) return;
+  (e.getCoalescedEvents?e.getCoalescedEvents():[e]).forEach(function(ev){_sc.drawPoints.push(_scGetPt(ev));});
+  _scRenderStrokes(); _scPreviewStroke(_sc.drawPoints);
+}
+function _scPreviewStroke(pts) {
+  var ctx=_sc.ctx; if(!ctx||pts.length<2) return;
+  ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
+  if(_sc.drawTool==='eraser'){ctx.globalCompositeOperation='destination-out';ctx.lineWidth=_sc.drawSize*4;ctx.strokeStyle='rgba(0,0,0,1)';}
+  else if(_sc.drawTool==='marker'){ctx.globalAlpha=0.45;ctx.strokeStyle=_sc.drawColor;ctx.lineWidth=_sc.drawSize*2.5;}
+  else{ctx.strokeStyle=_sc.drawColor;ctx.lineWidth=_sc.drawSize;}
+  ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);
+  for(var i=1;i<pts.length;i++){var p=pts[i],pp=pts[i-1];ctx.quadraticCurveTo(pp.x,pp.y,(p.x+pp.x)/2,(p.y+pp.y)/2);}
+  ctx.stroke();ctx.restore();
+}
+function _scDrawUp(e) {
+  if(!_sc.isDrawing) return; _sc.isDrawing=false;
+  if(_sc.drawPoints.length<2) return;
+  var cur=_scCur(); if(!cur) return;
+  cur.strokes.push({points:_sc.drawPoints.slice(),color:_sc.drawColor,size:_sc.drawSize,tool:_sc.drawTool});
+  _sc.drawPoints=[]; _scRenderStrokes();
+}
+function _scGetPt(e) {
+  var rect=_sc.canvas.getBoundingClientRect();
+  return {x:_sc.kfX.filter((e.clientX-rect.left)*_sc.canvas.width/rect.width),y:_sc.kfY.filter((e.clientY-rect.top)*_sc.canvas.height/rect.height)};
+}
+
+function scSetDrawTool(t,btn){ _sc.drawTool=t; document.querySelectorAll('.sc-draw-tool').forEach(function(b){b.classList.remove('active');}); if(btn)btn.classList.add('active'); }
+function scSetDrawColor(c,dot){ _sc.drawColor=c; document.querySelectorAll('.sc-draw-cdot').forEach(function(d){d.classList.remove('sel');}); if(dot)dot.classList.add('sel'); }
+function scSetDrawSize(s,btn){ _sc.drawSize=s; document.querySelectorAll('.sc-draw-size').forEach(function(b){b.classList.remove('active');}); if(btn)btn.classList.add('active'); }
+function scClearDraw(){ if(!confirm('Is slide ki drawing clear karein?')) return; scSnapshot(); var cur=_scCur(); if(cur) cur.strokes=[]; _scRenderStrokes(); }
+
+// ══════════════════════════════════════
+// QUICKMAP
+// ══════════════════════════════════════
+var _scQmNodeColors=['#e65100','#1565c0','#2e7d32','#6a1b9a','#00695c','#c62828'];
+var _scQmNextId=1;
+var _scQmTouchLast=0,_scQmConnecting=null,_scQmDragging=null,_scQmDragOff={x:0,y:0};
+
+function _scQmRender() {
+  var cv=_sc.qmCanvas,ctx=_sc.qmCtx; if(!cv||!ctx) return;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  var cur=_scCur(); if(!cur) return;
+  var nodes=cur.qmNodes||[], edges=cur.qmEdges||[];
+  if(!nodes.length) return;
+  var nm={}; nodes.forEach(function(n){nm[n.id]=n;});
+  edges.forEach(function(e){
+    var a=nm[e.from],b=nm[e.to]; if(!a||!b) return;
+    ctx.save();ctx.strokeStyle='#888';ctx.lineWidth=1.5;ctx.globalAlpha=0.65;
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.restore();
+  });
+  nodes.forEach(function(n){
+    var r=28; ctx.save();ctx.shadowColor='rgba(0,0,0,0.12)';ctx.shadowBlur=6;
+    ctx.fillStyle=n.color||'#e65100';ctx.globalAlpha=0.85;ctx.beginPath();
+    if(n.shape==='box'){if(ctx.roundRect)ctx.roundRect(n.x-r,n.y-r/1.4,r*2,r*1.4,8);else ctx.rect(n.x-r,n.y-r/1.4,r*2,r*1.4);}
+    else if(n.shape==='diamond'){ctx.moveTo(n.x,n.y-r);ctx.lineTo(n.x+r,n.y);ctx.lineTo(n.x,n.y+r);ctx.lineTo(n.x-r,n.y);ctx.closePath();}
+    else{ctx.arc(n.x,n.y,r,0,Math.PI*2);}
+    ctx.fill();ctx.restore();
+    ctx.save();ctx.fillStyle='#fff';ctx.font='bold 11px "Noto Sans Devanagari","Baloo 2",sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    var words=(n.label||'').split(' '),lines=[],cur2='';
+    words.forEach(function(w){if((cur2+w).length>8&&cur2){lines.push(cur2.trim());cur2=w+' ';}else cur2+=w+' ';});
+    if(cur2.trim())lines.push(cur2.trim());
+    var lh=13;lines.forEach(function(l,i){ctx.fillText(l,n.x,n.y+(i-(lines.length-1)/2)*lh);});
+    ctx.restore();
+  });
+}
+
+function _scQmNodeAt(x,y){ var hit=null; (_scCur()&&_scCur().qmNodes||[]).forEach(function(n){if(Math.hypot(n.x-x,n.y-y)<32)hit=n;}); return hit; }
+
+function _scQmDown(e){
+  if(_sc.mode!=='qmap') return; e.preventDefault();
+  var cv=_sc.qmCanvas,rect=cv.getBoundingClientRect();
+  var x=(e.clientX-rect.left)*cv.width/rect.width,y=(e.clientY-rect.top)*cv.height/rect.height;
+  var hit=_scQmNodeAt(x,y),now=Date.now();
+  if(hit&&now-_scQmTouchLast<350){_scQmConnecting=hit;showToast('🔗 Doosre node par tap karo','success');_scQmTouchLast=0;return;}
+  _scQmTouchLast=now;
+  if(hit){_scQmDragging=hit;_scQmDragOff.x=x-hit.x;_scQmDragOff.y=y-hit.y;}
+  else if(_scQmConnecting){_scQmConnecting=null;}
+  else{
+    scSnapshot(); var cur=_scCur(); if(!cur) return;
+    var node={id:'qn'+Date.now(),label:'Node '+_scQmNextId++,x:x,y:y,color:_scQmNodeColors[cur.qmNodes.length%_scQmNodeColors.length],shape:'bubble'};
+    cur.qmNodes.push(node); _scQmRender(); _scQmEditLabel(node);
+  }
+}
+function _scQmMove(e){
+  if(_sc.mode!=='qmap'||!_scQmDragging) return;
+  var cv=_sc.qmCanvas,rect=cv.getBoundingClientRect();
+  _scQmDragging.x=(e.clientX-rect.left)*cv.width/rect.width-_scQmDragOff.x;
+  _scQmDragging.y=(e.clientY-rect.top)*cv.height/rect.height-_scQmDragOff.y;
+  _scQmRender();
+}
+function _scQmUp(e){
+  if(_scQmConnecting&&_scQmDragging&&_scQmConnecting.id!==_scQmDragging.id){
+    scSnapshot(); var cur=_scCur(); if(cur) cur.qmEdges.push({from:_scQmConnecting.id,to:_scQmDragging.id});
+    _scQmConnecting=null;_scQmRender();
+  }
+  _scQmDragging=null;
+}
+function _scQmEditLabel(node){var l=prompt('Node ka naam:',node.label||'');if(l!==null){node.label=l||node.label;_scQmRender();}}
+function scQmClear(){if(!confirm('Is slide ka QuickMap clear karein?'))return;scSnapshot();var cur=_scCur();if(cur){cur.qmNodes=[];cur.qmEdges=[];}_scQmNextId=1;_scQmRender();}
+
+// ══════════════════════════════════════
+// TOOLBAR
+// ══════════════════════════════════════
+function scRenderToolbar() {
+  var tb=document.getElementById('scToolbar'); if(!tb) return; tb.innerHTML='';
+  if(_sc.mode==='text'){
+    tb.innerHTML='<span style="font-size:0.65rem;color:rgba(0,0,0,0.45);font-weight:700;align-self:center;white-space:nowrap;">Tap=add text</span><div class="sc-sep"></div>'
+      +'<button class="sc-tbtn" onclick="scAddTextBlock()" style="min-width:52px;">＋ Text</button>'
+      +'<button class="sc-tbtn" onclick="scAddBulletBlock()" style="min-width:44px;">• List</button>'
+      +'<button class="sc-tbtn" onclick="scAddHeadingBlock()" style="min-width:52px;font-weight:800;">H Head</button>';
+  } else if(_sc.mode==='draw'){
+    ['pen','marker','eraser'].forEach(function(t){
+      var ic=t==='pen'?'✒️':t==='marker'?'🖊️':'🧹';
+      tb.innerHTML+='<button class="sc-tbtn sc-draw-tool'+(t===_sc.drawTool?' active':'')
+        +'" onclick="scSetDrawTool(\''+t+'\',this)">'+ic+'</button>';
+    });
+    tb.innerHTML+='<div class="sc-sep"></div>';
+    [2,4,7].forEach(function(s){var l=s===2?'S':s===4?'M':'L';
+      tb.innerHTML+='<button class="sc-tbtn sc-draw-size'+(s===_sc.drawSize?' active':'')
+        +'" onclick="scSetDrawSize('+s+',this)" style="min-width:24px;">'+l+'</button>';});
+    tb.innerHTML+='<div class="sc-sep"></div>';
+    ['#1a1a1a','#1565c0','#c62828','#2e7d32','#6a1b9a','#f57c00'].forEach(function(c){
+      tb.innerHTML+='<div class="sc-color-dot sc-draw-cdot'+(c===_sc.drawColor?' sel':'')
+        +'" style="background:'+c+';" onclick="scSetDrawColor(\''+c+'\',this)"></div>';});
+    tb.innerHTML+='<input type="color" value="'+_sc.drawColor+'" onchange="scSetDrawColor(this.value)" style="width:22px;height:22px;border:none;border-radius:5px;padding:0;cursor:pointer;flex-shrink:0;">';
+    tb.innerHTML+='<div class="sc-sep"></div><button class="sc-tbtn" onclick="scClearDraw()" title="Clear">🗑</button>';
+  } else if(_sc.mode==='qmap'){
+    tb.innerHTML='<span style="font-size:0.65rem;color:rgba(0,0,0,0.45);font-weight:700;align-self:center;white-space:nowrap;">Tap=node · 2tap=connect · Drag=move</span>'
+      +'<div class="sc-sep"></div><button class="sc-tbtn" onclick="scQmClear()">🗑 Clear</button>';
+  } else if(_sc.mode==='select'){
+    tb.innerHTML='<span style="font-size:0.65rem;color:rgba(0,0,0,0.45);font-weight:700;align-self:center;white-space:nowrap;">Tap=select · 2tap=edit · Drag=move</span>';
+  }
+}
+
+function scAddTextBlock(){
+  var cur=_scCur(); if(!cur) return; scSnapshot();
+  var b={id:'scb_'+Date.now(),x:30,y:30+(Math.random()*60|0),w:180,html:'',fontSize:15,color:'#1a1a1a',bold:false,italic:false,underline:false,angle:0};
+  cur.textBlocks.push(b); var el=_scCreateBlockDOM(b); if(el) setTimeout(function(){scEditBlock(b,el);},50);
+}
+function scAddBulletBlock(){
+  var cur=_scCur(); if(!cur) return; scSnapshot();
+  var b={id:'scb_'+Date.now(),x:30,y:30+(Math.random()*60|0),w:200,html:'• ',fontSize:14,color:'#1a1a1a',bold:false,italic:false,underline:false,angle:0};
+  cur.textBlocks.push(b); var el=_scCreateBlockDOM(b); if(el) setTimeout(function(){scEditBlock(b,el);},50);
+}
+function scAddHeadingBlock(){
+  var cur=_scCur(); if(!cur) return; scSnapshot();
+  var b={id:'scb_'+Date.now(),x:30,y:20,w:220,html:'Heading',fontSize:22,color:'#1565c0',bold:true,italic:false,underline:false,angle:0};
+  cur.textBlocks.push(b); _scCreateBlockDOM(b);
+}
+
+// ══════════════════════════════════════
+// DRAG FROM NOTES
+// ══════════════════════════════════════
+function scNoteDragStart(e){
+  var sel=window.getSelection(); var text=sel?sel.toString().trim():'';
+  if(!text) return; _sc.dragText=text;
+  e.dataTransfer.setData('text/plain',text); e.dataTransfer.effectAllowed='copy';
+}
+function scDragOver(e){ e.preventDefault(); e.dataTransfer.dropEffect='copy'; document.getElementById('scCanvasWrap').classList.add('sc-drop-active'); }
+function scDragLeave(e){ document.getElementById('scCanvasWrap').classList.remove('sc-drop-active'); }
+function scDrop(e){
+  e.preventDefault(); document.getElementById('scCanvasWrap').classList.remove('sc-drop-active');
+  var text=e.dataTransfer.getData('text/plain')||_sc.dragText||''; if(!text) return;
+  var wrap=document.getElementById('scCanvasWrap'),rect=wrap.getBoundingClientRect();
+  var cur=_scCur(); if(!cur) return;
+  scSnapshot();
+  var b={id:'scb_'+Date.now(),x:Math.max(5,e.clientX-rect.left-80),y:Math.max(5,e.clientY-rect.top-15),w:Math.min(280,text.length*8+40),
+    html:text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'),fontSize:14,color:'#1a1a1a',bold:false,italic:false,underline:false,angle:0};
+  cur.textBlocks.push(b); _scCreateBlockDOM(b);
+  showToast('📋 Text canvas par add ho gaya!','success');
+}
+
+// ══════════════════════════════════════
+// SAVE
+// ══════════════════════════════════════
+function scSave() {
+  if(!_sc.tid){showToast('Pehle notes editor kholo!','error');return;}
+  var t=getTop(_sc.sid,_sc.secid,_sc.tid);
+  if(!t){showToast('Topic nahi mila!','error');return;}
+
+  // Sync current slide DOM
+  _scSyncCurrentSlideFromDOM();
+
+  // Compress strokes in all slides
+  var slidesToSave = _sc.slides.map(function(s){
+    return {
+      id:s.id, title:s.title, bg:s.bg,
+      textBlocks: JSON.parse(JSON.stringify(s.textBlocks||[])),
+      strokes:    _scCompressStrokes(s.strokes||[]),
+      qmNodes:    JSON.parse(JSON.stringify(s.qmNodes||[])),
+      qmEdges:    JSON.parse(JSON.stringify(s.qmEdges||[]))
+    };
+  });
+
+  var data = { v:2, slides:slidesToSave, curSlide:_sc.curSlide, savedAt:Date.now() };
+  var sz = JSON.stringify(data).length;
+
+  if(sz > 700000) {
+    showToast('⚠️ Data bahut bada! Kuch strokes/blocks hatao. ('+Math.round(sz/1024)+'KB)','error');
+    return;
+  }
+
+  t.studyCanvas = data;
+  save();
+  if(typeof saveToFirebase==='function'&&window._currentUser&&window._db) saveToFirebase();
+  showToast('✅ Study Canvas saved! '+_sc.slides.length+' slides · '+Math.round(sz/1024)+'KB','success');
+}
+
+function _scCompressStrokes(strokes){
+  return strokes.map(function(s){
+    var pts=s.points;
+    if(pts.length>40){var c=[];for(var i=0;i<pts.length;i+=2)c.push(pts[i]);if(pts[pts.length-1]!==c[c.length-1])c.push(pts[pts.length-1]);pts=c;}
+    return {points:pts.map(function(p){return{x:Math.round(p.x*10)/10,y:Math.round(p.y*10)/10};}),color:s.color,size:s.size,tool:s.tool};
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// END STUDY CANVAS SYSTEM v2
+// ═══════════════════════════════════════════════════════════════════
+</script>
+
+  // State
+  open:        false,
+  fullscreen:  false,
+  mode:        'text',   // 'text'|'draw'|'qmap'|'select'
+  bg:          '#fffde7',
+  tid:         null,
+  sid:         null,
+  secid:       null,
+
+  // Layers data (saved to Firebase)
+  textBlocks:  [],   // [{id,x,y,w,h,html,fontSize,color,bold,italic,underline,angle}]
+  strokes:     [],   // [{points:[{x,y,p}],color,size,tool}] — compressed, not PNG
+  qmNodes:     [],   // [{id,label,x,y,color,shape,children:[id,...]}]
+  qmEdges:     [],   // [{from,to,label}]
+
+  // Unified undo stack — stores full snapshots (max 25)
+  undoStack:   [],
+  redoStack:   [],
+
+  // Runtime
+  canvas:      null,
+  ctx:         null,
+  qmCanvas:    null,
+  qmCtx:       null,
+  drawColor:   '#1565c0',
+  drawSize:    3,
+  drawTool:    'pen',
+  isDrawing:   false,
+  drawPoints:  [],
+  kfX:         null,
+  kfY:         null,
+
+  // Text editing
+  activeBlock:   null,  // DOM element
+  activeBlockId: null,
+
+  // QMap inside SC
+  qm: {
+    nodes: [], edges: [],
+    tool: 'bubble', color: '#e65100',
+    connecting: null, dragging: null,
+    offsetX: 0, offsetY: 0,
+    history: [], redoStack: []
+  },
+
+  // Drag from notes
+  dragText: ''
+};
+
+// ── BG COLORS ──
+var SC_BG_COLORS = ['#fffde7','#fce4ec','#e8f5e9','#e3f2fd','#f3e5f5','#fff8e1','#e0f7fa','#f1f8e9'];
+
+// ── INIT when editor opens ──
+function scOnEditorOpen(sid, secid, tid) {
+  _sc.sid = sid; _sc.secid = secid; _sc.tid = tid;
+  // Load saved data
+  var t = getTop(sid, secid, tid);
+  if(t && t.studyCanvas) {
+    var sc = t.studyCanvas;
+    _sc.textBlocks = JSON.parse(JSON.stringify(sc.textBlocks || []));
+    _sc.strokes    = JSON.parse(JSON.stringify(sc.strokes    || []));
+    _sc.qmNodes    = JSON.parse(JSON.stringify(sc.qmNodes    || []));
+    _sc.qmEdges    = JSON.parse(JSON.stringify(sc.qmEdges    || []));
+    _sc.bg         = sc.bg || '#fffde7';
+  } else {
+    _sc.textBlocks = []; _sc.strokes = []; _sc.qmNodes = []; _sc.qmEdges = [];
+    _sc.bg = '#fffde7';
+  }
+  _sc.undoStack = []; _sc.redoStack = [];
+
+  // Show pull tab
+  var tab = document.getElementById('scPullTab');
+  if(tab) tab.classList.add('visible');
+
+  // Set title
+  if(t) {
+    var ti = document.getElementById('scTitle');
+    if(ti) ti.textContent = '📋 ' + t.name;
+  }
+}
+
+function scOnEditorClose() {
+  // Hide pull tab + close panel
+  var tab = document.getElementById('scPullTab');
+  if(tab) tab.classList.remove('visible');
+  var panel = document.getElementById('studyCanvasPanel');
+  if(panel) panel.classList.remove('sc-open','sc-fullscreen');
+  _sc.open = false; _sc.fullscreen = false;
+  _sc.activeBlock = null; _sc.activeBlockId = null;
+}
+
+// ── TOGGLE PANEL ──
+function scTogglePanel() {
+  _sc.open = !_sc.open;
+  var panel = document.getElementById('studyCanvasPanel');
+  if(!panel) return;
+  if(_sc.open) {
+    panel.classList.add('sc-open');
+    panel.style.background = _sc.bg;
+    scInitCanvas();
+    scRenderAll();
+    scRenderToolbar();
+    setTimeout(scFitCanvas, 50);
+  } else {
+    panel.classList.remove('sc-open','sc-fullscreen');
+    _sc.fullscreen = false;
+    _sc.activeBlock = null;
+    scHideAllBlockActions();
+  }
+}
+
+function scToggleFullscreen() {
+  _sc.fullscreen = !_sc.fullscreen;
+  var panel = document.getElementById('studyCanvasPanel');
+  var btn   = document.getElementById('scExpandBtn');
+  if(!panel) return;
+  if(_sc.fullscreen) {
+    panel.classList.add('sc-fullscreen');
+    if(btn) btn.textContent = '⊡';
+  } else {
+    panel.classList.remove('sc-fullscreen');
+    if(btn) btn.textContent = '⛶';
+  }
+  setTimeout(function(){ scFitCanvas(); scRenderAll(); }, 60);
+}
+
+// ── BACKGROUND ──
+function scSetBg(color, el) {
+  _sc.bg = color;
+  document.getElementById('studyCanvasPanel').style.background = color;
+  document.querySelectorAll('.sc-bg-dot').forEach(function(d){ d.classList.remove('sel'); });
+  if(el) el.classList.add('sel');
+}
+
+// ── MODE ──
+function scSetMode(mode, el) {
+  _sc.mode = mode;
+  document.querySelectorAll('.sc-mode-tab').forEach(function(t){ t.classList.remove('active'); });
+  if(el) el.classList.add('active');
+
+  // Canvas pointer events
+  var cv = document.getElementById('scCanvas');
+  var qm = document.getElementById('scQmCanvas');
+  if(cv) cv.style.pointerEvents = (mode === 'draw') ? 'all' : 'none';
+  if(qm) {
+    if(mode === 'qmap') { qm.classList.add('qm-active'); } 
+    else               { qm.classList.remove('qm-active'); }
+  }
+
+  // Deselect text blocks when switching mode
+  scDeselectBlock();
+  scRenderToolbar();
+  scSetStatus();
+}
+
+function scSetStatus() {
+  var el = document.getElementById('scStatus');
+  if(!el) return;
+  var msgs = {
+    text:   '✍️ Tap = text block add · Drag = move',
+    draw:   '✏️ Draw karo · Toolbar se tool/size/color',
+    qmap:   '🗺 Tap = node add · Drag = move · Long tap = connect',
+    select: '☝️ Block tap = select · Drag = move · Pinch = resize'
+  };
+  el.textContent = msgs[_sc.mode] || '';
+}
+
+// ── CANVAS INIT ──
+function scInitCanvas() {
+  var wrap = document.getElementById('scCanvasWrap');
+  var cv   = document.getElementById('scCanvas');
+  var qmcv = document.getElementById('scQmCanvas');
+  if(!wrap || !cv) return;
+
+  cv.width  = wrap.offsetWidth  || 340;
+  cv.height = wrap.offsetHeight || 480;
+  _sc.canvas = cv;
+  _sc.ctx    = cv.getContext('2d');
+
+  if(qmcv) {
+    qmcv.width  = cv.width;
+    qmcv.height = cv.height;
+    qmcv.style.width  = cv.width  + 'px';
+    qmcv.style.height = cv.height + 'px';
+    _sc.qmCanvas = qmcv;
+    _sc.qmCtx    = qmcv.getContext('2d');
+  }
+
+  // Init Kalman filters for smooth drawing
+  _sc.kfX = new KalmanFilter();
+  _sc.kfY = new KalmanFilter();
+
+  // Pointer events on draw canvas
+  cv.removeEventListener('pointerdown', _scDrawDown);
+  cv.removeEventListener('pointermove', _scDrawMove);
+  cv.removeEventListener('pointerup',   _scDrawUp);
+  cv.removeEventListener('pointercancel',_scDrawUp);
+  cv.addEventListener('pointerdown',  _scDrawDown,  { passive: false });
+  cv.addEventListener('pointermove',  _scDrawMove,  { passive: false });
+  cv.addEventListener('pointerup',    _scDrawUp,    { passive: true  });
+  cv.addEventListener('pointercancel',_scDrawUp,    { passive: true  });
+
+  // Tap on wrap for text/select mode
+  wrap.removeEventListener('pointerdown', _scWrapTap);
+  wrap.addEventListener('pointerdown', _scWrapTap, { passive: false });
+
+  // QMap canvas
+  if(qmcv) {
+    qmcv.removeEventListener('pointerdown', _scQmDown);
+    qmcv.removeEventListener('pointermove', _scQmMove);
+    qmcv.removeEventListener('pointerup',   _scQmUp);
+    qmcv.addEventListener('pointerdown', _scQmDown, { passive: false });
+    qmcv.addEventListener('pointermove', _scQmMove, { passive: false });
+    qmcv.addEventListener('pointerup',   _scQmUp,   { passive: true  });
+  }
+}
+
+function scFitCanvas() {
+  var wrap = document.getElementById('scCanvasWrap');
+  var cv   = document.getElementById('scCanvas');
+  var qmcv = document.getElementById('scQmCanvas');
+  if(!wrap || !cv) return;
+  var w = wrap.offsetWidth, h = wrap.offsetHeight;
+  if(w < 10 || h < 10) return;
+  // Save current drawing
+  var imgData = _sc.ctx ? _sc.ctx.getImageData(0,0,cv.width,cv.height) : null;
+  cv.width = w; cv.height = h;
+  if(qmcv) { qmcv.width = w; qmcv.height = h; }
+  if(imgData && _sc.ctx) _sc.ctx.putImageData(imgData,0,0);
+  scRenderAll();
+}
+
+// ── RENDER ALL ──
+function scRenderAll() {
+  _scRenderStrokes();
+  _scRenderTextBlocks();
+  _scQmRender();
+}
+
+// ── UNDO/REDO ──
+function scSnapshot() {
+  var snap = {
+    textBlocks: JSON.parse(JSON.stringify(_sc.textBlocks)),
+    strokes:    JSON.parse(JSON.stringify(_sc.strokes)),
+    qmNodes:    JSON.parse(JSON.stringify(_sc.qmNodes)),
+    qmEdges:    JSON.parse(JSON.stringify(_sc.qmEdges))
+  };
+  _sc.undoStack.push(snap);
+  if(_sc.undoStack.length > 25) _sc.undoStack.shift();
+  _sc.redoStack = [];
+}
+
+function scUndo() {
+  if(!_sc.undoStack.length) { showToast('Kuch nahi undo karne ko!','error'); return; }
+  // Push current to redo
+  _sc.redoStack.push({
+    textBlocks: JSON.parse(JSON.stringify(_sc.textBlocks)),
+    strokes:    JSON.parse(JSON.stringify(_sc.strokes)),
+    qmNodes:    JSON.parse(JSON.stringify(_sc.qmNodes)),
+    qmEdges:    JSON.parse(JSON.stringify(_sc.qmEdges))
+  });
+  var prev = _sc.undoStack.pop();
+  _sc.textBlocks = prev.textBlocks;
+  _sc.strokes    = prev.strokes;
+  _sc.qmNodes    = prev.qmNodes;
+  _sc.qmEdges    = prev.qmEdges;
+  scRenderAll();
+  _scSyncTextBlocksDOM();
+  showToast('↩ Undo', 'success');
+}
+
+function scRedo() {
+  if(!_sc.redoStack.length) { showToast('Kuch nahi redo karne ko!','error'); return; }
+  _sc.undoStack.push({
+    textBlocks: JSON.parse(JSON.stringify(_sc.textBlocks)),
+    strokes:    JSON.parse(JSON.stringify(_sc.strokes)),
+    qmNodes:    JSON.parse(JSON.stringify(_sc.qmNodes)),
+    qmEdges:    JSON.parse(JSON.stringify(_sc.qmEdges))
+  });
+  var next = _sc.redoStack.pop();
+  _sc.textBlocks = next.textBlocks;
+  _sc.strokes    = next.strokes;
+  _sc.qmNodes    = next.qmNodes;
+  _sc.qmEdges    = next.qmEdges;
+  scRenderAll();
+  _scSyncTextBlocksDOM();
+  showToast('↪ Redo', 'success');
+}
+
+// ══════════════════════════════════
+// TEXT BLOCKS
+// ══════════════════════════════════
+function _scRenderTextBlocks() {
+  // Remove old DOM blocks
+  var wrap = document.getElementById('scCanvasWrap');
+  if(!wrap) return;
+  wrap.querySelectorAll('.sc-text-block').forEach(function(el){ el.remove(); });
+
+  _sc.textBlocks.forEach(function(b) {
+    _scCreateBlockDOM(b);
+  });
+}
+
+function _scCreateBlockDOM(b) {
+  var wrap = document.getElementById('scCanvasWrap');
+  if(!wrap) return;
+
+  var el = document.createElement('div');
+  el.className = 'sc-text-block';
+  el.id = 'scBlock_' + b.id;
+  el.style.left   = b.x + 'px';
+  el.style.top    = b.y + 'px';
+  el.style.width  = (b.w || 140) + 'px';
+  el.style.fontSize = (b.fontSize || 15) + 'px';
+  el.style.color    = b.color || '#1a1a1a';
+  el.style.transform = b.angle ? 'rotate(' + b.angle + 'deg)' : '';
+  el.style.fontWeight   = b.bold   ? '800' : '';
+  el.style.fontStyle    = b.italic ? 'italic' : '';
+  el.style.textDecoration = b.underline ? 'underline' : '';
+  el.innerHTML = b.html || '';
+
+  // Resize handle
+  var resizeH = document.createElement('div');
+  resizeH.className = 'sc-block-resize';
+  el.appendChild(resizeH);
+
+  // Rotate handle
+  var rotH = document.createElement('div');
+  rotH.className = 'sc-block-rotate';
+  rotH.textContent = '↻';
+  el.appendChild(rotH);
+
+  // Tap to select / edit
+  el.addEventListener('pointerdown', function(e) {
+    if(e.target === resizeH || e.target === rotH) return;
+    e.stopPropagation();
+    if(_sc.mode === 'select' || _sc.mode === 'text') {
+      scSelectBlock(b, el);
+    }
+  });
+
+  // Double tap to edit
+  var _lastTap = 0;
+  el.addEventListener('pointerdown', function(e) {
+    if(e.target === resizeH || e.target === rotH) return;
+    var now = Date.now();
+    if(now - _lastTap < 320) {
+      e.stopPropagation();
+      scEditBlock(b, el);
+    }
+    _lastTap = now;
+  });
+
+  // Drag to move
+  _scBlockDrag(b, el);
+
+  // Resize handle
+  _scBlockResize(b, el, resizeH);
+
+  // Rotate handle
+  _scBlockRotate(b, el, rotH);
+
+  wrap.appendChild(el);
+  return el;
+}
+
+function scSelectBlock(b, el) {
+  scDeselectBlock();
+  _sc.activeBlock   = el;
+  _sc.activeBlockId = b.id;
+  el.classList.add('selected');
+  _scShowBlockActions(b, el);
+}
+
+function scDeselectBlock() {
+  if(_sc.activeBlock) _sc.activeBlock.classList.remove('selected');
+  _sc.activeBlock   = null;
+  _sc.activeBlockId = null;
+  scHideAllBlockActions();
+}
+
+function scHideAllBlockActions() {
+  document.querySelectorAll('.sc-block-actions').forEach(function(a){ a.remove(); });
+}
+
+function _scShowBlockActions(b, el) {
+  scHideAllBlockActions();
+  var wrap = document.getElementById('scCanvasWrap');
+  if(!wrap) return;
+
+  var bar = document.createElement('div');
+  bar.className = 'sc-block-actions';
+
+  function mkBtn(icon, title, fn) {
+    var btn = document.createElement('button');
+    btn.className = 'sc-block-act-btn';
+    btn.title = title;
+    btn.textContent = icon;
+    btn.addEventListener('pointerdown', function(e){ e.stopPropagation(); fn(); });
+    return btn;
+  }
+
+  // Bold
+  bar.appendChild(mkBtn('B', 'Bold', function(){
+    scSnapshot(); b.bold = !b.bold; _scRefreshBlock(b);
+  }));
+  // Italic
+  var itBtn = mkBtn('I', 'Italic', function(){
+    scSnapshot(); b.italic = !b.italic; _scRefreshBlock(b);
+  });
+  itBtn.style.fontStyle = 'italic';
+  bar.appendChild(itBtn);
+  // Underline
+  var ulBtn = mkBtn('U', 'Underline', function(){
+    scSnapshot(); b.underline = !b.underline; _scRefreshBlock(b);
+  });
+  ulBtn.style.textDecoration = 'underline';
+  bar.appendChild(ulBtn);
+  // Font size -/+
+  bar.appendChild(mkBtn('A−', 'Font chhota', function(){
+    scSnapshot(); b.fontSize = Math.max(10, (b.fontSize||15)-2); _scRefreshBlock(b);
+  }));
+  bar.appendChild(mkBtn('A+', 'Font bada', function(){
+    scSnapshot(); b.fontSize = Math.min(40, (b.fontSize||15)+2); _scRefreshBlock(b);
+  }));
+  // Color dots
+  ['#1a1a1a','#1565c0','#c62828','#2e7d32','#6a1b9a','#e65100'].forEach(function(c){
+    var dot = document.createElement('div');
+    dot.style.cssText = 'width:14px;height:14px;border-radius:50%;background:'+c+';cursor:pointer;flex-shrink:0;border:1.5px solid rgba(0,0,0,0.15);';
+    dot.addEventListener('pointerdown', function(e){
+      e.stopPropagation(); scSnapshot(); b.color = c; _scRefreshBlock(b);
+    });
+    bar.appendChild(dot);
+  });
+  // Delete
+  bar.appendChild(mkBtn('🗑', 'Delete', function(){
+    scSnapshot();
+    _sc.textBlocks = _sc.textBlocks.filter(function(x){ return x.id !== b.id; });
+    el.remove(); bar.remove();
+    _sc.activeBlock = null; _sc.activeBlockId = null;
+  }));
+
+  el.appendChild(bar);
+}
+
+function scEditBlock(b, el) {
+  el.contentEditable = 'true';
+  el.focus();
+  var sel = window.getSelection();
+  var range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+
+  function onBlur() {
+    el.contentEditable = 'false';
+    scSnapshot();
+    // Save HTML but strip handles
+    var clone = el.cloneNode(true);
+    clone.querySelectorAll('.sc-block-resize,.sc-block-rotate,.sc-block-actions').forEach(function(h){ h.remove(); });
+    b.html = clone.innerHTML;
+    el.removeEventListener('blur', onBlur);
+  }
+  el.addEventListener('blur', onBlur);
+}
+
+function _scRefreshBlock(b) {
+  var el = document.getElementById('scBlock_' + b.id);
+  if(!el) return;
+  el.style.fontWeight     = b.bold      ? '800' : '';
+  el.style.fontStyle      = b.italic    ? 'italic' : '';
+  el.style.textDecoration = b.underline ? 'underline' : '';
+  el.style.fontSize       = (b.fontSize||15) + 'px';
+  el.style.color          = b.color || '#1a1a1a';
+  el.style.transform      = b.angle ? 'rotate('+b.angle+'deg)' : '';
+  _scShowBlockActions(b, el);
+}
+
+function _scBlockDrag(b, el) {
+  var startX, startY, startBx, startBy;
+  var dragging = false;
+
+  el.addEventListener('pointerdown', function(e) {
+    if(e.target.classList.contains('sc-block-resize') ||
+       e.target.classList.contains('sc-block-rotate') ||
+       e.target.classList.contains('sc-block-act-btn') ||
+       el.contentEditable === 'true') return;
+    if(_sc.mode !== 'select' && _sc.mode !== 'text') return;
+    e.preventDefault();
+    try{ el.setPointerCapture(e.pointerId); } catch(x){}
+    startX = e.clientX; startY = e.clientY;
+    startBx = b.x; startBy = b.y;
+    dragging = true;
+    scSnapshot();
+  }, { passive: false });
+
+  el.addEventListener('pointermove', function(e) {
+    if(!dragging) return;
+    b.x = startBx + (e.clientX - startX);
+    b.y = startBy + (e.clientY - startY);
+    el.style.left = b.x + 'px';
+    el.style.top  = b.y + 'px';
+    // Move action bar if visible
+    var bar = el.querySelector('.sc-block-actions');
+    if(bar) {} // stays relative to el
+  }, { passive: true });
+
+  el.addEventListener('pointerup', function(){ dragging = false; }, { passive: true });
+}
+
+function _scBlockResize(b, el, handle) {
+  var startX, startY, startW;
+  var resizing = false;
+
+  handle.addEventListener('pointerdown', function(e) {
+    e.stopPropagation(); e.preventDefault();
+    try{ handle.setPointerCapture(e.pointerId); } catch(x){}
+    startX = e.clientX; startW = b.w || 140;
+    resizing = true;
+    scSnapshot();
+  }, { passive: false });
+
+  handle.addEventListener('pointermove', function(e) {
+    if(!resizing) return;
+    b.w = Math.max(60, startW + (e.clientX - startX));
+    el.style.width = b.w + 'px';
+  }, { passive: true });
+
+  handle.addEventListener('pointerup', function(){ resizing = false; }, { passive: true });
+}
+
+function _scBlockRotate(b, el, handle) {
+  var startAngle, startRot;
+  var rotating = false;
+
+  handle.addEventListener('pointerdown', function(e) {
+    e.stopPropagation(); e.preventDefault();
+    try{ handle.setPointerCapture(e.pointerId); } catch(x){}
+    var rect = el.getBoundingClientRect();
+    var cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
+    startAngle = Math.atan2(e.clientY - cy, e.clientX - cx) * 180/Math.PI;
+    startRot = b.angle || 0;
+    rotating = true;
+    scSnapshot();
+  }, { passive: false });
+
+  handle.addEventListener('pointermove', function(e) {
+    if(!rotating) return;
+    var rect = el.getBoundingClientRect();
+    var cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
+    var angle = Math.atan2(e.clientY - cy, e.clientX - cx) * 180/Math.PI;
+    b.angle = (startRot + (angle - startAngle)) % 360;
+    el.style.transform = 'rotate(' + b.angle + 'deg)';
+  }, { passive: true });
+
+  handle.addEventListener('pointerup', function(){ rotating = false; }, { passive: true });
+}
+
+// Tap on wrap to add text block
+function _scWrapTap(e) {
+  if(_sc.mode !== 'text') return;
+  // Ignore if tap is on an existing block
+  if(e.target.closest('.sc-text-block')) return;
+  if(e.target.closest('.sc-block-actions')) return;
+
+  var wrap = document.getElementById('scCanvasWrap');
+  if(!wrap) return;
+  var rect = wrap.getBoundingClientRect();
+  var x = e.clientX - rect.left;
+  var y = e.clientY - rect.top;
+
+  scSnapshot();
+  var b = {
+    id: 'scb_' + Date.now(),
+    x: x, y: y, w: 160,
+    html: '',
+    fontSize: 15, color: '#1a1a1a',
+    bold: false, italic: false, underline: false, angle: 0
+  };
+  _sc.textBlocks.push(b);
+  var el = _scCreateBlockDOM(b);
+  if(el) setTimeout(function(){ scEditBlock(b, el); }, 50);
+}
+
+function _scSyncTextBlocksDOM() {
+  var wrap = document.getElementById('scCanvasWrap');
+  if(!wrap) return;
+  wrap.querySelectorAll('.sc-text-block').forEach(function(el){ el.remove(); });
+  _sc.textBlocks.forEach(function(b){ _scCreateBlockDOM(b); });
+}
+
+// ══════════════════════════════════
+// DRAW ENGINE (reuses KalmanFilter from main app)
+// ══════════════════════════════════
+function _scRenderStrokes() {
+  var cv = _sc.canvas, ctx = _sc.ctx;
+  if(!cv || !ctx) return;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  _sc.strokes.forEach(function(stroke) {
+    if(!stroke.points || stroke.points.length < 2) return;
+    ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if(stroke.tool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.lineWidth = stroke.size * 4;
+      ctx.strokeStyle = 'rgba(0,0,0,1)';
+    } else if(stroke.tool === 'marker') {
+      ctx.globalAlpha = 0.45;
+      ctx.strokeStyle = stroke.color || '#1565c0';
+      ctx.lineWidth   = stroke.size * 2.5;
+    } else {
+      ctx.strokeStyle = stroke.color || '#1565c0';
+      ctx.lineWidth   = stroke.size;
+    }
+    ctx.beginPath();
+    ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+    for(var i=1; i<stroke.points.length; i++) {
+      var p  = stroke.points[i];
+      var pp = stroke.points[i-1];
+      var mx = (p.x + pp.x)/2, my = (p.y + pp.y)/2;
+      ctx.quadraticCurveTo(pp.x, pp.y, mx, my);
+    }
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function _scDrawDown(e) {
+  if(_sc.mode !== 'draw') return;
+  e.preventDefault();
+  if(!e.isPrimary) return;
+  try{ _sc.canvas.setPointerCapture(e.pointerId); } catch(x){}
+  _sc.isDrawing = true;
+  _sc.kfX = new KalmanFilter(); _sc.kfY = new KalmanFilter();
+  var pt = _scGetPt(e);
+  _sc.drawPoints = [pt];
+  scSnapshot();
+}
+
+function _scDrawMove(e) {
+  if(!_sc.isDrawing || _sc.mode !== 'draw') return;
+  e.preventDefault();
+  if(!e.isPrimary) return;
+  var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  evs.forEach(function(ev){
+    var pt = _scGetPt(ev);
+    _sc.drawPoints.push(pt);
+  });
+  // Live preview
+  _scRenderStrokes();
+  _scPreviewStroke(_sc.drawPoints);
+}
+
+function _scPreviewStroke(pts) {
+  var ctx = _sc.ctx;
+  if(!ctx || pts.length < 2) return;
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if(_sc.drawTool === 'eraser') {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.lineWidth = _sc.drawSize * 4;
+    ctx.strokeStyle = 'rgba(0,0,0,1)';
+  } else if(_sc.drawTool === 'marker') {
+    ctx.globalAlpha = 0.45;
+    ctx.strokeStyle = _sc.drawColor;
+    ctx.lineWidth   = _sc.drawSize * 2.5;
+  } else {
+    ctx.strokeStyle = _sc.drawColor;
+    ctx.lineWidth   = _sc.drawSize;
+  }
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for(var i=1; i<pts.length; i++) {
+    var p=pts[i], pp=pts[i-1];
+    ctx.quadraticCurveTo(pp.x,pp.y,(p.x+pp.x)/2,(p.y+pp.y)/2);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function _scDrawUp(e) {
+  if(!_sc.isDrawing) return;
+  _sc.isDrawing = false;
+  if(_sc.drawPoints.length < 2) return;
+  _sc.strokes.push({
+    points: _sc.drawPoints.slice(),
+    color: _sc.drawColor,
+    size: _sc.drawSize,
+    tool: _sc.drawTool
+  });
+  _sc.drawPoints = [];
+  _scRenderStrokes();
+}
+
+function _scGetPt(e) {
+  var rect = _sc.canvas.getBoundingClientRect();
+  var sx = _sc.canvas.width  / rect.width;
+  var sy = _sc.canvas.height / rect.height;
+  return {
+    x: _sc.kfX.filter((e.clientX - rect.left) * sx),
+    y: _sc.kfY.filter((e.clientY - rect.top)  * sy)
+  };
+}
+
+// ── Draw toolbar setters ──
+function scSetDrawTool(t, btn) {
+  _sc.drawTool = t;
+  document.querySelectorAll('.sc-draw-tool').forEach(function(b){ b.classList.remove('active'); });
+  if(btn) btn.classList.add('active');
+}
+function scSetDrawColor(c, dot) {
+  _sc.drawColor = c;
+  document.querySelectorAll('.sc-draw-cdot').forEach(function(d){ d.classList.remove('sel'); });
+  if(dot) dot.classList.add('sel');
+}
+function scSetDrawSize(s, btn) {
+  _sc.drawSize = s;
+  document.querySelectorAll('.sc-draw-size').forEach(function(b){ b.classList.remove('active'); });
+  if(btn) btn.classList.add('active');
+}
+function scClearDraw() {
+  if(!confirm('Drawing clear karein?')) return;
+  scSnapshot(); _sc.strokes = []; _scRenderStrokes();
+}
+
+// ══════════════════════════════════
+// QUICKMAP INSIDE STUDY CANVAS
+// ══════════════════════════════════
+var _scQmNodeColors = ['#e65100','#1565c0','#2e7d32','#6a1b9a','#00695c','#c62828'];
+var _scQmNextId = 1;
+
+function _scQmRender() {
+  var cv = _sc.qmCanvas, ctx = _sc.qmCtx;
+  if(!cv || !ctx) return;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  var nodes = _sc.qmNodes, edges = _sc.qmEdges;
+  if(!nodes.length) return;
+
+  var nodeMap = {};
+  nodes.forEach(function(n){ nodeMap[n.id] = n; });
+
+  // Draw edges
+  edges.forEach(function(edge) {
+    var a = nodeMap[edge.from], b = nodeMap[edge.to];
+    if(!a || !b) return;
+    ctx.save();
+    ctx.strokeStyle = '#888'; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.65;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.restore();
+  });
+
+  // Draw nodes
+  nodes.forEach(function(n) {
+    var r = 28;
+    ctx.save();
+    // Shadow
+    ctx.shadowColor = 'rgba(0,0,0,0.12)'; ctx.shadowBlur = 6;
+    // Fill
+    ctx.fillStyle = n.color || '#e65100';
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    if(n.shape === 'box') {
+      ctx.roundRect(n.x-r, n.y-r/1.4, r*2, r*1.4, 8);
+    } else if(n.shape === 'diamond') {
+      ctx.moveTo(n.x,n.y-r); ctx.lineTo(n.x+r,n.y);
+      ctx.lineTo(n.x,n.y+r); ctx.lineTo(n.x-r,n.y);
+      ctx.closePath();
+    } else {
+      ctx.arc(n.x, n.y, r, 0, Math.PI*2);
+    }
+    ctx.fill();
+    ctx.restore();
+    // Text
+    ctx.save();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 11px "Noto Sans Devanagari","Baloo 2",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    // Wrap text
+    var words = (n.label||'').split(' '), lines = [], cur = '';
+    words.forEach(function(w){
+      if((cur+w).length > 8 && cur) { lines.push(cur.trim()); cur = w+' '; }
+      else cur += w + ' ';
+    });
+    if(cur.trim()) lines.push(cur.trim());
+    var lh = 13;
+    lines.forEach(function(l, i){
+      ctx.fillText(l, n.x, n.y + (i - (lines.length-1)/2)*lh);
+    });
+    ctx.restore();
+  });
+}
+
+function _scQmNodeAt(x, y) {
+  var hit = null;
+  _sc.qmNodes.forEach(function(n){
+    if(Math.hypot(n.x-x, n.y-y) < 32) hit = n;
+  });
+  return hit;
+}
+
+var _scQmTouchLast = 0, _scQmConnecting = null, _scQmDragging = null;
+var _scQmDragOff = {x:0,y:0};
+
+function _scQmDown(e) {
+  if(_sc.mode !== 'qmap') return;
+  e.preventDefault();
+  var cv = _sc.qmCanvas;
+  var rect = cv.getBoundingClientRect();
+  var sx = cv.width/rect.width, sy = cv.height/rect.height;
+  var x = (e.clientX-rect.left)*sx, y = (e.clientY-rect.top)*sy;
+  var hit = _scQmNodeAt(x, y);
+
+  var now = Date.now();
+  if(hit && now - _scQmTouchLast < 350) {
+    // Double tap on node = connect mode
+    _scQmConnecting = hit;
+    if(typeof showToast==='function') showToast('🔗 Doosre node par tap karo — connect hoga', 'success');
+    _scQmTouchLast = 0;
+    return;
+  }
+  _scQmTouchLast = now;
+
+  if(hit) {
+    _scQmDragging = hit;
+    _scQmDragOff.x = x - hit.x;
+    _scQmDragOff.y = y - hit.y;
+  } else if(_scQmConnecting) {
+    // Tap on empty = cancel connect
+    _scQmConnecting = null;
+  } else {
+    // Tap on empty = add node
+    scSnapshot();
+    var label = 'Node ' + _scQmNextId++;
+    var node = {
+      id: 'qn'+Date.now(), label: label,
+      x: x, y: y,
+      color: _scQmNodeColors[(_sc.qmNodes.length) % _scQmNodeColors.length],
+      shape: 'bubble'
+    };
+    _sc.qmNodes.push(node);
+    _scQmRender();
+    // Show quick label editor
+    _scQmEditLabel(node);
+  }
+}
+
+function _scQmMove(e) {
+  if(_sc.mode !== 'qmap' || !_scQmDragging) return;
+  var cv = _sc.qmCanvas;
+  var rect = cv.getBoundingClientRect();
+  var sx = cv.width/rect.width, sy = cv.height/rect.height;
+  _scQmDragging.x = (e.clientX-rect.left)*sx - _scQmDragOff.x;
+  _scQmDragging.y = (e.clientY-rect.top)*sy  - _scQmDragOff.y;
+  _scQmRender();
+}
+
+function _scQmUp(e) {
+  if(_scQmConnecting && _scQmDragging && _scQmConnecting.id !== _scQmDragging.id) {
+    // Connect the two
+    scSnapshot();
+    _sc.qmEdges.push({ from: _scQmConnecting.id, to: _scQmDragging.id });
+    _scQmConnecting = null;
+    _scQmRender();
+  }
+  _scQmDragging = null;
+}
+
+function _scQmEditLabel(node) {
+  var label = prompt('Node ka naam:', node.label || '');
+  if(label !== null) {
+    node.label = label || node.label;
+    _scQmRender();
+  }
+}
+
+function scQmDeleteSelected() {
+  if(!_scQmDragging && !_sc.qmNodes.length) return;
+  showToast('Node tap karke select karo, phir yahan wala button dabaoge to delete hoga','error');
+}
+
+function scQmClear() {
+  if(!confirm('QuickMap clear karein?')) return;
+  scSnapshot(); _sc.qmNodes = []; _sc.qmEdges = []; _scQmNextId = 1; _scQmRender();
+}
+
+// ══════════════════════════════════
+// TOOLBAR RENDERING
+// ══════════════════════════════════
+function scRenderToolbar() {
+  var tb = document.getElementById('scToolbar');
+  if(!tb) return;
+  tb.innerHTML = '';
+
+  if(_sc.mode === 'text') {
+    tb.innerHTML = '<span style="font-size:0.68rem;color:rgba(0,0,0,0.45);font-weight:700;align-self:center;white-space:nowrap;">Tap canvas = text add</span>'
+      + '<div class="sc-sep"></div>'
+      + '<button class="sc-tbtn" onclick="scAddTextBlock()" title="Text block add karo" style="min-width:60px;">＋ Text</button>'
+      + '<button class="sc-tbtn" onclick="scAddBulletBlock()" title="Bullet list" style="min-width:52px;">• List</button>'
+      + '<button class="sc-tbtn" onclick="scAddHeadingBlock()" title="Heading" style="min-width:60px;font-weight:800;">H Heading</button>';
+
+  } else if(_sc.mode === 'draw') {
+    // Tool buttons
+    ['pen','marker','eraser'].forEach(function(t){
+      var icon = t==='pen'?'✒️':t==='marker'?'🖊️':'🧹';
+      tb.innerHTML += '<button class="sc-tbtn sc-draw-tool'+(t===_sc.drawTool?' active':'')
+        +'" onclick="scSetDrawTool(\''+t+'\',this)" title="'+t+'">'+icon+'</button>';
+    });
+    tb.innerHTML += '<div class="sc-sep"></div>';
+    // Sizes
+    [2,4,7].forEach(function(s){
+      var lbl = s===2?'S':s===4?'M':'L';
+      tb.innerHTML += '<button class="sc-tbtn sc-draw-size'+(s===_sc.drawSize?' active':'')
+        +'" onclick="scSetDrawSize('+s+',this)" style="min-width:26px;">'+lbl+'</button>';
+    });
+    tb.innerHTML += '<div class="sc-sep"></div>';
+    // Colors
+    ['#1a1a1a','#1565c0','#c62828','#2e7d32','#6a1b9a','#f57c00'].forEach(function(c){
+      tb.innerHTML += '<div class="sc-color-dot sc-draw-cdot'+(c===_sc.drawColor?' sel':'')
+        +'" style="background:'+c+';" onclick="scSetDrawColor(\''+c+'\',this)"></div>';
+    });
+    tb.innerHTML += '<input type="color" value="'+_sc.drawColor+'" onchange="scSetDrawColor(this.value)" style="width:22px;height:22px;border:none;border-radius:5px;padding:0;cursor:pointer;flex-shrink:0;">';
+    tb.innerHTML += '<div class="sc-sep"></div>';
+    tb.innerHTML += '<button class="sc-tbtn danger" onclick="scClearDraw()" title="Clear draw">🗑</button>';
+
+  } else if(_sc.mode === 'qmap') {
+    tb.innerHTML = '<span style="font-size:0.68rem;color:rgba(0,0,0,0.45);font-weight:700;align-self:center;white-space:nowrap;">Tap=add · DoubleTap=connect · Drag=move</span>'
+      + '<div class="sc-sep"></div>'
+      + '<button class="sc-tbtn" onclick="scQmClear()" title="Map clear karo">🗑 Clear</button>';
+
+  } else if(_sc.mode === 'select') {
+    tb.innerHTML = '<span style="font-size:0.68rem;color:rgba(0,0,0,0.45);font-weight:700;align-self:center;white-space:nowrap;">Block tap = select · Double tap = edit</span>';
+  }
+}
+
+// ── Quick text adders ──
+function scAddTextBlock() {
+  var wrap = document.getElementById('scCanvasWrap');
+  if(!wrap) return;
+  scSnapshot();
+  var b = {
+    id: 'scb_'+Date.now(), x: 30, y: 30+(Math.random()*80|0),
+    w: 180, html: '', fontSize:15, color:'#1a1a1a',
+    bold:false, italic:false, underline:false, angle:0
+  };
+  _sc.textBlocks.push(b);
+  var el = _scCreateBlockDOM(b);
+  if(el) setTimeout(function(){ scEditBlock(b, el); }, 50);
+}
+function scAddBulletBlock() {
+  scSnapshot();
+  var b = {
+    id: 'scb_'+Date.now(), x: 30, y: 30+(Math.random()*80|0),
+    w: 200, html: '• ', fontSize:14, color:'#1a1a1a',
+    bold:false, italic:false, underline:false, angle:0
+  };
+  _sc.textBlocks.push(b);
+  var el = _scCreateBlockDOM(b);
+  if(el) setTimeout(function(){ scEditBlock(b, el); }, 50);
+}
+function scAddHeadingBlock() {
+  scSnapshot();
+  var b = {
+    id: 'scb_'+Date.now(), x: 30, y: 20,
+    w: 220, html: 'Heading', fontSize:22, color:'#1565c0',
+    bold:true, italic:false, underline:false, angle:0
+  };
+  _sc.textBlocks.push(b);
+  _scCreateBlockDOM(b);
+}
+
+// ══════════════════════════════════
+// DRAG FROM NOTES EDITOR
+// ══════════════════════════════════
+function scNoteDragStart(e) {
+  var sel = window.getSelection();
+  var text = sel ? sel.toString().trim() : '';
+  if(!text) return;
+  _sc.dragText = text;
+  e.dataTransfer.setData('text/plain', text);
+  e.dataTransfer.effectAllowed = 'copy';
+}
+
+function scDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  document.getElementById('scCanvasWrap').classList.add('sc-drop-active');
+}
+function scDragLeave(e) {
+  document.getElementById('scCanvasWrap').classList.remove('sc-drop-active');
+}
+function scDrop(e) {
+  e.preventDefault();
+  document.getElementById('scCanvasWrap').classList.remove('sc-drop-active');
+  var text = e.dataTransfer.getData('text/plain') || _sc.dragText || '';
+  if(!text) return;
+
+  var wrap = document.getElementById('scCanvasWrap');
+  var rect = wrap.getBoundingClientRect();
+  var x = e.clientX - rect.left;
+  var y = e.clientY - rect.top;
+
+  scSnapshot();
+  var b = {
+    id: 'scb_'+Date.now(), x: Math.max(5,x-80), y: Math.max(5,y-15),
+    w: Math.min(280, text.length*8+40),
+    html: text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'),
+    fontSize:14, color:'#1a1a1a',
+    bold:false, italic:false, underline:false, angle:0
+  };
+  _sc.textBlocks.push(b);
+  _scCreateBlockDOM(b);
+  showToast('📋 Text canvas par add ho gaya!', 'success');
+}
+
+// ══════════════════════════════════
+// SAVE
+// ══════════════════════════════════
+function scSave() {
+  if(!_sc.tid) { showToast('Pehle notes editor kholo!', 'error'); return; }
+  var t = getTop(_sc.sid, _sc.secid, _sc.tid);
+  if(!t) { showToast('Topic nahi mila!', 'error'); return; }
+
+  // Sync HTML from DOM before saving
+  _sc.textBlocks.forEach(function(b) {
+    var el = document.getElementById('scBlock_'+b.id);
+    if(!el) return;
+    var clone = el.cloneNode(true);
+    clone.querySelectorAll('.sc-block-resize,.sc-block-rotate,.sc-block-actions').forEach(function(h){ h.remove(); });
+    b.html = clone.innerHTML;
+    b.x = parseFloat(el.style.left) || b.x;
+    b.y = parseFloat(el.style.top)  || b.y;
+  });
+
+  // Size check — strokes compress karo agar zaroori ho
+  var data = {
+    v:    1,
+    bg:   _sc.bg,
+    textBlocks: JSON.parse(JSON.stringify(_sc.textBlocks)),
+    strokes:    _scCompressStrokes(_sc.strokes),
+    qmNodes:    JSON.parse(JSON.stringify(_sc.qmNodes)),
+    qmEdges:    JSON.parse(JSON.stringify(_sc.qmEdges)),
+    savedAt:    Date.now()
+  };
+
+  // Rough size estimate
+  var sz = JSON.stringify(data).length;
+  if(sz > 700000) {
+    showToast('⚠️ Data bahut bada ho gaya! Kuch strokes ya blocks hatao pehle. (' + Math.round(sz/1024) + 'KB)', 'error');
+    return;
+  }
+
+  t.studyCanvas = data;
+  save();
+  if(typeof saveToFirebase === 'function' && window._currentUser && window._db) {
+    saveToFirebase();
+  }
+  showToast('✅ Study Canvas save ho gaya! (' + Math.round(sz/1024) + 'KB)', 'success');
+}
+
+function _scCompressStrokes(strokes) {
+  // Reduce point density for storage (keep every 2nd point for long strokes)
+  return strokes.map(function(s) {
+    var pts = s.points;
+    if(pts.length > 40) {
+      var compressed = [];
+      for(var i=0; i<pts.length; i+=2) compressed.push(pts[i]);
+      if(pts[pts.length-1] !== compressed[compressed.length-1]) compressed.push(pts[pts.length-1]);
+      pts = compressed;
+    }
+    return { points: pts.map(function(p){ return {x:Math.round(p.x*10)/10, y:Math.round(p.y*10)/10}; }),
+             color: s.color, size: s.size, tool: s.tool };
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// END STUDY CANVAS SYSTEM
+// ═══════════════════════════════════════════════════════════════════
 </script>
