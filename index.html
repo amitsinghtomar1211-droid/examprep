@@ -1302,7 +1302,38 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   pointer-events: none; z-index: 20;
 }
 
-/* Smart-send flash animation on new blocks */
+/* ── Highlights→Canvas Floating Btn — always above canvas panel ── */
+#neFooterHlBtn {
+  transition: all 0.3s ease;
+}
+/* Jab canvas open ho — fixed position mein aa jao canvas ke left par */
+#neFooterHlBtn.hl-btn-float {
+  position: fixed !important;
+  bottom: 80px !important;
+  right: min(88vw, 420px) !important;
+  transform: translateX(50%) !important;
+  z-index: 1400 !important;
+  display: flex !important;
+  box-shadow: 0 4px 20px rgba(21,101,192,0.45) !important;
+  border-radius: 12px !important;
+  white-space: nowrap !important;
+}
+
+/* neHlCanvasBtn (toolbar icon) — canvas open hone par float */
+#neHlCanvasBtn.hl-btn-float-icon {
+  position: fixed !important;
+  bottom: 140px !important;
+  right: min(88vw, 420px) !important;
+  transform: translateX(50%) !important;
+  z-index: 1400 !important;
+  box-shadow: 0 4px 20px rgba(21,101,192,0.45) !important;
+}
+
+@keyframes _hlBtnPulse {
+  0%,100% { box-shadow: 0 2px 10px rgba(21,101,192,0.3); }
+  50%      { box-shadow: 0 2px 18px rgba(106,27,154,0.55); }
+}
+
 @keyframes scBlockFlash {
   0%   { box-shadow: 0 0 0 3px rgba(21,101,192,0.7); }
   100% { box-shadow: 0 0 0 0px rgba(21,101,192,0); }
@@ -1453,7 +1484,7 @@ body.night-mode .sc-tbtn:hover { background: rgba(255,255,255,0.15); }
 /* Edit mode */
 .note-edit-area{font-size:0.86rem;line-height:1.85;color:var(--text);background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;padding:12px;min-height:300px;resize:vertical;font-family:'Noto Sans Devanagari',sans-serif;outline:none;width:100%;}
 .note-edit-area:focus{border-color:var(--accent);background:var(--surface);}
-.notes-editor-footer{padding:12px 16px;border-top:1.5px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0;flex-wrap:wrap;gap:8px;}
+.notes-editor-footer{padding:12px 16px;border-top:1.5px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0;flex-wrap:wrap;gap:8px;position:relative;z-index:1300;background:var(--surface);}
 /* Notes Editor Themes */
 .ne-dark{background:#1a1a2e !important;}
 .ne-dark .notes-editor-header,.ne-dark .notes-editor-modes,.ne-dark .notes-editor-toolbar,.ne-dark .notes-editor-footer{background:#12122a !important;border-color:#333 !important;}
@@ -22250,10 +22281,23 @@ window.neSendAllHighlightsToCanvas = function() {
     return;
   }
 
-  // Canvas open hai ya nahi check
+  // Canvas open hai ya nahi check — agar nahi to auto open karo
   var panel = document.getElementById('studyCanvasPanel');
   if(!panel || !panel.classList.contains('sc-open')) {
-    showToast && showToast('⚠️ Pehle Study Canvas kholo (🎨 SC button dabao)', 'error');
+    // Canvas auto-open karo — context _editorState se lo (notes editor already set karta hai)
+    var _eCtx = (typeof _editorState !== 'undefined') ? _editorState : null;
+    var _ctx  = window._neCanvasContext || window._aiChatContext;
+    var _sid   = (_eCtx && _eCtx.sid   != null) ? _eCtx.sid   : (_ctx && _ctx.sid);
+    var _secid = (_eCtx && _eCtx.secid != null) ? _eCtx.secid : (_ctx && _ctx.secid);
+    var _tid   = (_eCtx && _eCtx.tid   != null) ? _eCtx.tid   : (_ctx && _ctx.tid);
+
+    if(_sid != null) {
+      scOnEditorOpen(_sid, _secid, _tid);
+    }
+    scTogglePanel();
+    // Thodi der baad highlights bhejo (canvas open hone ka wait)
+    setTimeout(function(){ window.neSendAllHighlightsToCanvas(); }, 400);
+    showToast && showToast('📋 Canvas khul raha hai — highlights aa rahe hain...', 'info');
     return;
   }
 
@@ -23795,95 +23839,10 @@ document.addEventListener('DOMContentLoaded', function() {
   }, 1500);
 });
 // ══════════════════════════════════════════════════════════════
-// FAB COLLISION AVOIDANCE — overlapping hone par shift karo
+// FAB COLLISION AVOIDANCE — DISABLED (auto-shift hataya gaya)
+// FABs apni saved position par rahenge, auto move nahi honge
 // ══════════════════════════════════════════════════════════════
-(function() {
-  var FAB_IDS = ['qmapFab','creatorFabNewBtn','neDrawToggleBtn','neQmToggleBtn'];
-  var BACK_ID = 'floatBackBtn';
-  var GAP = 6; // px gap between buttons
-
-  function getFabRect(el) {
-    if(!el || el.style.display === 'none') return null;
-    return el.getBoundingClientRect();
-  }
-
-  function rectsOverlap(a, b) {
-    return !(a.right + GAP < b.left || b.right + GAP < a.left ||
-             a.bottom + GAP < b.top  || b.bottom + GAP < a.top);
-  }
-
-  function avoidFabCollisions() {
-    // Collect visible FABs (left-side dock, left to right)
-    var leftFabs = FAB_IDS.map(function(id) {
-      return document.getElementById(id);
-    }).filter(function(el) {
-      return el && getComputedStyle(el).display !== 'none';
-    });
-
-    if(!leftFabs.length) return;
-
-    // Reset to initial left positions
-    var startLeft = 10;
-    var btnW = 44;
-    var gap = 8;
-    leftFabs.forEach(function(el, i) {
-      el.style.left = (startLeft + i * (btnW + gap)) + 'px';
-    });
-
-    // Back button: keep right:10px — check if it overlaps any left FAB
-    var backEl = document.getElementById(BACK_ID);
-    if(backEl && getComputedStyle(backEl).display !== 'none') {
-      var backRect = backEl.getBoundingClientRect();
-      leftFabs.forEach(function(fab) {
-        var fr = fab.getBoundingClientRect();
-        if(rectsOverlap(fr, backRect)) {
-          // Push back button down
-          backEl.style.bottom = (72) + 'px';
-        }
-      });
-    }
-
-    // Check any canvas/toolbar elements overlap with FABs and push FABs up
-    var canvasTools = document.querySelectorAll(
-      '.notes-editor-footer, .ne-bottom-bar, [class*="bottom-bar"], [class*="bottombar"]'
-    );
-    canvasTools.forEach(function(tool) {
-      var tr = tool.getBoundingClientRect();
-      if(!tr.width) return;
-      leftFabs.forEach(function(fab) {
-        var fr = fab.getBoundingClientRect();
-        if(rectsOverlap(fr, tr)) {
-          var curBottom = parseInt(fab.style.bottom || '14');
-          fab.style.bottom = (curBottom + fr.height + GAP) + 'px';
-        }
-      });
-    });
-  }
-
-  // Run on visibility changes
-  var _origMakeFabMovable = window.makeFabMovable;
-  function patchVisibility() {
-    // Watch for class changes on FABs
-    FAB_IDS.concat([BACK_ID]).forEach(function(id) {
-      var el = document.getElementById(id);
-      if(!el) return;
-      var obs = new MutationObserver(function() {
-        setTimeout(avoidFabCollisions, 50);
-      });
-      obs.observe(el, { attributes: true, attributeFilter: ['class','style'] });
-    });
-    // Also run on scroll/resize
-    window.addEventListener('resize', avoidFabCollisions, { passive: true });
-    setTimeout(avoidFabCollisions, 300);
-    setTimeout(avoidFabCollisions, 1500);
-  }
-
-  if(document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', patchVisibility);
-  } else {
-    patchVisibility();
-  }
-})();
+// (removed to prevent unwanted position shifts)
 
 // ══════════════════════════════════════════════════════════════════════
 // 🧩 AI NODE BUILDER — Chat se Key Points → Draggable JSON Nodes
@@ -25665,6 +25624,350 @@ window._snmOpenSaved = function(mapIdx, sid, secid, tid) {
 };
 
 /* ══ END SMART NODE MAP ══ */
+
+/* ══════════════════════════════════════════════════════════
+   ✅ FIX: neFooterHlBtn + neHlCanvasBtn — canvas open hone
+   par auto-float karo taaki canvas ke neeche na dabe
+   ══════════════════════════════════════════════════════════ */
+(function() {
+  // Canvas toggle hone par check karo aur buttons float/un-float karo
+  var _origScToggle = window.scTogglePanel;
+  window.scTogglePanel = function() {
+    _origScToggle && _origScToggle.apply(this, arguments);
+    setTimeout(_neUpdateHlBtnPosition, 80);
+  };
+
+  window._neUpdateHlBtnPosition = function() {
+    var panel   = document.getElementById('studyCanvasPanel');
+    var isOpen  = panel && panel.classList.contains('sc-open');
+    var footerBtn = document.getElementById('neFooterHlBtn');
+    var iconBtn   = document.getElementById('neHlCanvasBtn');
+
+    if(isOpen) {
+      if(footerBtn && footerBtn.style.display !== 'none') {
+        footerBtn.classList.add('hl-btn-float');
+      }
+      if(iconBtn) iconBtn.classList.add('hl-btn-float-icon');
+    } else {
+      if(footerBtn) footerBtn.classList.remove('hl-btn-float');
+      if(iconBtn)   iconBtn.classList.remove('hl-btn-float-icon');
+    }
+  };
+
+  // Also watch for canvas class changes
+  document.addEventListener('DOMContentLoaded', function() {
+    var panel = document.getElementById('studyCanvasPanel');
+    if(!panel) return;
+    new MutationObserver(function() {
+      setTimeout(window._neUpdateHlBtnPosition, 80);
+    }).observe(panel, { attributes: true, attributeFilter: ['class'] });
+  });
+})();
+
+/* ══ END HL-BTN FIX ══ */
+
+/* ── Store notes editor canvas context for auto-open ── */
+(function() {
+  var _origOpen = window.openNotesEditor;
+  if(_origOpen) {
+    window.openNotesEditor = function(sid, secid, tid) {
+      // Save context so highlights-to-canvas can use it
+      window._neCanvasContext = { sid: sid, secid: secid, tid: tid };
+      return _origOpen.apply(this, arguments);
+    };
+  }
+  // Also patch scOnEditorOpen calls
+  var _origScOn = window.scOnEditorOpen;
+  if(_origScOn) {
+    window.scOnEditorOpen = function(sid, secid, tid) {
+      window._neCanvasContext = { sid: sid, secid: secid, tid: tid };
+      return _origScOn.apply(this, arguments);
+    };
+  }
+})();
 </script>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     🎛️ FAB MASTER TOGGLE — Ek button se saare FABs hide/show
+     ═══════════════════════════════════════════════════════════════ -->
+<style>
+/* Master Toggle Button */
+#_fabMasterToggle {
+  position: fixed;
+  bottom: 14px;
+  right: 10px;
+  z-index: 9900;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(13,27,42,0.88), rgba(21,101,192,0.88));
+  color: #fff;
+  border: 1.5px solid rgba(255,255,255,0.18);
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 1px;
+  box-shadow: 0 3px 14px rgba(0,0,0,0.35);
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.2s;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+#_fabMasterToggle:active { transform: scale(0.92); }
+#_fabMasterToggle .fmt-icon { font-size: 0.9rem; line-height: 1; }
+#_fabMasterToggle .fmt-label {
+  font-size: 0.38rem; font-weight: 900; letter-spacing: 0.4px;
+  font-family: 'Baloo 2', sans-serif; text-transform: uppercase;
+  opacity: 0.8; line-height: 1;
+}
+/* Hidden state style */
+#_fabMasterToggle.fabs-hidden {
+  background: linear-gradient(135deg, rgba(198,40,40,0.82), rgba(106,27,154,0.82));
+}
+
+/* Jab FABs hide hon — thin strip sirf toggle dikhaye */
+.fabs-all-hidden .qmap-fab,
+.fabs-all-hidden .creator-fab,
+.fabs-all-hidden #creatorFabNewBtn,
+.fabs-all-hidden #neDrawToggleBtn,
+.fabs-all-hidden #neQmToggleBtn,
+.fabs-all-hidden #factFloatBtn,
+.fabs-all-hidden #floatBackBtn,
+.fabs-all-hidden #_fabDockBar {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(10px) !important;
+  transition: opacity 0.25s, transform 0.25s !important;
+}
+
+/* Visible state — smooth appear */
+.fabs-all-visible .qmap-fab,
+.fabs-all-visible .creator-fab,
+.fabs-all-visible #creatorFabNewBtn,
+.fabs-all-visible #neDrawToggleBtn,
+.fabs-all-visible #neQmToggleBtn,
+.fabs-all-visible #factFloatBtn,
+.fabs-all-visible #floatBackBtn {
+  opacity: 1 !important;
+  pointer-events: all !important;
+  transform: translateY(0) !important;
+  transition: opacity 0.25s, transform 0.25s !important;
+}
+
+/* Night mode */
+body.night-mode #_fabMasterToggle {
+  background: linear-gradient(135deg, rgba(30,31,46,0.92), rgba(74,158,255,0.75));
+  border-color: rgba(255,255,255,0.12);
+}
+body.night-mode #_fabMasterToggle.fabs-hidden {
+  background: linear-gradient(135deg, rgba(248,81,73,0.8), rgba(188,140,255,0.75));
+}
+
+/* Toast for toggle feedback */
+#_fabToggleToast {
+  position: fixed;
+  bottom: 64px;
+  right: 10px;
+  z-index: 9950;
+  background: rgba(13,27,42,0.9);
+  color: #fff;
+  border-radius: 10px;
+  padding: 6px 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: 'Noto Sans Devanagari', sans-serif;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+  white-space: nowrap;
+  backdrop-filter: blur(6px);
+}
+#_fabToggleToast.show { opacity: 1; }
+</style>
+
+<!-- Master Toggle Button HTML -->
+<button id="_fabMasterToggle" title="Saare buttons hide/show karo" onclick="_fabMasterToggleFn()">
+  <span class="fmt-icon" id="_fmtIcon">👁</span>
+  <span class="fmt-label" id="_fmtLabel">FABs</span>
+</button>
+<div id="_fabToggleToast"></div>
+
+<script>
+(function() {
+  var _fabsHidden = false;
+
+  // Restore state from localStorage
+  try {
+    _fabsHidden = localStorage.getItem('_fabsHiddenState') === '1';
+  } catch(e) {}
+
+  function _applyFabState(animate) {
+    var body = document.body;
+    var toggleBtn = document.getElementById('_fabMasterToggle');
+    var icon  = document.getElementById('_fmtIcon');
+    var label = document.getElementById('_fmtLabel');
+    var toast = document.getElementById('_fabToggleToast');
+
+    if(_fabsHidden) {
+      body.classList.add('fabs-all-hidden');
+      body.classList.remove('fabs-all-visible');
+      if(toggleBtn) toggleBtn.classList.add('fabs-hidden');
+      if(icon)  icon.textContent  = '🙈';
+      if(label) label.textContent = 'SHOW';
+      if(animate && toast) {
+        toast.textContent = '🙈 Saare buttons hide hue';
+        toast.classList.add('show');
+        setTimeout(function(){ toast.classList.remove('show'); }, 1800);
+      }
+    } else {
+      body.classList.remove('fabs-all-hidden');
+      body.classList.add('fabs-all-visible');
+      if(toggleBtn) toggleBtn.classList.remove('fabs-hidden');
+      if(icon)  icon.textContent  = '👁';
+      if(label) label.textContent = 'FABs';
+      if(animate && toast) {
+        toast.textContent = '✅ Saare buttons wapas aa gaye';
+        toast.classList.add('show');
+        setTimeout(function(){ toast.classList.remove('show'); }, 1800);
+      }
+    }
+  }
+
+  window._fabMasterToggleFn = function() {
+    _fabsHidden = !_fabsHidden;
+    try { localStorage.setItem('_fabsHiddenState', _fabsHidden ? '1' : '0'); } catch(e) {}
+    _applyFabState(true);
+  };
+
+  // Apply on load
+  document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(function(){ _applyFabState(false); }, 400);
+  });
+  // Also apply immediately in case DOM already ready
+  if(document.readyState !== 'loading') {
+    setTimeout(function(){ _applyFabState(false); }, 400);
+  }
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     ✅ FIX: AI Chat Panel — Bada + Canvas Side-by-Side properly
+     ═══════════════════════════════════════════════════════════════ -->
+<style>
+/* AI Chat panel bada karo */
+.ai-chat-panel {
+  height: 92vh !important;
+  max-height: 92vh !important;
+}
+@media(min-width: 768px) {
+  .ai-chat-panel { height: 88vh !important; max-width: 760px !important; }
+}
+
+/* Canvas alongside — AI chat left mein shift ho, canvas right mein */
+.ai-chat-overlay.canvas-alongside {
+  right: min(88vw, 420px) !important;
+  background: rgba(0,0,0,0.15) !important;
+}
+.ai-chat-overlay.canvas-alongside .ai-chat-panel {
+  width: 100% !important;
+  max-width: 100% !important;
+  border-radius: 20px 20px 0 0 !important;
+}
+
+/* AI chat messages drag — cursor grab */
+.ai-msg.bot[draggable="true"] {
+  cursor: grab;
+  border-left: 3px solid transparent;
+  transition: border-color 0.15s, background 0.15s;
+}
+.ai-msg.bot[draggable="true"]:hover {
+  border-left-color: rgba(21,101,192,0.5);
+  background: rgba(21,101,192,0.04) !important;
+}
+.ai-msg.bot[draggable="true"]:active { cursor: grabbing; }
+
+/* Drag hint chip on bot messages */
+.ai-msg-drag-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.62rem;
+  color: rgba(21,101,192,0.55);
+  font-weight: 700;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(21,101,192,0.06);
+  border: 1px solid rgba(21,101,192,0.12);
+  cursor: grab;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Canvas tab in AI chat header — always visible */
+#_aiChatCanvasBtn {
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+}
+
+/* Highlighted text "Canvas mein bhejo" tooltip — bigger, better */
+#_aiSelTooltip {
+  font-size: 0.75rem !important;
+  padding: 6px 14px !important;
+  border-radius: 12px !important;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.3) !important;
+  z-index: 99999 !important;
+}
+
+/* HL Btn float — already defined above, but ensure animation */
+@keyframes _hlBtnPulse {
+  0%,100% { box-shadow: 0 2px 10px rgba(21,101,192,0.3), 0 0 0 0 rgba(106,27,154,0.2); }
+  50%      { box-shadow: 0 2px 18px rgba(106,27,154,0.55), 0 0 0 6px rgba(106,27,154,0); }
+}
+</style>
+
+<script>
+/* ── AI Chat: "📋 Canvas" button — canvas band bhi ho saka, toast improvement ── */
+(function() {
+  document.addEventListener('DOMContentLoaded', function() {
+    // AI chat header mein canvas button fix — click par toast se guide nahi, seedha karo
+    var oldToggle = window._aiToggleCanvasFromChat;
+    window._aiToggleCanvasFromChat = function() {
+      var panel  = document.getElementById('studyCanvasPanel');
+      var isOpen = panel && panel.classList.contains('sc-open');
+      var ctx    = window._aiChatContext;
+
+      if(!isOpen) {
+        if(ctx && ctx.tid != null) {
+          // scOnEditorOpen already called — bas toggle karo
+          scTogglePanel();
+        } else if(ctx) {
+          // No topic — but still open canvas
+          scTogglePanel();
+        } else {
+          showToast && showToast('⚠️ Kisi topic ka AI Chat kholo pehle', 'error');
+          return;
+        }
+      } else {
+        scTogglePanel();
+      }
+
+      setTimeout(function() {
+        var nowOpen = panel && panel.classList.contains('sc-open');
+        var btn     = document.getElementById('_aiChatCanvasBtn');
+        var overlay = document.getElementById('aiChatOverlay');
+        if(btn)     btn.innerHTML = nowOpen ? '📋 Band karo' : '📋 Canvas';
+        if(overlay) overlay.classList.toggle('canvas-alongside', !!nowOpen);
+        // Update hl button float state
+        window._neUpdateHlBtnPosition && window._neUpdateHlBtnPosition();
+      }, 60);
+    };
+  });
+})();
+</script>
+
 </body>
 </html>
