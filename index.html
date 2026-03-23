@@ -21812,6 +21812,7 @@ function scNextSlide() {
 }
 
 function scAddSlide() {
+  // Direct add at end (called internally)
   _scSyncCurrentSlideFromDOM();
   scSnapshot();
   var s = _scNewSlide('Slide ' + (_sc.slides.length + 1));
@@ -21825,6 +21826,271 @@ function scAddSlide() {
   _scRenderSlideNav();
   _scUpdateTitle(getTop(_sc.sid, _sc.secid, _sc.tid));
   showToast('📋 Nayi slide add ho gayi! (Slide ' + (_sc.curSlide+1) + ')', 'success');
+}
+
+// ── Insert Slide Position Menu ──
+function scShowInsertSlideMenu(btnEl) {
+  // Remove any existing menu
+  var old = document.getElementById('scInsertSlideMenu');
+  if(old) { old.remove(); return; }
+
+  var total = _sc.slides.length;
+
+  var menu = document.createElement('div');
+  menu.id = 'scInsertSlideMenu';
+  menu.style.cssText = [
+    'position:fixed',
+    'z-index:9999',
+    'background:var(--surface)',
+    'border:1.5px solid var(--border)',
+    'border-radius:14px',
+    'box-shadow:0 8px 32px rgba(0,0,0,0.18)',
+    'padding:10px 8px',
+    'min-width:220px',
+    'font-family:inherit'
+  ].join(';');
+
+  // Title
+  var title = document.createElement('div');
+  title.textContent = '➕ Slide Kahan Dalni Hai?';
+  title.style.cssText = 'font-size:0.78rem;font-weight:900;color:var(--accent);padding:2px 8px 8px;border-bottom:1.5px solid var(--border);margin-bottom:6px;';
+  menu.appendChild(title);
+
+  function makeOption(icon, label, sub, clickFn) {
+    var btn = document.createElement('button');
+    btn.style.cssText = [
+      'display:flex', 'align-items:center', 'gap:10px',
+      'width:100%', 'padding:9px 10px', 'border:none',
+      'border-radius:9px', 'background:transparent',
+      'cursor:pointer', 'font-family:inherit',
+      'text-align:left', 'transition:background 0.15s',
+      '-webkit-tap-highlight-color:transparent'
+    ].join(';');
+    btn.onmouseover = function(){ btn.style.background = 'var(--bg2)'; };
+    btn.onmouseout  = function(){ btn.style.background = 'transparent'; };
+
+    var iconEl = document.createElement('span');
+    iconEl.textContent = icon;
+    iconEl.style.cssText = 'font-size:1.3rem;flex-shrink:0;';
+
+    var textWrap = document.createElement('div');
+    var labelEl = document.createElement('div');
+    labelEl.textContent = label;
+    labelEl.style.cssText = 'font-size:0.82rem;font-weight:800;color:var(--text);';
+    var subEl = document.createElement('div');
+    subEl.textContent = sub;
+    subEl.style.cssText = 'font-size:0.65rem;color:var(--text2);margin-top:1px;';
+    textWrap.appendChild(labelEl);
+    textWrap.appendChild(subEl);
+
+    btn.appendChild(iconEl);
+    btn.appendChild(textWrap);
+    btn.onclick = function() { menu.remove(); clickFn(); };
+    return btn;
+  }
+
+  // Option 1: Sabse Right (end)
+  menu.appendChild(makeOption('▶️', 'Sabse Right (End mein)', 'Normal — last slide ke baad', function() {
+    _scSyncCurrentSlideFromDOM();
+    scSnapshot();
+    var s = _scNewSlide('Slide ' + (_sc.slides.length + 1));
+    _sc.slides.push(s);
+    _sc.curSlide = _sc.slides.length - 1;
+    var panel = document.getElementById('studyCanvasPanel');
+    if(panel) panel.style.background = s.bg;
+    _sc.activeBlock = null; _sc.activeBlockId = null;
+    scHideAllBlockActions(); scRenderAll(); _scRenderSlideNav();
+    _scUpdateTitle(getTop(_sc.sid, _sc.secid, _sc.tid));
+    showToast('📋 Nayi slide sabse end mein add ho gayi! (Slide ' + (_sc.curSlide+1) + ')', 'success');
+  }));
+
+  // Option 2: Sabse Left (first)
+  menu.appendChild(makeOption('◀️', 'Sabse Left (Pehle)', 'Nayi slide pehli slide banegi', function() {
+    if(total <= 0) { scAddSlide(); return; }
+    _scSyncCurrentSlideFromDOM();
+    scSnapshot();
+    var s = _scNewSlide('Slide 1');
+    _sc.slides.unshift(s);
+    _sc.curSlide = 0;
+    // Rename all slides for consistency
+    _sc.slides.forEach(function(sl, i) { if(!sl.title || sl.title.match(/^Slide \d+$/)) sl.title = 'Slide ' + (i+1); });
+    var panel = document.getElementById('studyCanvasPanel');
+    if(panel) panel.style.background = s.bg;
+    _sc.activeBlock = null; _sc.activeBlockId = null;
+    scHideAllBlockActions(); scRenderAll(); _scRenderSlideNav();
+    _scUpdateTitle(getTop(_sc.sid, _sc.secid, _sc.tid));
+    showToast('📋 Nayi slide sabse pehle add ho gayi! (Slide 1)', 'success');
+  }));
+
+  // Option 3: Bich Mein (between) - only show if 2+ slides exist
+  if(total >= 2) {
+    menu.appendChild(makeOption('🔀', 'Bich Mein', 'Do slides ke beech mein dalo', function() {
+      scShowBetweenSlideDialog(total);
+    }));
+  }
+
+  // Position the menu above the button
+  document.body.appendChild(menu);
+  var rect = btnEl.getBoundingClientRect();
+  var mw = 226;
+  var mh = menu.offsetHeight || 160;
+  var left = Math.min(Math.max(rect.left + rect.width/2 - mw/2, 8), window.innerWidth - mw - 8);
+  var top  = rect.top - mh - 8;
+  if(top < 8) top = rect.bottom + 8;
+  menu.style.left = left + 'px';
+  menu.style.top  = top  + 'px';
+
+  // Click outside closes
+  setTimeout(function() {
+    function _closeMenu(ev) {
+      if(!menu.contains(ev.target) && ev.target !== btnEl) {
+        menu.remove();
+        document.removeEventListener('pointerdown', _closeMenu, true);
+      }
+    }
+    document.addEventListener('pointerdown', _closeMenu, true);
+  }, 100);
+}
+
+// ── Between Slide Dialog ──
+function scShowBetweenSlideDialog(total) {
+  var old = document.getElementById('scBetweenSlideOverlay');
+  if(old) old.remove();
+
+  var overlay = document.createElement('div');
+  overlay.id = 'scBetweenSlideOverlay';
+  overlay.style.cssText = [
+    'position:fixed', 'inset:0',
+    'background:rgba(0,0,0,0.55)',
+    'z-index:10000',
+    'display:flex',
+    'align-items:flex-end',
+    'justify-content:center',
+    'padding:0'
+  ].join(';');
+
+  var box = document.createElement('div');
+  box.style.cssText = [
+    'background:var(--surface)',
+    'border-radius:20px 20px 0 0',
+    'padding:20px 18px 28px',
+    'width:100%', 'max-width:440px',
+    'box-shadow:0 -4px 40px rgba(0,0,0,0.2)',
+    'font-family:inherit'
+  ].join(';');
+
+  // Title
+  var h = document.createElement('div');
+  h.style.cssText = 'font-size:1rem;font-weight:900;color:var(--accent);margin-bottom:4px;';
+  h.textContent = '🔀 Bich Mein Slide Dalo';
+  box.appendChild(h);
+
+  var sub = document.createElement('div');
+  sub.style.cssText = 'font-size:0.72rem;color:var(--text2);margin-bottom:16px;';
+  sub.textContent = 'Kin do slides ke beech mein nayi slide dalni hai? Number select karo:';
+  box.appendChild(sub);
+
+  // Slide selector visuals
+  var slideGrid = document.createElement('div');
+  slideGrid.style.cssText = 'display:flex;flex-wrap:wrap;gap:7px;margin-bottom:16px;max-height:180px;overflow-y:auto;';
+
+  // We need to select a GAP between slide A and A+1
+  // So show gaps: "1 → 2", "2 → 3" etc.
+  var selectedGap = null; // index after which to insert (0-based: insert after slide selectedGap, before slide selectedGap+1)
+  var gapBtns = [];
+
+  for(var g = 0; g < total - 1; g++) {
+    (function(gap) {
+      var gbtn = document.createElement('button');
+      gbtn.style.cssText = [
+        'padding:7px 11px',
+        'border-radius:9px',
+        'border:1.5px solid var(--border)',
+        'background:var(--surface2)',
+        'cursor:pointer', 'font-family:inherit',
+        'font-size:0.75rem', 'font-weight:800',
+        'color:var(--text)',
+        'transition:all 0.15s',
+        '-webkit-tap-highlight-color:transparent',
+        'display:flex', 'align-items:center', 'gap:5px'
+      ].join(';');
+
+      var s1 = _sc.slides[gap];
+      var s2 = _sc.slides[gap + 1];
+      var lbl1 = (gap + 1) + '';
+      var lbl2 = (gap + 2) + '';
+      gbtn.innerHTML = '<span style="color:var(--accent);font-size:0.8rem;">'+lbl1+'</span>' +
+                       '<span style="color:var(--text2);font-size:0.7rem;">→</span>' +
+                       '<span style="color:var(--accent2);font-size:0.8rem;">'+lbl2+'</span>';
+      gbtn.title = 'Slide ' + lbl1 + ' aur ' + lbl2 + ' ke beech';
+
+      gbtn.onclick = function() {
+        selectedGap = gap;
+        gapBtns.forEach(function(b) { b.style.background = 'var(--surface2)'; b.style.borderColor = 'var(--border)'; b.style.color = 'var(--text)'; });
+        gbtn.style.background = 'var(--accent)';
+        gbtn.style.borderColor = 'var(--accent)';
+        gbtn.style.color = '#fff';
+        gbtn.querySelectorAll('span').forEach(function(sp) { sp.style.color = '#fff'; });
+        confirmBtn.disabled = false;
+        confirmBtn.style.opacity = '1';
+      };
+      gapBtns.push(gbtn);
+      slideGrid.appendChild(gbtn);
+    })(g);
+  }
+  box.appendChild(slideGrid);
+
+  // Info label
+  var infoLbl = document.createElement('div');
+  infoLbl.style.cssText = 'font-size:0.68rem;color:var(--text2);margin-bottom:12px;min-height:18px;';
+  infoLbl.textContent = 'Upar se gap chuniye jahan nayi slide dalni hai';
+  box.appendChild(infoLbl);
+
+  // Buttons row
+  var btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:9px;justify-content:flex-end;';
+
+  var cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = 'padding:9px 18px;border-radius:9px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font-family:inherit;font-size:0.82rem;font-weight:700;cursor:pointer;';
+  cancelBtn.onclick = function() { overlay.remove(); };
+
+  var confirmBtn = document.createElement('button');
+  confirmBtn.textContent = '✅ Slide Banao';
+  confirmBtn.disabled = true;
+  confirmBtn.style.cssText = 'padding:9px 20px;border-radius:9px;border:none;background:var(--accent);color:#fff;font-family:inherit;font-size:0.82rem;font-weight:800;cursor:pointer;opacity:0.5;transition:opacity 0.15s;';
+  confirmBtn.onclick = function() {
+    if(selectedGap === null) return;
+    overlay.remove();
+    _scSyncCurrentSlideFromDOM();
+    scSnapshot();
+    var insertAt = selectedGap + 1; // insert AFTER slide[selectedGap]
+    var newTitle = 'Slide ' + (insertAt + 1);
+    var s = _scNewSlide(newTitle);
+    _sc.slides.splice(insertAt, 0, s);
+    // Adjust curSlide pointer
+    if(_sc.curSlide >= insertAt) _sc.curSlide++;
+    // Rename auto-titled slides
+    _sc.slides.forEach(function(sl, i) { if(!sl.title || sl.title.match(/^Slide \d+$/)) sl.title = 'Slide ' + (i+1); });
+    var panel = document.getElementById('studyCanvasPanel');
+    if(panel) panel.style.background = s.bg;
+    _sc.activeBlock = null; _sc.activeBlockId = null;
+    scHideAllBlockActions(); scRenderAll(); _scRenderSlideNav();
+    _scUpdateTitle(getTop(_sc.sid, _sc.secid, _sc.tid));
+    showToast('🔀 Nayi slide ' + (insertAt+1) + ' bich mein add ho gayi!', 'success');
+  };
+
+  btnRow.appendChild(cancelBtn);
+  btnRow.appendChild(confirmBtn);
+  box.appendChild(btnRow);
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  // Tap outside to close
+  overlay.addEventListener('pointerdown', function(e) {
+    if(e.target === overlay) overlay.remove();
+  });
 }
 
 function scDeleteSlide() {
@@ -21965,8 +22231,8 @@ function _scRenderSlideNav() {
   var add = document.createElement('button');
   add.className = 'sc-nav-btn sc-nav-add';
   add.textContent = '＋';
-  add.title = 'Nayi slide add karo';
-  add.onclick = scAddSlide;
+  add.title = 'Slide kahan add karni hai — click karo';
+  add.onclick = function(e) { e.stopPropagation(); scShowInsertSlideMenu(add); };
   nav.appendChild(add);
 
   // Grid view button
@@ -22733,6 +22999,14 @@ function scClearDraw(){ if(!confirm('Is slide ki drawing clear karein?')) return
 var _scQmNodeColors=['#e65100','#1565c0','#2e7d32','#6a1b9a','#00695c','#c62828'];
 var _scQmNextId=1;
 var _scQmTouchLast=0,_scQmConnecting=null,_scQmDragging=null,_scQmDragOff={x:0,y:0};
+var _scQmTool='bubble'; // bubble | box | circle | diamond | connect
+var _scQmConnectFrom=null, _scQmConnectDragging=false, _scQmConnectPreview=null;
+
+function scQmSetTool(tool){
+  _scQmTool=tool;
+  _scQmConnecting=null; _scQmConnectFrom=null; _scQmConnectDragging=false;
+  scRenderToolbar();
+}
 
 // ── Inline textarea popup for SC QMap node editing (no prompt!) ──
 function _scQmShowInlineEdit(node, cx, cy) {
@@ -22832,15 +23106,32 @@ function _scQmRender() {
   edges.forEach(function(e){
     var a=nm[e.from],b=nm[e.to]; if(!a||!b) return;
     ctx.save();ctx.strokeStyle='#888';ctx.lineWidth=1.5;ctx.globalAlpha=0.7;
-    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.restore();
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+    // Arrow head
+    var ang=Math.atan2(b.y-a.y,b.x-a.x);
+    ctx.beginPath();ctx.moveTo(b.x,b.y);
+    ctx.lineTo(b.x-11*Math.cos(ang-0.4),b.y-11*Math.sin(ang-0.4));
+    ctx.lineTo(b.x-11*Math.cos(ang+0.4),b.y-11*Math.sin(ang+0.4));
+    ctx.closePath();ctx.fillStyle='#888';ctx.globalAlpha=0.7;ctx.fill();
+    ctx.restore();
   });
+  // Connect-tool drag preview line
+  if(_scQmConnectFrom && _scQmConnectPreview){
+    ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle='#e65100';ctx.lineWidth=2;ctx.globalAlpha=0.8;
+    ctx.beginPath();ctx.moveTo(_scQmConnectFrom.x,_scQmConnectFrom.y);
+    ctx.lineTo(_scQmConnectPreview.x,_scQmConnectPreview.y);ctx.stroke();
+    ctx.setLineDash([]);ctx.restore();
+  }
   nodes.forEach(function(n){
     // Dynamic size based on label length
     var rawLines=(n.label||'').split('\n');
     var maxLen=0; rawLines.forEach(function(l){if(l.length>maxLen)maxLen=l.length;});
     var r=Math.max(34, maxLen*5+18);
     var rh=Math.max(28, rawLines.length*16+14);
-    ctx.save();ctx.shadowColor='rgba(0,0,0,0.14)';ctx.shadowBlur=8;
+    var _isConnSrc = _scQmConnectFrom && _scQmConnectFrom.id===n.id;
+    ctx.save();
+    ctx.shadowColor=_isConnSrc?'rgba(230,81,0,0.6)':'rgba(0,0,0,0.14)';
+    ctx.shadowBlur=_isConnSrc?16:8;
     ctx.fillStyle=n.color||'#e65100';ctx.globalAlpha=0.88;ctx.beginPath();
     if(n.shape==='box'){
       if(ctx.roundRect)ctx.roundRect(n.x-r,n.y-rh/2,r*2,rh,9);
@@ -22921,34 +23212,84 @@ function _scQmDown(e){
   var cv=_sc.qmCanvas,rect=cv.getBoundingClientRect();
   var x=(e.clientX-rect.left)*cv.width/rect.width,y=(e.clientY-rect.top)*cv.height/rect.height;
   var hit=_scQmNodeAt(x,y),now=Date.now();
-  // Double-tap = edit
+
+  // CONNECT TOOL — drag from node to node
+  if(_scQmTool==='connect'){
+    if(hit){
+      _scQmConnectFrom=hit;
+      _scQmConnectDragging=false;
+      _scQmConnectPreview=null;
+    }
+    return;
+  }
+
+  // SHAPE TOOLS — double tap = edit, single tap on node = drag, empty = new node
   if(hit&&now-_scQmTouchLast<350&&_scQmLastHitId===hit.id){
     _scQmTouchLast=0; _scQmLastHitId=null;
     _scQmShowInlineEdit(hit, e.clientX, e.clientY);
     return;
   }
   _scQmTouchLast=now; _scQmLastHitId=hit?hit.id:null;
-  if(hit){_scQmDragging=hit;_scQmDragOff.x=x-hit.x;_scQmDragOff.y=y-hit.y;}
-  else if(_scQmConnecting){_scQmConnecting=null;}
-  else{
+  if(hit){
+    _scQmDragging=hit;
+    _scQmDragOff.x=x-hit.x;
+    _scQmDragOff.y=y-hit.y;
+  } else {
+    // New node with selected shape
     scSnapshot(); var cur=_scCur(); if(!cur) return;
-    var node={id:'qn'+Date.now(),label:'',x:x,y:y,color:_scQmNodeColors[cur.qmNodes.length%_scQmNodeColors.length],shape:'bubble'};
+    var shape=_scQmTool||'bubble';
+    var node={id:'qn'+Date.now(),label:'',x:x,y:y,
+      color:_scQmNodeColors[(cur.qmNodes.length)%_scQmNodeColors.length],
+      shape:shape};
     cur.qmNodes.push(node); _scQmRender();
     _scQmShowInlineEdit(node, e.clientX, e.clientY);
   }
 }
 var _scQmLastHitId=null;
 function _scQmMove(e){
-  if(_sc.mode!=='qmap'||!_scQmDragging) return;
+  if(_sc.mode!=='qmap') return;
   var cv=_sc.qmCanvas,rect=cv.getBoundingClientRect();
-  _scQmDragging.x=(e.clientX-rect.left)*cv.width/rect.width-_scQmDragOff.x;
-  _scQmDragging.y=(e.clientY-rect.top)*cv.height/rect.height-_scQmDragOff.y;
+  var x=(e.clientX-rect.left)*cv.width/rect.width;
+  var y=(e.clientY-rect.top)*cv.height/rect.height;
+
+  // Connect tool drag preview
+  if(_scQmTool==='connect' && _scQmConnectFrom){
+    var dx=x-_scQmConnectFrom.x, dy=y-_scQmConnectFrom.y;
+    if(!_scQmConnectDragging && Math.hypot(dx,dy)>12) _scQmConnectDragging=true;
+    if(_scQmConnectDragging){
+      _scQmConnectPreview={x:x,y:y};
+      _scQmRender();
+    }
+    return;
+  }
+
+  if(!_scQmDragging) return;
+  _scQmDragging.x=x-_scQmDragOff.x;
+  _scQmDragging.y=y-_scQmDragOff.y;
   _scQmRender();
 }
 function _scQmUp(e){
+  // Connect tool — complete connection
+  if(_scQmTool==='connect' && _scQmConnectFrom && _scQmConnectDragging && _scQmConnectPreview){
+    var cv=_sc.qmCanvas,rect=cv.getBoundingClientRect();
+    var x=(e.clientX-rect.left)*cv.width/rect.width;
+    var y=(e.clientY-rect.top)*cv.height/rect.height;
+    var target=_scQmNodeAt(x,y);
+    if(target && target.id!==_scQmConnectFrom.id){
+      scSnapshot(); var cur=_scCur();
+      if(cur){ cur.qmEdges=cur.qmEdges||[]; cur.qmEdges.push({from:_scQmConnectFrom.id,to:target.id}); }
+      if(navigator.vibrate) navigator.vibrate(18);
+    }
+    _scQmConnectFrom=null; _scQmConnectDragging=false; _scQmConnectPreview=null;
+    _scQmRender();
+    return;
+  }
+  _scQmConnectFrom=null; _scQmConnectDragging=false; _scQmConnectPreview=null;
+
+  // Old connect logic
   if(_scQmConnecting&&_scQmDragging&&_scQmConnecting.id!==_scQmDragging.id){
-    scSnapshot(); var cur=_scCur(); if(cur) cur.qmEdges=(cur.qmEdges||[]);cur&&cur.qmEdges.push({from:_scQmConnecting.id,to:_scQmDragging.id});
-    _scQmConnecting=null;_scQmRender();
+    scSnapshot(); var cur=_scCur(); if(cur){ cur.qmEdges=(cur.qmEdges||[]); cur.qmEdges.push({from:_scQmConnecting.id,to:_scQmDragging.id}); }
+    _scQmConnecting=null; _scQmRender();
   }
   _scQmDragging=null;
 }
@@ -22982,8 +23323,23 @@ function scRenderToolbar() {
     tb.innerHTML+='<input type="color" value="'+_sc.drawColor+'" onchange="scSetDrawColor(this.value)" style="width:22px;height:22px;border:none;border-radius:5px;padding:0;cursor:pointer;flex-shrink:0;">';
     tb.innerHTML+='<div class="sc-sep"></div><button class="sc-tbtn" onclick="scClearDraw()" title="Clear">🗑</button>';
   } else if(_sc.mode==='qmap'){
-    tb.innerHTML='<span style="font-size:0.65rem;color:rgba(0,0,0,0.45);font-weight:700;align-self:center;white-space:nowrap;">Tap=node · 2tap=connect · Drag=move</span>'
-      +'<div class="sc-sep"></div><button class="sc-tbtn" onclick="scQmClear()">🗑 Clear</button>';
+    var _qt=[
+      {t:'bubble', icon:'⬭'},
+      {t:'box',    icon:'▭'},
+      {t:'circle', icon:'○'},
+      {t:'diamond',icon:'◇'},
+    ];
+    var _th='';
+    _qt.forEach(function(x){
+      var _act=(_scQmTool===x.t);
+      _th+='<button class="sc-tbtn'+(_act?' active':'')+'" onclick="scQmSetTool(\''+x.t+'\')" title="'+x.t+' node" style="min-width:26px;font-size:1rem;padding:0 5px;">'+x.icon+'</button>';
+    });
+    _th+='<div class="sc-sep"></div>';
+    var _ca=(_scQmTool==='connect');
+    _th+='<button class="sc-tbtn'+(_ca?' active':'')+'" onclick="scQmSetTool(\'connect\')" title="Nodes connect karo" style="min-width:40px;font-weight:900;font-size:0.78rem;'+(_ca?'background:rgba(230,81,0,0.12);color:#e65100;border-color:rgba(230,81,0,0.5);':'')+'">→ Link</button>';
+    _th+='<div class="sc-sep"></div>';
+    _th+='<button class="sc-tbtn" onclick="scQmClear()" style="min-width:26px;">🗑</button>';
+    tb.innerHTML=_th;
   } else if(_sc.mode==='select'){
     tb.innerHTML='<span style="font-size:0.65rem;color:rgba(0,0,0,0.45);font-weight:700;align-self:center;white-space:nowrap;">Tap=select · 2tap=edit · Drag=move</span>';
   }
@@ -26885,6 +27241,829 @@ body.night-mode #_fabMasterToggle.fabs-hidden {
       }, 60);
     };
   });
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SHIFT / MOVE FEATURE — Items ko ek slide se dusri slide par le jao
+     ═══════════════════════════════════════════════════════════════ -->
+<style>
+/* Mode tab — Shift button */
+.sc-shift-tab {
+  padding: 4px 9px;
+  border-radius: 8px;
+  border: 1.5px solid rgba(106,27,154,0.35);
+  background: rgba(106,27,154,0.07);
+  color: #6a1b9a;
+  font-size: 0.68rem; font-weight: 800;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+}
+.sc-shift-tab.active {
+  background: #6a1b9a;
+  color: #fff;
+  border-color: #6a1b9a;
+  box-shadow: 0 2px 8px rgba(106,27,154,0.35);
+}
+
+/* Shift subtype chooser */
+#scShiftSubBar {
+  display: none;
+  gap: 6px;
+  padding: 5px 10px;
+  background: rgba(106,27,154,0.06);
+  border-bottom: 1px solid rgba(106,27,154,0.12);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+}
+#scShiftSubBar.visible { display: flex; }
+.sc-shift-sub-btn {
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1.5px solid rgba(106,27,154,0.3);
+  background: #fff;
+  color: #6a1b9a;
+  font-size: 0.7rem; font-weight: 800;
+  cursor: pointer; font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.15s;
+}
+.sc-shift-sub-btn.active {
+  background: #6a1b9a; color: #fff; border-color: #6a1b9a;
+}
+.sc-shift-hint {
+  font-size: 0.6rem; color: rgba(106,27,154,0.6); font-weight: 700;
+  padding: 0 4px;
+}
+
+/* Slide peek overlay — shows during drag */
+#scSlideSwipeOverlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  border-radius: inherit;
+  overflow: hidden;
+}
+#scSlideSwipeOverlay.visible { display: flex; }
+
+.sc-swipe-peek {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 48%;
+  background: rgba(255,255,255,0.92);
+  border: 2.5px solid #6a1b9a;
+  border-radius: 12px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 6px;
+  padding: 10px;
+  box-shadow: 0 4px 20px rgba(106,27,154,0.25);
+  transition: all 0.18s;
+  backdrop-filter: blur(4px);
+}
+.sc-swipe-peek.left-peek  { left: 2%;  border-color: #1565c0; }
+.sc-swipe-peek.right-peek { right: 2%; border-color: #e65100; }
+.sc-swipe-peek.highlighted { transform: scale(1.04); box-shadow: 0 6px 28px rgba(106,27,154,0.4); }
+.sc-swipe-peek.new-slide { border-style: dashed; border-color: #2e7d32; }
+
+.sc-swipe-peek-num {
+  font-size: 1.1rem; font-weight: 900;
+  color: #6a1b9a; line-height: 1;
+}
+.sc-swipe-peek-label {
+  font-size: 0.62rem; font-weight: 800;
+  color: rgba(0,0,0,0.55); text-align: center;
+}
+.sc-swipe-peek-arrow {
+  font-size: 1.3rem; color: #6a1b9a;
+}
+
+/* Highlight on text block / qm node during shift mode */
+.sc-text-block.shift-ready {
+  outline: 2.5px dashed #6a1b9a !important;
+  outline-offset: 3px;
+  cursor: grab !important;
+}
+.sc-text-block.shift-dragging {
+  opacity: 0.55 !important;
+  outline: 2.5px solid #e65100 !important;
+}
+</style>
+
+<script>
+'use strict';
+(function() {
+
+// ── State ──
+var _sh = {
+  active:      false,   // shift mode on?
+  subType:     null,    // 'box' | 'text' | 'map'  (for text mode: box=whole block, text=selected text)
+  dragItem:    null,    // {type:'block'|'qm', data:...}
+  dragEl:      null,    // DOM element being dragged (for blocks)
+  dragStartX:  0,
+  dragStartY:  0,
+  isDragging:  false,
+  loopTimer:   null,    // slide loop interval
+  loopDir:     null,    // 'left' | 'right'
+  loopIdx:     null,    // current peeked slide index
+  newSlideMode:false,   // long-press "move to new slide"
+};
+
+var EDGE_ZONE   = 0.22;   // 22% from edge triggers peek
+var LOOP_DELAY  = 900;    // ms before advancing to next slide
+var PEEK_HOLD   = 700;    // ms to hold on a slide before advancing
+
+// ── 1. Add "Shift" tab to mode strip ──
+document.addEventListener('DOMContentLoaded', function() {
+  setTimeout(_shInit, 300);
+});
+
+function _shInit() {
+  // Add Shift tab to mode strip
+  var strip = document.getElementById('scModeStrip');
+  if(strip && !document.getElementById('scShiftModeTab')) {
+    var tab = document.createElement('div');
+    tab.id = 'scShiftModeTab';
+    tab.className = 'sc-shift-tab';
+    tab.textContent = '↔ Shift';
+    tab.onclick = scToggleShiftMode;
+    strip.appendChild(tab);
+  }
+
+  // Add subbar after toolbar
+  var tb = document.getElementById('scToolbar');
+  if(tb && tb.parentNode && !document.getElementById('scShiftSubBar')) {
+    var sub = document.createElement('div');
+    sub.id = 'scShiftSubBar';
+    sub.innerHTML =
+      '<button class="sc-shift-sub-btn" id="scShiftSubBox" onclick="scShiftSetSub(\'box\')">📦 Box move</button>' +
+      '<button class="sc-shift-sub-btn" id="scShiftSubText" onclick="scShiftSetSub(\'text\')">✂️ Selected text</button>' +
+      '<span class="sc-shift-hint" id="scShiftHintTxt">Item select karo → drag left/right</span>';
+    tb.parentNode.insertBefore(sub, tb);
+  }
+
+  // Overlay for peek
+  var panel = document.getElementById('studyCanvasPanel');
+  if(panel && !document.getElementById('scSlideSwipeOverlay')) {
+    var ov = document.createElement('div');
+    ov.id = 'scSlideSwipeOverlay';
+    panel.appendChild(ov);
+  }
+}
+
+// ── 2. Toggle shift mode ──
+window.scToggleShiftMode = function() {
+  _sh.active = !_sh.active;
+  var tab = document.getElementById('scShiftModeTab');
+  var sub = document.getElementById('scShiftSubBar');
+  if(_sh.active) {
+    if(tab) tab.classList.add('active');
+    // Show subbar only in text/select mode, in map mode go directly
+    var mode = window._sc && window._sc.mode;
+    if(mode === 'qmap') {
+      if(sub) sub.style.display = 'none';
+      _sh.subType = 'map';
+      _shAttachMapHandlers();
+      _shUpdateHint();
+    } else {
+      _sh.subType = null;
+      if(sub) { sub.classList.add('visible'); }
+      document.querySelectorAll('.sc-shift-sub-btn').forEach(function(b){ b.classList.remove('active'); });
+      _shUpdateHint();
+    }
+    showToast && showToast('↔ Shift mode ON — item select karo', 'success');
+  } else {
+    _shDeactivate();
+  }
+};
+
+function _shDeactivate() {
+  _sh.active = false; _sh.subType = null; _sh.dragItem = null;
+  _sh.isDragging = false; _sh.newSlideMode = false;
+  clearTimeout(_sh.loopTimer);
+  var tab = document.getElementById('scShiftModeTab');
+  var sub = document.getElementById('scShiftSubBar');
+  if(tab) tab.classList.remove('active');
+  if(sub) sub.classList.remove('visible');
+  _shHidePeek();
+  _shUnhighlightAll();
+  _shDetachMapHandlers();
+  showToast && showToast('↔ Shift mode band', 'success');
+}
+
+// ── 3. Sub-type selection ──
+window.scShiftSetSub = function(type) {
+  _sh.subType = type;
+  document.querySelectorAll('.sc-shift-sub-btn').forEach(function(b){ b.classList.remove('active'); });
+  var btn = type === 'box' ? document.getElementById('scShiftSubBox') : document.getElementById('scShiftSubText');
+  if(btn) btn.classList.add('active');
+  _shUpdateHint();
+  if(type === 'box') _shAttachBlockHandlers();
+  else _shAttachTextHandlers();
+};
+
+function _shUpdateHint() {
+  var el = document.getElementById('scShiftHintTxt');
+  if(!el) return;
+  var mode = window._sc && window._sc.mode;
+  if(mode === 'qmap') {
+    el.textContent = 'Connected node pe long press → drag left/right → move to slide';
+  } else if(_sh.subType === 'box') {
+    el.textContent = 'Box pe long press → drag left/right → slide pe move karo';
+  } else if(_sh.subType === 'text') {
+    el.textContent = 'Koi text select karo → long press → drag left/right';
+  } else {
+    el.textContent = 'Upar se type chunein';
+  }
+}
+
+// ── 4. Block (box) shift handlers ──
+function _shAttachBlockHandlers() {
+  _shUnhighlightAll();
+  // Wait a tick for DOM to be ready, then attach
+  setTimeout(function() {
+    document.querySelectorAll('.sc-text-block').forEach(function(el) {
+      el.classList.add('shift-ready');
+      el.addEventListener('pointerdown', _shBlockPointerDown, { passive: false });
+    });
+    // Also observe future blocks
+    _sh._blockObs && _sh._blockObs.disconnect();
+    _sh._blockObs = new MutationObserver(function() {
+      if(!_sh.active || _sh.subType !== 'box') return;
+      document.querySelectorAll('.sc-text-block:not(.shift-ready)').forEach(function(el) {
+        el.classList.add('shift-ready');
+        el.addEventListener('pointerdown', _shBlockPointerDown, { passive: false });
+      });
+    });
+    var wrap = document.getElementById('scCanvasWrap');
+    if(wrap) _sh._blockObs.observe(wrap, { childList: true });
+  }, 80);
+}
+
+function _shDetachBlockHandlers() {
+  document.querySelectorAll('.sc-text-block').forEach(function(el) {
+    el.classList.remove('shift-ready', 'shift-dragging');
+    el.removeEventListener('pointerdown', _shBlockPointerDown);
+  });
+  _sh._blockObs && _sh._blockObs.disconnect();
+}
+
+var _shLpTimer = null;
+
+function _shBlockPointerDown(e) {
+  if(!_sh.active || _sh.subType !== 'box') return;
+  var el = this;
+  var startX = e.clientX, startY = e.clientY;
+  _sh.dragStartX = startX; _sh.dragStartY = startY;
+  _sh.isDragging = false; _sh.newSlideMode = false;
+
+  // Long press = activate drag
+  _shLpTimer = setTimeout(function() {
+    if(navigator.vibrate) navigator.vibrate(35);
+    // Find block data
+    var blockId = el.id.replace('scBlock_', '');
+    var cur = window._scCur && window._scCur();
+    if(!cur) return;
+    var block = (cur.textBlocks || []).find(function(b){ return b.id === blockId; });
+    if(!block) return;
+    _sh.dragItem = { type: 'block', data: block, fromSlide: window._sc.curSlide };
+    _sh.dragEl   = el;
+    el.classList.add('shift-dragging');
+    _sh.isDragging = true;
+
+    // Check if should do "new slide" mode — show option
+    _shShowMoveTypeMenu(e.clientX, e.clientY, 'block');
+  }, 500);
+
+  el.addEventListener('pointermove', _shBlockPointerMove, { passive: true });
+  el.addEventListener('pointerup',   _shBlockPointerUp,   { passive: true });
+  el.addEventListener('pointercancel', _shBlockPointerUp, { passive: true });
+  e.stopPropagation();
+}
+
+function _shBlockPointerMove(e) {
+  if(!_sh.isDragging) {
+    var dx = Math.abs(e.clientX - _sh.dragStartX);
+    var dy = Math.abs(e.clientY - _sh.dragStartY);
+    if(dx > 12 || dy > 12) { clearTimeout(_shLpTimer); }
+    return;
+  }
+  _shHandleDragMove(e.clientX, e.clientY);
+}
+
+function _shBlockPointerUp(e) {
+  clearTimeout(_shLpTimer);
+  this.removeEventListener('pointermove', _shBlockPointerMove);
+  this.removeEventListener('pointerup',   _shBlockPointerUp);
+  this.removeEventListener('pointercancel', _shBlockPointerUp);
+  if(_sh.isDragging) {
+    _shHandleDragEnd(e.clientX, e.clientY, 'block');
+  }
+  _sh.isDragging = false;
+  if(_sh.dragEl) _sh.dragEl.classList.remove('shift-dragging');
+}
+
+// ── 5. Text selection shift ──
+function _shAttachTextHandlers() {
+  _shUpdateHint();
+  // Text selection shift — uses selected text in contenteditable blocks
+  setTimeout(function() {
+    document.querySelectorAll('.sc-text-block').forEach(function(el) {
+      el.addEventListener('pointerdown', _shTextPointerDown, { passive: false });
+    });
+  }, 80);
+}
+
+function _shTextPointerDown(e) {
+  if(!_sh.active || _sh.subType !== 'text') return;
+  var el = this;
+  _sh.dragStartX = e.clientX; _sh.dragStartY = e.clientY;
+  _sh.isDragging = false;
+
+  _shLpTimer = setTimeout(function() {
+    var sel = window.getSelection();
+    var selectedText = sel ? sel.toString().trim() : '';
+    if(!selectedText) {
+      showToast && showToast('Pehle kuch text select karo, phir long press karo', 'error');
+      return;
+    }
+    if(navigator.vibrate) navigator.vibrate(35);
+    var blockId = el.id.replace('scBlock_', '');
+    var cur = window._scCur && window._scCur();
+    var block = cur && (cur.textBlocks || []).find(function(b){ return b.id === blockId; });
+    _sh.dragItem = { type: 'text', text: selectedText, block: block, fromSlide: window._sc.curSlide };
+    _sh.isDragging = true;
+    _shShowMoveTypeMenu(e.clientX, e.clientY, 'text');
+  }, 500);
+
+  el.addEventListener('pointermove', function(ev) {
+    if(Math.abs(ev.clientX - _sh.dragStartX) > 12) clearTimeout(_shLpTimer);
+  }, { once: true, passive: true });
+  el.addEventListener('pointerup', function() {
+    clearTimeout(_shLpTimer);
+    if(_sh.isDragging) _shHandleDragEnd(e.clientX, e.clientY, 'text');
+    _sh.isDragging = false;
+  }, { once: true, passive: true });
+}
+
+// ── 6. Map (qmap) shift handlers ──
+var _shQmLpTimer = null;
+
+function _shAttachMapHandlers() {
+  var cv = window._sc && window._sc.qmCanvas;
+  if(!cv) { setTimeout(_shAttachMapHandlers, 200); return; }
+  cv.addEventListener('pointerdown', _shQmPointerDown, { passive: false });
+  cv.addEventListener('pointermove', _shQmPointerMove, { passive: true });
+  cv.addEventListener('pointerup',   _shQmPointerUp,   { passive: true });
+  cv.addEventListener('pointercancel', _shQmPointerUp, { passive: true });
+}
+
+function _shDetachMapHandlers() {
+  var cv = window._sc && window._sc.qmCanvas;
+  if(!cv) return;
+  cv.removeEventListener('pointerdown', _shQmPointerDown);
+  cv.removeEventListener('pointermove', _shQmPointerMove);
+  cv.removeEventListener('pointerup',   _shQmPointerUp);
+  cv.removeEventListener('pointercancel', _shQmPointerUp);
+}
+
+function _shQmPt(e) {
+  var cv = window._sc.qmCanvas;
+  var r  = cv.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * cv.width  / r.width,
+    y: (e.clientY - r.top)  * cv.height / r.height
+  };
+}
+
+function _shQmPointerDown(e) {
+  if(!_sh.active || _sh.subType !== 'map') return;
+  var pt  = _shQmPt(e);
+  var hit = window._scQmNodeAt && window._scQmNodeAt(pt.x, pt.y);
+  if(!hit) return;
+  _sh.dragStartX = e.clientX; _sh.dragStartY = e.clientY;
+  _sh.isDragging = false;
+
+  _shQmLpTimer = setTimeout(function() {
+    if(navigator.vibrate) navigator.vibrate(35);
+    // Find all connected nodes (component)
+    var cur = window._scCur && window._scCur();
+    if(!cur) return;
+    var connected = _shGetConnectedNodes(hit.id, cur.qmNodes, cur.qmEdges);
+    _sh.dragItem = {
+      type: 'qm',
+      nodes: connected.nodes,
+      edges: connected.edges,
+      fromSlide: window._sc.curSlide
+    };
+    _sh.isDragging = true;
+    // Highlight connected nodes
+    _shQmHighlight(connected.nodes.map(function(n){ return n.id; }));
+    _shShowMoveTypeMenu(e.clientX, e.clientY, 'qm');
+  }, 500);
+}
+
+function _shQmPointerMove(e) {
+  if(Math.abs(e.clientX - _sh.dragStartX) > 12) clearTimeout(_shQmLpTimer);
+  if(!_sh.isDragging) return;
+  _shHandleDragMove(e.clientX, e.clientY);
+}
+
+function _shQmPointerUp(e) {
+  clearTimeout(_shQmLpTimer);
+  if(_sh.isDragging) _shHandleDragEnd(e.clientX, e.clientY, 'qm');
+  _sh.isDragging = false;
+  _shQmClearHighlight();
+}
+
+// Get all connected nodes (BFS)
+function _shGetConnectedNodes(startId, allNodes, allEdges) {
+  var visited = {}, queue = [startId];
+  visited[startId] = true;
+  while(queue.length) {
+    var cur = queue.shift();
+    (allEdges || []).forEach(function(e) {
+      if(e.from === cur && !visited[e.to])   { visited[e.to]   = true; queue.push(e.to); }
+      if(e.to   === cur && !visited[e.from]) { visited[e.from] = true; queue.push(e.from); }
+    });
+  }
+  var nodeIds = Object.keys(visited);
+  var nodes = allNodes.filter(function(n){ return visited[n.id]; });
+  var edges = (allEdges||[]).filter(function(e){ return visited[e.from] && visited[e.to]; });
+  return { nodes: nodes, edges: edges };
+}
+
+function _shQmHighlight(ids) {
+  // Just show toast for now — visual feedback
+  showToast && showToast('🔗 ' + ids.length + ' connected nodes select', 'success');
+}
+function _shQmClearHighlight() {}
+
+// ── 7. Move type menu (existing slide vs new slide) ──
+function _shShowMoveTypeMenu(cx, cy, itemType) {
+  var old = document.getElementById('_shMoveMenu');
+  if(old) old.remove();
+
+  var menu = document.createElement('div');
+  menu.id = '_shMoveMenu';
+  menu.style.cssText = [
+    'position:fixed;z-index:99999;background:#fff;border-radius:14px;',
+    'box-shadow:0 8px 30px rgba(0,0,0,0.2);padding:8px 0;min-width:200px;',
+    'border:2px solid rgba(106,27,154,0.2);',
+    'font-family:\'Noto Sans Devanagari\',sans-serif;'
+  ].join('');
+
+  var title = document.createElement('div');
+  title.style.cssText = 'padding:8px 14px 4px;font-size:0.7rem;font-weight:900;color:#6a1b9a;';
+  title.textContent = '↔ Kahan move karein?';
+  menu.appendChild(title);
+
+  // Option 1: Existing slide (drag)
+  var existBtn = document.createElement('button');
+  existBtn.textContent = '📋 Existing slide par → drag left/right';
+  existBtn.style.cssText = 'display:block;width:100%;padding:10px 16px;background:none;border:none;text-align:left;font-size:0.78rem;font-weight:700;cursor:pointer;color:#1565c0;-webkit-tap-highlight-color:transparent;';
+  existBtn.onclick = function() {
+    menu.remove();
+    _sh.newSlideMode = false;
+    _shStartExistingSlideMode();
+  };
+  menu.appendChild(existBtn);
+
+  // Option 2: New slide
+  var newBtn = document.createElement('button');
+  newBtn.textContent = '✨ New slide banao → drag left/right';
+  newBtn.style.cssText = 'display:block;width:100%;padding:10px 16px;background:none;border:none;text-align:left;font-size:0.78rem;font-weight:700;cursor:pointer;color:#2e7d32;-webkit-tap-highlight-color:transparent;';
+  newBtn.onclick = function() {
+    menu.remove();
+    _sh.newSlideMode = true;
+    _shStartNewSlideMode();
+  };
+  menu.appendChild(newBtn);
+
+  var cancelBtn = document.createElement('button');
+  cancelBtn.textContent = '✕ Cancel';
+  cancelBtn.style.cssText = 'display:block;width:100%;padding:8px 16px;background:none;border:none;text-align:left;font-size:0.72rem;font-weight:700;cursor:pointer;color:#888;-webkit-tap-highlight-color:transparent;';
+  cancelBtn.onclick = function() {
+    menu.remove();
+    _sh.isDragging = false;
+    _sh.dragItem = null;
+    if(_sh.dragEl) _sh.dragEl.classList.remove('shift-dragging');
+  };
+  menu.appendChild(cancelBtn);
+
+  var left = Math.max(8, Math.min(cx - 100, window.innerWidth - 210));
+  var top  = Math.max(60, Math.min(cy - 10, window.innerHeight - 180));
+  menu.style.left = left + 'px';
+  menu.style.top  = top  + 'px';
+  document.body.appendChild(menu);
+}
+
+// ── 8. Existing slide drag mode ──
+function _shStartExistingSlideMode() {
+  showToast && showToast('Drag left = prev slide  |  Drag right = next slide', 'success');
+  // Peek both neighbors
+  _shShowPeekBoth();
+}
+
+function _shStartNewSlideMode() {
+  showToast && showToast('Drag left = prev se pehle  |  Drag right = next ke baad — new slide banega', 'success');
+  _shShowNewSlidePeek();
+}
+
+// ── 9. Peek UI ──
+function _shShowPeekBoth() {
+  var ov = document.getElementById('scSlideSwipeOverlay');
+  if(!ov) return;
+  var cur  = window._sc.curSlide;
+  var total = window._sc.slides.length;
+  ov.innerHTML = '';
+
+  // Left peek (prev slide)
+  var leftIdx  = (cur - 1 + total) % total;  // loop
+  var rightIdx = (cur + 1) % total;           // loop
+
+  ov.appendChild(_shMakePeek('left',  leftIdx,  false));
+  ov.appendChild(_shMakePeek('right', rightIdx, false));
+  ov.classList.add('visible');
+  ov.style.pointerEvents = 'all';
+
+  // Attach drag handler to overlay
+  ov.addEventListener('pointermove', _shOverlayMove, { passive: true });
+  ov.addEventListener('pointerup',   _shOverlayUp,   { passive: true });
+  ov.addEventListener('pointercancel', _shOverlayUp, { passive: true });
+}
+
+function _shShowNewSlidePeek() {
+  var ov = document.getElementById('scSlideSwipeOverlay');
+  if(!ov) return;
+  ov.innerHTML = '';
+  ov.appendChild(_shMakePeek('left',  null, true));
+  ov.appendChild(_shMakePeek('right', null, true));
+  ov.classList.add('visible');
+  ov.style.pointerEvents = 'all';
+
+  ov.addEventListener('pointermove', _shOverlayMove, { passive: true });
+  ov.addEventListener('pointerup',   _shOverlayUp,   { passive: true });
+  ov.addEventListener('pointercancel', _shOverlayUp, { passive: true });
+}
+
+function _shMakePeek(side, slideIdx, isNew) {
+  var peek = document.createElement('div');
+  peek.className = 'sc-swipe-peek ' + side + '-peek' + (isNew ? ' new-slide' : '');
+  peek.dataset.side = side;
+  peek.dataset.idx  = slideIdx !== null ? slideIdx : -1;
+
+  var arrow = document.createElement('div');
+  arrow.className = 'sc-swipe-peek-arrow';
+  arrow.textContent = side === 'left' ? '←' : '→';
+
+  var num = document.createElement('div');
+  num.className = 'sc-swipe-peek-num';
+
+  var lbl = document.createElement('div');
+  lbl.className = 'sc-swipe-peek-label';
+
+  if(isNew) {
+    num.textContent = '✨';
+    lbl.textContent = 'New Slide\n' + (side === 'left' ? '(is se pehle)' : '(is ke baad)');
+    peek.style.borderColor = '#2e7d32';
+    arrow.style.color = '#2e7d32';
+  } else {
+    var sl = window._sc.slides[slideIdx];
+    num.textContent = (slideIdx + 1);
+    lbl.textContent = (sl && sl.title) || ('Slide ' + (slideIdx + 1));
+  }
+
+  peek.appendChild(arrow);
+  peek.appendChild(num);
+  peek.appendChild(lbl);
+  return peek;
+}
+
+// ── Overlay drag move — loop through slides ──
+var _shLoopActive = false;
+var _shCurrentPeekSide = null;
+var _shLoopInterval = null;
+
+function _shOverlayMove(e) {
+  var ov = document.getElementById('scSlideSwipeOverlay');
+  if(!ov) return;
+  var rect = ov.getBoundingClientRect();
+  var relX = (e.clientX - rect.left) / rect.width;
+
+  var side = relX < 0.5 ? 'left' : 'right';
+
+  if(side !== _shCurrentPeekSide) {
+    _shCurrentPeekSide = side;
+    clearInterval(_shLoopInterval);
+    _shLoopActive = false;
+
+    // Highlight active side
+    ov.querySelectorAll('.sc-swipe-peek').forEach(function(p) {
+      p.classList.toggle('highlighted', p.dataset.side === side);
+    });
+
+    // Start loop after hold
+    if(!_sh.newSlideMode) {
+      _shLoopInterval = setInterval(function() {
+        _shAdvancePeek(side);
+      }, LOOP_DELAY);
+    }
+  }
+}
+
+function _shAdvancePeek(side) {
+  // Advance the peeked slide in loop
+  var ov = document.getElementById('scSlideSwipeOverlay');
+  if(!ov) return;
+  var peek = ov.querySelector('.sc-swipe-peek.' + side + '-peek');
+  if(!peek) return;
+
+  var cur  = parseInt(peek.dataset.idx) || 0;
+  var total = window._sc.slides.length;
+  var next = side === 'right' ? (cur + 1) % total : (cur - 1 + total) % total;
+
+  // Skip current slide
+  if(next === window._sc.curSlide) {
+    next = side === 'right' ? (next + 1) % total : (next - 1 + total) % total;
+  }
+
+  peek.dataset.idx = next;
+  var numEl = peek.querySelector('.sc-swipe-peek-num');
+  var lblEl = peek.querySelector('.sc-swipe-peek-label');
+  if(numEl) numEl.textContent = next + 1;
+  if(lblEl) {
+    var sl = window._sc.slides[next];
+    lblEl.textContent = (sl && sl.title) || ('Slide ' + (next + 1));
+  }
+  if(navigator.vibrate) navigator.vibrate(10);
+}
+
+function _shOverlayUp(e) {
+  clearInterval(_shLoopInterval);
+  _shLoopInterval = null;
+
+  var ov = document.getElementById('scSlideSwipeOverlay');
+  var side = _shCurrentPeekSide || 'right';
+  var peek = ov ? ov.querySelector('.sc-swipe-peek.' + side + '-peek') : null;
+  var targetIdx = peek ? parseInt(peek.dataset.idx) : -1;
+
+  _shHidePeek();
+  _shCurrentPeekSide = null;
+
+  if(!_sh.dragItem) return;
+
+  if(_sh.newSlideMode) {
+    _shMoveToNewSlide(side);
+  } else {
+    if(targetIdx >= 0 && targetIdx !== window._sc.curSlide) {
+      _shMoveToExistingSlide(targetIdx);
+    } else {
+      showToast && showToast('Move cancel — same slide', 'error');
+      _sh.dragItem = null;
+      if(_sh.dragEl) _sh.dragEl.classList.remove('shift-dragging');
+    }
+  }
+}
+
+function _shHidePeek() {
+  var ov = document.getElementById('scSlideSwipeOverlay');
+  if(ov) {
+    ov.classList.remove('visible');
+    ov.innerHTML = '';
+    ov.style.pointerEvents = 'none';
+    ov.removeEventListener('pointermove', _shOverlayMove);
+    ov.removeEventListener('pointerup',   _shOverlayUp);
+    ov.removeEventListener('pointercancel', _shOverlayUp);
+  }
+}
+
+// ── 10. Actually move item ──
+function _shMoveToExistingSlide(targetIdx) {
+  var item = _sh.dragItem;
+  if(!item) return;
+  var fromSlide = window._sc.slides[item.fromSlide];
+  var toSlide   = window._sc.slides[targetIdx];
+  if(!fromSlide || !toSlide) return;
+
+  window.scSnapshot && window.scSnapshot();
+
+  if(item.type === 'block') {
+    // Remove from source
+    fromSlide.textBlocks = (fromSlide.textBlocks||[]).filter(function(b){ return b.id !== item.data.id; });
+    // Add to target
+    toSlide.textBlocks = toSlide.textBlocks || [];
+    toSlide.textBlocks.push(JSON.parse(JSON.stringify(item.data)));
+    showToast && showToast('📦 Box → Slide ' + (targetIdx+1) + ' par move ho gaya!', 'success');
+
+  } else if(item.type === 'text') {
+    // Create new text block on target with selected text
+    var newBlock = {
+      id: 'scb_' + Date.now(), x: 30, y: 30,
+      w: 180, html: item.text, fontSize: 15,
+      color: '#1a1a1a', bold: false, italic: false, underline: false, angle: 0
+    };
+    toSlide.textBlocks = toSlide.textBlocks || [];
+    toSlide.textBlocks.push(newBlock);
+    showToast && showToast('✂️ Text → Slide ' + (targetIdx+1) + ' par move ho gaya!', 'success');
+
+  } else if(item.type === 'qm') {
+    // Remove from source
+    var srcIds = item.nodes.map(function(n){ return n.id; });
+    fromSlide.qmNodes = (fromSlide.qmNodes||[]).filter(function(n){ return !srcIds.includes(n.id); });
+    fromSlide.qmEdges = (fromSlide.qmEdges||[]).filter(function(e){ return !srcIds.includes(e.from) && !srcIds.includes(e.to); });
+    // Add to target
+    toSlide.qmNodes = (toSlide.qmNodes||[]).concat(JSON.parse(JSON.stringify(item.nodes)));
+    toSlide.qmEdges = (toSlide.qmEdges||[]).concat(JSON.parse(JSON.stringify(item.edges)));
+    showToast && showToast('🗺 Map nodes → Slide ' + (targetIdx+1) + ' par move ho gaye!', 'success');
+  }
+
+  // Re-render current slide
+  window.scRenderAll && window.scRenderAll();
+  window._scSyncTextBlocksDOM && window._scSyncTextBlocksDOM();
+  window._scRenderSlideNav && window._scRenderSlideNav();
+
+  _sh.dragItem = null;
+  if(_sh.dragEl) { _sh.dragEl.classList.remove('shift-dragging'); _sh.dragEl = null; }
+}
+
+function _shMoveToNewSlide(side) {
+  var item = _sh.dragItem;
+  if(!item) return;
+  var fromSlide = window._sc.slides[item.fromSlide];
+  if(!fromSlide) return;
+
+  window.scSnapshot && window.scSnapshot();
+
+  // Create new slide
+  var newSlide = window._scNewSlide && window._scNewSlide('Slide ' + (window._sc.slides.length + 1));
+  if(!newSlide) return;
+
+  // Insert position
+  var insertAt = side === 'right' ? item.fromSlide + 1 : item.fromSlide;
+  window._sc.slides.splice(insertAt, 0, newSlide);
+  // Adjust curSlide if needed
+  if(insertAt <= window._sc.curSlide) window._sc.curSlide++;
+
+  // Move item to new slide
+  if(item.type === 'block') {
+    fromSlide.textBlocks = (fromSlide.textBlocks||[]).filter(function(b){ return b.id !== item.data.id; });
+    newSlide.textBlocks.push(JSON.parse(JSON.stringify(item.data)));
+    showToast && showToast('✨ New Slide ' + (insertAt+1) + ' bana + box move!', 'success');
+  } else if(item.type === 'text') {
+    var nb = { id:'scb_'+Date.now(), x:30, y:30, w:180, html: item.text, fontSize:15, color:'#1a1a1a', bold:false, italic:false, underline:false, angle:0 };
+    newSlide.textBlocks.push(nb);
+    showToast && showToast('✨ New Slide ' + (insertAt+1) + ' bana + text move!', 'success');
+  } else if(item.type === 'qm') {
+    var srcIds = item.nodes.map(function(n){ return n.id; });
+    fromSlide.qmNodes = (fromSlide.qmNodes||[]).filter(function(n){ return !srcIds.includes(n.id); });
+    fromSlide.qmEdges = (fromSlide.qmEdges||[]).filter(function(e){ return !srcIds.includes(e.from) && !srcIds.includes(e.to); });
+    newSlide.qmNodes = JSON.parse(JSON.stringify(item.nodes));
+    newSlide.qmEdges = JSON.parse(JSON.stringify(item.edges));
+    showToast && showToast('✨ New Slide ' + (insertAt+1) + ' bana + map nodes move!', 'success');
+  }
+
+  window.scRenderAll && window.scRenderAll();
+  window._scSyncTextBlocksDOM && window._scSyncTextBlocksDOM();
+  window._scRenderSlideNav && window._scRenderSlideNav();
+
+  _sh.dragItem = null;
+  if(_sh.dragEl) { _sh.dragEl.classList.remove('shift-dragging'); _sh.dragEl = null; }
+}
+
+// Dummy handler for drag-move (for existing slide mode, peek handles it)
+function _shHandleDragMove(cx, cy) {}
+function _shHandleDragEnd(cx, cy, type) {}
+
+// Cleanup on shift mode off
+function _shUnhighlightAll() {
+  document.querySelectorAll('.sc-text-block').forEach(function(el) {
+    el.classList.remove('shift-ready', 'shift-dragging');
+    el.removeEventListener('pointerdown', _shBlockPointerDown);
+    el.removeEventListener('pointerdown', _shTextPointerDown);
+  });
+}
+
+// ── 11. Patch scSetMode to handle shift mode ──
+(function _patchSetMode() {
+  var _origSetMode = window.scSetMode;
+  if(!_origSetMode) { setTimeout(_patchSetMode, 300); return; }
+  window.scSetMode = function(mode, el) {
+    // If shift is active and user switches mode, update subbar
+    if(_sh.active) {
+      _shDeactivate();
+    }
+    _origSetMode.apply(this, arguments);
+  };
+})();
+
 })();
 </script>
 
