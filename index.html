@@ -22782,51 +22782,44 @@ window.neSendAllHighlightsToCanvas = function() {
     return colY;
   }
 
-  // ── Start placement: find first slide with space ──
-  var firstAvail = _scFindSlideWithSpace(estH(items[0].text));
-  var slideIdx   = (firstAvail >= 0) ? firstAvail : _sc.curSlide;
-  var colY       = _scGetSlideColY(slideIdx);
-  var newSlides  = 0;
-  var placed     = 0;
+  // ── HIGHLIGHTS: NAYI DEDICATED SLIDES (kabhi existing notes slide pe nahi) ──
+  // Slide full hone par automatically agla "📌 Highlights N" slide banao
+  scSnapshot();
+
+  var _hlNum = 0; // counter for highlights slide naming
+  function _makeHlSlide() {
+    _hlNum++;
+    var t = _hlNum === 1 ? '📌 Highlights' : ('📌 Highlights ' + _hlNum);
+    var ns = _scNewSlide(t);
+    _sc.slides.push(ns);
+    return _sc.slides.length - 1;
+  }
+
+  // Pehli highlights slide
+  var slideIdx = _makeHlSlide();
+  _sc.curSlide = slideIdx;
+  _scRenderSlide && _scRenderSlide();
+
+  var colY   = [PAD, PAD];
+  var placed = 0;
 
   items.forEach(function(item, i) {
     var bH = estH(item.text);
     var c  = COLS === 1 ? 0 : (colY[0] <= colY[1] ? 0 : 1);
-    var x  = PAD + c * (BOX_W + GAP_X);
     var y  = colY[c];
 
-    // Slide full? → try next existing slide → else new slide
+    // Current slide full? → nayi highlights slide banao
     if(y + bH > wH - PAD) {
       _scSyncCurrentSlideFromDOM && _scSyncCurrentSlideFromDOM();
-
-      // Try next existing slide
-      var nextAvail = -1;
-      for(var si = slideIdx + 1; si < _sc.slides.length; si++) {
-        var cy = _scGetSlideColY(si);
-        var minY = Math.min(cy[0], cy[1]);
-        if(minY + bH <= wH - PAD) { nextAvail = si; break; }
-      }
-
-      if(nextAvail >= 0) {
-        // Existing slide mein jagah hai
-        slideIdx = nextAvail;
-        colY = _scGetSlideColY(slideIdx);
-      } else {
-        // New slide banana padega
-        newSlides++;
-        var ns = _scNewSlide('Slide ' + (_sc.slides.length + 1));
-        _sc.slides.push(ns);
-        slideIdx = _sc.slides.length - 1;
-        colY = [PAD, PAD];
-      }
-
+      slideIdx = _makeHlSlide();
       _sc.curSlide = slideIdx;
-      c    = COLS === 1 ? 0 : (colY[0] <= colY[1] ? 0 : 1);
-      x    = PAD + c * (BOX_W + GAP_X);
-      y    = colY[c];
+      colY = [PAD, PAD];
+      c = 0;
+      y = PAD;
       _scRenderSlide && _scRenderSlide();
     }
 
+    var x   = PAD + c * (BOX_W + GAP_X);
     var cur = _sc.slides[slideIdx];
     if(!cur) return;
 
@@ -22866,8 +22859,8 @@ window.neSendAllHighlightsToCanvas = function() {
 
   _scRenderSlideNav && _scRenderSlideNav();
 
-  var msg = '✅ ' + placed + ' highlighted text' + (placed>1?'s':' chunk') + ' canvas par aa gaye!';
-  if(newSlides > 0) msg += ' (' + newSlides + ' nayi slide bani)';
+  var _hlTotal = _hlNum;
+  var msg = '✅ ' + placed + ' highlight' + (placed>1?'s':'') + ' ' + _hlTotal + ' nayi slide' + (_hlTotal>1?'n':'') + ' mein distribute ho gaye!';
   showToast && showToast(msg, 'success');
 };
 
