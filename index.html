@@ -561,6 +561,7 @@ textarea:focus{border-color:var(--accent);background:var(--surface);}
 .tv-cat-card.cat-master   { border-color:rgba(74,20,140,0.22); background:rgba(74,20,140,0.03); }
 .tv-cat-card.cat-raw      { border-color:rgba(46,125,50,0.22); background:rgba(46,125,50,0.03); }
 .tv-cat-card.cat-facts    { border-color:rgba(230,81,0,0.22);  background:rgba(230,81,0,0.03); }
+.tv-cat-card.cat-fc       { border-color:rgba(230,81,0,0.35);  background:linear-gradient(135deg,rgba(230,81,0,0.04),rgba(198,40,40,0.03)); }
 
 /* ── Sub-screen header (Screen B) ── */
 .tv-sub-header { display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface2);border-bottom:1.5px solid var(--border);flex-shrink:0; }
@@ -6107,6 +6108,7 @@ function tvShowSub(catId, sid, secid, tid){
       { icon:'🤖', name:'AI Chat',      sub:'Topic ke baare mein poochho',cls:'cat-master', onclick:`closeModal('topicViewModal');setTimeout(()=>openAiChat('general','${_e(t.name)}',${tid},${sid},${secid}),200)` },
       { icon:'📌', name:'Facts',        sub:`${(t.savedFacts||[]).length} saved facts`,cls:'cat-facts', onclick:`closeModal('topicViewModal');setTimeout(()=>openFactsPage('topic',${sid},${secid},${tid},'${_e(t.name)}'),200)` },
       { icon:'⚡', name:'Master Notes', sub:'Sab sources se banao',       cls:'cat-master', onclick:`closeModal('topicViewModal');setTimeout(()=>openMasterNotesModal(${sid},${secid},${tid}),200)` },
+      { icon:'🃏', name:'Flashcards',   sub:tvGetFCBadge(tid),            cls:'cat-fc',     onclick:`tvShowSub('flashcards',${sid},${secid},${tid})` },
     ];
 
     subBody.innerHTML = `
@@ -6159,6 +6161,125 @@ function tvShowSub(catId, sid, secid, tid){
         </div>`).join('')}
     </div>`;
 
+  } else if(catId === 'flashcards') {
+    subTitle.textContent = '🃏 Flashcards';
+    const fc = tvLoadFC(tid);
+    const cards = fc.cards, prog = fc.progress;
+
+    if(!cards.length) {
+      subBody.innerHTML = `
+        <div style="padding:28px 20px;text-align:center;">
+          <div style="font-size:2.5rem;margin-bottom:10px;">🃏</div>
+          <div style="font-size:0.85rem;font-weight:700;color:var(--text);margin-bottom:8px;">Koi flashcards nahi hain</div>
+          <div style="font-size:0.76rem;color:var(--text2);margin-bottom:16px;line-height:1.6;">
+            Study Canvas mein notes likhkar 🤖 AI Chat → 🃏 Flashcards se generate karo
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="closeModal('topicViewModal');setTimeout(()=>{
+            scOnEditorOpen(${sid},${secid},${tid});scTogglePanel();
+          },200)">📋 Study Canvas Kholo</button>
+        </div>`;
+      return;
+    }
+
+    // Categorize by difficulty
+    var hardCards=[], medCards=[], easyCards=[];
+    cards.forEach(function(c) {
+      var p = prog[c.id] || {r:0,w:0};
+      var total = p.r + p.w;
+      if(total === 0)              medCards.push({card:c,p:p,diff:'unseen'});
+      else if(p.w > p.r)           hardCards.push({card:c,p:p,diff:'hard'});
+      else if(p.r>0 && p.w===0)    easyCards.push({card:c,p:p,diff:'easy'});
+      else                         medCards.push({card:c,p:p,diff:'medium'});
+    });
+    function _ds(a,b){ return (b.p.w - b.p.r) - (a.p.w - a.p.r); }
+    hardCards.sort(_ds); medCards.sort(_ds); easyCards.sort(_ds);
+
+    // JSON export object
+    var exportObj = {
+      topic: t.name,
+      exportedAt: new Date().toLocaleString(),
+      totalCards: cards.length,
+      summary: { hard: hardCards.length, unseen: medCards.filter(x=>x.diff==='unseen').length, medium: medCards.filter(x=>x.diff==='medium').length, easy: easyCards.length },
+      categories: {
+        hard:   hardCards.map(x=>({q:x.card.q,a:x.card.a,correct:x.p.r,wrong:x.p.w})),
+        unseen: medCards.filter(x=>x.diff==='unseen').map(x=>({q:x.card.q,a:x.card.a})),
+        medium: medCards.filter(x=>x.diff==='medium').map(x=>({q:x.card.q,a:x.card.a,correct:x.p.r,wrong:x.p.w})),
+        easy:   easyCards.map(x=>({q:x.card.q,a:x.card.a,correct:x.p.r,wrong:x.p.w}))
+      }
+    };
+    var jsonStr = JSON.stringify(exportObj, null, 2);
+
+    function _fcCardHtml(item, idx) {
+      var c=item.card, p=item.p, d=item.diff, total=p.r+p.w;
+      var pct = total ? Math.round((p.r/total)*100) : null;
+      var tagMap = {
+        hard:   { bg:'rgba(198,40,40,0.1)',  border:'rgba(198,40,40,0.35)',  col:'#c62828', bar:'#c62828', lbl:'🔴 Hard'   },
+        medium: { bg:'rgba(245,124,0,0.1)',  border:'rgba(245,124,0,0.35)',  col:'#e65100', bar:'#f57c00', lbl:'🟡 Medium' },
+        unseen: { bg:'rgba(33,150,243,0.08)',border:'rgba(33,150,243,0.25)', col:'#1565c0', bar:'#1976d2', lbl:'🔵 Unseen' },
+        easy:   { bg:'rgba(46,125,50,0.08)', border:'rgba(46,125,50,0.25)', col:'#2e7d32', bar:'#2e7d32', lbl:'🟢 Easy'   }
+      };
+      var tag = tagMap[d]||tagMap.unseen;
+      return `<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:13px;padding:11px 13px;margin-bottom:8px;position:relative;overflow:hidden;">
+        <div style="position:absolute;top:0;left:0;bottom:0;width:4px;background:${tag.bar};border-radius:13px 0 0 13px;"></div>
+        <div style="margin-left:8px;">
+          <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;">
+            <span style="font-size:0.68rem;font-weight:700;color:var(--text2);flex-shrink:0;margin-top:2px;">Q${idx+1}</span>
+            <div style="flex:1;font-size:0.8rem;font-weight:700;color:var(--text);line-height:1.5;">${_e(c.q)}</div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;">
+              <span style="background:${tag.bg};border:1px solid ${tag.border};color:${tag.col};border-radius:20px;padding:1px 7px;font-size:0.6rem;font-weight:800;white-space:nowrap;">${tag.lbl}</span>
+              ${total>0?`<span style="font-size:0.58rem;color:var(--text2);font-weight:700;">✅${p.r} ❌${p.w}${pct!==null?' · '+pct+'%':''}</span>`:'<span style="font-size:0.58rem;color:var(--text2);">Naya</span>'}
+            </div>
+          </div>
+          <details>
+            <summary style="font-size:0.7rem;color:var(--accent);font-weight:700;cursor:pointer;list-style:none;-webkit-tap-highlight-color:transparent;padding:4px 0;">👁 Answer ▾</summary>
+            <div style="margin-top:6px;padding:7px 10px;background:rgba(21,101,192,0.05);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;font-size:0.76rem;line-height:1.55;color:var(--text);">${_e(c.a)}</div>
+          </details>
+        </div>
+      </div>`;
+    }
+
+    function _fcSection(emoji, title, items, bg, emptyMsg) {
+      return `<div style="margin-bottom:14px;">
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:${bg};border-radius:10px;margin-bottom:8px;">
+          <span style="font-size:1rem;">${emoji}</span>
+          <span style="font-size:0.78rem;font-weight:800;color:var(--text);flex:1;">${title}</span>
+          <span style="font-size:0.7rem;font-weight:800;color:var(--text2);">${items.length} cards</span>
+        </div>
+        ${items.length ? items.map((x,i)=>_fcCardHtml(x,i)).join('') : `<div style="font-size:0.72rem;color:var(--text2);padding:6px 4px;font-style:italic;">${emptyMsg}</div>`}
+      </div>`;
+    }
+
+    const unseenCards = medCards.filter(x=>x.diff==='unseen');
+    const mediumCards = medCards.filter(x=>x.diff==='medium');
+    const safeJson = jsonStr.replace(/\\/g,'\\\\').replace(/'/g,'&#39;').replace(/"/g,'&quot;');
+
+    subBody.innerHTML = `<div style="padding:10px 14px 20px;">
+      <!-- Stats pills -->
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px;">
+        <span style="font-size:0.72rem;font-weight:700;color:var(--text2);">📊 Total: <b>${cards.length}</b></span>
+        <span style="background:rgba(198,40,40,0.1);color:#c62828;border:1px solid rgba(198,40,40,0.3);border-radius:20px;padding:2px 8px;font-size:0.65rem;font-weight:800;">🔴 ${hardCards.length} Hard</span>
+        <span style="background:rgba(33,150,243,0.08);color:#1565c0;border:1px solid rgba(33,150,243,0.2);border-radius:20px;padding:2px 8px;font-size:0.65rem;font-weight:800;">🔵 ${unseenCards.length} Unseen</span>
+        <span style="background:rgba(245,124,0,0.1);color:#e65100;border:1px solid rgba(245,124,0,0.3);border-radius:20px;padding:2px 8px;font-size:0.65rem;font-weight:800;">🟡 ${mediumCards.length} Medium</span>
+        <span style="background:rgba(46,125,50,0.08);color:#2e7d32;border:1px solid rgba(46,125,50,0.25);border-radius:20px;padding:2px 8px;font-size:0.65rem;font-weight:800;">🟢 ${easyCards.length} Easy</span>
+      </div>
+      <!-- JSON Actions -->
+      <div style="display:flex;gap:7px;margin-bottom:14px;">
+        <button onclick="tvCopyFCJson(this)" data-json="${safeJson}"
+          style="flex:1;padding:8px;border-radius:9px;border:1.5px solid rgba(21,101,192,0.3);background:rgba(21,101,192,0.07);color:#1565c0;font-size:0.7rem;font-weight:800;cursor:pointer;font-family:inherit;">
+          📋 JSON Copy
+        </button>
+        <button onclick="tvDownloadFCJson(this)" data-json="${safeJson}" data-topic="${_e(t.name)}"
+          style="flex:1;padding:8px;border-radius:9px;border:1.5px solid rgba(46,125,50,0.3);background:rgba(46,125,50,0.07);color:#2e7d32;font-size:0.7rem;font-weight:800;cursor:pointer;font-family:inherit;">
+          ⬇ JSON Download
+        </button>
+      </div>
+      <!-- Difficulty-ordered sections -->
+      ${_fcSection('🔴','Hard — Zyada practice chahiye', hardCards,  'rgba(198,40,40,0.06)',  'Koi hard card nahi ✅')}
+      ${_fcSection('🔵','Unseen — Abhi practice nahi ki', unseenCards,'rgba(33,150,243,0.06)', 'Saare cards dekhe ja chuke hain!')}
+      ${_fcSection('🟡','Medium — Kuch sahi kuch galat',  mediumCards,'rgba(245,124,0,0.06)',  'Koi medium card nahi')}
+      ${_fcSection('🟢','Easy — Achhi tarah yaad hai',    easyCards,  'rgba(46,125,50,0.06)',  'Koi easy card nahi abhi')}
+    </div>`;
+
   } else {
     // Smart / Final / Master — single content
     const typeMap = {
@@ -6204,6 +6325,72 @@ function tvGoBack(){
   document.getElementById('tvScreenB').style.display='none';
   document.getElementById('tvScreenA').classList.add('active');
   document.getElementById('tvScreenA').style.display='block';
+}
+
+// ── Flashcard badge helper ──
+function tvGetFCBadge(tid) {
+  try {
+    var raw = localStorage.getItem('scFC_' + (tid||'default'));
+    if(!raw) return 'No flashcards yet';
+    var d = JSON.parse(raw);
+    var cards = d.cards || [];
+    if(!cards.length) return 'No flashcards yet';
+    var prog = d.progress || {};
+    var hard = 0, easy = 0, unseen = 0;
+    cards.forEach(function(c) {
+      var p = prog[c.id];
+      if(!p || (p.r+p.w)===0) unseen++;
+      else if(p.w > p.r) hard++;
+      else easy++;
+    });
+    return cards.length + ' cards · 🔴' + hard + ' 🟡' + unseen + ' 🟢' + easy;
+  } catch(e) { return 'Flashcards'; }
+}
+
+// ── Load flashcards for a topic from localStorage ──
+function tvLoadFC(tid) {
+  try {
+    var raw = localStorage.getItem('scFC_' + (tid||'default'));
+    if(!raw) return { cards:[], progress:{} };
+    var d = JSON.parse(raw);
+    return { cards: d.cards||[], progress: d.progress||{} };
+  } catch(e) { return { cards:[], progress:{} }; }
+}
+
+// ── Copy FC JSON to clipboard ──
+function tvCopyFCJson(btn) {
+  try {
+    var json = btn.getAttribute('data-json')
+      .replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,'&');
+    navigator.clipboard.writeText(json).then(function() {
+      if(typeof showToast==='function') showToast('📋 JSON copied!', 'success');
+    }).catch(function() {
+      // Fallback
+      var ta = document.createElement('textarea');
+      ta.value = json; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      if(typeof showToast==='function') showToast('📋 JSON copied!', 'success');
+    });
+  } catch(e) { if(typeof showToast==='function') showToast('❌ Copy error: '+e.message,'error'); }
+}
+
+// ── Download FC JSON as file ──
+function tvDownloadFCJson(btn) {
+  try {
+    var json  = btn.getAttribute('data-json')
+      .replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,'&');
+    var topic = btn.getAttribute('data-topic') || 'flashcards';
+    var blob  = new Blob([json], { type:'application/json' });
+    var url   = URL.createObjectURL(blob);
+    var a     = document.createElement('a');
+    a.href     = url;
+    a.download = 'flashcards_' + topic.replace(/[^a-z0-9]/gi,'_').toLowerCase() + '_' + Date.now() + '.json';
+    a.click();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    if(typeof showToast==='function') showToast('⬇ JSON download ho raha hai!', 'success');
+  } catch(e) { if(typeof showToast==='function') showToast('❌ Download error: '+e.message,'error'); }
 }
 
 // Compat stub
