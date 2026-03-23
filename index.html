@@ -1213,7 +1213,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 8px 10px;
+  min-height: 44px;
   flex-shrink: 0;
   background: rgba(0,0,0,0.05);
   border-top: 1px solid rgba(0,0,0,0.08);
@@ -1373,25 +1374,34 @@ body.night-mode .sc-tbtn:hover { background: rgba(255,255,255,0.15); }
 .sc-nav-btn.sc-nav-add:hover { background: rgba(21,101,192,0.22); }
 
 .sc-slide-dots {
-  display: flex; align-items: center; gap: 5px;
+  display: flex; align-items: center; gap: 4px;
   padding: 0 4px; flex-wrap: nowrap; overflow-x: auto;
   max-width: 140px;
 }
 .sc-slide-dots::-webkit-scrollbar { display: none; }
 .sc-slide-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: rgba(0,0,0,0.2);
+  width: 14px; height: 22px; border-radius: 6px;
+  background: rgba(0,0,0,0.18);
   cursor: pointer; flex-shrink: 0;
   transition: all 0.15s;
   border: 1.5px solid rgba(0,0,0,0.1);
   -webkit-tap-highlight-color: transparent;
+  /* Bigger invisible touch area */
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.sc-slide-dot::after {
+  content: '';
+  position: absolute;
+  inset: -6px -4px;
+  border-radius: 8px;
 }
 .sc-slide-dot.active {
   background: #1565c0;
-  width: 20px; border-radius: 4px;
+  width: 22px; border-radius: 5px;
   border-color: #1565c0;
 }
-.sc-slide-dot:hover:not(.active) { background: rgba(0,0,0,0.35); transform: scale(1.2); }
+.sc-slide-dot:hover:not(.active) { background: rgba(0,0,0,0.35); }
 
 /* ── Status bar ── */
 #scStatus {
@@ -3107,7 +3117,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 <!-- QM NODE INPUT POPUP -->
 <div id="neQmNodeInput">
   <textarea id="neQmNodeText" placeholder="Node text likhein... (Enter = nayi line, ✓ Add = confirm)" rows="2"
-    onkeydown="neQmNodeInputKey(event)"></textarea>
+    onkeydown="neQmNodeInputKey(event)"
+    oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
   <div style="display:flex;gap:5px;margin-top:7px;flex-wrap:wrap;">
     <button class="neqm-nib" onclick="neQmConfirmNode()">✓ Add</button>
     <button class="neqm-nib" data-shape="bubble" onclick="neQmSetPendingShape('bubble')">⬭</button>
@@ -21809,11 +21820,13 @@ function _scRenderSlideNav() {
       _scSlideDeleteMenu(idx, e.clientX, e.clientY);
     }; })(i));
     dot.addEventListener('touchstart', (function(idx){ return function(e){
+      var t0 = e.touches[0];
+      var sx = t0.clientX, sy = t0.clientY;
       _lpT = setTimeout(function(){
         _lpT = null;
-        var t = e.touches[0];
-        _scSlideDeleteMenu(idx, t.clientX, t.clientY);
-      }, 500);
+        if(navigator.vibrate) navigator.vibrate(30);
+        _scSlideDeleteMenu(idx, sx, sy - 60);
+      }, 400);
     }; })(i), { passive: true });
     dot.addEventListener('touchend',   function(){ clearTimeout(_lpT); _lpT=null; }, { passive: true });
     dot.addEventListener('touchmove',  function(){ clearTimeout(_lpT); _lpT=null; }, { passive: true });
@@ -22573,6 +22586,94 @@ var _scQmNodeColors=['#e65100','#1565c0','#2e7d32','#6a1b9a','#00695c','#c62828'
 var _scQmNextId=1;
 var _scQmTouchLast=0,_scQmConnecting=null,_scQmDragging=null,_scQmDragOff={x:0,y:0};
 
+// ── Inline textarea popup for SC QMap node editing (no prompt!) ──
+function _scQmShowInlineEdit(node, cx, cy) {
+  // Remove any existing popup
+  var old = document.getElementById('_scQmInlineEdit');
+  if(old) old.remove();
+
+  var popup = document.createElement('div');
+  popup.id = '_scQmInlineEdit';
+  popup.style.cssText = [
+    'position:fixed;z-index:99998;',
+    'background:var(--surface,#fff);',
+    'border:2px solid #2e7d32;border-radius:13px;',
+    'padding:10px 12px;box-shadow:0 4px 22px rgba(46,125,50,0.22);',
+    'min-width:210px;max-width:88vw;',
+    'font-family:\'Noto Sans Devanagari\',\'Baloo 2\',sans-serif;'
+  ].join('');
+
+  var label = document.createElement('div');
+  label.style.cssText = 'font-size:0.68rem;font-weight:800;color:#37526d;margin-bottom:6px;';
+  label.textContent = node.label ? '✏️ Node edit karo' : '✏️ Node ka text likhein';
+  popup.appendChild(label);
+
+  var ta = document.createElement('textarea');
+  ta.value = (node.label || '').replace(/\\n/g, '\n');
+  ta.placeholder = 'Text likhein... (Enter = nayi line)';
+  ta.rows = 3;
+  ta.style.cssText = [
+    'width:100%;border:1px solid rgba(0,0,0,0.12);border-radius:8px;',
+    'outline:none;font-family:inherit;font-size:0.88rem;font-weight:700;',
+    'color:var(--text,#222);background:transparent;',
+    'resize:none;min-height:44px;max-height:130px;overflow-y:auto;',
+    'padding:6px 8px;line-height:1.45;'
+  ].join('');
+  ta.onkeydown = function(e) {
+    if(e.key === 'Escape') { e.preventDefault(); popup.remove(); }
+    if(e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doConfirm(); }
+  };
+  popup.appendChild(ta);
+
+  var hint = document.createElement('div');
+  hint.style.cssText = 'font-size:0.6rem;color:#888;margin:4px 0 6px;';
+  hint.textContent = 'Enter = nayi line  •  Ctrl+Enter ya ✓ = confirm';
+  popup.appendChild(hint);
+
+  var btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:6px;';
+
+  function doConfirm() {
+    var val = ta.value; // preserve newlines as-is
+    node.label = val;
+    _scQmRender();
+    popup.remove();
+  }
+
+  var confirmBtn = document.createElement('button');
+  confirmBtn.textContent = '✓ Confirm';
+  confirmBtn.style.cssText = 'flex:1;padding:7px;border-radius:8px;border:none;background:#2e7d32;color:#fff;font-weight:800;font-size:0.78rem;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;';
+  confirmBtn.onclick = doConfirm;
+  btnRow.appendChild(confirmBtn);
+
+  var cancelBtn = document.createElement('button');
+  cancelBtn.textContent = '✕';
+  cancelBtn.style.cssText = 'padding:7px 12px;border-radius:8px;border:1.5px solid rgba(0,0,0,0.12);background:none;color:#888;font-weight:800;font-size:0.78rem;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;';
+  cancelBtn.onclick = function() { popup.remove(); };
+  btnRow.appendChild(cancelBtn);
+  popup.appendChild(btnRow);
+
+  // Position near tap or node center
+  document.body.appendChild(popup);
+  var pw = popup.offsetWidth || 220;
+  var ph = popup.offsetHeight || 140;
+  var left, top;
+  if(cx != null && cy != null) {
+    left = Math.max(8, Math.min(cx - pw/2, window.innerWidth  - pw - 8));
+    top  = Math.max(60, Math.min(cy + 10,  window.innerHeight - ph - 10));
+  } else {
+    left = Math.max(8, (window.innerWidth  - pw) / 2);
+    top  = Math.max(60, (window.innerHeight - ph) / 2);
+  }
+  popup.style.left = left + 'px';
+  popup.style.top  = top  + 'px';
+
+  setTimeout(function(){
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  }, 60);
+}
+
 function _scQmRender() {
   var cv=_sc.qmCanvas,ctx=_sc.qmCtx; if(!cv||!ctx) return;
   ctx.clearRect(0,0,cv.width,cv.height);
@@ -22653,9 +22754,7 @@ function _scQmCtxClose(){var m=document.getElementById('scQmCtxMenu');if(m)m.sty
 function _scQmCtxEdit(){
   _scQmCtxClose();
   if(!_scQmCtxNode) return;
-  var node=_scQmCtxNode;
-  var newLabel=prompt('Node ka content badlein (Enter=confirm):',node.label||'');
-  if(newLabel!==null){ node.label=newLabel||node.label; _scQmRender(); }
+  _scQmShowInlineEdit(_scQmCtxNode, null, null);
 }
 function _scQmCtxDel(){
   if(!_scQmCtxNode){_scQmCtxClose();return;}
@@ -22677,8 +22776,7 @@ function _scQmDown(e){
   // Double-tap = edit
   if(hit&&now-_scQmTouchLast<350&&_scQmLastHitId===hit.id){
     _scQmTouchLast=0; _scQmLastHitId=null;
-    var newLabel=prompt('Node ka naam / content:',hit.label||'');
-    if(newLabel!==null){ hit.label=newLabel||hit.label; _scQmRender(); }
+    _scQmShowInlineEdit(hit, e.clientX, e.clientY);
     return;
   }
   _scQmTouchLast=now; _scQmLastHitId=hit?hit.id:null;
@@ -22686,10 +22784,9 @@ function _scQmDown(e){
   else if(_scQmConnecting){_scQmConnecting=null;}
   else{
     scSnapshot(); var cur=_scCur(); if(!cur) return;
-    var node={id:'qn'+Date.now(),label:'Node '+_scQmNextId++,x:x,y:y,color:_scQmNodeColors[cur.qmNodes.length%_scQmNodeColors.length],shape:'bubble'};
+    var node={id:'qn'+Date.now(),label:'',x:x,y:y,color:_scQmNodeColors[cur.qmNodes.length%_scQmNodeColors.length],shape:'bubble'};
     cur.qmNodes.push(node); _scQmRender();
-    var newLabel=prompt('Node ka naam likhein:',node.label||'');
-    if(newLabel!==null){ node.label=newLabel||node.label; _scQmRender(); }
+    _scQmShowInlineEdit(node, e.clientX, e.clientY);
   }
 }
 var _scQmLastHitId=null;
@@ -22707,7 +22804,7 @@ function _scQmUp(e){
   }
   _scQmDragging=null;
 }
-function _scQmEditLabel(node){var l=prompt('Node ka naam:',node.label||'');if(l!==null){node.label=l||node.label;_scQmRender();}}
+function _scQmEditLabel(node){ _scQmShowInlineEdit(node, null, null); }
 function scQmClear(){if(!confirm('Is slide ka QuickMap clear karein?'))return;scSnapshot();var cur=_scCur();if(cur){cur.qmNodes=[];cur.qmEdges=[];}_scQmNextId=1;_scQmRender();}
 
 // ══════════════════════════════════════
