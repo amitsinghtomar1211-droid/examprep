@@ -23711,7 +23711,955 @@ document.addEventListener('DOMContentLoaded', function() {
   }, 2000);
 });
 
-// ══ END AI NODE BUILDER ══
+// ══════════════════════════════════════════════════════════════════════════════
+// 🗺️ SMART NODE MAP SYSTEM v1
+// — Topic ki saari notes files deeply analyze karta hai
+// — Data ko thematic sections mein divide karta hai
+// — Har section ke liye ek "Node Map" banata hai
+//   → Nodes = 1-3 word ultra-short key facts (pure arth ke saath)
+//   → Edges = nodes ke beech logical connections
+// — Results ek draggable/editable panel mein dikhata hai
+// — Canvas Slide ya Overview Card mein insert kar sakte ho
+// — Sab JSON format mein
+// ══════════════════════════════════════════════════════════════════════════════
+
+/* ── CSS ── */
+(function(){
+  if(document.getElementById('_snmCSS')) return;
+  var s=document.createElement('style'); s.id='_snmCSS';
+  s.textContent=`
+/* Trigger button in AI chat */
+.snm-trigger-btn {
+  display:inline-flex;align-items:center;gap:5px;
+  padding:7px 12px;border-radius:10px;
+  border:1.5px solid rgba(21,101,192,0.3);
+  background:linear-gradient(135deg,rgba(21,101,192,0.08),rgba(106,27,154,0.08));
+  color:var(--accent,#1565c0);font-size:0.75rem;font-weight:800;
+  cursor:pointer;font-family:inherit;
+  -webkit-tap-highlight-color:transparent;
+  transition:all 0.15s;
+}
+.snm-trigger-btn:hover{background:linear-gradient(135deg,rgba(21,101,192,0.15),rgba(106,27,154,0.15));}
+
+/* Full-screen panel */
+#_snmPanel {
+  position:fixed;inset:0;z-index:19998;
+  background:var(--bg,#eaf4fb);
+  display:none;flex-direction:column;
+  font-family:'Noto Sans Devanagari','Baloo 2',sans-serif;
+}
+#_snmPanel.open{display:flex;}
+body.night-mode #_snmPanel{background:#0f1117;}
+
+/* Header */
+._snm-hdr{
+  display:flex;align-items:center;gap:8px;
+  padding:10px 14px;flex-shrink:0;
+  background:linear-gradient(135deg,#1565c0,#6a1b9a);
+  color:#fff;
+}
+._snm-hdr-title{flex:1;font-size:0.9rem;font-weight:800;}
+._snm-hdr-sub{font-size:0.65rem;opacity:0.8;font-weight:500;}
+._snm-hdr-btn{
+  background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.3);
+  color:#fff;border-radius:8px;padding:5px 10px;cursor:pointer;
+  font-size:0.72rem;font-weight:700;font-family:inherit;
+  -webkit-tap-highlight-color:transparent;
+}
+
+/* Progress bar */
+._snm-progress{height:3px;background:rgba(255,255,255,0.2);flex-shrink:0;}
+._snm-progress-fill{height:100%;background:#fff;transition:width 0.4s;width:0%;}
+
+/* Status bar */
+._snm-status{
+  padding:6px 14px;font-size:0.7rem;color:var(--text2,#37526d);
+  background:var(--surface2,#f4f9fe);border-bottom:1px solid var(--border,#bdd5ea);
+  flex-shrink:0;min-height:28px;display:flex;align-items:center;gap:6px;
+}
+body.night-mode ._snm-status{background:#161b22;border-color:#30363d;}
+
+/* Maps scroll area */
+._snm-maps{
+  flex:1;overflow-y:auto;overflow-x:hidden;
+  padding:10px 10px 80px;
+  display:flex;flex-direction:column;gap:12px;
+}
+._snm-maps::-webkit-scrollbar{width:4px;}
+._snm-maps::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.15);border-radius:2px;}
+
+/* Node Map Card */
+._snm-map-card{
+  background:var(--surface,#fff);
+  border:1.5px solid var(--border,#bdd5ea);
+  border-radius:16px;overflow:hidden;
+  box-shadow:0 2px 10px rgba(21,101,192,0.07);
+}
+body.night-mode ._snm-map-card{background:#1c2128;border-color:#30363d;}
+._snm-map-card.selected{border-color:#1565c0;box-shadow:0 2px 14px rgba(21,101,192,0.2);}
+
+._snm-map-hdr{
+  display:flex;align-items:center;gap:8px;
+  padding:9px 12px;cursor:pointer;
+  border-bottom:1px solid var(--border,#bdd5ea);
+}
+body.night-mode ._snm-map-hdr{border-color:#30363d;}
+._snm-map-icon{font-size:1.1rem;flex-shrink:0;}
+._snm-map-label{flex:1;font-size:0.82rem;font-weight:800;color:var(--text,#0d1b2a);}
+body.night-mode ._snm-map-label{color:#e6edf3;}
+._snm-map-count{font-size:0.62rem;color:var(--text2);font-weight:600;opacity:0.7;}
+._snm-map-sel-chk{
+  width:20px;height:20px;border-radius:6px;
+  border:1.5px solid var(--border,#bdd5ea);
+  background:var(--surface,#fff);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  font-size:0.7rem;flex-shrink:0;
+  transition:all 0.12s;
+}
+._snm-map-sel-chk.checked{background:#1565c0;border-color:#1565c0;color:#fff;}
+body.night-mode ._snm-map-sel-chk{background:#21262d;border-color:#444;}
+
+/* Nodes canvas area */
+._snm-canvas{
+  position:relative;min-height:140px;
+  padding:12px;overflow-x:auto;overflow-y:visible;
+}
+._snm-canvas-inner{
+  position:relative;
+  min-width:300px;min-height:120px;
+}
+
+/* Node bubble */
+._snm-node{
+  position:absolute;
+  background:var(--surface2,#f4f9fe);
+  border:1.5px solid var(--border,#bdd5ea);
+  border-radius:10px;padding:5px 9px;
+  font-size:0.72rem;font-weight:800;
+  color:var(--text,#0d1b2a);
+  cursor:move;user-select:none;
+  -webkit-user-select:none;
+  transition:box-shadow 0.12s,border-color 0.12s;
+  touch-action:none;
+  max-width:130px;text-align:center;
+  line-height:1.3;word-break:break-word;
+  z-index:2;
+}
+._snm-node:active{box-shadow:0 4px 16px rgba(0,0,0,0.18);z-index:10;}
+._snm-node.dragging{opacity:0.75;z-index:20;}
+body.night-mode ._snm-node{background:#21262d;border-color:#444;color:#e6edf3;}
+
+/* Node type color accent */
+._snm-node-accent{
+  position:absolute;top:0;left:0;right:0;height:3px;border-radius:8px 8px 0 0;
+}
+
+/* Edge SVG overlay */
+._snm-edges-svg{
+  position:absolute;inset:0;width:100%;height:100%;
+  pointer-events:none;z-index:1;overflow:visible;
+}
+._snm-edge{stroke-width:1.5;fill:none;stroke-dasharray:none;}
+._snm-edge-label{font-size:9px;fill:var(--text2,#37526d);font-weight:700;}
+
+/* Edit node inline */
+._snm-node[contenteditable="true"]{
+  outline:none;border-color:var(--accent,#1565c0);
+  box-shadow:0 0 0 2px rgba(21,101,192,0.2);
+  cursor:text;
+}
+
+/* Bottom action bar */
+._snm-bottom{
+  position:fixed;bottom:0;left:0;right:0;z-index:20000;
+  background:var(--surface,#fff);
+  border-top:1.5px solid var(--border,#bdd5ea);
+  padding:8px 10px;padding-bottom:max(8px,env(safe-area-inset-bottom,8px));
+  display:flex;gap:6px;flex-wrap:wrap;align-items:center;
+}
+body.night-mode ._snm-bottom{background:#1c2128;border-color:#30363d;}
+
+._snm-act-btn{
+  flex:1;min-width:120px;
+  padding:10px 10px;border-radius:12px;border:none;
+  font-size:0.74rem;font-weight:800;cursor:pointer;
+  font-family:inherit;display:flex;align-items:center;
+  justify-content:center;gap:5px;
+  -webkit-tap-highlight-color:transparent;
+  transition:all 0.15s;
+}
+._snm-btn-canvas{background:linear-gradient(135deg,#e65100,#f57c00);color:#fff;box-shadow:0 3px 10px rgba(230,81,0,0.25);}
+._snm-btn-notes{background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;box-shadow:0 3px 10px rgba(21,101,192,0.25);}
+._snm-btn-overview{background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;box-shadow:0 3px 10px rgba(46,125,50,0.25);}
+._snm-btn-sm{
+  flex:none;padding:8px 11px;border-radius:10px;
+  border:1.5px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);
+  color:var(--text2);font-size:0.7rem;font-weight:700;cursor:pointer;
+  font-family:inherit;-webkit-tap-highlight-color:transparent;
+}
+._snm-btn-sm:hover{border-color:var(--accent,#1565c0);color:var(--accent,#1565c0);}
+
+/* Select-all bar */
+._snm-sel-bar{
+  display:flex;align-items:center;gap:6px;width:100%;
+  padding:0 2px;font-size:0.72rem;color:var(--text2);
+}
+._snm-sel-count{font-weight:800;color:var(--accent,#1565c0);}
+
+/* Loading spinner */
+._snm-loading{
+  flex:1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  gap:10px;padding:30px;
+}
+._snm-spinner{
+  width:32px;height:32px;border-radius:50%;
+  border:3px solid rgba(21,101,192,0.15);
+  border-top-color:#1565c0;
+  animation:_snmSpin 0.7s linear infinite;
+}
+@keyframes _snmSpin{to{transform:rotate(360deg);}}
+._snm-loading-text{font-size:0.8rem;color:var(--text2);font-weight:600;text-align:center;line-height:1.6;}
+
+/* Empty state */
+._snm-empty{
+  padding:32px;text-align:center;
+  font-size:0.82rem;color:var(--text2);line-height:1.7;
+}
+
+/* JSON modal */
+._snm-json-overlay{
+  position:fixed;inset:0;z-index:20100;
+  background:rgba(0,0,0,0.6);
+  display:flex;align-items:center;justify-content:center;padding:16px;
+}
+._snm-json-box{
+  background:var(--surface,#fff);border-radius:16px;
+  width:100%;max-width:520px;max-height:70vh;
+  display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 8px 40px rgba(0,0,0,0.3);
+}
+._snm-json-hdr{
+  padding:11px 14px;border-bottom:1px solid var(--border,#e0e0e0);
+  display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+}
+._snm-json-ta{
+  flex:1;padding:12px;font-size:0.72rem;font-family:monospace;
+  border:none;outline:none;resize:none;
+  background:var(--surface2,#f4f9fe);color:var(--text,#0d1b2a);
+  overflow-y:auto;
+}
+`;
+  document.head.appendChild(s);
+})();
+
+/* ── State ── */
+var _snm = {
+  maps:     [],      // [{id,icon,title,color,nodes:[{id,x,y,text,type}],edges:[{from,to,label}],selected:bool}]
+  topic:    null,    // {tid,sid,secid,name}
+  open:     false,
+  dragNode: null,    // {mapIdx,nodeIdx,startX,startY,origX,origY}
+  selAll:   false
+};
+
+/* ── Type config ── */
+var _snmTypeColor = {
+  main:'#1565c0', place:'#e65100', date:'#c62828',
+  person:'#6a1b9a', term:'#2e7d32', fact:'#00695c',
+  formula:'#37474f', event:'#0277bd'
+};
+
+/* ── Helpers ── */
+function _snmE(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function _snmId(){ return 'n_'+Date.now()+'_'+(Math.random()*9999|0); }
+
+/* ── Extract all notes from topic ── */
+function _snmExtractTopicData(tid, sid, secid) {
+  var t = getTop(sid, secid, tid);
+  if(!t) return '';
+  var parts = [];
+  // All raw notes
+  (t.notes||[]).forEach(function(n, i){
+    if(n.content && n.content.trim())
+      parts.push('=== RAW NOTE '+(i+1)+': '+n.name+' ===\n'+n.content.trim());
+  });
+  // Final notes
+  if(t.finalNotes && t.finalNotes.trim()) {
+    var clean = t.finalNotes.replace(/%%NEW%%|%%DATE%%.*?%%ENDNEW%%|%%HIGHLIGHT%%|%%ENDHIGHLIGHT%%/g,'').trim();
+    if(clean) parts.push('=== FINAL NOTES ===\n'+clean);
+  }
+  // Smart AI notes
+  if(t.smartNotesAI && t.smartNotesAI.trim())
+    parts.push('=== SMART NOTES (AI) ===\n'+t.smartNotesAI.trim());
+  // Master notes
+  if(t.masterNotes && t.masterNotes.trim())
+    parts.push('=== MASTER NOTES ===\n'+t.masterNotes.trim());
+  return parts.join('\n\n---\n\n');
+}
+
+/* ── Build AI Prompt ── */
+function _snmBuildPrompt(allContent, topicName) {
+  return `You are an expert knowledge mapper for Indian competitive exams (UPSC, SSC, etc.).
+
+TOPIC: "${topicName}"
+
+ALL NOTES CONTENT:
+---
+${allContent.substring(0,4500)}
+---
+
+TASK: Analyze ALL the content deeply. Identify EVERY important concept, fact, person, place, date, term, formula, event. Now create 3-7 thematic "Node Maps" that together cover the ENTIRE content with zero data loss.
+
+RULES:
+1. Each node text = MAXIMUM 3 words (ultra-short but full meaning)
+2. Nodes must be connected by edges with a 1-3 word relationship label
+3. Each map = one coherent theme/section (e.g. "Important Places", "Key Dates", "Main Concepts", "Key Persons", etc.)
+4. Edges show logical connections (caused-by, part-of, located-in, led-to, etc.)
+5. Nodes placed at x/y coords (0-400 x, 0-300 y) — spread them well, no overlap
+6. Total nodes across all maps: 25-45 (more for dense content)
+7. Hindi terms OK if present in notes
+
+RETURN ONLY this JSON (no markdown, no explanation):
+{
+  "maps": [
+    {
+      "id": "map1",
+      "icon": "📍",
+      "title": "Important Places",
+      "color": "#e65100",
+      "nodes": [
+        {"id":"n1","x":50,"y":60,"text":"Harappa","type":"place"},
+        {"id":"n2","x":200,"y":60,"text":"Mohenjo-daro","type":"place"},
+        {"id":"n3","x":350,"y":60,"text":"Indus River","type":"place"}
+      ],
+      "edges": [
+        {"from":"n1","to":"n2","label":"similar to"},
+        {"from":"n1","to":"n3","label":"near"},
+        {"from":"n2","to":"n3","label":"on banks of"}
+      ]
+    }
+  ]
+}
+
+Types: main, place, date, person, term, fact, formula, event`;
+}
+
+/* ── Open Panel ── */
+function _snmOpen(tid, sid, secid, topicName) {
+  _snmBuildPanel();
+  _snm.topic = {tid:tid, sid:sid, secid:secid, name:topicName};
+  _snm.maps = [];
+  _snm.open = true;
+  var panel = document.getElementById('_snmPanel');
+  panel.classList.add('open');
+  _snmSetStatus('🔍 Saari notes files load ho rahi hain...');
+  _snmSetProgress(5);
+  document.getElementById('_snmMaps').innerHTML =
+    '<div class="_snm-loading"><div class="_snm-spinner"></div>' +
+    '<div class="_snm-loading-text">Topic ki saari files analyze ho rahi hain...<br>' +
+    'Raw notes, Final notes, Smart notes, Master notes — sab ek saath process ho rahe hain.<br>' +
+    '<span style="opacity:0.6;font-size:0.7rem;">Yeh 10-20 second le sakta hai...</span></div></div>';
+  _snmGenerate(tid, sid, secid, topicName);
+}
+
+function _snmClose() {
+  var p = document.getElementById('_snmPanel');
+  if(p) p.classList.remove('open');
+  _snm.open = false;
+}
+
+/* ── Build Panel DOM ── */
+function _snmBuildPanel() {
+  if(document.getElementById('_snmPanel')) return;
+  var div = document.createElement('div');
+  div.id = '_snmPanel';
+  div.innerHTML =
+    '<div class="_snm-hdr">' +
+      '<div style="flex:1;">' +
+        '<div class="_snm-hdr-title">🗺️ Smart Node Map</div>' +
+        '<div class="_snm-hdr-sub" id="_snmSubtitle">Topic analysis...</div>' +
+      '</div>' +
+      '<button class="_snm-hdr-btn" onclick="_snmShowJSON()">{ } JSON</button>' +
+      '<button class="_snm-hdr-btn" onclick="_snmClose()" style="background:rgba(198,40,40,0.25);">✕</button>' +
+    '</div>' +
+    '<div class="_snm-progress"><div class="_snm-progress-fill" id="_snmProg"></div></div>' +
+    '<div class="_snm-status" id="_snmStatus"></div>' +
+    '<div class="_snm-maps" id="_snmMaps"></div>' +
+    '<div class="_snm-bottom" id="_snmBottom"></div>';
+  document.body.appendChild(div);
+}
+
+function _snmSetStatus(txt) {
+  var el = document.getElementById('_snmStatus'); if(el) el.textContent = txt;
+}
+function _snmSetProgress(pct) {
+  var el = document.getElementById('_snmProg'); if(el) el.style.width = pct+'%';
+}
+
+/* ── Generate via AI ── */
+async function _snmGenerate(tid, sid, secid, topicName) {
+  try {
+    _snmSetProgress(15);
+    _snmSetStatus('📂 Notes extract ho rahe hain...');
+    var allContent = _snmExtractTopicData(tid, sid, secid);
+    if(!allContent.trim()) {
+      document.getElementById('_snmMaps').innerHTML =
+        '<div class="_snm-empty">⚠️ Is topic mein koi notes nahi hain!<br>Pehle Raw Notes ya Final Notes add karo.</div>';
+      return;
+    }
+    _snmSetProgress(30);
+    _snmSetStatus('🤖 AI content analyze kar raha hai — ' + (allContent.length/1000).toFixed(1) + 'k chars...');
+
+    var prompt = _snmBuildPrompt(allContent, topicName);
+    var raw = await callGroq(prompt, 3500);
+    _snmSetProgress(75);
+    _snmSetStatus('🔄 JSON parse ho raha hai...');
+
+    // Extract JSON
+    var m = raw.match(/\{[\s\S]*\}/);
+    if(!m) throw new Error('JSON nahi mila AI response mein');
+    var parsed = JSON.parse(m[0]);
+    if(!parsed.maps || !parsed.maps.length) throw new Error('Maps array empty hai');
+
+    _snm.maps = parsed.maps.map(function(map) {
+      // Assign unique IDs, ensure defaults
+      return {
+        id: map.id || _snmId(),
+        icon: map.icon || '🗂️',
+        title: map.title || 'Section',
+        color: map.color || '#1565c0',
+        nodes: (map.nodes||[]).map(function(n){
+          return { id:n.id||_snmId(), x:n.x||50, y:n.y||50, text:n.text||'Node', type:n.type||'fact' };
+        }),
+        edges: (map.edges||[]).map(function(e){
+          return { from:e.from, to:e.to, label:e.label||'' };
+        }),
+        selected: false
+      };
+    });
+
+    _snmSetProgress(95);
+    _snmSetStatus('✅ ' + _snm.maps.length + ' maps ready — ' +
+      _snm.maps.reduce(function(a,m){return a+m.nodes.length;},0) + ' total nodes');
+    document.getElementById('_snmSubtitle').textContent = topicName + ' — ' + _snm.maps.length + ' thematic maps';
+    _snmRender();
+    _snmSetProgress(100);
+  } catch(err) {
+    _snmSetStatus('❌ Error: ' + err.message);
+    document.getElementById('_snmMaps').innerHTML =
+      '<div class="_snm-empty">❌ ' + _snmE(err.message) + '<br><br>' +
+      '<button onclick="_snmGenerate(\''+tid+'\',\''+sid+'\',\''+secid+'\',\''+_snmE(topicName)+'\')" ' +
+      'style="padding:9px 18px;border-radius:10px;border:1.5px solid var(--accent);background:transparent;' +
+      'color:var(--accent);font-weight:700;cursor:pointer;font-family:inherit;">🔄 Phir try karo</button></div>';
+  }
+}
+
+/* ── Render all maps ── */
+function _snmRender() {
+  var container = document.getElementById('_snmMaps');
+  if(!container) return;
+  container.innerHTML = '';
+
+  // Select-all bar
+  var selBar = document.createElement('div');
+  selBar.className = '_snm-sel-bar';
+  var selCount = _snm.maps.filter(function(m){return m.selected;}).length;
+  selBar.innerHTML =
+    '<button style="padding:4px 10px;border-radius:8px;border:1.5px solid var(--border);background:var(--surface);' +
+    'font-size:0.7rem;font-weight:700;cursor:pointer;font-family:inherit;color:var(--text2);" ' +
+    'onclick="_snmToggleAll()">☑ Sab '+(selCount===_snm.maps.length?'Deselect':'Select')+'</button>' +
+    '<span class="_snm-sel-count">'+selCount+' selected</span>' +
+    '<span style="font-size:0.65rem;opacity:0.6;">Tap map header to select</span>';
+  container.appendChild(selBar);
+
+  _snm.maps.forEach(function(map, mi) {
+    var card = document.createElement('div');
+    card.className = '_snm-map-card' + (map.selected ? ' selected' : '');
+    card.id = '_snmCard_'+mi;
+
+    // Calculate canvas size
+    var maxX = 380, maxY = 250;
+    map.nodes.forEach(function(n){ if(n.x>maxX)maxX=n.x+150; if(n.y>maxY)maxY=n.y+80; });
+
+    // Header
+    var hdr = document.createElement('div');
+    hdr.className = '_snm-map-hdr';
+    hdr.innerHTML =
+      '<span class="_snm-map-icon">'+map.icon+'</span>' +
+      '<div>' +
+        '<div class="_snm-map-label">'+_snmE(map.title)+'</div>' +
+        '<div class="_snm-map-count">'+map.nodes.length+' nodes · '+map.edges.length+' connections</div>' +
+      '</div>' +
+      '<div class="_snm-map-sel-chk'+(map.selected?' checked':'')+'">'+
+        (map.selected?'✓':'')+'</div>';
+    hdr.querySelector('._snm-map-sel-chk').addEventListener('click', function(e){
+      e.stopPropagation();
+      _snm.maps[mi].selected = !_snm.maps[mi].selected;
+      _snmRender();
+    });
+    hdr.addEventListener('click', function(){
+      _snm.maps[mi].selected = !_snm.maps[mi].selected;
+      _snmRender();
+    });
+    card.appendChild(hdr);
+
+    // Canvas area
+    var canvasWrap = document.createElement('div');
+    canvasWrap.className = '_snm-canvas';
+    var inner = document.createElement('div');
+    inner.className = '_snm-canvas-inner';
+    inner.style.width = (maxX+40)+'px';
+    inner.style.height = (maxY+40)+'px';
+
+    // SVG edges
+    var svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('class','_snm-edges-svg');
+    svg.setAttribute('width', maxX+40);
+    svg.setAttribute('height', maxY+40);
+    svg.setAttribute('viewBox', '0 0 '+(maxX+40)+' '+(maxY+40));
+
+    // Build node position lookup
+    var nodePos = {};
+    map.nodes.forEach(function(n){ nodePos[n.id] = {x:n.x+50, y:n.y+18}; });
+
+    // Draw edges
+    map.edges.forEach(function(edge) {
+      var from = nodePos[edge.from], to = nodePos[edge.to];
+      if(!from || !to) return;
+      var midX = (from.x+to.x)/2, midY = (from.y+to.y)/2;
+      var line = document.createElementNS('http://www.w3.org/2000/svg','path');
+      // Curved path
+      var cx = midX + (to.y - from.y) * 0.15;
+      var cy = midY - (to.x - from.x) * 0.15;
+      line.setAttribute('d','M '+from.x+' '+from.y+' Q '+cx+' '+cy+' '+to.x+' '+to.y);
+      line.setAttribute('class','_snm-edge');
+      line.setAttribute('stroke', map.color+'99');
+      line.setAttribute('marker-end','url(#arrow_'+mi+')');
+      svg.appendChild(line);
+
+      // Edge label
+      if(edge.label) {
+        var txt = document.createElementNS('http://www.w3.org/2000/svg','text');
+        txt.setAttribute('x', midX); txt.setAttribute('y', midY-4);
+        txt.setAttribute('text-anchor','middle');
+        txt.setAttribute('class','_snm-edge-label');
+        txt.textContent = edge.label;
+        svg.appendChild(txt);
+      }
+    });
+
+    // Arrow marker
+    var defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+    var marker = document.createElementNS('http://www.w3.org/2000/svg','marker');
+    marker.setAttribute('id','arrow_'+mi);
+    marker.setAttribute('markerWidth','7'); marker.setAttribute('markerHeight','7');
+    marker.setAttribute('refX','6'); marker.setAttribute('refY','3');
+    marker.setAttribute('orient','auto');
+    var arrowPath = document.createElementNS('http://www.w3.org/2000/svg','path');
+    arrowPath.setAttribute('d','M0,0 L0,6 L7,3 z');
+    arrowPath.setAttribute('fill', map.color+'BB');
+    marker.appendChild(arrowPath);
+    defs.appendChild(marker);
+    svg.insertBefore(defs, svg.firstChild);
+
+    inner.appendChild(svg);
+
+    // Draw nodes
+    map.nodes.forEach(function(node, ni) {
+      var nodeDiv = document.createElement('div');
+      nodeDiv.className = '_snm-node';
+      nodeDiv.style.left = node.x + 'px';
+      nodeDiv.style.top  = node.y + 'px';
+      nodeDiv.style.borderColor = (map.color+'55');
+      nodeDiv.setAttribute('contenteditable','true');
+      nodeDiv.textContent = node.text;
+
+      // Color accent bar
+      var accent = document.createElement('div');
+      accent.className = '_snm-node-accent';
+      accent.style.background = map.color;
+      nodeDiv.insertBefore(accent, nodeDiv.firstChild);
+
+      // Save edits
+      nodeDiv.addEventListener('blur', function(){
+        _snm.maps[mi].nodes[ni].text = nodeDiv.textContent.trim() || node.text;
+        _snmRedrawEdges(mi);
+      });
+      nodeDiv.addEventListener('click', function(e){ e.stopPropagation(); });
+
+      // Touch/pointer drag
+      _snmMakeDraggable(nodeDiv, mi, ni, inner, svg, map);
+
+      inner.appendChild(nodeDiv);
+    });
+
+    canvasWrap.appendChild(inner);
+    card.appendChild(canvasWrap);
+    container.appendChild(card);
+  });
+
+  // Bottom action bar
+  _snmRenderBottom();
+}
+
+/* ── Redraw edges for a map (after node move) ── */
+function _snmRedrawEdges(mi) {
+  var inner = document.querySelector('#_snmCard_'+mi+' ._snm-canvas-inner');
+  if(!inner) return;
+  var svg = inner.querySelector('._snm-edges-svg');
+  if(!svg) return;
+  var map = _snm.maps[mi];
+  // Recalculate positions from node divs
+  var nodePos = {};
+  inner.querySelectorAll('._snm-node').forEach(function(nd, ni){
+    var nx = parseInt(nd.style.left)||0, ny = parseInt(nd.style.top)||0;
+    if(map.nodes[ni]) nodePos[map.nodes[ni].id] = {x:nx+50, y:ny+18};
+  });
+  // Remove old edges (not defs, not new nodes)
+  var toRemove = [];
+  svg.childNodes.forEach(function(ch){
+    if(ch.tagName==='path'||ch.tagName==='text') toRemove.push(ch);
+  });
+  toRemove.forEach(function(ch){ svg.removeChild(ch); });
+  // Redraw
+  map.edges.forEach(function(edge){
+    var from=nodePos[edge.from], to=nodePos[edge.to];
+    if(!from||!to) return;
+    var midX=(from.x+to.x)/2, midY=(from.y+to.y)/2;
+    var cx=midX+(to.y-from.y)*0.15, cy=midY-(to.x-from.x)*0.15;
+    var line=document.createElementNS('http://www.w3.org/2000/svg','path');
+    line.setAttribute('d','M '+from.x+' '+from.y+' Q '+cx+' '+cy+' '+to.x+' '+to.y);
+    line.setAttribute('class','_snm-edge');
+    line.setAttribute('stroke',map.color+'99');
+    line.setAttribute('marker-end','url(#arrow_'+mi+')');
+    svg.appendChild(line);
+    if(edge.label){
+      var txt=document.createElementNS('http://www.w3.org/2000/svg','text');
+      txt.setAttribute('x',midX); txt.setAttribute('y',midY-4);
+      txt.setAttribute('text-anchor','middle');
+      txt.setAttribute('class','_snm-edge-label');
+      txt.textContent=edge.label;
+      svg.appendChild(txt);
+    }
+  });
+}
+
+/* ── Draggable nodes ── */
+function _snmMakeDraggable(el, mi, ni, container, svg, map) {
+  var startX, startY, origLeft, origTop, isDrag=false;
+
+  function onStart(ex, ey) {
+    isDrag=true;
+    startX=ex; startY=ey;
+    origLeft=parseInt(el.style.left)||0;
+    origTop=parseInt(el.style.top)||0;
+    el.classList.add('dragging');
+  }
+  function onMove(ex, ey) {
+    if(!isDrag) return;
+    var dx=ex-startX, dy=ey-startY;
+    var nx=Math.max(0,origLeft+dx), ny=Math.max(0,origTop+dy);
+    el.style.left=nx+'px'; el.style.top=ny+'px';
+    _snm.maps[mi].nodes[ni].x=nx;
+    _snm.maps[mi].nodes[ni].y=ny;
+    _snmRedrawEdges(mi);
+  }
+  function onEnd() {
+    isDrag=false;
+    el.classList.remove('dragging');
+  }
+
+  // Pointer events (works for both touch and mouse)
+  el.addEventListener('pointerdown', function(e){
+    if(el.getAttribute('contenteditable')==='true' && document.activeElement===el) return;
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    onStart(e.clientX, e.clientY);
+  });
+  el.addEventListener('pointermove', function(e){ if(isDrag){e.preventDefault();onMove(e.clientX,e.clientY);} });
+  el.addEventListener('pointerup', onEnd);
+  el.addEventListener('pointercancel', onEnd);
+}
+
+/* ── Toggle all ── */
+function _snmToggleAll() {
+  var allSel = _snm.maps.every(function(m){return m.selected;});
+  _snm.maps.forEach(function(m){ m.selected = !allSel; });
+  _snmRender();
+}
+
+/* ── Bottom action buttons ── */
+function _snmRenderBottom() {
+  var bottom = document.getElementById('_snmBottom');
+  if(!bottom) return;
+  var selCount = _snm.maps.filter(function(m){return m.selected;}).length;
+  bottom.innerHTML =
+    '<button class="_snm-act-btn _snm-btn-canvas" onclick="_snmInsertCanvas()">' +
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>' +
+      'Canvas Slide ('+(selCount||'all')+')</button>' +
+    '<button class="_snm-act-btn _snm-btn-notes" onclick="_snmInsertNotes()">' +
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>' +
+      'Notes Editor ('+(selCount||'all')+')</button>' +
+    '<button class="_snm-act-btn _snm-btn-overview" onclick="_snmInsertOverview()">' +
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>' +
+      'Overview Card</button>';
+}
+
+/* ── Insert to Canvas Slide ── */
+function _snmInsertCanvas() {
+  var mapsToInsert = _snm.maps.filter(function(m){return m.selected;});
+  if(!mapsToInsert.length) mapsToInsert = _snm.maps;
+  var cur = (typeof _scCur==='function') ? _scCur() : null;
+  if(!cur) { showToast&&showToast('⚠️ Canvas pehle kholo!','error'); return; }
+  if(typeof scSnapshot==='function') scSnapshot();
+
+  var slideStartY = 20;
+  mapsToInsert.forEach(function(map, mi) {
+    // Section heading block
+    var hBlock = {
+      id:'scb_snm_h_'+Date.now()+'_'+mi,
+      x:20, y:slideStartY, w:320,
+      html:'<span style="font-size:11px;font-weight:900;color:'+map.color+';">'+map.icon+' '+_snmE(map.title)+'</span>',
+      fontSize:14, color:map.color, bold:true, italic:false, underline:false, angle:0
+    };
+    cur.textBlocks.push(hBlock);
+    slideStartY += 30;
+
+    // Each node as a textBlock
+    map.nodes.forEach(function(node, ni) {
+      var tc = _snmTypeColor[node.type] || map.color;
+      var block = {
+        id:'scb_snm_'+Date.now()+'_'+mi+'_'+ni,
+        x: 20 + (node.x % 380),
+        y: slideStartY + (node.y % 220),
+        w: 110,
+        html:'<span style="font-size:8px;font-weight:800;color:'+tc+';text-transform:uppercase;opacity:0.7;">'+node.type+'</span><br>'+_snmE(node.text),
+        fontSize:12, color:'#1a1a1a', bold:false, italic:false, underline:false, angle:0,
+        bg: tc+'11', borderColor: tc+'55'
+      };
+      cur.textBlocks.push(block);
+    });
+    slideStartY += 250;
+
+    // Add new slide for next map if needed
+    if(mi < mapsToInsert.length-1 && typeof scAddSlide==='function') {
+      scAddSlide();
+      cur = _scCur();
+      slideStartY = 20;
+    }
+  });
+
+  if(typeof _scRenderAll==='function') _scRenderAll();
+  else if(typeof scRender==='function') scRender();
+  showToast&&showToast('✅ '+mapsToInsert.length+' maps canvas mein add ho gaye!','success');
+  _snmClose();
+}
+
+/* ── Insert to Notes Editor ── */
+function _snmInsertNotes() {
+  var mapsToInsert = _snm.maps.filter(function(m){return m.selected;});
+  if(!mapsToInsert.length) mapsToInsert = _snm.maps;
+
+  var html = '<div style="margin:10px 0;font-family:inherit;">';
+  mapsToInsert.forEach(function(map) {
+    html += '<div style="margin-bottom:14px;border-left:3px solid '+map.color+';padding-left:10px;">' +
+      '<div style="font-size:0.78rem;font-weight:900;color:'+map.color+';margin-bottom:6px;">'+map.icon+' '+_snmE(map.title)+'</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:5px;">';
+    map.nodes.forEach(function(node) {
+      var tc = _snmTypeColor[node.type] || map.color;
+      html += '<span style="display:inline-block;padding:3px 8px;border-radius:7px;' +
+        'background:'+tc+'11;border:1px solid '+tc+'44;' +
+        'font-size:0.72rem;font-weight:800;color:'+tc+';">'+_snmE(node.text)+'</span>';
+    });
+    html += '</div></div>';
+  });
+  html += '</div>';
+
+  var area = document.getElementById('noteEditableArea');
+  var editorOverlay = document.getElementById('notesEditorOverlay');
+  var editorVisible = editorOverlay && editorOverlay.classList.contains('show');
+
+  if(area && editorVisible) {
+    area.focus();
+    try { document.execCommand('insertHTML', false, html); } catch(e) { area.innerHTML += html; }
+    showToast&&showToast('✅ Node maps notes mein add ho gaye!','success');
+    _snmClose(); return;
+  }
+
+  // Open editor with this content
+  var cleanText = mapsToInsert.map(function(map){
+    return map.icon+' '+map.title+':\n'+map.nodes.map(function(n){return '  • ['+n.type+'] '+n.text;}).join('\n');
+  }).join('\n\n');
+  if(_snm.topic && _snm.topic.tid && typeof addAiResponseToNotes==='function') {
+    if(window._aiChatContext) window._aiChatContext.tid = _snm.topic.tid;
+    addAiResponseToNotes(cleanText);
+  } else {
+    var ta=document.createElement('textarea');
+    ta.value=cleanText;ta.style.cssText='position:fixed;left:-9999px;';
+    document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');showToast&&showToast('📋 Clipboard mein copy hua! Notes mein paste karo.','success');}catch(e){}
+    document.body.removeChild(ta);
+  }
+  _snmClose();
+}
+
+/* ── Insert to Overview Card ── */
+function _snmInsertOverview() {
+  var mapsToInsert = _snm.maps.filter(function(m){return m.selected;});
+  if(!mapsToInsert.length) mapsToInsert = _snm.maps;
+  if(!_snm.topic || !_snm.topic.tid) { showToast&&showToast('Topic context nahi hai!','error'); return; }
+  var t = getTop(_snm.topic.sid, _snm.topic.secid, _snm.topic.tid);
+  if(!t) { showToast&&showToast('Topic nahi mila!','error'); return; }
+
+  // Store node map data in topic
+  if(!t.aiNodeMaps) t.aiNodeMaps = [];
+  var today = new Date().toLocaleDateString('hi-IN');
+  mapsToInsert.forEach(function(map) {
+    // Remove duplicate by title
+    t.aiNodeMaps = t.aiNodeMaps.filter(function(m){return m.title !== map.title;});
+    t.aiNodeMaps.push({
+      id: map.id, icon: map.icon, title: map.title, color: map.color,
+      nodes: map.nodes, edges: map.edges, createdAt: today
+    });
+  });
+  if(typeof save==='function') save();
+  showToast&&showToast('✅ '+mapsToInsert.length+' maps overview card mein save ho gaye!','success');
+
+  // If overview is open, refresh it
+  if(typeof tvShowSub==='function' && _snm.topic) {
+    // Don't close snm panel — just notify
+  }
+  _snmClose();
+
+  // Re-open topic view at overview
+  setTimeout(function() {
+    if(_snm.topic && typeof tvShowSub==='function') {
+      tvShowSub('nodemap', _snm.topic.sid, _snm.topic.secid, _snm.topic.tid);
+    }
+  }, 400);
+}
+
+/* ── Show JSON ── */
+function _snmShowJSON() {
+  var data = {
+    topic: _snm.topic ? _snm.topic.name : '',
+    maps: _snm.maps.map(function(m){
+      return {id:m.id,icon:m.icon,title:m.title,color:m.color,nodes:m.nodes,edges:m.edges};
+    })
+  };
+  var json = JSON.stringify(data, null, 2);
+  var overlay = document.createElement('div');
+  overlay.className = '_snm-json-overlay';
+  overlay.innerHTML =
+    '<div class="_snm-json-box">' +
+      '<div class="_snm-json-hdr">' +
+        '<span style="font-weight:800;font-size:0.86rem;color:var(--accent,#1565c0);">{ } Node Map JSON</span>' +
+        '<div style="display:flex;gap:6px;">' +
+          '<button onclick="navigator.clipboard.writeText(this.closest(\'._snm-json-box\').querySelector(\'._snm-json-ta\').value).then(()=>{showToast&&showToast(\'✅ Copied!\',\'success\')})" ' +
+          'style="padding:5px 12px;border-radius:8px;border:1.5px solid var(--accent);background:transparent;color:var(--accent);font-size:0.72rem;font-weight:700;cursor:pointer;font-family:inherit;">📋 Copy</button>' +
+          '<button onclick="this.closest(\'._snm-json-overlay\').remove()" ' +
+          'style="padding:5px 10px;border-radius:8px;border:none;background:rgba(198,40,40,0.1);color:#c62828;font-size:0.72rem;font-weight:700;cursor:pointer;font-family:inherit;">✕</button>' +
+        '</div>' +
+      '</div>' +
+      '<textarea class="_snm-json-ta" readonly>'+json.replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</textarea>' +
+    '</div>';
+  overlay.addEventListener('click', function(e){if(e.target===overlay)overlay.remove();});
+  document.body.appendChild(overlay);
+}
+
+/* ── Add "🗺️ Smart Node Map" button to AI chat header suggestions ── */
+function _snmAddChatButton(tid, sid, secid, topicName) {
+  var sugs = document.getElementById('aiChatSuggestions');
+  if(!sugs || document.getElementById('_snmChatBtn')) return;
+  var btn = document.createElement('button');
+  btn.id = '_snmChatBtn';
+  btn.className = 'snm-trigger-btn';
+  btn.innerHTML = '🗺️ Smart Node Map banao';
+  btn.title = 'Saari notes files analyze karke connected node maps banao';
+  btn.onclick = function() {
+    closeAiChat && closeAiChat();
+    setTimeout(function(){
+      _snmOpen(tid, sid, secid, topicName);
+    }, 200);
+  };
+  sugs.insertBefore(btn, sugs.firstChild);
+}
+
+/* ── Hook into openAiChat to add Smart Node Map button ── */
+var _origOpenAiChat = window.openAiChat;
+window.openAiChat = function(contextType, contextName, tid, sid, secid) {
+  _origOpenAiChat && _origOpenAiChat.apply(this, arguments);
+  // Add button after chat opens if topic context
+  if(tid) {
+    setTimeout(function(){
+      _snmAddChatButton(tid, sid, secid, contextName);
+    }, 150);
+  }
+};
+
+/* ── Handle tvShowSub for 'nodemap' category ── */
+var _origTvShowSub = window.tvShowSub;
+window.tvShowSub = function(catId, sid, secid, tid) {
+  if(catId === 'nodemap') {
+    var t = getTop(sid, secid, tid);
+    if(!t || !t.aiNodeMaps || !t.aiNodeMaps.length) {
+      showToast&&showToast('Pehle AI Chat mein Smart Node Map banao!','info');
+      return;
+    }
+    // Show saved node maps in topic view
+    var subBody = document.getElementById('tvSubBody');
+    var subTitle = document.getElementById('tvSubTitle');
+    if(subBody) {
+      subTitle.textContent = '🗺️ Node Maps';
+      var screenA = document.getElementById('tvScreenA');
+      var screenB = document.getElementById('tvScreenB');
+      if(screenA) { screenA.classList.remove('active'); screenA.style.display='none'; }
+      if(screenB) { screenB.classList.add('active'); screenB.style.display='flex'; }
+
+      subBody.innerHTML = '';
+      t.aiNodeMaps.forEach(function(map, mi) {
+        var card = document.createElement('div');
+        card.style.cssText = 'background:var(--surface);border:1.5px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden;';
+        card.innerHTML =
+          '<div style="padding:9px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;cursor:pointer;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'block\':\'none\'">' +
+            '<span style="font-size:1rem;">'+map.icon+'</span>' +
+            '<div style="flex:1;font-size:0.8rem;font-weight:800;color:var(--text);">'+_snmE(map.title)+'</div>' +
+            '<span style="font-size:0.65rem;color:var(--text2);">'+map.nodes.length+' nodes</span>' +
+            '<button onclick="event.stopPropagation();_snmOpenSaved('+mi+','+sid+','+secid+','+tid+')" style="padding:4px 9px;border-radius:7px;border:1.5px solid var(--accent);background:transparent;color:var(--accent);font-size:0.68rem;font-weight:700;cursor:pointer;font-family:inherit;">Edit/Insert</button>' +
+          '</div>' +
+          '<div style="display:none;padding:10px 12px;display:flex;flex-wrap:wrap;gap:5px;">' +
+          map.nodes.map(function(n){
+            var tc=_snmTypeColor[n.type]||map.color;
+            return '<span style="padding:3px 8px;border-radius:7px;background:'+tc+'11;border:1px solid '+tc+'44;font-size:0.7rem;font-weight:800;color:'+tc+';">'+_snmE(n.text)+'</span>';
+          }).join('') +
+          '</div>';
+        subBody.appendChild(card);
+      });
+    }
+    return;
+  }
+  _origTvShowSub && _origTvShowSub.apply(this, arguments);
+};
+
+/* ── Open saved node map for editing ── */
+window._snmOpenSaved = function(mapIdx, sid, secid, tid) {
+  var t = getTop(sid, secid, tid);
+  if(!t || !t.aiNodeMaps || !t.aiNodeMaps[mapIdx]) return;
+  _snmBuildPanel();
+  _snm.topic = {tid:tid, sid:sid, secid:secid, name:t.name};
+  _snm.maps = t.aiNodeMaps.map(function(m){
+    return Object.assign({}, m, {selected:false});
+  });
+  _snm.open = true;
+  document.getElementById('_snmPanel').classList.add('open');
+  document.getElementById('_snmSubtitle').textContent = t.name;
+  document.getElementById('_snmStatus').textContent = '✅ Saved maps loaded — edit, drag, insert karo';
+  document.getElementById('_snmMaps').innerHTML = '';
+  _snmRender();
+  if(typeof closeModal==='function') closeModal('topicViewModal');
+};
+
+/* ══ END SMART NODE MAP ══ */
 </script>
 </body>
 </html>
