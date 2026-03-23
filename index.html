@@ -13738,6 +13738,48 @@ function initQmCanvas() {
   canvas.addEventListener('pointermove', onQmPointerMove, {passive:false});
   canvas.addEventListener('pointerup',   onQmPointerUp,   {passive:true});
   canvas.style.touchAction = 'none';
+
+  // Right-click context menu
+  canvas.addEventListener('contextmenu', function(e){
+    e.preventDefault();
+    if(_qmTab==='draw') return;
+    var pt=qmPoint(e);
+    var hit=qmNodeAt(pt.x,pt.y);
+    if(hit){
+      var wr=wrap.getBoundingClientRect();
+      _qmShowCtxMenu(hit, e.clientX-wr.left, e.clientY-wr.top);
+    }
+  }, false);
+
+  // Long-press for mobile (600ms)
+  var _lpTimer=null, _lpNode=null;
+  canvas.addEventListener('touchstart', function(e){
+    if(_qmTab==='draw') return;
+    var t=e.touches[0];
+    var pt=qmPoint(t);
+    var hit=qmNodeAt(pt.x,pt.y);
+    if(hit){
+      _lpNode=hit;
+      _lpTimer=setTimeout(function(){
+        if(_lpNode){
+          var wr=wrap.getBoundingClientRect();
+          _qmShowCtxMenu(_lpNode, t.clientX-wr.left, t.clientY-wr.top);
+          _lpNode=null;
+        }
+      }, 600);
+    }
+  }, {passive:true});
+  canvas.addEventListener('touchend', function(){ clearTimeout(_lpTimer); _lpNode=null; }, {passive:true});
+  canvas.addEventListener('touchmove', function(){ clearTimeout(_lpTimer); _lpNode=null; }, {passive:true});
+
+  // Click outside menu = close it
+  wrap.addEventListener('pointerdown', function(e){
+    var menu=document.getElementById('qmNodeCtxMenu');
+    if(menu && menu.style.display!=='none'){
+      if(!menu.contains(e.target)) qmCtxClose();
+    }
+  }, true);
+
   qmRedraw();
 }
 
@@ -13801,6 +13843,52 @@ function qmDeleteSelected() {
   _qm.edges = _qm.edges.filter(function(e){ return e.from!==id && e.to!==id; });
   _qm.selectedNode = null;
   qmSaveHistory(); qmRedraw();
+  showToast && showToast('Node delete ho gaya','success');
+}
+
+// ── Context Menu ──
+var _qmCtxNode = null;
+function _qmShowCtxMenu(node, px, py){
+  _qmCtxNode = node;
+  var menu = document.getElementById('qmNodeCtxMenu');
+  var title = document.getElementById('qmNodeCtxTitle');
+  if(!menu) return;
+  if(title) title.textContent = (node.text||'Node').substring(0,28)+(node.text&&node.text.length>28?'…':'');
+  menu.style.display='flex';
+  // Position within canvas wrap
+  var wrap = document.getElementById('qmapCanvasWrap');
+  var wr = wrap ? wrap.getBoundingClientRect() : {left:0,top:0,width:300,height:400};
+  var mw=180, mh=200;
+  var left = Math.min(px, wr.width-mw-4);
+  var top  = Math.min(py, wr.height-mh-4);
+  menu.style.left = Math.max(2,left)+'px';
+  menu.style.top  = Math.max(2,top)+'px';
+  _qm.selectedNode = node; qmRedraw();
+}
+function qmCtxClose(){
+  var menu=document.getElementById('qmNodeCtxMenu');
+  if(menu) menu.style.display='none';
+  _qmCtxNode=null;
+}
+function qmCtxEdit(){
+  qmCtxClose();
+  if(_qmCtxNode) _showQmNodeEdit(_qmCtxNode);
+}
+function qmCtxDelete(){
+  if(!_qmCtxNode){ qmCtxClose(); return; }
+  _qm.selectedNode = _qmCtxNode;
+  qmCtxClose();
+  qmDeleteSelected();
+}
+function qmCtxMoveMode(){
+  qmCtxClose();
+  setQmTool('move', document.getElementById('qmt-move'));
+  showToast && showToast('✋ Move mode ON — node drag karo','success');
+}
+function qmCtxDuplicate(){
+  if(_qmCtxNode){ _qm.selectedNode=_qmCtxNode; }
+  qmCtxClose();
+  qmDuplicateSelected();
 }
 function qmDuplicateSelected() {
   if(!_qm.selectedNode) return;
@@ -14166,16 +14254,20 @@ function qmRedraw(){
     ctx.fill(); ctx.stroke();
     ctx.shadowBlur=0;
 
-    // Text with word wrap
+    // Text with word wrap + newline support
     ctx.fillStyle=n.textColor||(isDark?'#e6edf3':'#222');
     ctx.font='700 12px '+FONT; ctx.textAlign='center'; ctx.textBaseline='middle';
-    var words=(n.text||'').split(' '),line='',lines2=[],mxW=w-10;
-    words.forEach(function(ww){
-      var t=line?line+' '+ww:ww;
-      if(ctx.measureText(t).width>mxW&&line){lines2.push(line);line=ww;}else line=t;
+    var rawLines=(n.text||'').split('\n');
+    var lines2=[], mxW=w-14;
+    rawLines.forEach(function(rawLine){
+      var words=rawLine.split(' '), line='';
+      words.forEach(function(ww){
+        var t=line?line+' '+ww:ww;
+        if(ctx.measureText(t).width>mxW&&line){lines2.push(line);line=ww;}else line=t;
+      });
+      if(line||rawLine==='') lines2.push(line);
     });
-    if(line) lines2.push(line);
-    var lh=14,sY=y-(lines2.length-1)*lh/2;
+    var lh=15, sY=y-(lines2.length-1)*lh/2;
     lines2.forEach(function(l,i){ctx.fillText(l,x,sY+i*lh);});
     ctx.restore();
   });
@@ -14215,16 +14307,22 @@ function onQmPointerDown(e){
     return;
   }
   if(hit){
-    // Double-tap = edit text
+    // Single tap = action menu; double-tap = edit directly
     var now=Date.now();
-    if(now-(_qm._lastTap||0)<350&&_qm._lastTapNode===hit.id){
-      _qm._lastTap=0;
+    if(now-(_qm._lastTap||0)<380&&_qm._lastTapNode===hit.id){
+      // Double tap = seedha edit karo
+      _qm._lastTap=0; _qm._lastTapNode=null;
+      qmCtxClose();
       _showQmNodeEdit(hit);
       return;
     }
     _qm._lastTap=now; _qm._lastTapNode=hit.id;
     _qm.selectedNode=hit; qmRedraw();
-    // Start drag
+    // Single tap = action menu dikhao (mobile friendly — no right-click needed)
+    var wrap=document.getElementById('qmapCanvasWrap');
+    var wr=wrap?wrap.getBoundingClientRect():{left:0,top:0};
+    _qmShowCtxMenu(hit, e.clientX-wr.left, e.clientY-wr.top);
+    // Drag bhi chalega (pointerdown se start hoga)
     _qm.dragging={node:hit,offsetX:pt.x-hit.x,offsetY:pt.y-hit.y};
     return;
   }
@@ -14233,10 +14331,15 @@ function onQmPointerDown(e){
   _qm.pendingNode={ x:pt.x, y:pt.y, shape:_qm.tool||'bubble', fill:null, stroke:_qm.color||'#e65100' };
   var inp=document.getElementById('qmapNodeInput');
   var txt=document.getElementById('qmapNodeText');
+  var title=document.getElementById('qmNodeInputTitle');
   if(inp&&txt){
+    if(title) title.textContent='📍 Node likhein';
     inp.style.display='block';
-    inp.style.left=Math.min(pt.x,(_qm.canvas.width-200))+'px';
-    inp.style.top =Math.min(pt.y+10,(_qm.canvas.height-100))+'px';
+    // Mobile-friendly: bottom se thoda upar, center mein
+    var cw=_qm.canvas.width, ch=_qm.canvas.height;
+    var iw=230;
+    inp.style.left=Math.max(4,Math.min(pt.x-iw/2, cw-iw-4))+'px';
+    inp.style.top =Math.max(4,Math.min(pt.y+14, ch-160))+'px';
     txt.value=''; txt.focus();
   }
   qmRedraw();
@@ -14260,27 +14363,38 @@ function onQmPointerUp(e){
 function _showQmNodeEdit(node){
   var inp=document.getElementById('qmapNodeInput');
   var txt=document.getElementById('qmapNodeText');
+  var title=document.getElementById('qmNodeInputTitle');
   if(!inp||!txt) return;
-  _qm.pendingNode=node; // reuse pending for edit
+  _qm.pendingNode=node;
   _qm._editingNode=node;
+  if(title) title.textContent='✏️ Edit karo';
   txt.value=node.text||'';
   inp.style.display='block';
-  inp.style.left=Math.min(node.x,(_qm.canvas.width-200))+'px';
-  inp.style.top =Math.min(node.y+node.h/2+6,(_qm.canvas.height-100))+'px';
+  var cw=_qm.canvas?_qm.canvas.width:300;
+  var ch=_qm.canvas?_qm.canvas.height:400;
+  var iw=230;
+  inp.style.left=Math.max(4,Math.min(node.x-iw/2, cw-iw-4))+'px';
+  inp.style.top =Math.max(4,Math.min(node.y+node.h/2+8, ch-160))+'px';
   txt.focus(); txt.select();
 }
 
 // ── Node input confirm/cancel ──
 function qmConfirmNode(){
-  var txt=(document.getElementById('qmapNodeText')||{}).value||'';
+  var txEl=document.getElementById('qmapNodeText');
+  var txt=txEl?(txEl.value||''):'';
   if(!txt.trim()){ cancelQmNode(); return; }
   qmSaveHistory();
+  var lines=txt.trim().split('\n');
+  var maxLineLen=0; lines.forEach(function(l){if(l.length>maxLineLen)maxLineLen=l.length;});
+  var W=Math.max(maxLineLen*8+28,100), H=Math.max(lines.length*18+22,44);
   if(_qm._editingNode){
     _qm._editingNode.text=txt.trim();
+    // Resize node if text grew
+    _qm._editingNode.w=Math.max(_qm._editingNode.w||100,W);
+    _qm._editingNode.h=Math.max(_qm._editingNode.h||44,H);
     _qm._editingNode=null;
   } else if(_qm.pendingNode){
     var shape=_qm.pendingNode.shape||'bubble';
-    var W=Math.max(txt.length*8+20,80), H=44;
     _qm.nodes.push({
       id:'n'+Date.now(), text:txt.trim(),
       x:_qm.pendingNode.x, y:_qm.pendingNode.y,
@@ -14301,8 +14415,17 @@ function cancelQmNode(){
   if(inp) inp.style.display='none';
 }
 function onQmNodeInputKey(e){
-  if(e.key==='Enter') qmConfirmNode();
-  if(e.key==='Escape') cancelQmNode();
+  // Enter = nai line (mobile friendly - Save button se confirm karo)
+  // Sirf Escape = cancel
+  if(e.key==='Escape'){ e.preventDefault(); cancelQmNode(); }
+}
+function qmInsertNewline(){
+  var el=document.getElementById('qmapNodeText');
+  if(!el) return;
+  var s=el.selectionStart, e2=el.selectionEnd;
+  el.value=el.value.substring(0,s)+'\n'+el.value.substring(e2);
+  el.selectionStart=el.selectionEnd=s+1;
+  el.focus();
 }
 
 // ── History / Undo / Clear ──
@@ -18286,16 +18409,38 @@ initFirebase();
 
         <!-- ── NODE TEXT INPUT POPUP ── -->
         <div class="qmap-node-input" id="qmapNodeInput">
-          <input id="qmapNodeText" placeholder="Key point likhein..." maxlength="60" autofocus
-            onkeydown="onQmNodeInputKey(event)">
-          <div class="qmap-node-input-btns">
-            <button class="qmap-nib" onclick="qmConfirmNode()">✓ Add</button>
-            <button class="qmap-nib qmt-shape-btn sel" data-shape="bubble" onclick="setQmNodeShape('bubble')">⬭</button>
-            <button class="qmap-nib qmt-shape-btn" data-shape="box"    onclick="setQmNodeShape('box')">▭</button>
-            <button class="qmap-nib qmt-shape-btn" data-shape="circle" onclick="setQmNodeShape('circle')">○</button>
-            <button class="qmap-nib qmt-shape-btn" data-shape="diamond" onclick="setQmNodeShape('diamond')">◇</button>
-            <button class="qmap-nib" onclick="cancelQmNode()" style="color:var(--red);">✕</button>
+          <div style="font-size:0.68rem;color:var(--text2);font-weight:800;margin-bottom:5px;display:flex;align-items:center;justify-content:space-between;">
+            <span id="qmNodeInputTitle">📍 Node likhein</span>
+            <button onclick="cancelQmNode()" style="background:none;border:none;color:var(--red);font-size:1rem;cursor:pointer;padding:0 2px;line-height:1;">✕</button>
           </div>
+          <textarea id="qmapNodeText" placeholder="Key point likhein..." rows="3"
+            onkeydown="onQmNodeInputKey(event)"
+            style="width:100%;border:1.5px solid var(--border);border-radius:8px;padding:7px 9px;font-size:0.85rem;font-family:inherit;background:var(--surface);color:var(--text);outline:none;resize:none;min-height:64px;max-height:130px;line-height:1.55;display:block;"></textarea>
+          <!-- Mobile: Nai Line button prominently shown -->
+          <div style="display:flex;gap:5px;margin-top:6px;flex-wrap:wrap;align-items:center;">
+            <button class="qmap-nib" onclick="qmInsertNewline()" title="Nai line add karo" style="background:var(--surface2);font-size:0.75rem;min-width:70px;">↵ Nai Line</button>
+            <div style="flex:1;"></div>
+            <button class="qmap-nib qmt-shape-btn sel" data-shape="bubble" onclick="setQmNodeShape('bubble')" title="Bubble">⬭</button>
+            <button class="qmap-nib qmt-shape-btn" data-shape="box"     onclick="setQmNodeShape('box')"     title="Box">▭</button>
+            <button class="qmap-nib qmt-shape-btn" data-shape="circle"  onclick="setQmNodeShape('circle')"  title="Circle">○</button>
+            <button class="qmap-nib qmt-shape-btn" data-shape="diamond" onclick="setQmNodeShape('diamond')" title="Diamond">◇</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px;">
+            <button class="qmap-nib" onclick="qmConfirmNode()" style="flex:1;background:linear-gradient(135deg,#e65100,#f57c00);color:#fff;border-color:#e65100;font-size:0.82rem;padding:7px 0;">✓ Save karo</button>
+            <button class="qmap-nib" onclick="cancelQmNode()" style="color:var(--red);min-width:60px;font-size:0.82rem;padding:7px 0;">✕ Roko</button>
+          </div>
+        </div>
+
+        <!-- ── NODE CONTEXT MENU (tap on node to open) ── -->
+        <div id="qmNodeCtxMenu" style="display:none;position:absolute;z-index:999;background:var(--surface);border:1.5px solid var(--border);border-radius:14px;box-shadow:0 6px 28px rgba(0,0,0,0.22);min-width:190px;padding:6px 0;flex-direction:column;">
+          <div style="padding:8px 15px 5px;font-size:0.7rem;color:var(--text2);font-weight:800;letter-spacing:0.4px;border-bottom:1px solid var(--border);margin-bottom:3px;" id="qmNodeCtxTitle">Node</div>
+          <button onclick="qmCtxEdit()" style="display:flex;align-items:center;gap:10px;width:100%;padding:12px 16px;border:none;background:none;color:var(--text);font-size:0.9rem;font-family:inherit;cursor:pointer;font-weight:600;-webkit-tap-highlight-color:transparent;">✏️ Edit / Content badlein</button>
+          <button onclick="qmCtxDelete()" style="display:flex;align-items:center;gap:10px;width:100%;padding:12px 16px;border:none;background:none;color:#c62828;font-size:0.9rem;font-family:inherit;cursor:pointer;font-weight:600;-webkit-tap-highlight-color:transparent;">🗑️ Sirf yeh node hatao</button>
+          <div style="height:1px;background:var(--border);margin:3px 10px;"></div>
+          <button onclick="qmCtxMoveMode()" style="display:flex;align-items:center;gap:10px;width:100%;padding:12px 16px;border:none;background:none;color:var(--text);font-size:0.9rem;font-family:inherit;cursor:pointer;font-weight:600;-webkit-tap-highlight-color:transparent;">✋ Move mode (drag karo)</button>
+          <button onclick="qmCtxDuplicate()" style="display:flex;align-items:center;gap:10px;width:100%;padding:12px 16px;border:none;background:none;color:var(--text);font-size:0.9rem;font-family:inherit;cursor:pointer;font-weight:600;-webkit-tap-highlight-color:transparent;">⎘ Copy / Duplicate karo</button>
+          <div style="height:1px;background:var(--border);margin:3px 10px;"></div>
+          <button onclick="qmCtxClose()" style="display:flex;align-items:center;gap:10px;width:100%;padding:10px 16px;border:none;background:none;color:var(--text2);font-size:0.82rem;font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;">✕ Band karo</button>
         </div>
 
       </div><!-- /qmapOverlay -->
@@ -21705,6 +21850,31 @@ function scInitCanvas() {
     qmcv.addEventListener('pointerdown', _scQmDown, { passive:false });
     qmcv.addEventListener('pointermove', _scQmMove, { passive:false });
     qmcv.addEventListener('pointerup',   _scQmUp,   { passive:true  });
+    // Right-click context menu for sc canvas
+    qmcv.oncontextmenu = function(e){
+      e.preventDefault();
+      if(_sc.mode!=='qmap') return;
+      var rect=qmcv.getBoundingClientRect();
+      var x=(e.clientX-rect.left)*qmcv.width/rect.width, y=(e.clientY-rect.top)*qmcv.height/rect.height;
+      var hit=_scQmNodeAt(x,y);
+      if(hit){
+        var wrap=document.getElementById('scCanvasWrap');
+        var wr=wrap?wrap.getBoundingClientRect():{left:0,top:0};
+        _scQmShowCtx(hit, e.clientX-wr.left, e.clientY-wr.top);
+      }
+    };
+    // Long-press for mobile
+    var _scLpTimer=null,_scLpNode=null;
+    qmcv.addEventListener('touchstart',function(e){
+      if(_sc.mode!=='qmap') return;
+      var t=e.touches[0];
+      var rect=qmcv.getBoundingClientRect();
+      var x=(t.clientX-rect.left)*qmcv.width/rect.width,y=(t.clientY-rect.top)*qmcv.height/rect.height;
+      var hit=_scQmNodeAt(x,y);
+      if(hit){_scLpNode=hit;_scLpTimer=setTimeout(function(){if(_scLpNode){var wrap=document.getElementById('scCanvasWrap');var wr=wrap?wrap.getBoundingClientRect():{left:0,top:0};_scQmShowCtx(_scLpNode,t.clientX-wr.left,t.clientY-wr.top);_scLpNode=null;}},600);}
+    },{passive:true});
+    qmcv.addEventListener('touchend',function(){clearTimeout(_scLpTimer);_scLpNode=null;},{passive:true});
+    qmcv.addEventListener('touchmove',function(){clearTimeout(_scLpTimer);_scLpNode=null;},{passive:true});
   }
   // Set initial draw canvas pointer-events based on current mode
   cv.style.pointerEvents = (_sc.mode === 'draw') ? 'all' : 'none';
@@ -21861,8 +22031,159 @@ function _scShowBlockActions(b, el) {
     el.remove(); bar.remove();
     _sc.activeBlock=null; _sc.activeBlockId=null;
   }));
+
+  // ── "→ Slide" button — doosri slide par move karo ──
+  if(_sc.slides && _sc.slides.length > 1) {
+    var moveBtn = document.createElement('button');
+    moveBtn.className = 'sc-block-act-btn';
+    moveBtn.title     = 'Doosri slide par move karo';
+    moveBtn.textContent = '⇢';
+    moveBtn.style.cssText = 'background:rgba(21,101,192,0.15);color:#1565c0;font-weight:900;font-size:0.85rem;';
+    moveBtn.addEventListener('pointerdown', function(e) {
+      e.stopPropagation();
+      _scShowMoveToSlideMenu(b, el, bar);
+    });
+    bar.appendChild(moveBtn);
+  }
+
   el.appendChild(bar);
 }
+
+// ══════════════════════════════════════════════════════
+// 🔀 MOVE BLOCK TO ANOTHER SLIDE — Menu + Logic
+// ══════════════════════════════════════════════════════
+function _scShowMoveToSlideMenu(b, el, bar) {
+  var old = document.getElementById('_scMoveSlideMenu');
+  if(old) old.remove();
+
+  var menu = document.createElement('div');
+  menu.id = '_scMoveSlideMenu';
+  menu.style.cssText =
+    'position:fixed;z-index:19999;' +
+    'background:var(--surface,#fff);border:1.5px solid var(--border,#bdd5ea);' +
+    'border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,0.22);' +
+    'padding:8px 0;min-width:190px;font-family:inherit;overflow:hidden;';
+
+  var rect = el.getBoundingClientRect();
+  var menuTop  = Math.min(rect.bottom + 6, window.innerHeight - 240);
+  var menuLeft = Math.max(4, Math.min(rect.left, window.innerWidth - 200));
+  menu.style.top  = menuTop  + 'px';
+  menu.style.left = menuLeft + 'px';
+
+  var title = document.createElement('div');
+  title.style.cssText =
+    'padding:7px 14px 8px;font-size:0.72rem;font-weight:900;' +
+    'color:var(--text2,#37526d);border-bottom:1px solid var(--border,#bdd5ea);margin-bottom:4px;';
+  title.textContent = '\u21e2 Kis slide par bhejein?';
+  menu.appendChild(title);
+
+  _sc.slides.forEach(function(slide, si) {
+    if(si === _sc.curSlide) return;
+    var opt = document.createElement('div');
+    opt.style.cssText =
+      'padding:9px 14px;cursor:pointer;font-size:0.78rem;font-weight:700;' +
+      'color:var(--text,#0d1b2a);display:flex;align-items:center;gap:8px;' +
+      'transition:background 0.12s;-webkit-tap-highlight-color:transparent;';
+    opt.innerHTML =
+      '<span style="width:22px;height:22px;border-radius:7px;' +
+      'background:rgba(21,101,192,0.12);color:#1565c0;font-size:0.7rem;font-weight:900;' +
+      'display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+      (si+1)+'</span>'+
+      '<span style="flex:1;">'+(slide.title||('Slide '+(si+1)))+'</span>'+
+      '<span style="font-size:0.62rem;color:var(--text2);font-weight:600;">'+
+      (slide.textBlocks?slide.textBlocks.length:0)+' blocks</span>';
+    opt.addEventListener('mouseenter',function(){opt.style.background='rgba(21,101,192,0.07)';});
+    opt.addEventListener('mouseleave',function(){opt.style.background='';});
+    opt.addEventListener('pointerdown',function(e){
+      e.stopPropagation(); menu.remove();
+      _scMoveBlockToSlide(b, el, bar, si);
+    });
+    menu.appendChild(opt);
+  });
+
+  var sep = document.createElement('div');
+  sep.style.cssText='height:1px;background:var(--border,#bdd5ea);margin:4px 0;';
+  menu.appendChild(sep);
+
+  var newOpt = document.createElement('div');
+  newOpt.style.cssText =
+    'padding:9px 14px;cursor:pointer;font-size:0.78rem;font-weight:700;' +
+    'color:#2e7d32;display:flex;align-items:center;gap:8px;' +
+    'transition:background 0.12s;-webkit-tap-highlight-color:transparent;';
+  newOpt.innerHTML =
+    '<span style="width:22px;height:22px;border-radius:7px;' +
+    'background:rgba(46,125,50,0.12);font-size:0.9rem;' +
+    'display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">\u2795</span>'+
+    '<span>Nayi Slide par bhejo</span>';
+  newOpt.addEventListener('mouseenter',function(){newOpt.style.background='rgba(46,125,50,0.07)';});
+  newOpt.addEventListener('mouseleave',function(){newOpt.style.background='';});
+  newOpt.addEventListener('pointerdown',function(e){
+    e.stopPropagation(); menu.remove();
+    scSnapshot();
+    var ns = _scNewSlide('Slide '+(_sc.slides.length+1));
+    _sc.slides.push(ns);
+    _scMoveBlockToSlide(b, el, bar, _sc.slides.length-1);
+    _scRenderSlideNav && _scRenderSlideNav();
+  });
+  menu.appendChild(newOpt);
+  document.body.appendChild(menu);
+
+  setTimeout(function(){
+    document.addEventListener('pointerdown',function _cm(ev){
+      if(!menu.contains(ev.target)){menu.remove();document.removeEventListener('pointerdown',_cm);}
+    });
+  },50);
+}
+
+function _scMoveBlockToSlide(b, el, bar, targetSlideIdx) {
+  scSnapshot();
+  var curSlide    = _scCur();
+  var targetSlide = _sc.slides[targetSlideIdx];
+  if(!curSlide || !targetSlide) return;
+
+  curSlide.textBlocks = curSlide.textBlocks.filter(function(x){return x.id!==b.id;});
+  if(el)  el.remove();
+  if(bar) bar.remove();
+  _sc.activeBlock = null; _sc.activeBlockId = null;
+
+  var wrap = document.getElementById('scCanvasWrap');
+  var wW   = wrap ? (wrap.offsetWidth  || 340) : 340;
+  var wH   = wrap ? (wrap.offsetHeight || 480) : 480;
+  var PAD  = 14, GAP_X = 12, GAP_Y = 10;
+  var COLS = (wW >= 300) ? 2 : 1;
+  var BOX_W = COLS===2 ? Math.floor((wW-PAD*2-GAP_X)/2) : (wW-PAD*2);
+
+  var tBlocks = targetSlide.textBlocks || [];
+  var colY = [PAD, PAD];
+  tBlocks.forEach(function(blk){
+    var bH  = 60;
+    var col = (COLS===2 && (blk.x||0) >= wW/2) ? 1 : 0;
+    var bot = (blk.y||0) + bH + GAP_Y;
+    if(bot > colY[col]) colY[col] = bot;
+  });
+
+  var c    = (COLS===1) ? 0 : (colY[0]<=colY[1] ? 0 : 1);
+  var newX = PAD + c*(BOX_W+GAP_X);
+  var newY = colY[c];
+  if(newY > wH-PAD-40){ newX=PAD; newY=PAD; }
+
+  var movedBlock = Object.assign({},b,{
+    id: 'scb_mv_'+Date.now(),
+    x: newX, y: newY, w: BOX_W
+  });
+  targetSlide.textBlocks.push(movedBlock);
+
+  _sc.curSlide = targetSlideIdx;
+  _scRenderSlide    && _scRenderSlide();
+  _scSyncTextBlocksDOM && _scSyncTextBlocksDOM();
+  _scRenderSlideNav && _scRenderSlideNav();
+
+  showToast && showToast(
+    '\u2705 Block \u2192 '+(targetSlide.title||'Slide '+(targetSlideIdx+1))+' par move ho gaya!',
+    'success'
+  );
+}
+// ══ END MOVE BLOCK TO SLIDE ══
 
 function scEditBlock(b, el) {
   // Hide handles during edit
@@ -22090,42 +22411,117 @@ function _scQmRender() {
   var nm={}; nodes.forEach(function(n){nm[n.id]=n;});
   edges.forEach(function(e){
     var a=nm[e.from],b=nm[e.to]; if(!a||!b) return;
-    ctx.save();ctx.strokeStyle='#888';ctx.lineWidth=1.5;ctx.globalAlpha=0.65;
+    ctx.save();ctx.strokeStyle='#888';ctx.lineWidth=1.5;ctx.globalAlpha=0.7;
     ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.restore();
   });
   nodes.forEach(function(n){
-    var r=28; ctx.save();ctx.shadowColor='rgba(0,0,0,0.12)';ctx.shadowBlur=6;
-    ctx.fillStyle=n.color||'#e65100';ctx.globalAlpha=0.85;ctx.beginPath();
-    if(n.shape==='box'){if(ctx.roundRect)ctx.roundRect(n.x-r,n.y-r/1.4,r*2,r*1.4,8);else ctx.rect(n.x-r,n.y-r/1.4,r*2,r*1.4);}
-    else if(n.shape==='diamond'){ctx.moveTo(n.x,n.y-r);ctx.lineTo(n.x+r,n.y);ctx.lineTo(n.x,n.y+r);ctx.lineTo(n.x-r,n.y);ctx.closePath();}
-    else{ctx.arc(n.x,n.y,r,0,Math.PI*2);}
+    // Dynamic size based on label length
+    var rawLines=(n.label||'').split('\n');
+    var maxLen=0; rawLines.forEach(function(l){if(l.length>maxLen)maxLen=l.length;});
+    var r=Math.max(34, maxLen*5+18);
+    var rh=Math.max(28, rawLines.length*16+14);
+    ctx.save();ctx.shadowColor='rgba(0,0,0,0.14)';ctx.shadowBlur=8;
+    ctx.fillStyle=n.color||'#e65100';ctx.globalAlpha=0.88;ctx.beginPath();
+    if(n.shape==='box'){
+      if(ctx.roundRect)ctx.roundRect(n.x-r,n.y-rh/2,r*2,rh,9);
+      else ctx.rect(n.x-r,n.y-rh/2,r*2,rh);
+    } else if(n.shape==='diamond'){
+      ctx.moveTo(n.x,n.y-rh);ctx.lineTo(n.x+r,n.y);ctx.lineTo(n.x,n.y+rh);ctx.lineTo(n.x-r,n.y);ctx.closePath();
+    } else {
+      ctx.arc(n.x,n.y,r,0,Math.PI*2);
+    }
     ctx.fill();ctx.restore();
-    ctx.save();ctx.fillStyle='#fff';ctx.font='bold 11px "Noto Sans Devanagari","Baloo 2",sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
-    var words=(n.label||'').split(' '),lines=[],cur2='';
-    words.forEach(function(w){if((cur2+w).length>8&&cur2){lines.push(cur2.trim());cur2=w+' ';}else cur2+=w+' ';});
-    if(cur2.trim())lines.push(cur2.trim());
-    var lh=13;lines.forEach(function(l,i){ctx.fillText(l,n.x,n.y+(i-(lines.length-1)/2)*lh);});
+    // Text — multiline support
+    ctx.save();ctx.fillStyle='#fff';ctx.font='bold 12px "Noto Sans Devanagari","Baloo 2",sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    var allLines=[];
+    rawLines.forEach(function(rawLine){
+      var words=rawLine.split(' '), line='', mxW=(r*2)-14;
+      words.forEach(function(w){
+        var t=line?line+' '+w:w;
+        if(ctx.measureText(t).width>mxW&&line){allLines.push(line);line=w;}else line=t;
+      });
+      allLines.push(line);
+    });
+    var lh=15;
+    allLines.forEach(function(l,i){ctx.fillText(l,n.x,n.y+(i-(allLines.length-1)/2)*lh);});
     ctx.restore();
   });
 }
 
-function _scQmNodeAt(x,y){ var hit=null; (_scCur()&&_scCur().qmNodes||[]).forEach(function(n){if(Math.hypot(n.x-x,n.y-y)<32)hit=n;}); return hit; }
+function _scQmNodeAt(x,y){ var hit=null; (_scCur()&&_scCur().qmNodes||[]).forEach(function(n){if(Math.hypot(n.x-x,n.y-y)<36)hit=n;}); return hit; }
+
+// Study Canvas node context menu
+var _scQmCtxNode=null;
+function _scQmShowCtx(node, px, py){
+  _scQmCtxNode=node;
+  var menu=document.getElementById('scQmCtxMenu');
+  if(!menu){
+    menu=document.createElement('div');
+    menu.id='scQmCtxMenu';
+    menu.style.cssText='position:absolute;z-index:999;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.2);min-width:175px;padding:6px 0;flex-direction:column;';
+    menu.innerHTML=
+      '<div style="padding:6px 14px 4px;font-size:0.68rem;color:var(--text2);font-weight:800;border-bottom:1px solid var(--border);margin-bottom:4px;" id="scQmCtxTitle">Node</div>'+
+      '<button onclick="_scQmCtxEdit()" style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 14px;border:none;background:none;color:var(--text);font-size:0.82rem;font-family:inherit;cursor:pointer;font-weight:600;">✏️ Edit karo</button>'+
+      '<button onclick="_scQmCtxDel()" style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 14px;border:none;background:none;color:#c62828;font-size:0.82rem;font-family:inherit;cursor:pointer;font-weight:600;">🗑️ Sirf yeh delete karo</button>'+
+      '<div style="height:1px;background:var(--border);margin:2px 8px;"></div>'+
+      '<button onclick="_scQmCtxClose()" style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 14px;border:none;background:none;color:var(--text2);font-size:0.78rem;font-family:inherit;cursor:pointer;">✕ Band karo</button>';
+    var wrap=document.getElementById('scCanvasWrap')||document.getElementById('studyCanvasPanel');
+    if(wrap) wrap.appendChild(menu);
+  }
+  var title=document.getElementById('scQmCtxTitle');
+  if(title) title.textContent=(node.label||'Node').substring(0,28);
+  menu.style.display='flex';
+  var wrap=document.getElementById('scCanvasWrap');
+  if(wrap){
+    var wr=wrap.getBoundingClientRect();
+    menu.style.left=Math.min(px,wr.width-180)+'px';
+    menu.style.top=Math.min(py,wr.height-160)+'px';
+  }
+}
+function _scQmCtxClose(){var m=document.getElementById('scQmCtxMenu');if(m)m.style.display='none';_scQmCtxNode=null;}
+function _scQmCtxEdit(){
+  _scQmCtxClose();
+  if(!_scQmCtxNode) return;
+  var node=_scQmCtxNode;
+  var newLabel=prompt('Node ka content badlein (Enter=confirm):',node.label||'');
+  if(newLabel!==null){ node.label=newLabel||node.label; _scQmRender(); }
+}
+function _scQmCtxDel(){
+  if(!_scQmCtxNode){_scQmCtxClose();return;}
+  var id=_scQmCtxNode.id;
+  _scQmCtxClose();
+  scSnapshot();
+  var cur=_scCur(); if(!cur) return;
+  cur.qmNodes=cur.qmNodes.filter(function(n){return n.id!==id;});
+  cur.qmEdges=(cur.qmEdges||[]).filter(function(e){return e.from!==id&&e.to!==id;});
+  _scQmRender();
+  showToast && showToast('Node delete ho gaya','success');
+}
 
 function _scQmDown(e){
   if(_sc.mode!=='qmap') return; e.preventDefault();
   var cv=_sc.qmCanvas,rect=cv.getBoundingClientRect();
   var x=(e.clientX-rect.left)*cv.width/rect.width,y=(e.clientY-rect.top)*cv.height/rect.height;
   var hit=_scQmNodeAt(x,y),now=Date.now();
-  if(hit&&now-_scQmTouchLast<350){_scQmConnecting=hit;showToast('🔗 Doosre node par tap karo','success');_scQmTouchLast=0;return;}
-  _scQmTouchLast=now;
+  // Double-tap = edit
+  if(hit&&now-_scQmTouchLast<350&&_scQmLastHitId===hit.id){
+    _scQmTouchLast=0; _scQmLastHitId=null;
+    var newLabel=prompt('Node ka naam / content:',hit.label||'');
+    if(newLabel!==null){ hit.label=newLabel||hit.label; _scQmRender(); }
+    return;
+  }
+  _scQmTouchLast=now; _scQmLastHitId=hit?hit.id:null;
   if(hit){_scQmDragging=hit;_scQmDragOff.x=x-hit.x;_scQmDragOff.y=y-hit.y;}
   else if(_scQmConnecting){_scQmConnecting=null;}
   else{
     scSnapshot(); var cur=_scCur(); if(!cur) return;
     var node={id:'qn'+Date.now(),label:'Node '+_scQmNextId++,x:x,y:y,color:_scQmNodeColors[cur.qmNodes.length%_scQmNodeColors.length],shape:'bubble'};
-    cur.qmNodes.push(node); _scQmRender(); _scQmEditLabel(node);
+    cur.qmNodes.push(node); _scQmRender();
+    var newLabel=prompt('Node ka naam likhein:',node.label||'');
+    if(newLabel!==null){ node.label=newLabel||node.label; _scQmRender(); }
   }
 }
+var _scQmLastHitId=null;
 function _scQmMove(e){
   if(_sc.mode!=='qmap'||!_scQmDragging) return;
   var cv=_sc.qmCanvas,rect=cv.getBoundingClientRect();
@@ -22135,7 +22531,7 @@ function _scQmMove(e){
 }
 function _scQmUp(e){
   if(_scQmConnecting&&_scQmDragging&&_scQmConnecting.id!==_scQmDragging.id){
-    scSnapshot(); var cur=_scCur(); if(cur) cur.qmEdges.push({from:_scQmConnecting.id,to:_scQmDragging.id});
+    scSnapshot(); var cur=_scCur(); if(cur) cur.qmEdges=(cur.qmEdges||[]);cur&&cur.qmEdges.push({from:_scQmConnecting.id,to:_scQmDragging.id});
     _scQmConnecting=null;_scQmRender();
   }
   _scQmDragging=null;
@@ -22343,10 +22739,55 @@ window.neSendAllHighlightsToCanvas = function() {
     return Math.max(1, lines) * LINE_H + BOX_PAD_V * 2 + 8;
   }
 
-  var slideIdx  = _sc.curSlide;
-  var colY      = [PAD, PAD];
-  var newSlides = 0;
-  var placed    = 0;
+  // ── SMART SLIDE SELECTION: pehle koi existing slide dhundho jisme jagah ho ──
+  // Agar current slide full hai, pehli available slide pe jao, phir new slide banao
+  function _scFindSlideWithSpace(neededH) {
+    for(var si = 0; si < _sc.slides.length; si++) {
+      var sl = _sc.slides[si];
+      var blocks = sl.textBlocks || [];
+      // Calculate used height — bottom-most block ka bottom Y
+      var maxY = PAD;
+      blocks.forEach(function(blk) {
+        var bBottom = (blk.y || 0) + estH(blk.html ? blk.html.replace(/<[^>]+>/g,'') : '');
+        if(bBottom > maxY) maxY = bBottom;
+      });
+      var freeH = wH - maxY - PAD;
+      if(freeH >= neededH + GAP_Y) return si; // Yeh slide mein jagah hai
+    }
+    return -1; // Koi slide nahi mili — new banana padega
+  }
+
+  // ── Calculate starting colY for a slide (existing blocks ke baad) ──
+  function _scGetSlideColY(slideIdx) {
+    var sl = _sc.slides[slideIdx];
+    var blocks = sl ? (sl.textBlocks || []) : [];
+    var colY = [PAD, PAD];
+    if(COLS === 1) {
+      var maxY = PAD;
+      blocks.forEach(function(blk) {
+        var bH = estH(blk.html ? blk.html.replace(/<[^>]+>/g,'') : '');
+        var bottom = (blk.y || 0) + bH + GAP_Y;
+        if(bottom > maxY) maxY = bottom;
+      });
+      colY = [maxY, maxY];
+    } else {
+      // 2-column: figure out which column each block belongs to
+      blocks.forEach(function(blk) {
+        var bH = estH(blk.html ? blk.html.replace(/<[^>]+>/g,'') : '');
+        var col = (blk.x || 0) < (wW / 2) ? 0 : 1;
+        var bottom = (blk.y || 0) + bH + GAP_Y;
+        if(bottom > colY[col]) colY[col] = bottom;
+      });
+    }
+    return colY;
+  }
+
+  // ── Start placement: find first slide with space ──
+  var firstAvail = _scFindSlideWithSpace(estH(items[0].text));
+  var slideIdx   = (firstAvail >= 0) ? firstAvail : _sc.curSlide;
+  var colY       = _scGetSlideColY(slideIdx);
+  var newSlides  = 0;
+  var placed     = 0;
 
   items.forEach(function(item, i) {
     var bH = estH(item.text);
@@ -22354,21 +22795,35 @@ window.neSendAllHighlightsToCanvas = function() {
     var x  = PAD + c * (BOX_W + GAP_X);
     var y  = colY[c];
 
-    // Slide full? → new slide
+    // Slide full? → try next existing slide → else new slide
     if(y + bH > wH - PAD) {
       _scSyncCurrentSlideFromDOM && _scSyncCurrentSlideFromDOM();
 
-      newSlides++;
-      var ns = _scNewSlide('Slide ' + (_sc.slides.length + 1));
-      _sc.slides.push(ns);
-      slideIdx = _sc.slides.length - 1;
+      // Try next existing slide
+      var nextAvail = -1;
+      for(var si = slideIdx + 1; si < _sc.slides.length; si++) {
+        var cy = _scGetSlideColY(si);
+        var minY = Math.min(cy[0], cy[1]);
+        if(minY + bH <= wH - PAD) { nextAvail = si; break; }
+      }
+
+      if(nextAvail >= 0) {
+        // Existing slide mein jagah hai
+        slideIdx = nextAvail;
+        colY = _scGetSlideColY(slideIdx);
+      } else {
+        // New slide banana padega
+        newSlides++;
+        var ns = _scNewSlide('Slide ' + (_sc.slides.length + 1));
+        _sc.slides.push(ns);
+        slideIdx = _sc.slides.length - 1;
+        colY = [PAD, PAD];
+      }
+
       _sc.curSlide = slideIdx;
-
-      colY = [PAD, PAD];
-      c    = 0;
-      x    = PAD;
-      y    = PAD;
-
+      c    = COLS === 1 ? 0 : (colY[0] <= colY[1] ? 0 : 1);
+      x    = PAD + c * (BOX_W + GAP_X);
+      y    = colY[c];
       _scRenderSlide && _scRenderSlide();
     }
 
@@ -22476,8 +22931,50 @@ window._scSmartSendToCanvas = function(text) {
     slideIdx = 0;
   }
 
-  // Track Y positions per column on current slide
-  var colY = [PAD + HEADER_H, PAD + HEADER_H];
+  // ── SMART SLIDE SELECTION: existing slides mein jagah dhundho ──
+  function _smartEstH(txt) {
+    var lines = Math.ceil(txt.length / CHARS_PER_LINE) + (txt.match(/\n/g)||[]).length;
+    return Math.max(1, lines) * LINE_H + BOX_PAD * 2 + 6;
+  }
+  function _smartGetColY(si) {
+    var sl = _sc.slides[si];
+    var blocks = sl ? (sl.textBlocks || []) : [];
+    var cy = [PAD + HEADER_H, PAD + HEADER_H];
+    if(colsInRow === 1) {
+      var maxY = PAD + HEADER_H;
+      blocks.forEach(function(blk) {
+        var bH = _smartEstH(blk.html ? blk.html.replace(/<[^>]+>/g,'') : '');
+        var bottom = (blk.y || 0) + bH + GAP_Y;
+        if(bottom > maxY) maxY = bottom;
+      });
+      cy = [maxY, maxY];
+    } else {
+      blocks.forEach(function(blk) {
+        var bH = _smartEstH(blk.html ? blk.html.replace(/<[^>]+>/g,'') : '');
+        var col = (blk.x || 0) < (wW / 2) ? 0 : 1;
+        var bottom = (blk.y || 0) + bH + GAP_Y;
+        if(bottom > cy[col]) cy[col] = bottom;
+      });
+    }
+    return cy;
+  }
+
+  // Find first slide with enough space for first chunk
+  var _firstChunkH = chunks.length ? _smartEstH(chunks[0]) : 60;
+  var _startSlide = -1;
+  for(var _si = 0; _si < _sc.slides.length; _si++) {
+    var _cy = _smartGetColY(_si);
+    if(Math.min(_cy[0], _cy[1]) + _firstChunkH <= wH - PAD) {
+      _startSlide = _si; break;
+    }
+  }
+  if(_startSlide >= 0) {
+    slideIdx = _startSlide;
+  }
+  // else slideIdx stays as _sc.curSlide (will create new slide when needed)
+
+  // Track Y positions per column on starting slide
+  var colY = _smartGetColY(slideIdx);
 
   for(var ci = 0; ci < chunks.length; ci++) {
     var chunk = chunks[ci];
@@ -22488,23 +22985,36 @@ window._scSmartSendToCanvas = function(text) {
     var x = PAD + c * (BOX_W + GAP_X);
     var y = colY[c];
 
-    // If this box doesn't fit on current slide → new slide
+    // If this box doesn't fit on current slide → try next existing → else new slide
     if(y + bH > wH - PAD) {
       // Save current slide DOM
       _scSyncCurrentSlideFromDOM && _scSyncCurrentSlideFromDOM();
 
-      // Create new slide
-      newSlides++;
-      var ns = _scNewSlide('Slide ' + (_sc.slides.length + 1));
-      _sc.slides.push(ns);
-      slideIdx = _sc.slides.length - 1;
-      _sc.curSlide = slideIdx;
+      // Try next existing slide with space
+      var _nextSlide = -1;
+      for(var _nsi = slideIdx + 1; _nsi < _sc.slides.length; _nsi++) {
+        var _ncy = _smartGetColY(_nsi);
+        if(Math.min(_ncy[0], _ncy[1]) + bH <= wH - PAD) {
+          _nextSlide = _nsi; break;
+        }
+      }
 
-      // Reset layout
-      colY = [PAD + HEADER_H, PAD + HEADER_H];
-      c    = 0;
-      x    = PAD;
-      y    = PAD + HEADER_H;
+      if(_nextSlide >= 0) {
+        slideIdx = _nextSlide;
+        colY = _smartGetColY(slideIdx);
+      } else {
+        // Create new slide
+        newSlides++;
+        var ns = _scNewSlide('Slide ' + (_sc.slides.length + 1));
+        _sc.slides.push(ns);
+        slideIdx = _sc.slides.length - 1;
+        colY = [PAD + HEADER_H, PAD + HEADER_H];
+      }
+
+      _sc.curSlide = slideIdx;
+      c    = (colsInRow === 1) ? 0 : (colY[0] <= colY[1] ? 0 : 1);
+      x    = PAD + c * (BOX_W + GAP_X);
+      y    = colY[c];
 
       // Render new slide
       _scRenderSlide && _scRenderSlide();
