@@ -1249,6 +1249,69 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   pointer-events: none; z-index: 20;
 }
 
+/* ══ HIGHLIGHTS → CANVAS BUTTON ══ */
+@keyframes _hlBtnPulse {
+  0%,100% { box-shadow: 0 2px 10px rgba(21,101,192,0.3); }
+  50%      { box-shadow: 0 2px 18px rgba(106,27,154,0.55), 0 0 0 3px rgba(21,101,192,0.15); }
+}
+/* ══ END HIGHLIGHTS BUTTON ══ */
+#_neCanvasTip {
+  position: fixed;
+  z-index: 29999;
+  background: linear-gradient(135deg,#1565c0,#6a1b9a);
+  color: #fff;
+  border-radius: 11px;
+  padding: 6px 14px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 4px 18px rgba(21,101,192,0.35);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+  animation: _neTipIn 0.18s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+#_neCanvasTip:hover { opacity: 0.92; transform: scale(1.04); }
+@keyframes _neTipIn {
+  from { opacity:0; transform:translateY(6px) translateX(-50%); }
+  to   { opacity:1; transform:translateY(0)   translateX(-50%); }
+}
+
+/* Drag highlight on noteEditableArea when canvas is open */
+#noteEditableArea.ne-drag-ready {
+  cursor: grab !important;
+}
+#noteEditableArea.ne-drag-ready ::selection {
+  background: rgba(21,101,192,0.25);
+}
+
+/* Canvas drop active — brighter when note drag */
+#scCanvasWrap.ne-drop-active::after {
+  content: '📋 Highlighted text yahan drop karo!';
+  position: absolute; inset: 0;
+  background: rgba(106,27,154,0.08);
+  border: 3px dashed #6a1b9a;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.9rem; font-weight: 800; color: #6a1b9a;
+  pointer-events: none; z-index: 20;
+}
+
+/* Smart-send flash animation on new blocks */
+@keyframes scBlockFlash {
+  0%   { box-shadow: 0 0 0 3px rgba(21,101,192,0.7); }
+  100% { box-shadow: 0 0 0 0px rgba(21,101,192,0); }
+}
+.sc-text-block.sc-new-flash {
+  animation: scBlockFlash 0.7s ease forwards;
+}
+/* ══ END NOTES→CANVAS TOOLTIP ══ */
+
 /* ── Drag-from-notes highlight ── */
 .sc-drag-source {
   background: rgba(21,101,192,0.08) !important;
@@ -4698,6 +4761,19 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         </svg>
       </button>
 
+      <!-- Highlights → Canvas -->
+      <button id="neHlCanvasBtn" onclick="neSendAllHighlightsToCanvas()" title="Saare Highlights → Canvas"
+        style="width:36px;height:36px;border-radius:10px;border:1.5px solid rgba(21,101,192,0.4);
+        background:linear-gradient(135deg,rgba(21,101,192,0.12),rgba(106,27,154,0.12));
+        cursor:pointer;display:flex;align-items:center;
+        justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;
+        position:relative;box-shadow:0 2px 10px rgba(21,101,192,0.15);">
+        <span style="font-size:1rem;">🎨</span>
+        <span id="neHlBadge" style="display:none;position:absolute;top:-4px;right:-4px;
+          background:#c62828;color:#fff;border-radius:50%;width:14px;height:14px;
+          font-size:0.5rem;font-weight:900;line-height:14px;text-align:center;"></span>
+      </button>
+
       <!-- Word count -->
       <div style="font-size:0.55rem;color:var(--text2);text-align:center;padding:2px;flex-shrink:0;">
         <span id="editWordCount" style="font-weight:700;display:block;">0</span>
@@ -4813,7 +4889,21 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
       <div style="display:flex;align-items:center;gap:6px;">
         <span id="editorStatus" style="font-size:0.74rem;color:var(--text2);font-weight:600;display:none;">👁️ Read Mode</span>
       </div>
-      <div style="display:flex;gap:7px;">
+      <div style="display:flex;gap:7px;align-items:center;">
+        <!-- Highlights → Canvas button — only when highlights exist -->
+        <button id="neFooterHlBtn"
+          onclick="neSendAllHighlightsToCanvas()"
+          title="Saare highlighted text ko Canvas par bhejo"
+          style="display:none;padding:6px 13px;border-radius:10px;
+            border:1.5px solid rgba(21,101,192,0.5);
+            background:linear-gradient(135deg,#1565c0,#6a1b9a);
+            color:#fff;font-size:0.72rem;font-weight:800;cursor:pointer;
+            font-family:inherit;-webkit-tap-highlight-color:transparent;
+            box-shadow:0 2px 10px rgba(21,101,192,0.3);
+            animation:_hlBtnPulse 2s ease-in-out infinite;
+            align-items:center;gap:5px;">
+          🎨 Highlights → Canvas
+        </button>
         <button class="btn btn-outline btn-sm" onclick="closeNotesEditor()">‹ Back</button>
       </div>
     </div>
@@ -8676,6 +8766,7 @@ function openAiAnswerInEditor(text, ctx) {
   document.body.style.overflow = 'hidden';
   showFloatBack && showFloatBack('‹');
   history.pushState({type:'notesEditor'}, '');
+  setTimeout(function(){ neUpdateHlCanvasBtn && neUpdateHlCanvasBtn(); }, 200);
 }
 
 // AI response ko question explanation mein add karo
@@ -8833,6 +8924,7 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   showFloatBack('‹');
   setTimeout(function(){
     showQmapFab && showQmapFab();
+    neUpdateHlCanvasBtn && neUpdateHlCanvasBtn();
     // Restore canvas drawings if saved
     _neRestoreCanvas(n.canvasObjs || null);
     // Restore draw strokes from JSON (new system)
@@ -9147,6 +9239,8 @@ function neLoadContent(text, isHtml) {
   // Reset snapshot stacks on fresh load
   _htmlUndoStack = [];
   _htmlRedoStack = [];
+  // Update highlights→canvas badge
+  setTimeout(function(){ neUpdateHlCanvasBtn && neUpdateHlCanvasBtn(); }, 100);
 }
 
 // Toggle edit mode on/off
@@ -10054,6 +10148,8 @@ function applyHighlightFromRange(range, text) {
     markModified();
     showToast('Highlight ho gaya! 🖊️', 'success');
     trackActivity('highlight', { name: text.substring(0,40), tid: _editorState.tid });
+    // Update highlights→canvas button badge
+    setTimeout(neUpdateHlCanvasBtn, 50);
   } catch(e) {
     // Range spans multiple nodes - use extractContents approach
     try {
@@ -10068,6 +10164,8 @@ function applyHighlightFromRange(range, text) {
       _editorState.highlights.push({ id: uid, text: mark.textContent, color });
       markModified();
       showToast('Highlight ho gaya! 🖊️', 'success');
+      // Update highlights→canvas button badge
+      setTimeout(neUpdateHlCanvasBtn, 50);
     } catch(e2) {
       showToast('Thoda alag text select karo', 'error');
     }
@@ -10103,6 +10201,8 @@ function neAttachUnhighlightToMark(mark) {
     _editorState.highlights = _editorState.highlights.filter(h => h.id !== hid);
     markModified();
     showToast('Highlight hata diya 🧹', 'success');
+    // Update highlights→canvas button badge
+    setTimeout(neUpdateHlCanvasBtn, 50);
   };
   mark.addEventListener('pointerdown', mark._unhighlightFn);
 }
@@ -10584,6 +10684,7 @@ function openViewerModal(title, text) {
   document.getElementById('notesEditorOverlay').classList.add('show');
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesViewer'}, '');
+  setTimeout(function(){ neUpdateHlCanvasBtn && neUpdateHlCanvasBtn(); }, 200);
 }
 
 function deleteRawNote(sid, secid, tid, noteIdx) {
@@ -20405,6 +20506,7 @@ function openFactsPage(level, sid, secid, tid, title) {
   ov.classList.add('show');
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesEditor'}, '');
+  setTimeout(function(){ neUpdateHlCanvasBtn && neUpdateHlCanvasBtn(); }, 200);
 
   // "+ Add Fact" button footer mein add karo temporarily
   _fpAddFactBtn();
@@ -22067,20 +22169,500 @@ function scNoteDragStart(e){
   var sel=window.getSelection(); var text=sel?sel.toString().trim():'';
   if(!text) return; _sc.dragText=text;
   e.dataTransfer.setData('text/plain',text); e.dataTransfer.effectAllowed='copy';
+  // Highlight canvas drop zone
+  var wrap=document.getElementById('scCanvasWrap');
+  if(wrap) wrap.classList.add('ne-drop-active');
+  // Remove on dragend
+  document.addEventListener('dragend', function(){
+    if(wrap) { wrap.classList.remove('ne-drop-active'); wrap.classList.remove('sc-drop-active'); }
+  }, {once:true});
 }
 function scDragOver(e){ e.preventDefault(); e.dataTransfer.dropEffect='copy'; document.getElementById('scCanvasWrap').classList.add('sc-drop-active'); }
 function scDragLeave(e){ document.getElementById('scCanvasWrap').classList.remove('sc-drop-active'); }
 function scDrop(e){
-  e.preventDefault(); document.getElementById('scCanvasWrap').classList.remove('sc-drop-active');
-  var text=e.dataTransfer.getData('text/plain')||_sc.dragText||''; if(!text) return;
-  var wrap=document.getElementById('scCanvasWrap'),rect=wrap.getBoundingClientRect();
-  var cur=_scCur(); if(!cur) return;
-  scSnapshot();
-  var b={id:'scb_'+Date.now(),x:Math.max(5,e.clientX-rect.left-80),y:Math.max(5,e.clientY-rect.top-15),w:Math.min(280,text.length*8+40),
-    html:text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'),fontSize:14,color:'#1a1a1a',bold:false,italic:false,underline:false,angle:0};
-  cur.textBlocks.push(b); _scCreateBlockDOM(b);
-  showToast('📋 Text canvas par add ho gaya!','success');
+  e.preventDefault();
+  document.getElementById('scCanvasWrap').classList.remove('sc-drop-active');
+  document.getElementById('scCanvasWrap').classList.remove('ne-drop-active');
+  var text=e.dataTransfer.getData('text/plain')||_sc.dragText||'';
+  if(!text) return;
+  // Use smart send for all drops
+  _scSmartSendToCanvas(text);
 }
+
+// ══════════════════════════════════════════════════════════
+// SMART SEND TO CANVAS — Notes highlighted text → Canvas
+// Auto split into boxes, auto new slides if slide is full
+// ══════════════════════════════════════════════════════════
+
+/**
+ * Main entry: text ko canvas par smart-split karke bhejta hai.
+ * - Short text  (<120 chars)  → 1 box
+ * - Medium text (120-400)     → 2 boxes
+ * - Long text   (400-800)     → 3-4 boxes
+ * - Very long                 → multiple slides
+ */
+// ══════════════════════════════════════════════════════════
+// SEND ALL HIGHLIGHTS → CANVAS
+// Notes editor ke saare highlighted marks collect karo
+// aur ek baar mein smart-split karke canvas par bhejo
+// ══════════════════════════════════════════════════════════
+
+/**
+ * Highlight badge update — jab bhi highlights change hon
+ * call karo, footer button aur side panel badge update hoga
+ */
+function neUpdateHlCanvasBtn() {
+  var area = document.getElementById('noteEditableArea');
+  if(!area) return;
+  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green');
+  var count = marks.length;
+
+  // Footer button
+  var footerBtn = document.getElementById('neFooterHlBtn');
+  if(footerBtn) {
+    footerBtn.style.display = count > 0 ? 'flex' : 'none';
+  }
+
+  // Side panel badge
+  var badge = document.getElementById('neHlBadge');
+  if(badge) {
+    if(count > 0) {
+      badge.style.display = 'block';
+      badge.textContent   = count > 9 ? '9+' : count;
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+}
+
+/**
+ * Saare highlighted <mark> elements ka text collect karo
+ * DOM order mein, phir smart-split karke canvas par bhejo.
+ * Color ke hisaab se bhi group kar sakte hain (optional).
+ */
+window.neSendAllHighlightsToCanvas = function() {
+  var area = document.getElementById('noteEditableArea');
+  if(!area) { showToast && showToast('Notes editor open nahi hai!', 'error'); return; }
+
+  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green');
+  if(!marks || marks.length === 0) {
+    showToast && showToast('⚠️ Koi highlighted text nahi mila! Pehle text highlight karo.', 'error');
+    return;
+  }
+
+  // Canvas open hai ya nahi check
+  var panel = document.getElementById('studyCanvasPanel');
+  if(!panel || !panel.classList.contains('sc-open')) {
+    showToast && showToast('⚠️ Pehle Study Canvas kholo (🎨 SC button dabao)', 'error');
+    return;
+  }
+
+  // Har mark ka text collect karo — DOM order maintain karo
+  // Saath mein color info bhi rakhte hain
+  var items = [];
+  marks.forEach(function(mark) {
+    var txt = mark.textContent.trim();
+    if(!txt) return;
+    var color = '#0d1b2a';
+    if(mark.classList.contains('user-hl-pink'))  color = '#880e4f';
+    if(mark.classList.contains('user-hl-green')) color = '#1b5e20';
+    if(mark.classList.contains('user-hl'))       color = '#5d4037';
+    items.push({ text: txt, color: color });
+  });
+
+  if(!items.length) {
+    showToast && showToast('⚠️ Highlights mein koi text nahi mila!', 'error');
+    return;
+  }
+
+  // ── Layout ──
+  scSnapshot();
+
+  var wrap = document.getElementById('scCanvasWrap');
+  var wW   = wrap ? (wrap.offsetWidth  || 340) : 340;
+  var wH   = wrap ? (wrap.offsetHeight || 480) : 480;
+
+  var PAD         = 14;
+  var GAP_X       = 12;
+  var GAP_Y       = 10;
+  var COLS        = (wW >= 300) ? 2 : 1;
+  var BOX_W       = COLS === 2
+                    ? Math.floor((wW - PAD*2 - GAP_X) / 2)
+                    : (wW - PAD*2);
+  var FONT_SZ     = 13;
+  var LINE_H      = FONT_SZ * 1.65;
+  var BOX_PAD_V   = 10;
+  var CHARS_PER   = Math.max(15, Math.floor((BOX_W - 20) / (FONT_SZ * 0.57)));
+
+  function estH(txt) {
+    var lines = Math.ceil(txt.length / CHARS_PER) + (txt.match(/\n/g)||[]).length;
+    return Math.max(1, lines) * LINE_H + BOX_PAD_V * 2 + 8;
+  }
+
+  var slideIdx  = _sc.curSlide;
+  var colY      = [PAD, PAD];
+  var newSlides = 0;
+  var placed    = 0;
+
+  items.forEach(function(item, i) {
+    var bH = estH(item.text);
+    var c  = COLS === 1 ? 0 : (colY[0] <= colY[1] ? 0 : 1);
+    var x  = PAD + c * (BOX_W + GAP_X);
+    var y  = colY[c];
+
+    // Slide full? → new slide
+    if(y + bH > wH - PAD) {
+      _scSyncCurrentSlideFromDOM && _scSyncCurrentSlideFromDOM();
+
+      newSlides++;
+      var ns = _scNewSlide('Slide ' + (_sc.slides.length + 1));
+      _sc.slides.push(ns);
+      slideIdx = _sc.slides.length - 1;
+      _sc.curSlide = slideIdx;
+
+      colY = [PAD, PAD];
+      c    = 0;
+      x    = PAD;
+      y    = PAD;
+
+      _scRenderSlide && _scRenderSlide();
+    }
+
+    var cur = _sc.slides[slideIdx];
+    if(!cur) return;
+
+    var safeHtml = item.text
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/\n/g,'<br>');
+
+    var block = {
+      id:        'scb_hl_' + Date.now() + '_' + i,
+      x:         x,
+      y:         y,
+      w:         BOX_W,
+      html:      safeHtml,
+      fontSize:  FONT_SZ,
+      color:     item.color,
+      bold:      true,
+      italic:    false,
+      underline: false,
+      angle:     0
+    };
+
+    cur.textBlocks.push(block);
+
+    if(slideIdx === _sc.curSlide) {
+      var el = _scCreateBlockDOM(block);
+      if(el) {
+        el.classList.add('sc-new-flash');
+        setTimeout(function(e2){ e2.classList.remove('sc-new-flash'); }, 900, el);
+      }
+    }
+
+    colY[c] = y + bH + GAP_Y;
+    placed++;
+  });
+
+  _scRenderSlideNav && _scRenderSlideNav();
+
+  var msg = '✅ ' + placed + ' highlighted text' + (placed>1?'s':' chunk') + ' canvas par aa gaye!';
+  if(newSlides > 0) msg += ' (' + newSlides + ' nayi slide bani)';
+  showToast && showToast(msg, 'success');
+};
+
+// ══ END SEND ALL HIGHLIGHTS → CANVAS ══
+
+window._scSmartSendToCanvas = function(text) {
+  if(!text || !text.trim()) return;
+  text = text.trim();
+
+  // Canvas open hai ya nahi?
+  var panel = document.getElementById('studyCanvasPanel');
+  if(!panel || !panel.classList.contains('sc-open')) {
+    showToast && showToast('⚠️ Pehle Study Canvas kholo (toolbar mein 🎨 button)', 'error');
+    return;
+  }
+
+  scSnapshot();
+
+  var wrap = document.getElementById('scCanvasWrap');
+  var wW   = wrap ? (wrap.offsetWidth  || 340) : 340;
+  var wH   = wrap ? (wrap.offsetHeight || 480) : 480;
+
+  // ── Layout constants ──
+  var PAD      = 14;   // canvas edge padding
+  var GAP_X    = 12;   // gap between columns
+  var GAP_Y    = 12;   // gap between rows
+  var BOX_W    = Math.floor((wW - PAD*2 - GAP_X) / 2);  // 2-column grid
+  if(BOX_W < 100) BOX_W = wW - PAD*2;  // narrow canvas → 1 column
+  var FONT_SZ  = 13;
+  var LINE_H   = FONT_SZ * 1.6;        // px per line
+  var BOX_PAD  = 10;                   // inner padding of each block (top+bottom)
+  var HEADER_H = 0;                    // no header reserved
+
+  // Estimate lines for a piece of text at BOX_W
+  var CHARS_PER_LINE = Math.floor((BOX_W - BOX_PAD*2) / (FONT_SZ * 0.57));
+  if(CHARS_PER_LINE < 10) CHARS_PER_LINE = 30;
+
+  function estimateHeight(txt) {
+    var lines = Math.ceil(txt.length / CHARS_PER_LINE);
+    // Also count actual newlines
+    lines += (txt.match(/\n/g)||[]).length;
+    lines = Math.max(1, lines);
+    return lines * LINE_H + BOX_PAD * 2 + 6;
+  }
+
+  // ── Split text into chunks ──
+  var chunks = _scSplitTextChunks(text, CHARS_PER_LINE);
+
+  // ── Place chunks on slides ──
+  var slideIdx = _sc.curSlide;
+  var col      = 0;   // 0 or 1 (2-column)
+  var curY     = PAD + HEADER_H;
+  var totalPlaced = 0;
+  var newSlides   = 0;
+  var colsInRow   = (wW >= 300) ? 2 : 1;
+
+  // ensure at least 1 slide
+  if(!_sc.slides || !_sc.slides.length) {
+    _sc.slides = [_scNewSlide('Slide 1')];
+    _sc.curSlide = 0;
+    slideIdx = 0;
+  }
+
+  // Track Y positions per column on current slide
+  var colY = [PAD + HEADER_H, PAD + HEADER_H];
+
+  for(var ci = 0; ci < chunks.length; ci++) {
+    var chunk = chunks[ci];
+    var bH    = estimateHeight(chunk);
+
+    // Which column has more space?
+    var c = (colsInRow === 1) ? 0 : (colY[0] <= colY[1] ? 0 : 1);
+    var x = PAD + c * (BOX_W + GAP_X);
+    var y = colY[c];
+
+    // If this box doesn't fit on current slide → new slide
+    if(y + bH > wH - PAD) {
+      // Save current slide DOM
+      _scSyncCurrentSlideFromDOM && _scSyncCurrentSlideFromDOM();
+
+      // Create new slide
+      newSlides++;
+      var ns = _scNewSlide('Slide ' + (_sc.slides.length + 1));
+      _sc.slides.push(ns);
+      slideIdx = _sc.slides.length - 1;
+      _sc.curSlide = slideIdx;
+
+      // Reset layout
+      colY = [PAD + HEADER_H, PAD + HEADER_H];
+      c    = 0;
+      x    = PAD;
+      y    = PAD + HEADER_H;
+
+      // Render new slide
+      _scRenderSlide && _scRenderSlide();
+    }
+
+    var cur = _sc.slides[slideIdx];
+    if(!cur) continue;
+
+    var safeHtml = chunk
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/\n/g,'<br>');
+
+    var block = {
+      id:        'scb_note_' + Date.now() + '_' + ci,
+      x:         x,
+      y:         y,
+      w:         BOX_W,
+      html:      safeHtml,
+      fontSize:  FONT_SZ,
+      color:     '#0d1b2a',
+      bold:      false,
+      italic:    false,
+      underline: false,
+      angle:     0
+    };
+
+    cur.textBlocks.push(block);
+
+    // Only create DOM if this is the currently displayed slide
+    if(slideIdx === _sc.curSlide) {
+      var el = _scCreateBlockDOM(block);
+      // Flash animation
+      if(el) {
+        el.classList.add('sc-new-flash');
+        setTimeout(function(e2){ e2.classList.remove('sc-new-flash'); }, 800, el);
+      }
+    }
+
+    // Advance column Y
+    colY[c] = y + bH + GAP_Y;
+    totalPlaced++;
+  }
+
+  // Update slide nav
+  _scRenderSlideNav && _scRenderSlideNav();
+
+  // Toast
+  var msg = '✅ ' + totalPlaced + ' box' + (totalPlaced>1?'es':'') + ' canvas par add ho gaye!';
+  if(newSlides > 0) msg += ' (' + newSlides + ' nayi slide bhi bani)';
+  showToast && showToast(msg, 'success');
+};
+
+/**
+ * Text ko smart chunks mein split karta hai.
+ * Priority: paragraph → sentence → word wrap
+ */
+function _scSplitTextChunks(text, charsPerLine) {
+  // Max chars per box (3 lines comfortable, 5 lines max)
+  var MAX_CHARS = charsPerLine * 4;
+  var MIN_CHARS = 40;
+
+  if(text.length <= MAX_CHARS) return [text];
+
+  // Split by double newline (paragraphs) first
+  var paras = text.split(/\n\s*\n/).map(function(p){ return p.trim(); }).filter(Boolean);
+
+  var chunks = [];
+
+  paras.forEach(function(para) {
+    if(para.length <= MAX_CHARS) {
+      chunks.push(para);
+      return;
+    }
+    // Split paragraph by sentence
+    var sentences = para.match(/[^।\.!\?]+[।\.!\?]*/g) || [para];
+    var cur = '';
+    sentences.forEach(function(sent) {
+      sent = sent.trim();
+      if(!sent) return;
+      if((cur + ' ' + sent).trim().length <= MAX_CHARS) {
+        cur = (cur + ' ' + sent).trim();
+      } else {
+        if(cur) chunks.push(cur);
+        // If single sentence too long → word-wrap split
+        if(sent.length > MAX_CHARS) {
+          var words = sent.split(/\s+/);
+          cur = '';
+          words.forEach(function(w) {
+            if((cur + ' ' + w).trim().length <= MAX_CHARS) {
+              cur = (cur + ' ' + w).trim();
+            } else {
+              if(cur) chunks.push(cur);
+              cur = w;
+            }
+          });
+        } else {
+          cur = sent;
+        }
+      }
+    });
+    if(cur) chunks.push(cur);
+  });
+
+  // Merge tiny chunks with next
+  var merged = [];
+  for(var i = 0; i < chunks.length; i++) {
+    var c = chunks[i];
+    if(c.length < MIN_CHARS && merged.length > 0) {
+      merged[merged.length-1] += '\n' + c;
+    } else {
+      merged.push(c);
+    }
+  }
+
+  return merged.length ? merged : [text];
+}
+
+// ══════════════════════════════════════════════════════════
+// NOTES EDITOR SELECTION → CANVAS TOOLTIP
+// Notes editor mein text select hone par floating button dikhao
+// ══════════════════════════════════════════════════════════
+(function() {
+  // Listen for mouseup/touchend on notes editor body
+  document.addEventListener('mouseup', function(e) {
+    var area = document.getElementById('noteEditableArea');
+    if(!area) return;
+    // Is mouseup notes editor ke andar hai?
+    setTimeout(function() { _neCheckSelectionForCanvas(e); }, 60);
+  });
+
+  document.addEventListener('touchend', function(e) {
+    var area = document.getElementById('noteEditableArea');
+    if(!area) return;
+    setTimeout(function() { _neCheckSelectionForCanvas(e); }, 150);
+  });
+
+  window._neCheckSelectionForCanvas = function(e) {
+    var area = document.getElementById('noteEditableArea');
+    var overlay = document.getElementById('notesEditorOverlay');
+    if(!overlay || !overlay.classList.contains('show')) return;
+    if(!area) return;
+
+    var sel = window.getSelection();
+    var txt = sel ? sel.toString().trim() : '';
+
+    // Remove old tooltip
+    var old = document.getElementById('_neCanvasTip');
+    if(old) old.remove();
+
+    if(!txt || txt.length < 3) return;
+    // Check selection inside noteEditableArea
+    if(!sel.anchorNode || !area.contains(sel.anchorNode)) return;
+
+    // Get position
+    var range = sel.getRangeAt(0);
+    var rect  = range.getBoundingClientRect();
+
+    var tipY = rect.top - 44;
+    if(tipY < 10) tipY = rect.bottom + 8;
+
+    var tip = document.createElement('div');
+    tip.id  = '_neCanvasTip';
+    tip.style.top  = tipY + 'px';
+    tip.style.left = (rect.left + rect.width/2) + 'px';
+    tip.style.transform = 'translateX(-50%)';
+    tip.innerHTML = '📋 Canvas mein bhejo';
+
+    // Capture text NOW (selection may clear on click)
+    var captured = txt;
+
+    tip.addEventListener('mousedown', function(e2){ e2.preventDefault(); });
+    tip.addEventListener('click', function() {
+      tip.remove();
+      if(sel) sel.removeAllRanges();
+      _scSmartSendToCanvas(captured);
+    });
+    tip.addEventListener('touchstart', function(e2) {
+      e2.preventDefault();
+      tip.remove();
+      if(sel) sel.removeAllRanges();
+      _scSmartSendToCanvas(captured);
+    }, {passive:false});
+
+    document.body.appendChild(tip);
+
+    // Auto remove after 5s
+    setTimeout(function(){
+      var t = document.getElementById('_neCanvasTip');
+      if(t === tip) tip.remove();
+    }, 5000);
+
+    // Remove on outside click/scroll
+    var rm = function(){ if(tip.parentNode) tip.remove(); };
+    setTimeout(function(){
+      document.addEventListener('click',  rm, {once:true});
+      document.addEventListener('scroll', rm, {once:true, passive:true});
+    }, 200);
+  };
+})();
+// ══ END NOTES→CANVAS SMART SEND ══
 
 // ══════════════════════════════════════
 // SAVE
@@ -25012,29 +25594,8 @@ function _snmAddChatButton(tid, sid, secid, topicName) {
 
     // Insert after short delay if canvas just opened
     setTimeout(function(){
-      var cur = _scCur();
-      if(!cur) { showToast&&showToast('Canvas slide nahi mili!','error'); return; }
-      scSnapshot();
-
-      // Random position on canvas
-      var wrap = document.getElementById('scCanvasWrap');
-      var wW = wrap ? wrap.offsetWidth  : 320;
-      var wH = wrap ? wrap.offsetHeight : 400;
-      var x  = Math.max(10, Math.floor(Math.random()*(wW-200)));
-      var y  = Math.max(10, Math.floor(Math.random()*(wH-80)));
-
-      var safeHtml = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      var block = {
-        id:   'scb_ai_'+Date.now(),
-        x: x, y: y,
-        w: Math.min(280, text.length*7 + 40),
-        html: safeHtml,
-        fontSize: 13, color:'#0d1b2a',
-        bold:false, italic:false, underline:false, angle:0
-      };
-      cur.textBlocks.push(block);
-      _scCreateBlockDOM(block);
-      showToast&&showToast('✅ Canvas mein add ho gaya!','success');
+      // Use smart send — proper grid layout + auto new slides
+      _scSmartSendToCanvas(text);
     }, canvasOpen ? 0 : 400);
   };
 
