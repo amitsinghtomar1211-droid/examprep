@@ -1425,9 +1425,28 @@ body.night-mode .sc-tbtn:hover { background: rgba(255,255,255,0.15); }
 }
 .sc-grid-card:hover { border-color: rgba(255,255,255,0.6); transform: scale(1.02); }
 .sc-grid-card.active { border-color: #fff; border-width: 2.5px; }
+.sc-grid-card-num {
+  position: absolute; top: 5px; left: 7px;
+  font-size: 0.6rem; font-weight: 900; color: rgba(255,255,255,0.85);
+  background: rgba(0,0,0,0.35); border-radius: 5px;
+  padding: 1px 5px; line-height: 1.5;
+  pointer-events: none;
+}
+.sc-grid-card-del {
+  position: absolute; top: 4px; right: 5px;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(198,40,40,0.85); border: none;
+  color: #fff; font-size: 0.75rem; font-weight: 900;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  line-height: 1; padding: 0;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  z-index: 2;
+}
+.sc-grid-card-del:active { background: #b71c1c; transform: scale(0.92); }
 .sc-grid-preview {
   flex: 1; font-size: 0.68rem; color: rgba(0,0,0,0.55);
-  line-height: 1.45; overflow: hidden;
+  line-height: 1.45; overflow: hidden; margin-top: 16px;
   display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
   word-break: break-word;
 }
@@ -3158,8 +3177,10 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
   <!-- Row 2: Size -->
   <div style="display:flex;gap:5px;align-items:center;">
     <span style="font-size:0.62rem;color:#37526d;font-weight:700;flex-shrink:0;">Size:</span>
-    <button class="neqm-bar-btn" onclick="neQmBarResize(-20,-10)" title="Chhota">−</button>
-    <button class="neqm-bar-btn" onclick="neQmBarResize(+20,+10)" title="Bada">+</button>
+    <button class="neqm-bar-btn" onclick="neQmBarResize(-30,-15)" title="Chhota">−−</button>
+    <button class="neqm-bar-btn" onclick="neQmBarResize(-10,-5)" title="Thoda chhota">−</button>
+    <button class="neqm-bar-btn" onclick="neQmBarResize(+10,+5)" title="Thoda bada">+</button>
+    <button class="neqm-bar-btn" onclick="neQmBarResize(+30,+15)" title="Bada">++</button>
     <div style="width:1px;height:18px;background:rgba(0,0,0,0.1);flex-shrink:0;"></div>
     <span style="font-size:0.62rem;color:#37526d;font-weight:700;flex-shrink:0;">Fill:</span>
     <div class="neqm-bar-color" style="background:#fff8e1;" onclick="neQmBarSetFill('#fff8e1',this)"></div>
@@ -16339,13 +16360,44 @@ function _neQmDown(e) {
   _neQmActivePointers[e.pointerId] = { x: e.clientX, y: e.clientY };
   var pointerCount = Object.keys(_neQmActivePointers).length;
 
-  // Multi-touch (pinch) — sirf primary handle karo, node creation band
+  // Second finger down = start pinch-to-resize
   if(!e.isPrimary) {
     e.preventDefault();
-    // Start pinch tracking on secondary touch
-    _neQm._pinchActive = true;
+    _neQm._pinchActive    = true;
     _neQm._pinchStartDist = _neQmPinchDist();
-    _neQm._pinchStartNodes = _neQm.nodes.map(function(n){ return {id:n.id,x:n.x,y:n.y,w:n.w,h:n.h}; });
+
+    // Find which node to resize:
+    // 1. Already selected node
+    // 2. Node under primary finger (first pointer)
+    // 3. Nearest node to pinch midpoint
+    var nodeToResize = _neQm.selectedNode || null;
+    if(!nodeToResize) {
+      var pts = Object.values(_neQmActivePointers);
+      if(pts.length >= 2) {
+        var midX = (pts[0].x + pts[1].x) / 2;
+        var midY = (pts[0].y + pts[1].y) / 2;
+        var r  = _neQm.canvas.getBoundingClientRect();
+        var sx = _neQm.canvas.width  / r.width;
+        var sy = _neQm.canvas.height / r.height;
+        var cx = (midX - r.left) * sx;
+        var cy = (midY - r.top)  * sy;
+        // Find nearest node to midpoint
+        var best = null, bestDist = Infinity;
+        _neQm.nodes.forEach(function(n) {
+          var d = Math.hypot(n.x - cx, n.y - cy);
+          if(d < bestDist) { bestDist = d; best = n; }
+        });
+        if(best && bestDist < Math.max(best.w, best.h) * 1.5) nodeToResize = best;
+      }
+    }
+    _neQm._pinchTargetNode = nodeToResize;
+    if(nodeToResize) {
+      _neQm.selectedNode = nodeToResize;
+      _neQm._pinchStartW = nodeToResize.w;
+      _neQm._pinchStartH = nodeToResize.h;
+      _neQmRedraw();
+    }
+    _neQm._pinchStartNodes = _neQm.nodes.map(function(n){ return {id:n.id,w:n.w,h:n.h}; });
     return;
   }
   if(pointerCount > 1 || _neQm._pinchActive) { e.preventDefault(); return; }
@@ -16366,14 +16418,15 @@ function _neQmDown(e) {
     return;
   }
 
-  // ARROW / LINE connector
+  // ARROW / LINE connector (old tool-based — still works)
   if(_neQm.tool === 'arrow' || _neQm.tool === 'line') {
     if(hit) {
       if(!_neQm.connecting) {
         _neQm.connecting = hit;
+        _neQmRedraw();
       } else if(_neQm.connecting.id !== hit.id) {
         _neQmSaveHistory();
-        _neQm.edges.push({ from: _neQm.connecting.id, to: hit.id, color: _neQm.color, type: _neQm.tool });
+        _neQm.edges.push({ from: _neQm.connecting.id, to: hit.id, color: _neQm.color, type: 'arrow' });
         _neQm.connecting = null; _neQm.previewPt = null;
         _neQmRedraw();
       }
@@ -16382,7 +16435,23 @@ function _neQmDown(e) {
   }
 
   if(hit) {
-    // Double-tap = edit
+    // Check if touch is on EDGE of node (outer 35%) → start drag-to-connect
+    var edgeThresh = 0.35;
+    var nx = hit.x, ny = hit.y, hw = hit.w/2, hh = hit.h/2;
+    var relX = Math.abs(pt.x - nx) / hw;
+    var relY = Math.abs(pt.y - ny) / hh;
+    var onEdge = (relX > (1 - edgeThresh)) || (relY > (1 - edgeThresh));
+
+    if(onEdge && _neQm.tool !== 'move') {
+      // Edge drag → start connector
+      _neQm._edgeDragFrom = hit;
+      _neQm._edgeDragActive = false; // becomes true after small movement
+      _neQm.selectedNode = hit;
+      _neQmRedraw();
+      return;
+    }
+
+    // Double-tap = edit (center tap)
     var now = Date.now();
     if(now - _neQm._lastTap < 350 && _neQm._lastTapNode === hit.id) {
       _neQm._lastTap = 0;
@@ -16409,16 +16478,16 @@ function _neQmMove(e) {
     _neQmActivePointers[e.pointerId] = { x: e.clientX, y: e.clientY };
   }
 
-  // Pinch in progress — resize selected node
-  if(_neQm._pinchActive && _neQm.selectedNode) {
+  // Pinch in progress — resize target node
+  if(_neQm._pinchActive) {
     e.preventDefault();
-    var curDist = _neQmPinchDist();
-    if(_neQm._pinchStartDist && curDist && _neQm._pinchStartNodes) {
-      var ratio = curDist / _neQm._pinchStartDist;
-      var orig  = _neQm._pinchStartNodes.find(function(x){ return x.id === _neQm.selectedNode.id; });
-      if(orig) {
-        _neQm.selectedNode.w = Math.max(50, orig.w * ratio);
-        _neQm.selectedNode.h = Math.max(30, orig.h * ratio);
+    var node = _neQm._pinchTargetNode || _neQm.selectedNode;
+    if(node && _neQm._pinchStartDist && _neQm._pinchStartW) {
+      var curDist = _neQmPinchDist();
+      if(curDist) {
+        var ratio = curDist / _neQm._pinchStartDist;
+        node.w = Math.max(50,  Math.round(_neQm._pinchStartW * ratio));
+        node.h = Math.max(30,  Math.round(_neQm._pinchStartH * ratio));
         _neQmRedraw();
       }
     }
@@ -16428,6 +16497,21 @@ function _neQmMove(e) {
   if(!e.isPrimary) return;
   e.preventDefault();
   var pt = _neQmPt(e);
+
+  // Edge-drag connector in progress
+  if(_neQm._edgeDragFrom) {
+    var dx = pt.x - _neQm._edgeDragFrom.x;
+    var dy = pt.y - _neQm._edgeDragFrom.y;
+    if(!_neQm._edgeDragActive && Math.hypot(dx, dy) > 18) {
+      _neQm._edgeDragActive = true;
+    }
+    if(_neQm._edgeDragActive) {
+      _neQm.connecting  = _neQm._edgeDragFrom;
+      _neQm.previewPt   = pt;
+      _neQmRedraw();
+    }
+    return;
+  }
 
   if(_neQm.dragging) {
     var n = _neQm.dragging.node;
@@ -16455,12 +16539,32 @@ function _neQmUp(e) {
 
   if(_neQm._pinchActive) {
     if(remaining < 2) {
-      // Pinch ended — save state
       _neQmSaveHistory();
       _neQm._pinchActive     = false;
       _neQm._pinchStartDist  = null;
       _neQm._pinchStartNodes = null;
+      _neQm._pinchTargetNode = null;
+      _neQm._pinchStartW     = null;
+      _neQm._pinchStartH     = null;
     }
+    return;
+  }
+
+  // Edge-drag connector — check if finger released on a node
+  if(_neQm._edgeDragFrom) {
+    if(_neQm._edgeDragActive && _neQm.previewPt) {
+      var target = _neQmNodeAt(_neQm.previewPt.x, _neQm.previewPt.y);
+      if(target && target.id !== _neQm._edgeDragFrom.id) {
+        _neQmSaveHistory();
+        _neQm.edges.push({ from: _neQm._edgeDragFrom.id, to: target.id, color: _neQm.color || '#888', type: 'arrow' });
+        if(navigator.vibrate) navigator.vibrate(20);
+      }
+    }
+    _neQm._edgeDragFrom   = null;
+    _neQm._edgeDragActive = false;
+    _neQm.connecting      = null;
+    _neQm.previewPt       = null;
+    _neQmRedraw();
     return;
   }
 
@@ -16764,8 +16868,9 @@ function _neQmRedraw() {
     var fill   = n.fill   || (isDark ? 'rgba(28,33,40,0.88)' : 'rgba(255,248,225,0.92)');
     var stroke = n.stroke || _neQm.color || '#e65100';
     var sel    = _neQm.selectedNode && _neQm.selectedNode.id === n.id;
+    var isEdgeSrc = _neQm._edgeDragFrom && _neQm._edgeDragFrom.id === n.id;
 
-    if(sel) { ctx.shadowColor='rgba(230,81,0,0.5)'; ctx.shadowBlur=14; }
+    if(sel || isEdgeSrc) { ctx.shadowColor='rgba(230,81,0,0.5)'; ctx.shadowBlur=14; }
 
     ctx.fillStyle   = fill;
     ctx.strokeStyle = sel ? '#e65100' : stroke;
@@ -16808,6 +16913,18 @@ function _neQmRedraw() {
     var lh = 15, sY = y - (lines2.length - 1) * lh / 2;
     lines2.forEach(function(l, i) { ctx.fillText(l, x, sY + i * lh); });
     ctx.restore();
+
+    // Draw connector dots on edges when node is selected (visual hint)
+    if(sel && _neQm.tool !== 'move') {
+      var dots = [{x:x,y:y-hh},{x:x,y:y+hh},{x:x-hw,y:y},{x:x+hw,y:y}];
+      dots.forEach(function(d){
+        ctx.save();
+        ctx.beginPath(); ctx.arc(d.x, d.y, 5, 0, Math.PI*2);
+        ctx.fillStyle = '#e65100'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+        ctx.fill(); ctx.stroke();
+        ctx.restore();
+      });
+    }
   });
 }
 // ════════════════════════════════════════════════════════════════
@@ -21888,7 +22005,42 @@ function _scRenderGrid() {
     card.style.background = s.bg || '#fffde7';
     card.title = s.title || ('Slide ' + (i+1));
 
-    // Mini preview — show text block labels
+    // Slide number badge
+    var numBadge = document.createElement('div');
+    numBadge.className = 'sc-grid-card-num';
+    numBadge.textContent = (i + 1);
+    card.appendChild(numBadge);
+
+    // Delete button
+    if(_sc.slides.length > 1) {
+      var delBtn = document.createElement('button');
+      delBtn.className = 'sc-grid-card-del';
+      delBtn.textContent = '✕';
+      delBtn.title = 'Slide ' + (i+1) + ' delete karo';
+      delBtn.onclick = (function(idx) { return function(e) {
+        e.stopPropagation();
+        if(!confirm('Slide ' + (idx+1) + ' delete karein?')) return;
+        scSnapshot && scSnapshot();
+        _sc.slides.splice(idx, 1);
+        _sc.curSlide = Math.max(0, Math.min(_sc.curSlide, _sc.slides.length - 1));
+        _sc.activeBlock = null; _sc.activeBlockId = null;
+        scHideAllBlockActions && scHideAllBlockActions();
+        scRenderAll && scRenderAll();
+        _scRenderSlideNav && _scRenderSlideNav();
+        _scUpdateTitle && _scUpdateTitle(getTop && getTop(_sc.sid, _sc.secid, _sc.tid));
+        showToast && showToast('Slide ' + (idx+1) + ' delete ho gayi!', 'success');
+        if(_sc.slides.length <= 1) {
+          _scGridOpen = false;
+          var ov = document.getElementById('scGridOverlay');
+          if(ov) ov.style.display = 'none';
+        } else {
+          _scRenderGrid();
+        }
+      }; })(i);
+      card.appendChild(delBtn);
+    }
+
+    // Mini preview
     var preview = document.createElement('div');
     preview.className = 'sc-grid-preview';
     var textPreview = (s.textBlocks || []).map(function(b){
@@ -21896,7 +22048,7 @@ function _scRenderGrid() {
       tmp.innerHTML = b.html || '';
       return tmp.textContent.substring(0,30);
     }).filter(Boolean).slice(0,4).join(' · ');
-    preview.textContent = textPreview || (s.strokes && s.strokes.length ? '✏️ Drawing' : '') || (s.qmNodes && s.qmNodes.length ? '🗺 Map' : '(empty)');
+    preview.textContent = textPreview || (s.strokes && s.strokes.length ? '✏️ Drawing' : '') || (s.qmNodes && s.qmNodes.length ? '\ud83d\uddfa Map' : '(empty)');
 
     var label = document.createElement('div');
     label.className = 'sc-grid-label';
@@ -21913,10 +22065,6 @@ function _scRenderGrid() {
     container.appendChild(card);
   });
 }
-
-// ══════════════════════════════════════
-// BACKGROUND per slide
-// ══════════════════════════════════════
 function scSetBg(color, el) {
   var cur = _scCur();
   if(cur) cur.bg = color;
