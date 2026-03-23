@@ -5041,6 +5041,9 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <!-- Filled by JS based on active mode -->
   </div>
 
+  <!-- QMap Select Actions Bar -->
+  <div id="scQmSelectBar" style="display:none;flex-direction:row;align-items:center;gap:4px;padding:4px 8px;background:rgba(21,101,192,0.06);border-bottom:1.5px solid rgba(21,101,192,0.18);overflow-x:auto;flex-wrap:nowrap;min-height:38px;-webkit-overflow-scrolling:touch;"></div>
+
   <!-- Canvas area -->
   <div id="scCanvasWrap"
     ondragover="scDragOver(event)"
@@ -22999,13 +23002,42 @@ function scClearDraw(){ if(!confirm('Is slide ki drawing clear karein?')) return
 var _scQmNodeColors=['#e65100','#1565c0','#2e7d32','#6a1b9a','#00695c','#c62828'];
 var _scQmNextId=1;
 var _scQmTouchLast=0,_scQmConnecting=null,_scQmDragging=null,_scQmDragOff={x:0,y:0};
-var _scQmTool='bubble'; // bubble | box | circle | diamond | connect
+var _scQmTool='bubble'; // bubble | box | circle | diamond | connect | lock | select
 var _scQmConnectFrom=null, _scQmConnectDragging=false, _scQmConnectPreview=null;
 
+// ── Lock Mode ──
+var _scQmLocked = false; // true = new node creation disabled
+
+// ── Select Mode ──
+var _scQmSelected = []; // array of selected node ids
+var _scQmSelectDrag = null;
+var _scQmSelectDragOff = {x:0,y:0};
+
 function scQmSetTool(tool){
+  if(tool === 'lock') {
+    _scQmLocked = !_scQmLocked;
+    _scQmTool = _scQmLocked ? 'lock' : 'bubble';
+    _scQmConnecting=null; _scQmConnectFrom=null; _scQmConnectDragging=false;
+    scRenderToolbar();
+    _scQmRender();
+    showToast && showToast(_scQmLocked ? '🔒 Lock ON — nayi node nahi banegi' : '🔓 Lock OFF — nayi node ban sakti hai', _scQmLocked ? 'error' : 'success');
+    return;
+  }
+  if(tool === 'select') {
+    _scQmTool = 'select';
+    _scQmSelected = [];
+    _scQmConnecting=null; _scQmConnectFrom=null; _scQmConnectDragging=false;
+    scRenderToolbar();
+    _scQmRender();
+    showToast && showToast('🟦 Select Mode — nodes ko tap karke select karo', 'success');
+    return;
+  }
   _scQmTool=tool;
+  _scQmLocked = false;
+  _scQmSelected = [];
   _scQmConnecting=null; _scQmConnectFrom=null; _scQmConnectDragging=false;
   scRenderToolbar();
+  _scQmRender();
 }
 
 // ── Inline textarea popup for SC QMap node editing (no prompt!) ──
@@ -23126,12 +23158,14 @@ function _scQmRender() {
     // Dynamic size based on label length
     var rawLines=(n.label||'').split('\n');
     var maxLen=0; rawLines.forEach(function(l){if(l.length>maxLen)maxLen=l.length;});
-    var r=Math.max(34, maxLen*5+18);
-    var rh=Math.max(28, rawLines.length*16+14);
+    var boost = n.sizeBoost || 0;
+    var r=Math.max(34, maxLen*5+18+boost);
+    var rh=Math.max(28, rawLines.length*16+14+Math.abs(boost)*0.5);
     var _isConnSrc = _scQmConnectFrom && _scQmConnectFrom.id===n.id;
+    var _isSel = _scQmSelected.indexOf(n.id)>=0;
     ctx.save();
-    ctx.shadowColor=_isConnSrc?'rgba(230,81,0,0.6)':'rgba(0,0,0,0.14)';
-    ctx.shadowBlur=_isConnSrc?16:8;
+    ctx.shadowColor=_isSel?'rgba(21,101,192,0.8)':_isConnSrc?'rgba(230,81,0,0.6)':'rgba(0,0,0,0.14)';
+    ctx.shadowBlur=_isSel?20:_isConnSrc?16:8;
     ctx.fillStyle=n.color||'#e65100';ctx.globalAlpha=0.88;ctx.beginPath();
     if(n.shape==='box'){
       if(ctx.roundRect)ctx.roundRect(n.x-r,n.y-rh/2,r*2,rh,9);
@@ -23141,7 +23175,22 @@ function _scQmRender() {
     } else {
       ctx.arc(n.x,n.y,r,0,Math.PI*2);
     }
-    ctx.fill();ctx.restore();
+    ctx.fill();
+    // Selection ring
+    if(_isSel){
+      ctx.globalAlpha=1;ctx.strokeStyle='#1565c0';ctx.lineWidth=3;ctx.setLineDash([6,3]);
+      ctx.beginPath();
+      if(n.shape==='box'){
+        if(ctx.roundRect)ctx.roundRect(n.x-r-4,n.y-rh/2-4,r*2+8,rh+8,11);
+        else ctx.rect(n.x-r-4,n.y-rh/2-4,r*2+8,rh+8);
+      } else if(n.shape==='diamond'){
+        ctx.moveTo(n.x,n.y-rh-5);ctx.lineTo(n.x+r+5,n.y);ctx.lineTo(n.x,n.y+rh+5);ctx.lineTo(n.x-r-5,n.y);ctx.closePath();
+      } else {
+        ctx.arc(n.x,n.y,r+5,0,Math.PI*2);
+      }
+      ctx.stroke();ctx.setLineDash([]);
+    }
+    ctx.restore();
     // Text — multiline support
     ctx.save();ctx.fillStyle='#fff';ctx.font='bold 12px "Noto Sans Devanagari","Baloo 2",sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
     var allLines=[];
@@ -23159,7 +23208,7 @@ function _scQmRender() {
   });
 }
 
-function _scQmNodeAt(x,y){ var hit=null; (_scCur()&&_scCur().qmNodes||[]).forEach(function(n){if(Math.hypot(n.x-x,n.y-y)<36)hit=n;}); return hit; }
+function _scQmNodeAt(x,y){ var hit=null; (_scCur()&&_scCur().qmNodes||[]).forEach(function(n){ var r=Math.max(34,36+(n.sizeBoost||0)); if(Math.hypot(n.x-x,n.y-y)<r) hit=n; }); return hit; }
 
 // Study Canvas node context menu
 var _scQmCtxNode=null;
@@ -23213,12 +23262,55 @@ function _scQmDown(e){
   var x=(e.clientX-rect.left)*cv.width/rect.width,y=(e.clientY-rect.top)*cv.height/rect.height;
   var hit=_scQmNodeAt(x,y),now=Date.now();
 
+  // SELECT TOOL — tap to select/deselect nodes
+  if(_scQmTool==='select'){
+    if(hit){
+      var idx=_scQmSelected.indexOf(hit.id);
+      if(idx>=0){
+        // Already selected — allow drag
+        _scQmSelectDrag=hit;
+        _scQmSelectDragOff.x=x-hit.x;
+        _scQmSelectDragOff.y=y-hit.y;
+      } else {
+        // Select this node
+        _scQmSelected.push(hit.id);
+        if(navigator.vibrate) navigator.vibrate(12);
+      }
+      _scQmRender();
+    } else {
+      // Tap empty area — deselect all
+      if(_scQmSelected.length>0){
+        _scQmSelected=[];
+        _scQmRender();
+      }
+    }
+    return;
+  }
+
   // CONNECT TOOL — drag from node to node
   if(_scQmTool==='connect'){
     if(hit){
       _scQmConnectFrom=hit;
       _scQmConnectDragging=false;
       _scQmConnectPreview=null;
+    }
+    return;
+  }
+
+  // LOCK MODE — no new nodes, only drag/edit existing
+  if(_scQmLocked || _scQmTool==='lock'){
+    if(hit){
+      if(now-_scQmTouchLast<350&&_scQmLastHitId===hit.id){
+        _scQmTouchLast=0; _scQmLastHitId=null;
+        _scQmShowInlineEdit(hit, e.clientX, e.clientY);
+        return;
+      }
+      _scQmTouchLast=now; _scQmLastHitId=hit.id;
+      _scQmDragging=hit;
+      _scQmDragOff.x=x-hit.x;
+      _scQmDragOff.y=y-hit.y;
+    } else {
+      showToast && showToast('🔒 Lock ON hai — unlock karke node banao', 'error');
     }
     return;
   }
@@ -23252,10 +23344,27 @@ function _scQmMove(e){
   var x=(e.clientX-rect.left)*cv.width/rect.width;
   var y=(e.clientY-rect.top)*cv.height/rect.height;
 
+  // Select tool — drag selected node
+  if(_scQmTool==='select' && _scQmSelectDrag){
+    var dx=x-_scQmSelectDragOff.x-_scQmSelectDrag.x;
+    var dy=y-_scQmSelectDragOff.y-_scQmSelectDrag.y;
+    // Move all selected nodes together
+    var cur=_scCur(); if(!cur) return;
+    cur.qmNodes.forEach(function(n){
+      if(_scQmSelected.indexOf(n.id)>=0){
+        n.x+=dx; n.y+=dy;
+      }
+    });
+    _scQmSelectDragOff.x=x-_scQmSelectDrag.x;
+    _scQmSelectDragOff.y=y-_scQmSelectDrag.y;
+    _scQmRender();
+    return;
+  }
+
   // Connect tool drag preview
   if(_scQmTool==='connect' && _scQmConnectFrom){
-    var dx=x-_scQmConnectFrom.x, dy=y-_scQmConnectFrom.y;
-    if(!_scQmConnectDragging && Math.hypot(dx,dy)>12) _scQmConnectDragging=true;
+    var dx2=x-_scQmConnectFrom.x, dy2=y-_scQmConnectFrom.y;
+    if(!_scQmConnectDragging && Math.hypot(dx2,dy2)>12) _scQmConnectDragging=true;
     if(_scQmConnectDragging){
       _scQmConnectPreview={x:x,y:y};
       _scQmRender();
@@ -23269,6 +23378,12 @@ function _scQmMove(e){
   _scQmRender();
 }
 function _scQmUp(e){
+  // Select tool — stop drag
+  if(_scQmTool==='select'){
+    _scQmSelectDrag=null;
+    return;
+  }
+
   // Connect tool — complete connection
   if(_scQmTool==='connect' && _scQmConnectFrom && _scQmConnectDragging && _scQmConnectPreview){
     var cv=_sc.qmCanvas,rect=cv.getBoundingClientRect();
@@ -23296,6 +23411,157 @@ function _scQmUp(e){
 function _scQmEditLabel(node){ _scQmShowInlineEdit(node, null, null); }
 function scQmClear(){if(!confirm('Is slide ka QuickMap clear karein?'))return;scSnapshot();var cur=_scCur();if(cur){cur.qmNodes=[];cur.qmEdges=[];}_scQmNextId=1;_scQmRender();}
 
+// ══════════════════════════════════════════════════
+// SELECT MODE — Actions Bar
+// ══════════════════════════════════════════════════
+function _scQmRenderSelectBar() {
+  var bar = document.getElementById('scQmSelectBar');
+  if(!bar) return;
+
+  if(_scQmTool !== 'select') {
+    bar.style.display = 'none';
+    return;
+  }
+
+  bar.style.display = 'flex';
+  var cnt = _scQmSelected.length;
+
+  bar.innerHTML = '';
+
+  // Count label
+  var lbl = document.createElement('span');
+  lbl.style.cssText = 'font-size:0.68rem;font-weight:900;color:var(--accent);white-space:nowrap;align-self:center;padding:0 4px;';
+  lbl.textContent = cnt > 0 ? cnt + ' selected' : 'Select nodes';
+  bar.appendChild(lbl);
+
+  // Select All
+  var selAll = document.createElement('button');
+  selAll.className = 'sc-tbtn';
+  selAll.title = 'Sab select karo';
+  selAll.textContent = '☑ All';
+  selAll.style.cssText = 'font-size:0.72rem;font-weight:800;min-width:40px;';
+  selAll.onclick = function() {
+    var cur = _scCur(); if(!cur) return;
+    _scQmSelected = (cur.qmNodes||[]).map(function(n){ return n.id; });
+    _scQmRender(); _scQmRenderSelectBar();
+    showToast && showToast('☑ Saare ' + _scQmSelected.length + ' nodes select ho gaye', 'success');
+  };
+  bar.appendChild(selAll);
+
+  // Deselect All
+  var desel = document.createElement('button');
+  desel.className = 'sc-tbtn';
+  desel.title = 'Sab deselect';
+  desel.textContent = '☐ None';
+  desel.style.cssText = 'font-size:0.72rem;font-weight:800;min-width:44px;';
+  desel.onclick = function() {
+    _scQmSelected = []; _scQmRender(); _scQmRenderSelectBar();
+  };
+  bar.appendChild(desel);
+
+  if(cnt === 0) return; // No actions needed if nothing selected
+
+  // Separator
+  var sep = document.createElement('div'); sep.className='sc-sep'; bar.appendChild(sep);
+
+  // Size UP
+  var sizeUp = document.createElement('button');
+  sizeUp.className = 'sc-tbtn';
+  sizeUp.title = 'Size bada karo';
+  sizeUp.innerHTML = '<b style="font-size:0.9rem">A</b><sup style="font-size:0.55rem">+</sup>';
+  sizeUp.style.cssText = 'min-width:28px;';
+  sizeUp.onclick = function() {
+    scSnapshot();
+    var cur = _scCur(); if(!cur) return;
+    cur.qmNodes.forEach(function(n) {
+      if(_scQmSelected.indexOf(n.id) >= 0) {
+        n.sizeBoost = (n.sizeBoost || 0) + 12;
+      }
+    });
+    _scQmRender();
+    showToast && showToast('📏 Size bada ho gaya (' + cnt + ' nodes)', 'success');
+  };
+  bar.appendChild(sizeUp);
+
+  // Size DOWN
+  var sizeDn = document.createElement('button');
+  sizeDn.className = 'sc-tbtn';
+  sizeDn.title = 'Size chhota karo';
+  sizeDn.innerHTML = '<b style="font-size:0.9rem">A</b><sup style="font-size:0.55rem">−</sup>';
+  sizeDn.style.cssText = 'min-width:28px;';
+  sizeDn.onclick = function() {
+    scSnapshot();
+    var cur = _scCur(); if(!cur) return;
+    cur.qmNodes.forEach(function(n) {
+      if(_scQmSelected.indexOf(n.id) >= 0) {
+        n.sizeBoost = Math.max(-20, (n.sizeBoost || 0) - 12);
+      }
+    });
+    _scQmRender();
+    showToast && showToast('📏 Size chhota ho gaya (' + cnt + ' nodes)', 'success');
+  };
+  bar.appendChild(sizeDn);
+
+  // Separator
+  var sep2 = document.createElement('div'); sep2.className='sc-sep'; bar.appendChild(sep2);
+
+  // Edit Text (only if single node selected)
+  if(cnt === 1) {
+    var editBtn = document.createElement('button');
+    editBtn.className = 'sc-tbtn';
+    editBtn.title = 'Text edit karo';
+    editBtn.textContent = '✏️';
+    editBtn.style.cssText = 'min-width:28px;font-size:0.9rem;';
+    editBtn.onclick = function() {
+      var cur = _scCur(); if(!cur) return;
+      var node = cur.qmNodes.filter(function(n){ return n.id === _scQmSelected[0]; })[0];
+      if(node) _scQmShowInlineEdit(node, null, null);
+    };
+    bar.appendChild(editBtn);
+  }
+
+  // Connect selected (if exactly 2 selected)
+  if(cnt === 2) {
+    var connBtn = document.createElement('button');
+    connBtn.className = 'sc-tbtn';
+    connBtn.title = 'In dono ko connect karo';
+    connBtn.textContent = '→ Link';
+    connBtn.style.cssText = 'min-width:42px;font-size:0.72rem;font-weight:900;color:#e65100;border-color:rgba(230,81,0,0.4);';
+    connBtn.onclick = function() {
+      scSnapshot();
+      var cur = _scCur(); if(!cur) return;
+      cur.qmEdges = cur.qmEdges || [];
+      // Check not already connected
+      var a = _scQmSelected[0], b = _scQmSelected[1];
+      var exists = cur.qmEdges.some(function(e){ return (e.from===a&&e.to===b)||(e.from===b&&e.to===a); });
+      if(exists) { showToast && showToast('Yeh nodes already connected hain!', 'error'); return; }
+      cur.qmEdges.push({from: a, to: b});
+      _scQmRender();
+      showToast && showToast('→ Dono nodes connect ho gaye!', 'success');
+    };
+    bar.appendChild(connBtn);
+  }
+
+  // Delete selected
+  var sep3 = document.createElement('div'); sep3.className='sc-sep'; bar.appendChild(sep3);
+  var delBtn = document.createElement('button');
+  delBtn.className = 'sc-tbtn';
+  delBtn.title = 'Selected nodes delete karo';
+  delBtn.textContent = '🗑';
+  delBtn.style.cssText = 'min-width:28px;color:#c62828;border-color:rgba(198,40,40,0.3);';
+  delBtn.onclick = function() {
+    if(!confirm(cnt + ' node(s) delete karein?')) return;
+    scSnapshot();
+    var cur = _scCur(); if(!cur) return;
+    cur.qmNodes = cur.qmNodes.filter(function(n){ return _scQmSelected.indexOf(n.id) < 0; });
+    cur.qmEdges = (cur.qmEdges||[]).filter(function(e){ return _scQmSelected.indexOf(e.from) < 0 && _scQmSelected.indexOf(e.to) < 0; });
+    _scQmSelected = [];
+    _scQmRender(); _scQmRenderSelectBar();
+    showToast && showToast('🗑 ' + cnt + ' node(s) delete ho gaye', 'success');
+  };
+  bar.appendChild(delBtn);
+}
+
 // ══════════════════════════════════════
 // TOOLBAR
 // ══════════════════════════════════════
@@ -23322,24 +23588,32 @@ function scRenderToolbar() {
         +'" style="background:'+c+';" onclick="scSetDrawColor(\''+c+'\',this)"></div>';});
     tb.innerHTML+='<input type="color" value="'+_sc.drawColor+'" onchange="scSetDrawColor(this.value)" style="width:22px;height:22px;border:none;border-radius:5px;padding:0;cursor:pointer;flex-shrink:0;">';
     tb.innerHTML+='<div class="sc-sep"></div><button class="sc-tbtn" onclick="scClearDraw()" title="Clear">🗑</button>';
-  } else if(_sc.mode==='qmap'){
-    var _qt=[
-      {t:'bubble', icon:'⬭'},
-      {t:'box',    icon:'▭'},
-      {t:'circle', icon:'○'},
-      {t:'diamond',icon:'◇'},
-    ];
-    var _th='';
-    _qt.forEach(function(x){
-      var _act=(_scQmTool===x.t);
-      _th+='<button class="sc-tbtn'+(_act?' active':'')+'" onclick="scQmSetTool(\''+x.t+'\')" title="'+x.t+' node" style="min-width:26px;font-size:1rem;padding:0 5px;">'+x.icon+'</button>';
-    });
-    _th+='<div class="sc-sep"></div>';
-    var _ca=(_scQmTool==='connect');
-    _th+='<button class="sc-tbtn'+(_ca?' active':'')+'" onclick="scQmSetTool(\'connect\')" title="Nodes connect karo" style="min-width:40px;font-weight:900;font-size:0.78rem;'+(_ca?'background:rgba(230,81,0,0.12);color:#e65100;border-color:rgba(230,81,0,0.5);':'')+'">→ Link</button>';
-    _th+='<div class="sc-sep"></div>';
-    _th+='<button class="sc-tbtn" onclick="scQmClear()" style="min-width:26px;">🗑</button>';
-    tb.innerHTML=_th;
+   } else if(_sc.mode==='qmap'){
+     var _qt=[
+       {t:'bubble', icon:'⯫'},
+       {t:'box',    icon:'▭'},
+       {t:'circle', icon:'○'},
+       {t:'diamond',icon:'◇'},
+     ];
+     var _th='';
+     _qt.forEach(function(x){
+       var _act=(_scQmTool===x.t);
+       _th+='<button class="sc-tbtn'+(_act?' active':'')+'" onclick="scQmSetTool(\''+x.t+'\')" title="'+x.t+' node" style="min-width:26px;font-size:1rem;padding:0 5px;">'+x.icon+'</button>';
+     });
+     _th+='<div class="sc-sep"></div>';
+     var _ca=(_scQmTool==='connect');
+     _th+='<button class="sc-tbtn'+(_ca?' active':'')+'" onclick="scQmSetTool(\'connect\')" title="Nodes connect karo" style="min-width:40px;font-weight:900;font-size:0.78rem;'+(_ca?'background:rgba(230,81,0,0.12);color:#e65100;border-color:rgba(230,81,0,0.5);':'')+'">→ Link</button>';
+     _th+='<div class="sc-sep"></div>';
+     // Lock button
+     var _lk=(_scQmTool==='lock'||_scQmLocked);
+     _th+='<button class="sc-tbtn'+(_lk?' active':'')+'" onclick="scQmSetTool(\'lock\')" title="Lock ON/OFF" style="min-width:30px;font-size:1rem;'+(_lk?'background:rgba(198,40,40,0.12);color:#c62828;border-color:rgba(198,40,40,0.4);':'')+'">'+(_lk?'🔒':'🔓')+'</button>';
+     // Select button
+     var _sl=(_scQmTool==='select');
+     _th+='<button class="sc-tbtn'+(_sl?' active':'')+'" onclick="scQmSetTool(\'select\')" title="Select Mode" style="min-width:30px;font-size:0.85rem;font-weight:900;'+(_sl?'background:rgba(21,101,192,0.12);color:#1565c0;border-color:rgba(21,101,192,0.4);':'')+'">'+(_sl?'☑':'☐')+'</button>';
+     _th+='<div class="sc-sep"></div>';
+     _th+='<button class="sc-tbtn" onclick="scQmClear()" style="min-width:26px;">🗑</button>';
+     tb.innerHTML=_th;
+     _scQmRenderSelectBar();
   } else if(_sc.mode==='select'){
     tb.innerHTML='<span style="font-size:0.65rem;color:rgba(0,0,0,0.45);font-weight:700;align-self:center;white-space:nowrap;">Tap=select · 2tap=edit · Drag=move</span>';
   }
@@ -28061,6 +28335,12 @@ function _shUnhighlightAll() {
       _shDeactivate();
     }
     _origSetMode.apply(this, arguments);
+    // Hide select bar when leaving qmap mode
+    if(mode !== 'qmap') {
+      var sb = document.getElementById('scQmSelectBar');
+      if(sb) sb.style.display = 'none';
+      _scQmSelected = [];
+    }
   };
 })();
 
