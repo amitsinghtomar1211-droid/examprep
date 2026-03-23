@@ -23165,6 +23165,553 @@ document.addEventListener('DOMContentLoaded', function() {
     patchVisibility();
   }
 })();
+
+// ══════════════════════════════════════════════════════════════════════
+// 🧩 AI NODE BUILDER — Chat se Key Points → Draggable JSON Nodes
+// Kaam karta hai:
+//  1. Topic AI Chat ya Canvas AI Chat ke bot reply ke baad "🧩 Nodes" btn
+//  2. Button click → Groq se JSON nodes generate hote hain
+//  3. Node Preview Panel opens — nodes visible hain, drag/reorder kar sako
+//  4. "→ Notes Editor" ya "→ Canvas Slide" se insert karo
+//  5. Notes Editor mein styled card blocks, Canvas mein textBlocks
+// ══════════════════════════════════════════════════════════════════════
+
+// ── CSS inject ──
+(function injectNodeCSS(){
+  if(document.getElementById('_aiNodeCSS')) return;
+  var s = document.createElement('style');
+  s.id = '_aiNodeCSS';
+  s.textContent = `
+/* ── Node Preview Panel ── */
+#_aiNodePanel {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  z-index: 19999;
+  background: var(--surface, #fff);
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -6px 32px rgba(0,0,0,0.18);
+  display: none;
+  flex-direction: column;
+  max-height: 78vh;
+  font-family: 'Noto Sans Devanagari','Baloo 2',sans-serif;
+  transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+}
+#_aiNodePanel.open { display: flex; }
+body.night-mode #_aiNodePanel { background: #1c2128; }
+
+._anp-handle {
+  width: 38px; height: 4px; border-radius: 2px;
+  background: rgba(0,0,0,0.15);
+  margin: 10px auto 0; flex-shrink: 0;
+}
+body.night-mode ._anp-handle { background: rgba(255,255,255,0.15); }
+
+._anp-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px 6px; flex-shrink: 0;
+  border-bottom: 1px solid var(--border, #e0e0e0);
+}
+._anp-title {
+  flex: 1; font-size: 0.88rem; font-weight: 800;
+  color: var(--accent, #1565c0);
+}
+._anp-close {
+  background: rgba(198,40,40,0.1); border: none; border-radius: 8px;
+  padding: 4px 10px; cursor: pointer; color: #c62828;
+  font-size: 0.76rem; font-weight: 700; font-family: inherit;
+}
+
+/* Nodes list */
+._anp-list {
+  flex: 1; overflow-y: auto; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 7px;
+}
+._anp-list::-webkit-scrollbar { width: 4px; }
+._anp-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
+
+/* Single node card */
+._anp-node {
+  background: var(--surface2, #f4f9fe);
+  border: 1.5px solid var(--border, #bdd5ea);
+  border-radius: 12px;
+  padding: 9px 12px;
+  display: flex; align-items: flex-start; gap: 8px;
+  cursor: grab; transition: border-color 0.15s, box-shadow 0.15s;
+  user-select: none; -webkit-user-select: none;
+}
+._anp-node:active { cursor: grabbing; }
+._anp-node.dragging { opacity: 0.45; border-style: dashed; }
+body.night-mode ._anp-node { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.12); }
+
+._anp-node-color {
+  width: 10px; flex-shrink: 0;
+  border-radius: 3px; align-self: stretch; min-height: 20px;
+}
+._anp-node-body { flex: 1; min-width: 0; }
+._anp-node-tag {
+  font-size: 0.58rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.6px; margin-bottom: 3px;
+  opacity: 0.65; color: var(--text2, #37526d);
+}
+._anp-node-text {
+  font-size: 0.78rem; font-weight: 700; color: var(--text, #0d1b2a);
+  line-height: 1.45; word-break: break-word;
+}
+._anp-node-detail {
+  font-size: 0.7rem; color: var(--text2, #37526d);
+  margin-top: 3px; line-height: 1.4;
+}
+body.night-mode ._anp-node-text { color: #e6edf3; }
+body.night-mode ._anp-node-detail { color: #8b949e; }
+
+._anp-node-del {
+  background: none; border: none; color: rgba(198,40,40,0.5);
+  cursor: pointer; font-size: 0.8rem; padding: 0 2px; flex-shrink: 0;
+  line-height: 1; margin-top: 1px;
+  -webkit-tap-highlight-color: transparent;
+}
+._anp-node-del:hover { color: #c62828; }
+
+/* Edit inline */
+._anp-node-text[contenteditable="true"] {
+  outline: none; border-bottom: 1.5px solid var(--accent, #1565c0);
+  cursor: text;
+}
+
+/* Action bar */
+._anp-actions {
+  padding: 8px 12px 12px; display: flex; gap: 7px;
+  flex-shrink: 0; flex-wrap: wrap;
+  border-top: 1px solid var(--border, #e0e0e0);
+  padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
+}
+._anp-btn {
+  flex: 1; min-width: 130px;
+  padding: 11px 14px; border-radius: 12px; border: none;
+  font-size: 0.78rem; font-weight: 800; cursor: pointer;
+  font-family: inherit; display: flex; align-items: center;
+  justify-content: center; gap: 5px;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.15s;
+}
+._anp-btn-notes {
+  background: linear-gradient(135deg,#1565c0,#1976d2); color: #fff;
+  box-shadow: 0 3px 10px rgba(21,101,192,0.3);
+}
+._anp-btn-canvas {
+  background: linear-gradient(135deg,#e65100,#f57c00); color: #fff;
+  box-shadow: 0 3px 10px rgba(230,81,0,0.3);
+}
+._anp-btn-json {
+  background: var(--surface2, #f4f9fe);
+  border: 1.5px solid var(--border, #bdd5ea) !important;
+  color: var(--text2, #37526d); font-size: 0.72rem;
+  border-radius: 10px !important;
+  flex: unset; padding: 8px 12px;
+}
+._anp-btn-json:hover { border-color: var(--accent) !important; color: var(--accent); }
+
+/* Loading state */
+._anp-loading {
+  padding: 24px; text-align: center;
+  color: var(--text2); font-size: 0.82rem;
+}
+._anp-spinner {
+  display: inline-block; width: 22px; height: 22px;
+  border: 2.5px solid rgba(21,101,192,0.2);
+  border-top-color: #1565c0; border-radius: 50%;
+  animation: _anpSpin 0.7s linear infinite; margin-bottom: 8px;
+}
+@keyframes _anpSpin { to { transform: rotate(360deg); } }
+
+/* Node type color map */
+._anp-type-fact    { background: #1565c0; }
+._anp-type-def     { background: #6a1b9a; }
+._anp-type-date    { background: #c62828; }
+._anp-type-tip     { background: #2e7d32; }
+._anp-type-example { background: #e65100; }
+._anp-type-formula { background: #00695c; }
+._anp-type-term    { background: #37474f; }
+
+/* Drag-over highlight on notes editor + canvas */
+.ne-node-drop-ready { outline: 3px dashed rgba(21,101,192,0.5) !important; }
+.sc-node-drop-ready { outline: 3px dashed rgba(230,81,0,0.5) !important; }
+
+/* Node pill in notes editor */
+.ai-node-pill {
+  display: inline-flex; align-items: flex-start; gap: 0;
+  background: var(--surface2, #f4f9fe);
+  border: 1.5px solid var(--border, #bdd5ea);
+  border-radius: 10px; margin: 4px 0;
+  overflow: hidden; width: 100%; max-width: 560px;
+}
+.ai-node-pill-bar { width: 6px; flex-shrink: 0; }
+.ai-node-pill-inner { padding: 7px 10px; flex: 1; min-width: 0; }
+.ai-node-pill-tag {
+  font-size: 0.55rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.5px; opacity: 0.6; margin-bottom: 2px;
+}
+.ai-node-pill-text {
+  font-size: 0.8rem; font-weight: 700; line-height: 1.45;
+  color: var(--text, #0d1b2a);
+}
+.ai-node-pill-detail {
+  font-size: 0.71rem; color: var(--text2, #37526d);
+  margin-top: 2px; line-height: 1.4;
+}
+  `;
+  document.head.appendChild(s);
+})();
+
+// ── State ──
+var _anNodes = [];       // current node list
+var _anContext = null;   // {tid, sid, secid, name, type:'topic'|'canvas'}
+var _anDragIdx = null;
+
+// ── Type config (color + label) ──
+var _anTypes = {
+  fact:    { color:'#1565c0', label:'📌 Key Fact' },
+  def:     { color:'#6a1b9a', label:'📖 Definition' },
+  date:    { color:'#c62828', label:'📅 Date/Year' },
+  tip:     { color:'#2e7d32', label:'💡 Tip' },
+  example: { color:'#e65100', label:'📝 Example' },
+  formula: { color:'#00695c', label:'∑ Formula' },
+  term:    { color:'#37474f', label:'🔤 Term' }
+};
+
+// ── Build Panel DOM ──
+function _anBuildPanel() {
+  if(document.getElementById('_aiNodePanel')) return;
+  var panel = document.createElement('div');
+  panel.id = '_aiNodePanel';
+  panel.innerHTML =
+    '<div class="_anp-handle"></div>' +
+    '<div class="_anp-header">' +
+      '<span class="_anp-title">🧩 AI Key Points — Nodes</span>' +
+      '<button class="_anp-btn _anp-btn-json" id="_anJsonBtn" onclick="_anShowJSON()" title="JSON dekhein / copy karein">{ } JSON</button>' +
+      '<button class="_anp-close" onclick="_anClose()">✕</button>' +
+    '</div>' +
+    '<div class="_anp-list" id="_anList"></div>' +
+    '<div class="_anp-actions" id="_anActions"></div>';
+  document.body.appendChild(panel);
+}
+
+// ── Open Panel with loading ──
+function _anOpen(ctx) {
+  _anBuildPanel();
+  _anContext = ctx;
+  _anNodes = [];
+  var panel = document.getElementById('_aiNodePanel');
+  panel.classList.add('open');
+  document.getElementById('_anList').innerHTML =
+    '<div class="_anp-loading"><div class="_anp-spinner"></div><br>AI key points dhundh raha hai...</div>';
+  document.getElementById('_anActions').innerHTML = '';
+}
+
+// ── Close ──
+function _anClose() {
+  var p = document.getElementById('_aiNodePanel');
+  if(p) p.classList.remove('open');
+}
+
+// ── Render nodes list ──
+function _anRender() {
+  var list = document.getElementById('_anList');
+  if(!list) return;
+  if(!_anNodes.length) {
+    list.innerHTML = '<div class="_anp-loading">⚠️ Koi node nahi mila. Phir try karo.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  _anNodes.forEach(function(node, i) {
+    var tc = _anTypes[node.type] || _anTypes.fact;
+    var card = document.createElement('div');
+    card.className = '_anp-node';
+    card.draggable = true;
+    card.dataset.idx = i;
+    card.innerHTML =
+      '<div class="_anp-node-color" style="background:' + tc.color + '"></div>' +
+      '<div class="_anp-node-body">' +
+        '<div class="_anp-node-tag">' + tc.label + '</div>' +
+        '<div class="_anp-node-text" contenteditable="true" spellcheck="false" ' +
+          'onblur="_anNodes[' + i + '].text=this.textContent.trim()" ' +
+          'onclick="event.stopPropagation()">' + _anEsc(node.text) + '</div>' +
+        (node.detail ? '<div class="_anp-node-detail">' + _anEsc(node.detail) + '</div>' : '') +
+      '</div>' +
+      '<button class="_anp-node-del" onclick="_anDeleteNode(' + i + ')" title="Hatao">✕</button>';
+
+    // drag events
+    card.addEventListener('dragstart', function(e) {
+      _anDragIdx = i;
+      card.classList.add('dragging');
+      e.dataTransfer.setData('text/plain', node.text);
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+    card.addEventListener('dragend', function() {
+      card.classList.remove('dragging');
+      _anDragIdx = null;
+    });
+
+    list.appendChild(card);
+  });
+
+  // Render action buttons
+  var actions = document.getElementById('_anActions');
+  actions.innerHTML =
+    '<button class="_anp-btn _anp-btn-notes" onclick="_anInsertToNotes()">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
+      'Notes Editor mein</button>' +
+    '<button class="_anp-btn _anp-btn-canvas" onclick="_anInsertToCanvas()">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="3"/></svg>' +
+      'Canvas Slide mein</button>';
+}
+
+function _anDeleteNode(i) {
+  _anNodes.splice(i, 1);
+  _anRender();
+}
+
+function _anEsc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Generate nodes from AI response text ──
+async function _anGenerate(responseText, ctx) {
+  _anOpen(ctx);
+
+  var apiKey = '';
+  try { apiKey = (document.getElementById('apiKey') || {}).value || localStorage.getItem('groqApiKey') || ''; } catch(e) {}
+
+  if(!apiKey) {
+    document.getElementById('_anList').innerHTML =
+      '<div class="_anp-loading">⚠️ Groq API key nahi hai! Settings mein save karo.</div>';
+    return;
+  }
+
+  var prompt =
+    'Extract key points from this text as JSON nodes array. Return ONLY valid JSON, no markdown:\n' +
+    '[{"type":"fact","text":"Short key point","detail":"Optional extra detail"},..]\n\n' +
+    'type must be one of: fact, def, date, tip, example, formula, term\n' +
+    'Make 6-12 nodes. text max 80 chars. detail max 120 chars (optional, leave "" if not needed).\n' +
+    'Hindi/English mix OK.\n\n' +
+    'TEXT:\n' + responseText.replace(/<[^>]*>/g,'').substring(0, 2000);
+
+  try {
+    var resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+apiKey },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        max_tokens: 1200,
+        messages: [
+          { role:'system', content:'Return ONLY valid JSON array. No explanation, no markdown code blocks.' },
+          { role:'user',   content: prompt }
+        ]
+      })
+    });
+    var data = await resp.json();
+    var raw = (data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content) || '[]';
+    // Strip markdown if any
+    raw = raw.replace(/```json|```/g,'').trim();
+    // Extract JSON array
+    var m = raw.match(/\[[\s\S]*\]/);
+    if(!m) throw new Error('JSON array nahi mila');
+    _anNodes = JSON.parse(m[0]).filter(function(n){ return n && n.text; });
+    _anRender();
+  } catch(err) {
+    document.getElementById('_anList').innerHTML =
+      '<div class="_anp-loading">❌ Error: ' + err.message + '<br><button onclick="_anGenerate(window._anLastText, _anContext)" style="margin-top:10px;padding:7px 16px;border-radius:9px;border:1.5px solid var(--accent);background:transparent;color:var(--accent);font-weight:700;cursor:pointer;font-family:inherit;">🔄 Retry</button></div>';
+  }
+}
+
+// ── Insert to Notes Editor ──
+function _anInsertToNotes() {
+  if(!_anNodes.length) { showToast && showToast('Koi node nahi!','error'); return; }
+
+  // Build styled HTML block
+  var html = '<div style="margin:8px 0;display:flex;flex-direction:column;gap:5px;">';
+  _anNodes.forEach(function(node) {
+    var tc = _anTypes[node.type] || _anTypes.fact;
+    html +=
+      '<div class="ai-node-pill" style="border-left:4px solid ' + tc.color + ';">' +
+        '<div class="ai-node-pill-inner">' +
+          '<div class="ai-node-pill-tag" style="color:' + tc.color + ';">' + tc.label + '</div>' +
+          '<div class="ai-node-pill-text">' + _anEsc(node.text) + '</div>' +
+          (node.detail ? '<div class="ai-node-pill-detail">' + _anEsc(node.detail) + '</div>' : '') +
+        '</div>' +
+      '</div>';
+  });
+  html += '</div>';
+
+  // Try to insert into currently open notes editor
+  var area = document.getElementById('noteEditableArea');
+  var editorOverlay = document.getElementById('notesEditorOverlay');
+  var editorVisible = editorOverlay && (editorOverlay.style.display !== 'none') && editorOverlay.classList.contains('show');
+
+  if(area && editorVisible) {
+    area.focus();
+    try { document.execCommand('insertHTML', false, html); } catch(e) { area.innerHTML += html; }
+    showToast && showToast('✅ ' + _anNodes.length + ' nodes notes mein add ho gaye!', 'success');
+    _anClose();
+    return;
+  }
+
+  // If editor not open — open it with this content
+  if(_anContext && _anContext.tid) {
+    // Use addAiResponseToNotes flow
+    var cleanText = _anNodes.map(function(n){ return '• [' + (n.type||'fact').toUpperCase() + '] ' + n.text + (n.detail ? ' — ' + n.detail : ''); }).join('\n');
+    if(typeof addAiResponseToNotes === 'function') {
+      // Temporarily set context
+      if(window._aiChatContext) window._aiChatContext.tid = _anContext.tid;
+      addAiResponseToNotes(cleanText);
+      _anClose();
+      return;
+    }
+  }
+
+  // Fallback: copy HTML to clipboard
+  var ta = document.createElement('textarea');
+  ta.value = _anNodes.map(function(n){ return '• ['+n.type+'] '+n.text+(n.detail?' — '+n.detail:''); }).join('\n');
+  ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); showToast && showToast('📋 Nodes clipboard mein copy ho gaye! Notes mein paste karo.','success'); } catch(e) {}
+  document.body.removeChild(ta);
+  _anClose();
+}
+
+// ── Insert to Canvas Slide ──
+function _anInsertToCanvas() {
+  if(!_anNodes.length) { showToast && showToast('Koi node nahi!','error'); return; }
+
+  var cur = (typeof _scCur === 'function') ? _scCur() : null;
+
+  if(!cur) {
+    showToast && showToast('⚠️ Canvas pehle kholo!', 'error');
+    return;
+  }
+
+  if(typeof scSnapshot === 'function') scSnapshot();
+
+  // Place nodes in a cascading diagonal layout
+  var startX = 20, startY = 20;
+  var cols = Math.min(3, _anNodes.length);
+  var colW = 175, rowH = 90;
+
+  _anNodes.forEach(function(node, i) {
+    var tc = _anTypes[node.type] || _anTypes.fact;
+    var col = i % cols;
+    var row = Math.floor(i / cols);
+    var x = startX + col * (colW + 10);
+    var y = startY + row * (rowH + 8);
+
+    // Heading style for type label
+    var headHtml = '<span style="font-size:9px;font-weight:800;color:' + tc.color + ';text-transform:uppercase;letter-spacing:0.4px;opacity:0.75;">' + (tc.label||'') + '</span><br>';
+    var bodyHtml = _anEsc(node.text);
+    if(node.detail) bodyHtml += '<br><span style="font-size:10px;opacity:0.65;">' + _anEsc(node.detail) + '</span>';
+
+    var block = {
+      id: 'scb_' + Date.now() + '_' + i,
+      x: x, y: y,
+      w: colW,
+      html: headHtml + bodyHtml,
+      fontSize: 13,
+      color: '#1a1a1a',
+      bold: false, italic: false, underline: false, angle: 0,
+      bg: tc.color + '11',       // very light tint
+      borderColor: tc.color + '55'
+    };
+    cur.textBlocks.push(block);
+  });
+
+  // Re-render canvas
+  if(typeof _scRenderAll === 'function') _scRenderAll();
+  else if(typeof scRender === 'function') scRender();
+
+  showToast && showToast('✅ ' + _anNodes.length + ' nodes canvas slide mein add ho gaye!', 'success');
+  _anClose();
+}
+
+// ── Show JSON modal ──
+function _anShowJSON() {
+  if(!_anNodes.length) { showToast && showToast('Koi node nahi!','error'); return; }
+  var json = JSON.stringify(_anNodes, null, 2);
+  // Simple modal
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:20100;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;padding:16px;';
+  overlay.innerHTML =
+    '<div style="background:var(--surface,#fff);border-radius:16px;width:100%;max-width:520px;max-height:70vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.3);">' +
+      '<div style="padding:12px 16px;border-bottom:1px solid var(--border,#e0e0e0);display:flex;align-items:center;justify-content:space-between;">' +
+        '<span style="font-weight:800;font-size:0.88rem;color:var(--accent,#1565c0);">{ } JSON Nodes</span>' +
+        '<div style="display:flex;gap:7px;">' +
+          '<button onclick="navigator.clipboard.writeText(this.closest(\'div\').parentNode.querySelector(\'textarea\').value).then(()=>showToast&&showToast(\'✅ Copied!\',\'success\'))" style="padding:5px 12px;border-radius:8px;border:1.5px solid var(--accent);background:transparent;color:var(--accent);font-size:0.74rem;font-weight:700;cursor:pointer;font-family:inherit;">Copy</button>' +
+          '<button onclick="this.closest(\'div\').parentNode.parentNode.remove()" style="padding:5px 10px;border-radius:8px;border:none;background:rgba(198,40,40,0.1);color:#c62828;font-size:0.74rem;font-weight:700;cursor:pointer;font-family:inherit;">✕</button>' +
+        '</div>' +
+      '</div>' +
+      '<textarea readonly style="flex:1;padding:12px;font-size:0.74rem;font-family:monospace;border:none;outline:none;resize:none;background:var(--surface2,#f4f9fe);color:var(--text,#0d1b2a);overflow-y:auto;">' + json.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>' +
+    '</div>';
+  overlay.addEventListener('click', function(e){ if(e.target===overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+// ── Add "🧩 Nodes" button to every bot message ──
+// Hook into addChatMsg (topic AI chat)
+var _origAddChatMsg = window.addChatMsg;
+window.addChatMsg = function(role, text, id, showSave) {
+  _origAddChatMsg && _origAddChatMsg.apply(this, arguments);
+  if(role === 'bot' && showSave && text && text.length > 60) {
+    var msgs = document.getElementById('aiChatMessages');
+    if(!msgs) return;
+    var lastMsg = msgs.lastElementChild;
+    if(!lastMsg) return;
+    // Find or create action row
+    var actRow = lastMsg.querySelector('div[style*="flex"]');
+    if(!actRow) { actRow = document.createElement('div'); actRow.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;'; lastMsg.appendChild(actRow); }
+    var nodeBtn = document.createElement('button');
+    nodeBtn.style.cssText = 'padding:4px 9px;border-radius:8px;border:1.5px solid rgba(106,27,154,0.35);background:rgba(106,27,154,0.08);color:#6a1b9a;font-size:0.72rem;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:4px;';
+    nodeBtn.innerHTML = '🧩 Nodes banao';
+    nodeBtn.title = 'Is response ke key points se draggable nodes banao';
+    var capturedText = text;
+    nodeBtn.onclick = function() {
+      window._anLastText = capturedText;
+      _anGenerate(capturedText, window._aiChatContext || null);
+    };
+    actRow.appendChild(nodeBtn);
+  }
+};
+
+// ── Hook into Canvas AI (_scAiMsg) ──
+var _origScAiMsg = window._scAiMsg || function(){};
+// Override after DOM ready
+document.addEventListener('DOMContentLoaded', function() {
+  setTimeout(function() {
+    var origFn = window._scAiMsg;
+    window._scAiMsg = function(role, html) {
+      origFn && origFn.apply(this, arguments);
+      if(role === 'bot' && html && !html.includes('⏳') && html.length > 60) {
+        setTimeout(function() {
+          var box = document.getElementById('_scAiMsgs');
+          if(!box) return;
+          var lastMsg = box.lastElementChild;
+          if(!lastMsg || lastMsg.querySelector('._sc-node-btn')) return;
+          var nodeBtn = document.createElement('button');
+          nodeBtn.className = '_sc-node-btn';
+          nodeBtn.style.cssText = 'margin-top:6px;display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:8px;border:1.5px solid rgba(106,27,154,0.35);background:rgba(106,27,154,0.08);color:#6a1b9a;font-size:0.7rem;font-weight:700;cursor:pointer;font-family:inherit;';
+          nodeBtn.innerHTML = '🧩 Nodes banao';
+          var capturedHtml = html;
+          var canvasCtx = { type:'canvas', name:'Canvas AI', tid: (typeof _sc!=='undefined'?_sc.tid:null), sid:(typeof _sc!=='undefined'?_sc.sid:null), secid:(typeof _sc!=='undefined'?_sc.secid:null) };
+          nodeBtn.onclick = function() {
+            window._anLastText = capturedHtml;
+            _anGenerate(capturedHtml, canvasCtx);
+          };
+          lastMsg.appendChild(document.createElement('br'));
+          lastMsg.appendChild(nodeBtn);
+        }, 200);
+      }
+    };
+  }, 2000);
+});
+
+// ══ END AI NODE BUILDER ══
 </script>
 </body>
 </html>
