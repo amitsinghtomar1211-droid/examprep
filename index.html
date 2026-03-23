@@ -673,8 +673,60 @@ textarea:focus{border-color:var(--accent);background:var(--surface);}
 .raw-note-content.open{display:block;}
 
 /* AI CHAT PANEL */
-.ai-chat-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:500;display:none;align-items:flex-end;justify-content:center;padding:0;}
+/* ══ AI CHAT CANVAS INTEGRATION ══
+   — AI Chat mein Canvas Pull Tab (right edge)
+   — Canvas open hone par AI chat thoda left shift
+   — Selected text drag to canvas
+   ════════════════════════════════════════════ */
+.ai-chat-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:502;display:none;align-items:flex-end;justify-content:center;padding:0;}
 .ai-chat-overlay.show{display:flex;}
+
+/* When canvas is open alongside AI chat */
+.ai-chat-overlay.canvas-alongside {
+  right: min(88vw, 420px);
+  background: rgba(0,0,0,0.18);
+}
+.ai-chat-overlay.canvas-alongside .ai-chat-panel {
+  width: 100%;
+  max-width: 100%;
+  border-radius: 24px 24px 0 0;
+}
+
+/* AI Chat Canvas Pull Tab */
+#_aiCanvasTab {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 9999;
+  width: 24px;
+  height: 80px;
+  background: linear-gradient(180deg,#e65100,#1565c0);
+  border-radius: 10px 0 0 10px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: -2px 0 14px rgba(0,0,0,0.22);
+  -webkit-tap-highlight-color: transparent;
+  flex-direction: column;
+  gap: 3px;
+  transition: opacity 0.2s;
+}
+#_aiCanvasTab.visible { display: flex; }
+#_aiCanvasTab span {
+  color: #fff; font-size: 0.56rem; font-weight: 900;
+  writing-mode: vertical-rl; letter-spacing: 1px; opacity: 0.9;
+}
+
+/* Drag-select on AI messages */
+.ai-msg { -webkit-user-select: text; user-select: text; }
+
+/* Canvas drop zone active */
+#scCanvasWrap.ai-drop-active {
+  outline: 3px dashed rgba(21,101,192,0.6) !important;
+  background: rgba(21,101,192,0.04) !important;
+}
 .ai-chat-panel{background:var(--surface);width:100%;max-width:720px;height:88vh;border-radius:24px 24px 0 0;display:flex;flex-direction:column;box-shadow:0 -6px 40px rgba(0,0,0,0.2);overflow:hidden;}
 .ai-chat-header{padding:12px 16px;background:linear-gradient(135deg,var(--accent),var(--accent3));color:#fff;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
 .ai-chat-title{font-weight:800;font-size:0.9rem;}
@@ -4339,6 +4391,10 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 
 <!-- AI CHAT PANEL -->
 <div class="ai-chat-overlay" id="aiChatOverlay" onclick="closeAiChatIfBg(event)">
+  <!-- Canvas Pull Tab — right edge pe, sirf tab context mein dikhega -->
+  <div id="_aiCanvasTab" title="Canvas kholo / band karo">
+    <span>📋</span><span>C·S</span>
+  </div>
   <div class="ai-chat-panel" id="aiChatPanel">
     <div class="ai-chat-header">
       <div>
@@ -24674,7 +24730,256 @@ function _snmAddChatButton(tid, sid, secid, topicName) {
   sugs.insertBefore(btn, sugs.firstChild);
 }
 
-/* ── openAiChat mein button directly inject ho gaya upar ── */
+/* ══ openAiChat mein button directly inject ho gaya upar ══ */
+
+// ══════════════════════════════════════════════════════════════════
+// 🔗 AI CHAT ↔ CANVAS INTEGRATION
+// 1. AI Chat open hone par Canvas Pull Tab dikhao (right edge)
+// 2. Tab tap → Canvas slide se khulta/band hota hai (side-by-side)
+// 3. AI chat messages mein text select → "📋 Canvas mein bhejo" btn
+// 4. Drag support — selected text canvas par drop karo
+// ══════════════════════════════════════════════════════════════════
+(function(){
+
+  /* ── Canvas pull tab visibility manage karo ── */
+  function _aiCanvasTabSync() {
+    var tab = document.getElementById('_aiCanvasTab');
+    if(!tab) return;
+    var chatOpen = document.getElementById('aiChatOverlay')
+                    && document.getElementById('aiChatOverlay').classList.contains('show');
+    var hasCtx   = window._aiChatContext && window._aiChatContext.tid;
+    if(chatOpen && hasCtx) tab.classList.add('visible');
+    else                   tab.classList.remove('visible');
+  }
+
+  /* ── Tab click → toggle canvas alongside AI chat ── */
+  function _aiToggleCanvasTab() {
+    var overlay  = document.getElementById('aiChatOverlay');
+    var panel    = document.getElementById('studyCanvasPanel');
+    var canvasOpen = panel && panel.classList.contains('sc-open');
+
+    if(!canvasOpen) {
+      // Canvas kholo
+      var ctx = window._aiChatContext;
+      if(ctx && ctx.tid) {
+        scOnEditorOpen(ctx.sid, ctx.secid, ctx.tid);
+        scTogglePanel(); // opens canvas
+      } else {
+        showToast && showToast('Topic context nahi hai!','error');
+        return;
+      }
+    } else {
+      // Canvas band karo
+      scTogglePanel();
+    }
+
+    // Overlay shift
+    if(overlay) {
+      var nowOpen = panel && panel.classList.contains('sc-open');
+      overlay.classList.toggle('canvas-alongside', nowOpen);
+    }
+    // Tab icon update
+    var tab = document.getElementById('_aiCanvasTab');
+    if(tab) {
+      var nowOpen2 = panel && panel.classList.contains('sc-open');
+      tab.style.background = nowOpen2
+        ? 'linear-gradient(180deg,#c62828,#e65100)'
+        : 'linear-gradient(180deg,#e65100,#1565c0)';
+      tab.querySelector('span:last-child').textContent = nowOpen2 ? 'बंद' : 'C·S';
+    }
+  }
+
+  /* ── Hook: openAiChat ke baad tab sync ── */
+  var _origOpen = window.openAiChat;  // already patched above — wrap again safely
+  // Instead, use MutationObserver on overlay classList
+  document.addEventListener('DOMContentLoaded', function(){
+    var overlay = document.getElementById('aiChatOverlay');
+    if(!overlay) return;
+
+    // Canvas tab click handler
+    var tab = document.getElementById('_aiCanvasTab');
+    if(tab) {
+      tab.addEventListener('click', function(e){
+        e.stopPropagation();
+        _aiToggleCanvasTab();
+      });
+    }
+
+    // Watch overlay show/hide
+    new MutationObserver(function(){
+      _aiCanvasTabSync();
+      // If overlay hides, also remove alongside class and close canvas
+      if(!overlay.classList.contains('show')) {
+        overlay.classList.remove('canvas-alongside');
+        var tab2 = document.getElementById('_aiCanvasTab');
+        if(tab2) {
+          tab2.classList.remove('visible');
+          tab2.style.background = 'linear-gradient(180deg,#e65100,#1565c0)';
+        }
+      }
+    }).observe(overlay, {attributes:true, attributeFilter:['class']});
+
+    // ── Selected text → "📋 Canvas" action button ──
+    var msgsEl = document.getElementById('aiChatMessages');
+    if(!msgsEl) return;
+
+    // Watch for new messages
+    new MutationObserver(function(mutations){
+      mutations.forEach(function(m){
+        m.addedNodes.forEach(function(node){
+          if(node.nodeType===1 && node.classList && node.classList.contains('ai-msg') &&
+             node.classList.contains('bot')) {
+            _addDragToCanvasBtn(node);
+          }
+        });
+      });
+    }).observe(msgsEl, {childList:true});
+
+    // Also handle mouseup / touchend for text selection
+    msgsEl.addEventListener('mouseup', _handleAiSelection);
+    msgsEl.addEventListener('touchend', function(){ setTimeout(_handleAiSelection, 100); });
+  });
+
+  /* ── Add "📋 Canvas mein bhejo" button to bot message ── */
+  function _addDragToCanvasBtn(msgEl) {
+    // Make draggable
+    msgEl.setAttribute('draggable', 'true');
+    msgEl.addEventListener('dragstart', function(e){
+      var sel = window.getSelection();
+      var txt = sel && sel.toString().trim();
+      if(!txt) txt = msgEl.innerText.substring(0, 500);
+      e.dataTransfer.setData('text/plain', txt);
+      e.dataTransfer.effectAllowed = 'copy';
+      // Highlight canvas drop zone
+      var wrap = document.getElementById('scCanvasWrap');
+      if(wrap) wrap.classList.add('ai-drop-active');
+    });
+    msgEl.addEventListener('dragend', function(){
+      var wrap = document.getElementById('scCanvasWrap');
+      if(wrap) wrap.classList.remove('ai-drop-active');
+    });
+  }
+
+  /* ── Handle text selection inside AI chat ── */
+  function _handleAiSelection() {
+    var sel = window.getSelection();
+    var txt = sel && sel.toString().trim();
+
+    // Remove old tooltip
+    var old = document.getElementById('_aiSelTooltip');
+    if(old) old.remove();
+
+    if(!txt || txt.length < 3) return;
+    // Check selection is inside aiChatMessages
+    var anchor = sel.anchorNode;
+    var msgs   = document.getElementById('aiChatMessages');
+    if(!msgs || !msgs.contains(anchor)) return;
+
+    // Build floating tooltip
+    var range = sel.getRangeAt(0);
+    var rect  = range.getBoundingClientRect();
+    var tip   = document.createElement('div');
+    tip.id    = '_aiSelTooltip';
+    tip.style.cssText =
+      'position:fixed;z-index:19999;'+
+      'top:'+(rect.top-38)+'px;'+
+      'left:'+(rect.left + rect.width/2)+'px;'+
+      'transform:translateX(-50%);'+
+      'background:linear-gradient(135deg,#1565c0,#6a1b9a);'+
+      'color:#fff;border-radius:10px;padding:5px 12px;'+
+      'font-size:0.72rem;font-weight:800;cursor:pointer;'+
+      'box-shadow:0 4px 16px rgba(0,0,0,0.25);'+
+      'display:flex;align-items:center;gap:5px;'+
+      'white-space:nowrap;font-family:inherit;'+
+      '-webkit-tap-highlight-color:transparent;';
+    tip.innerHTML = '📋 Canvas mein bhejo';
+    tip.addEventListener('mousedown', function(e){
+      e.preventDefault();
+    });
+    tip.addEventListener('click', function(){
+      var finalTxt = txt;
+      tip.remove();
+      sel.removeAllRanges();
+      _aiSendTextToCanvas(finalTxt);
+    });
+    // Touch long-press support
+    tip.addEventListener('touchstart', function(e){
+      e.preventDefault();
+      var finalTxt = txt;
+      tip.remove();
+      sel.removeAllRanges();
+      _aiSendTextToCanvas(finalTxt);
+    });
+    document.body.appendChild(tip);
+
+    // Auto-remove after 4s
+    setTimeout(function(){
+      if(document.getElementById('_aiSelTooltip') === tip) tip.remove();
+    }, 4000);
+
+    // Remove on scroll or outside click
+    var removeTip = function(){ if(tip.parentNode) tip.remove(); };
+    document.addEventListener('click',  removeTip, {once:true});
+    document.addEventListener('scroll', removeTip, {once:true, passive:true});
+  }
+
+  /* ── Core: text ko canvas mein insert karo ── */
+  window._aiSendTextToCanvas = function(text) {
+    if(!text || !text.trim()) return;
+    var panel = document.getElementById('studyCanvasPanel');
+    var canvasOpen = panel && panel.classList.contains('sc-open');
+
+    // Canvas open nahi hai to pehle kholo
+    if(!canvasOpen) {
+      var ctx = window._aiChatContext;
+      if(ctx && ctx.tid) {
+        scOnEditorOpen(ctx.sid, ctx.secid, ctx.tid);
+        scTogglePanel();
+        // Overlay shift
+        var ov = document.getElementById('aiChatOverlay');
+        if(ov) ov.classList.add('canvas-alongside');
+        // Tab update
+        var tb = document.getElementById('_aiCanvasTab');
+        if(tb) {
+          tb.style.background='linear-gradient(180deg,#c62828,#e65100)';
+          tb.querySelector('span:last-child').textContent='बंद';
+        }
+      } else {
+        showToast && showToast('⚠️ Topic context nahi — pehle kisi topic ka AI Chat kholo','error');
+        return;
+      }
+    }
+
+    // Insert after short delay if canvas just opened
+    setTimeout(function(){
+      var cur = _scCur();
+      if(!cur) { showToast&&showToast('Canvas slide nahi mili!','error'); return; }
+      scSnapshot();
+
+      // Random position on canvas
+      var wrap = document.getElementById('scCanvasWrap');
+      var wW = wrap ? wrap.offsetWidth  : 320;
+      var wH = wrap ? wrap.offsetHeight : 400;
+      var x  = Math.max(10, Math.floor(Math.random()*(wW-200)));
+      var y  = Math.max(10, Math.floor(Math.random()*(wH-80)));
+
+      var safeHtml = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      var block = {
+        id:   'scb_ai_'+Date.now(),
+        x: x, y: y,
+        w: Math.min(280, text.length*7 + 40),
+        html: safeHtml,
+        fontSize: 13, color:'#0d1b2a',
+        bold:false, italic:false, underline:false, angle:0
+      };
+      cur.textBlocks.push(block);
+      _scCreateBlockDOM(block);
+      showToast&&showToast('✅ Canvas mein add ho gaya!','success');
+    }, canvasOpen ? 0 : 400);
+  };
+
+})();
+/* ══ END AI CHAT CANVAS INTEGRATION ══ */
 
 /* ── Handle tvShowSub for 'nodemap' category ── */
 var _origTvShowSub = window.tvShowSub;
