@@ -2057,10 +2057,12 @@ body.night-mode .neqm-btn.sel { background: rgba(63,185,80,0.18); border-color: 
   min-width: 200px;
   max-width: 85vw;
 }
-#neQmNodeInput input {
+#neQmNodeInput textarea {
   width: 100%; border: none; outline: none;
   font-family: inherit; font-size: 0.88rem;
   font-weight: 700; color: var(--text); background: transparent;
+  resize: none; min-height: 40px; max-height: 120px;
+  line-height: 1.45; overflow-y: auto;
 }
 .neqm-nib {
   padding: 4px 9px; border-radius: 7px;
@@ -3104,8 +3106,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 
 <!-- QM NODE INPUT POPUP -->
 <div id="neQmNodeInput">
-  <input id="neQmNodeText" placeholder="Node text likhein..." maxlength="50"
-    onkeydown="neQmNodeInputKey(event)" autofocus>
+  <textarea id="neQmNodeText" placeholder="Node text likhein... (Enter = nayi line, ✓ Add = confirm)" rows="2"
+    onkeydown="neQmNodeInputKey(event)"></textarea>
   <div style="display:flex;gap:5px;margin-top:7px;flex-wrap:wrap;">
     <button class="neqm-nib" onclick="neQmConfirmNode()">✓ Add</button>
     <button class="neqm-nib" data-shape="bubble" onclick="neQmSetPendingShape('bubble')">⬭</button>
@@ -16281,13 +16283,18 @@ function _neQmInit() {
     _neQm.edges = JSON.parse(JSON.stringify(_neQm._savedState.edges));
   }
 
-  canvas.removeEventListener('pointerdown', _neQmDown);
-  canvas.removeEventListener('pointermove', _neQmMove);
-  canvas.removeEventListener('pointerup',   _neQmUp);
-  canvas.addEventListener('pointerdown', _neQmDown, { passive: false });
-  canvas.addEventListener('pointermove', _neQmMove, { passive: false });
-  canvas.addEventListener('pointerup',   _neQmUp,   { passive: true });
+  canvas.removeEventListener('pointerdown',   _neQmDown);
+  canvas.removeEventListener('pointermove',   _neQmMove);
+  canvas.removeEventListener('pointerup',     _neQmUp);
+  canvas.removeEventListener('pointercancel', _neQmUp);
+  canvas.addEventListener('pointerdown',   _neQmDown,  { passive: false });
+  canvas.addEventListener('pointermove',   _neQmMove,  { passive: false });
+  canvas.addEventListener('pointerup',     _neQmUp,    { passive: true });
+  canvas.addEventListener('pointercancel', _neQmUp,    { passive: true });
   canvas.style.touchAction = 'none';
+  // Reset multi-touch state
+  _neQmActivePointers = {};
+  _neQm._pinchActive = false;
 
   _neQmRedraw();
 }
@@ -16313,8 +16320,25 @@ function _neQmNodeAt(x, y) {
 }
 
 // ── Pointer events ──
+// Track active pointer count to detect pinch/multi-touch
+var _neQmActivePointers = {};
+
 function _neQmDown(e) {
-  if(!e.isPrimary) return;
+  // Track all pointers
+  _neQmActivePointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+  var pointerCount = Object.keys(_neQmActivePointers).length;
+
+  // Multi-touch (pinch) — sirf primary handle karo, node creation band
+  if(!e.isPrimary) {
+    e.preventDefault();
+    // Start pinch tracking on secondary touch
+    _neQm._pinchActive = true;
+    _neQm._pinchStartDist = _neQmPinchDist();
+    _neQm._pinchStartNodes = _neQm.nodes.map(function(n){ return {id:n.id,x:n.x,y:n.y,w:n.w,h:n.h}; });
+    return;
+  }
+  if(pointerCount > 1 || _neQm._pinchActive) { e.preventDefault(); return; }
+
   e.preventDefault();
   try { _neQm.canvas.setPointerCapture(e.pointerId); } catch(x) {}
 
@@ -16369,6 +16393,27 @@ function _neQmDown(e) {
 }
 
 function _neQmMove(e) {
+  // Update pointer position
+  if(_neQmActivePointers[e.pointerId]) {
+    _neQmActivePointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+  }
+
+  // Pinch in progress — resize selected node
+  if(_neQm._pinchActive && _neQm.selectedNode) {
+    e.preventDefault();
+    var curDist = _neQmPinchDist();
+    if(_neQm._pinchStartDist && curDist && _neQm._pinchStartNodes) {
+      var ratio = curDist / _neQm._pinchStartDist;
+      var orig  = _neQm._pinchStartNodes.find(function(x){ return x.id === _neQm.selectedNode.id; });
+      if(orig) {
+        _neQm.selectedNode.w = Math.max(50, orig.w * ratio);
+        _neQm.selectedNode.h = Math.max(30, orig.h * ratio);
+        _neQmRedraw();
+      }
+    }
+    return;
+  }
+
   if(!e.isPrimary) return;
   e.preventDefault();
   var pt = _neQmPt(e);
@@ -16385,7 +16430,29 @@ function _neQmMove(e) {
   }
 }
 
+// Helper: get distance between two active touch pointers
+function _neQmPinchDist() {
+  var pts = Object.values(_neQmActivePointers);
+  if(pts.length < 2) return null;
+  var a = pts[0], b = pts[1];
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
 function _neQmUp(e) {
+  delete _neQmActivePointers[e.pointerId];
+  var remaining = Object.keys(_neQmActivePointers).length;
+
+  if(_neQm._pinchActive) {
+    if(remaining < 2) {
+      // Pinch ended — save state
+      _neQmSaveHistory();
+      _neQm._pinchActive     = false;
+      _neQm._pinchStartDist  = null;
+      _neQm._pinchStartNodes = null;
+    }
+    return;
+  }
+
   if(_neQm.dragging) { _neQmSaveHistory(); _neQm.dragging = null; }
 }
 
@@ -16401,26 +16468,35 @@ function _neQmShowNodeInput(x, y) {
   var sy  = r.height / _neQm.canvas.height;
   var vx  = r.left + x * sx;
   var vy  = r.top  + y * sy;
-  var left = Math.min(Math.max(vx - 100, 8), window.innerWidth  - 220);
-  var top  = Math.min(vy + 12, window.innerHeight - 120);
+  var left = Math.min(Math.max(vx - 110, 8), window.innerWidth  - 240);
+  var top  = Math.min(Math.max(vy + 16, 60), window.innerHeight - 160);
 
   inp.style.display = 'block';
   inp.style.left    = left + 'px';
   inp.style.top     = top  + 'px';
   txt.value = '';
-  setTimeout(function(){ txt.focus(); }, 50);
+  txt.style.height = 'auto';
+  setTimeout(function(){ txt.focus(); }, 80);
 }
 
 function _neQmShowNodeEdit(node, pt) {
   _neQm.pendingNode  = node;
   _neQm._editingNode = node;
   _neQmShowNodeInput(node.x, node.y);
-  document.getElementById('neQmNodeText').value = node.text || '';
+  var el = document.getElementById('neQmNodeText');
+  if(el) {
+    el.value = (node.text || '').replace(/\\n/g, '\n');
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+    setTimeout(function(){ el.focus(); el.select(); }, 80);
+  }
 }
 
 function neQmNodeInputKey(e) {
-  if(e.key === 'Enter')  neQmConfirmNode();
-  if(e.key === 'Escape') neQmCancelNode();
+  // Ctrl+Enter ya Cmd+Enter = confirm
+  if(e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); neQmConfirmNode(); return; }
+  // Enter alone = normal newline (textarea me) — kuch mat karo
+  if(e.key === 'Escape') { e.preventDefault(); neQmCancelNode(); }
 }
 
 function neQmConfirmNode() {
@@ -16428,12 +16504,20 @@ function neQmConfirmNode() {
   if(!txt.trim()) { neQmCancelNode(); return; }
 
   _neQmSaveHistory();
+  // Calculate size based on longest line and line count
+  var lines = txt.trim().split('\n');
+  var maxLen = lines.reduce(function(m,l){ return Math.max(m, l.length); }, 0);
+  var W = Math.max(maxLen * 8 + 32, 90);
+  var H = Math.max(lines.length * 22 + 22, 44);
+
   if(_neQm._editingNode) {
     _neQm._editingNode.text = txt.trim();
+    // Resize to fit new text
+    _neQm._editingNode.w = Math.max(_neQm._editingNode.w || W, W);
+    _neQm._editingNode.h = Math.max(H, 44);
     _neQm._editingNode = null;
   } else if(_neQm.pendingNode) {
     var shape = _neQm.pendingNode.shape || 'bubble';
-    var W = Math.max(txt.length * 9 + 24, 80), H = 44;
     _neQm.nodes.push({
       id:     'n' + Date.now(),
       text:   txt.trim(),
@@ -16695,18 +16779,23 @@ function _neQmRedraw() {
     ctx.fill(); ctx.stroke();
     ctx.shadowBlur = 0;
 
-    // Text word-wrap
+    // Text — support both \n newlines and word-wrap
     ctx.fillStyle    = n.textColor || (isDark ? '#e6edf3' : '#222');
     ctx.font         = '700 12px ' + FONT;
     ctx.textAlign    = 'center'; ctx.textBaseline = 'middle';
-    var words = (n.text||'').split(' '), line='', lines2=[], mxW=n.w-10;
-    words.forEach(function(w) {
-      var t = line ? line+' '+w : w;
-      if(ctx.measureText(t).width > mxW && line) { lines2.push(line); line=w; } else line=t;
+    var mxW = n.w - 14;
+    var lines2 = [];
+    var rawLines = (n.text||'').split('\n');
+    rawLines.forEach(function(rawLine) {
+      var words = rawLine.split(' '), line = '';
+      words.forEach(function(w) {
+        var t = line ? line + ' ' + w : w;
+        if(ctx.measureText(t).width > mxW && line) { lines2.push(line); line = w; } else line = t;
+      });
+      lines2.push(line);
     });
-    if(line) lines2.push(line);
-    var lh=14, sY=y-(lines2.length-1)*lh/2;
-    lines2.forEach(function(l,i){ ctx.fillText(l, x, sY+i*lh); });
+    var lh = 15, sY = y - (lines2.length - 1) * lh / 2;
+    lines2.forEach(function(l, i) { ctx.fillText(l, x, sY + i * lh); });
     ctx.restore();
   });
 }
@@ -21625,6 +21714,71 @@ function scDeleteSlide() {
 }
 
 // ── Render bottom slide navigator ──
+// ── Slide dot long-press delete menu ──
+function _scSlideDeleteMenu(idx, cx, cy) {
+  // Remove old menu if any
+  var old = document.getElementById('_scSlideCtxMenu');
+  if(old) old.remove();
+
+  if(_sc.slides.length <= 1) { showToast('Sirf ek slide hai, delete nahi kar sakte!','error'); return; }
+
+  var menu = document.createElement('div');
+  menu.id = '_scSlideCtxMenu';
+  menu.style.cssText = [
+    'position:fixed;z-index:99999;background:#fff;border-radius:12px;',
+    'box-shadow:0 6px 24px rgba(0,0,0,0.18);padding:6px 0;min-width:160px;',
+    'border:1.5px solid rgba(0,0,0,0.1);font-family:\'Noto Sans Devanagari\',sans-serif;'
+  ].join('');
+
+  var slideNum = idx + 1;
+
+  // Go to slide option
+  var gotoBtn = document.createElement('button');
+  gotoBtn.textContent = '📋 Slide ' + slideNum + ' pe jao';
+  gotoBtn.style.cssText = 'display:block;width:100%;padding:10px 16px;background:none;border:none;text-align:left;font-size:0.82rem;font-weight:600;cursor:pointer;color:#1565c0;-webkit-tap-highlight-color:transparent;';
+  gotoBtn.onclick = function(){ menu.remove(); scGoToSlide(idx); };
+  menu.appendChild(gotoBtn);
+
+  // Separator
+  var sep = document.createElement('div');
+  sep.style.cssText = 'height:1px;background:rgba(0,0,0,0.08);margin:2px 10px;';
+  menu.appendChild(sep);
+
+  // Delete option
+  var delBtn = document.createElement('button');
+  delBtn.textContent = '🗑 Slide ' + slideNum + ' delete karo';
+  delBtn.style.cssText = 'display:block;width:100%;padding:10px 16px;background:none;border:none;text-align:left;font-size:0.82rem;font-weight:600;cursor:pointer;color:#c62828;-webkit-tap-highlight-color:transparent;';
+  delBtn.onclick = function(){
+    menu.remove();
+    if(_sc.slides.length <= 1) { showToast('Sirf ek slide hai!','error'); return; }
+    if(!confirm('Slide ' + slideNum + ' delete karein?')) return;
+    scSnapshot && scSnapshot();
+    _sc.slides.splice(idx, 1);
+    _sc.curSlide = Math.max(0, Math.min(_sc.curSlide, _sc.slides.length-1));
+    _sc.activeBlock = null; _sc.activeBlockId = null;
+    scHideAllBlockActions && scHideAllBlockActions();
+    scRenderAll && scRenderAll();
+    _scRenderSlideNav();
+    _scUpdateTitle && _scUpdateTitle(getTop && getTop(_sc.sid, _sc.secid, _sc.tid));
+    showToast('🗑 Slide ' + slideNum + ' delete ho gayi!','success');
+  };
+  menu.appendChild(delBtn);
+
+  // Position
+  var mw = 170, mh = 90;
+  var left = Math.min(Math.max(cx - mw/2, 8), window.innerWidth  - mw - 8);
+  var top  = Math.min(Math.max(cy - mh - 8, 8), window.innerHeight - mh - 8);
+  menu.style.left = left + 'px';
+  menu.style.top  = top  + 'px';
+  document.body.appendChild(menu);
+
+  // Click outside closes
+  setTimeout(function(){
+    function _close(ev){ if(!menu.contains(ev.target)){ menu.remove(); document.removeEventListener('pointerdown',_close,true); } }
+    document.addEventListener('pointerdown', _close, true);
+  }, 100);
+}
+
 function _scRenderSlideNav() {
   var nav = document.getElementById('scSlideNav');
   if(!nav) return;
@@ -21647,6 +21801,23 @@ function _scRenderSlideNav() {
     dot.className = 'sc-slide-dot' + (i === _sc.curSlide ? ' active' : '');
     dot.title = s.title || ('Slide ' + (i+1));
     dot.onclick = (function(idx){ return function(){ scGoToSlide(idx); }; })(i);
+
+    // Long-press or right-click → delete menu
+    var _lpT = null;
+    dot.addEventListener('contextmenu', (function(idx){ return function(e){
+      e.preventDefault();
+      _scSlideDeleteMenu(idx, e.clientX, e.clientY);
+    }; })(i));
+    dot.addEventListener('touchstart', (function(idx){ return function(e){
+      _lpT = setTimeout(function(){
+        _lpT = null;
+        var t = e.touches[0];
+        _scSlideDeleteMenu(idx, t.clientX, t.clientY);
+      }, 500);
+    }; })(i), { passive: true });
+    dot.addEventListener('touchend',   function(){ clearTimeout(_lpT); _lpT=null; }, { passive: true });
+    dot.addEventListener('touchmove',  function(){ clearTimeout(_lpT); _lpT=null; }, { passive: true });
+
     dotsWrap.appendChild(dot);
   });
   nav.appendChild(dotsWrap);
