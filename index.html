@@ -1709,7 +1709,7 @@ body.night-mode .qmap-overlay { background: #0f1117; }
 #creatorFabNewBtn {
   position: fixed;
   left: 18px;
-  bottom: 205px;
+  bottom: 150px;
   z-index: 9700;
   width: 46px; height: 46px;
   border-radius: 14px;
@@ -1771,7 +1771,7 @@ body.night-mode .creator-fab-label-new { color: #ce93d8; }
 #neQmToggleBtn {
   position: fixed;
   left: 18px;
-  bottom: 260px;         /* above draw btn (150), creator btn (205), qmap (88) */
+  bottom: 260px;
   z-index: 9700;
   width: 46px; height: 46px;
   border-radius: 14px;
@@ -2249,7 +2249,7 @@ body.night-mode .ndt-sep { background: rgba(255,255,255,0.15); }
 #neDrawToggleBtn {
   position: fixed;
   left: 18px;
-  bottom: 150px;
+  bottom: 205px;
   z-index: 9700;
   width: 46px; height: 46px;
   border-radius: 14px;
@@ -4803,7 +4803,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <!-- Redo -->
     <button class="sc-hbtn" onclick="scRedo()" title="Redo">↪</button>
     <!-- Download PDF -->
-    <button class="sc-hbtn" onclick="scDownloadPDF()" title="PDF download karo — mobile storage mein save hoga" style="background:rgba(46,125,50,0.12);color:#2e7d32;border-color:rgba(46,125,50,0.3);font-weight:900;">⬇</button>
+    <button class="sc-hbtn" onclick="scDownloadPDF()" title="PDF download karo" style="background:rgba(46,125,50,0.12);color:#2e7d32;border-color:rgba(46,125,50,0.3);font-weight:900;" id="scPdfBtn">⬇</button>
     <!-- Help -->
     <button class="sc-hbtn" onclick="scShowHelp()" title="Help — Kaise use karein?" style="background:rgba(21,101,192,0.12);color:#1565c0;border-color:rgba(21,101,192,0.3);font-weight:900;">?</button>
     <!-- Expand / Collapse -->
@@ -14543,16 +14543,15 @@ function makeFabMovable(elId, storageKey) {
   var startX, startY, startLeft, startTop;
   var moved = false;
 
-  // Restore saved position (only if previously moved by user)
+  // Restore saved position (only if within screen bounds)
   try {
     var saved = localStorage.getItem('fabPos_' + storageKey);
     if(saved) {
       var pos = JSON.parse(saved);
-      // Validate position is within current screen bounds
+      var lv = parseFloat(pos.left) || 0;
+      var tv = parseFloat(pos.top)  || 0;
       var maxL = window.innerWidth  - (el.offsetWidth  || 50);
       var maxT = window.innerHeight - (el.offsetHeight || 50);
-      var lv   = parseInt(pos.left) || 0;
-      var tv   = parseInt(pos.top)  || 0;
       if(lv >= 0 && lv <= maxL && tv >= 0 && tv <= maxT) {
         el.style.left   = pos.left;
         el.style.top    = pos.top;
@@ -17720,8 +17719,6 @@ initFirebase();
       </div><!-- /qmapOverlay -->
 
 <!-- Mobile Debugger -->
-<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-<script>eruda.init();</script>
 
 
 <!-- ==================== PDF EXTRACTOR MODAL ==================== -->
@@ -21709,1083 +21706,8 @@ scTogglePanel = function() {
     }
   }
 };
-</script>
 
-  // State
-  open:        false,
-  fullscreen:  false,
-  mode:        'text',   // 'text'|'draw'|'qmap'|'select'
-  bg:          '#fffde7',
-  tid:         null,
-  sid:         null,
-  secid:       null,
 
-  // Layers data (saved to Firebase)
-  textBlocks:  [],   // [{id,x,y,w,h,html,fontSize,color,bold,italic,underline,angle}]
-  strokes:     [],   // [{points:[{x,y,p}],color,size,tool}] — compressed, not PNG
-  qmNodes:     [],   // [{id,label,x,y,color,shape,children:[id,...]}]
-  qmEdges:     [],   // [{from,to,label}]
-
-  // Unified undo stack — stores full snapshots (max 25)
-  undoStack:   [],
-  redoStack:   [],
-
-  // Runtime
-  canvas:      null,
-  ctx:         null,
-  qmCanvas:    null,
-  qmCtx:       null,
-  drawColor:   '#1565c0',
-  drawSize:    3,
-  drawTool:    'pen',
-  isDrawing:   false,
-  drawPoints:  [],
-  kfX:         null,
-  kfY:         null,
-
-  // Text editing
-  activeBlock:   null,  // DOM element
-  activeBlockId: null,
-
-  // QMap inside SC
-  qm: {
-    nodes: [], edges: [],
-    tool: 'bubble', color: '#e65100',
-    connecting: null, dragging: null,
-    offsetX: 0, offsetY: 0,
-    history: [], redoStack: []
-  },
-
-  // Drag from notes
-  dragText: ''
-};
-
-// ── BG COLORS ──
-var SC_BG_COLORS = ['#fffde7','#fce4ec','#e8f5e9','#e3f2fd','#f3e5f5','#fff8e1','#e0f7fa','#f1f8e9'];
-
-// ── INIT when editor opens ──
-function scOnEditorOpen(sid, secid, tid) {
-  _sc.sid = sid; _sc.secid = secid; _sc.tid = tid;
-  // Load saved data
-  var t = getTop(sid, secid, tid);
-  if(t && t.studyCanvas) {
-    var sc = t.studyCanvas;
-    _sc.textBlocks = JSON.parse(JSON.stringify(sc.textBlocks || []));
-    _sc.strokes    = JSON.parse(JSON.stringify(sc.strokes    || []));
-    _sc.qmNodes    = JSON.parse(JSON.stringify(sc.qmNodes    || []));
-    _sc.qmEdges    = JSON.parse(JSON.stringify(sc.qmEdges    || []));
-    _sc.bg         = sc.bg || '#fffde7';
-  } else {
-    _sc.textBlocks = []; _sc.strokes = []; _sc.qmNodes = []; _sc.qmEdges = [];
-    _sc.bg = '#fffde7';
-  }
-  _sc.undoStack = []; _sc.redoStack = [];
-
-  // Show pull tab
-  var tab = document.getElementById('scPullTab');
-  if(tab) tab.classList.add('visible');
-
-  // Set title
-  if(t) {
-    var ti = document.getElementById('scTitle');
-    if(ti) ti.textContent = '📋 ' + t.name;
-  }
-}
-
-function scOnEditorClose() {
-  // Hide pull tab + close panel
-  var tab = document.getElementById('scPullTab');
-  if(tab) tab.classList.remove('visible');
-  var panel = document.getElementById('studyCanvasPanel');
-  if(panel) panel.classList.remove('sc-open','sc-fullscreen');
-  _sc.open = false; _sc.fullscreen = false;
-  _sc.activeBlock = null; _sc.activeBlockId = null;
-}
-
-// ── TOGGLE PANEL ──
-function scTogglePanel() {
-  _sc.open = !_sc.open;
-  var panel = document.getElementById('studyCanvasPanel');
-  if(!panel) return;
-  if(_sc.open) {
-    panel.classList.add('sc-open');
-    panel.style.background = _sc.bg;
-    scInitCanvas();
-    scRenderAll();
-    scRenderToolbar();
-    setTimeout(scFitCanvas, 50);
-  } else {
-    panel.classList.remove('sc-open','sc-fullscreen');
-    _sc.fullscreen = false;
-    _sc.activeBlock = null;
-    scHideAllBlockActions();
-  }
-}
-
-function scToggleFullscreen() {
-  _sc.fullscreen = !_sc.fullscreen;
-  var panel = document.getElementById('studyCanvasPanel');
-  var btn   = document.getElementById('scExpandBtn');
-  if(!panel) return;
-  if(_sc.fullscreen) {
-    panel.classList.add('sc-fullscreen');
-    if(btn) btn.textContent = '⊡';
-  } else {
-    panel.classList.remove('sc-fullscreen');
-    if(btn) btn.textContent = '⛶';
-  }
-  setTimeout(function(){ scFitCanvas(); scRenderAll(); }, 60);
-}
-
-// ── BACKGROUND ──
-function scSetBg(color, el) {
-  _sc.bg = color;
-  document.getElementById('studyCanvasPanel').style.background = color;
-  document.querySelectorAll('.sc-bg-dot').forEach(function(d){ d.classList.remove('sel'); });
-  if(el) el.classList.add('sel');
-}
-
-// ── MODE ──
-function scSetMode(mode, el) {
-  _sc.mode = mode;
-  document.querySelectorAll('.sc-mode-tab').forEach(function(t){ t.classList.remove('active'); });
-  if(el) el.classList.add('active');
-
-  // Canvas pointer events
-  var cv = document.getElementById('scCanvas');
-  var qm = document.getElementById('scQmCanvas');
-  if(cv) cv.style.pointerEvents = (mode === 'draw') ? 'all' : 'none';
-  if(qm) {
-    if(mode === 'qmap') { qm.classList.add('qm-active'); } 
-    else               { qm.classList.remove('qm-active'); }
-  }
-
-  // Deselect text blocks when switching mode
-  scDeselectBlock();
-  scRenderToolbar();
-  scSetStatus();
-}
-
-function scSetStatus() {
-  var el = document.getElementById('scStatus');
-  if(!el) return;
-  var msgs = {
-    text:   '✍️ Tap = text block add · Drag = move',
-    draw:   '✏️ Draw karo · Toolbar se tool/size/color',
-    qmap:   '🗺 Tap = node add · Drag = move · Long tap = connect',
-    select: '☝️ Block tap = select · Drag = move · Pinch = resize'
-  };
-  el.textContent = msgs[_sc.mode] || '';
-}
-
-// ── CANVAS INIT ──
-function scInitCanvas() {
-  var wrap = document.getElementById('scCanvasWrap');
-  var cv   = document.getElementById('scCanvas');
-  var qmcv = document.getElementById('scQmCanvas');
-  if(!wrap || !cv) return;
-
-  cv.width  = wrap.offsetWidth  || 340;
-  cv.height = wrap.offsetHeight || 480;
-  _sc.canvas = cv;
-  _sc.ctx    = cv.getContext('2d');
-
-  if(qmcv) {
-    qmcv.width  = cv.width;
-    qmcv.height = cv.height;
-    qmcv.style.width  = cv.width  + 'px';
-    qmcv.style.height = cv.height + 'px';
-    _sc.qmCanvas = qmcv;
-    _sc.qmCtx    = qmcv.getContext('2d');
-  }
-
-  // Init Kalman filters for smooth drawing
-  _sc.kfX = new KalmanFilter();
-  _sc.kfY = new KalmanFilter();
-
-  // Pointer events on draw canvas
-  cv.removeEventListener('pointerdown', _scDrawDown);
-  cv.removeEventListener('pointermove', _scDrawMove);
-  cv.removeEventListener('pointerup',   _scDrawUp);
-  cv.removeEventListener('pointercancel',_scDrawUp);
-  cv.addEventListener('pointerdown',  _scDrawDown,  { passive: false });
-  cv.addEventListener('pointermove',  _scDrawMove,  { passive: false });
-  cv.addEventListener('pointerup',    _scDrawUp,    { passive: true  });
-  cv.addEventListener('pointercancel',_scDrawUp,    { passive: true  });
-
-  // Tap on wrap for text/select mode
-  wrap.removeEventListener('pointerdown', _scWrapTap);
-  wrap.addEventListener('pointerdown', _scWrapTap, { passive: false });
-
-  // QMap canvas
-  if(qmcv) {
-    qmcv.removeEventListener('pointerdown', _scQmDown);
-    qmcv.removeEventListener('pointermove', _scQmMove);
-    qmcv.removeEventListener('pointerup',   _scQmUp);
-    qmcv.addEventListener('pointerdown', _scQmDown, { passive: false });
-    qmcv.addEventListener('pointermove', _scQmMove, { passive: false });
-    qmcv.addEventListener('pointerup',   _scQmUp,   { passive: true  });
-  }
-}
-
-function scFitCanvas() {
-  var wrap = document.getElementById('scCanvasWrap');
-  var cv   = document.getElementById('scCanvas');
-  var qmcv = document.getElementById('scQmCanvas');
-  if(!wrap || !cv) return;
-  var w = wrap.offsetWidth, h = wrap.offsetHeight;
-  if(w < 10 || h < 10) return;
-  // Save current drawing
-  var imgData = _sc.ctx ? _sc.ctx.getImageData(0,0,cv.width,cv.height) : null;
-  cv.width = w; cv.height = h;
-  if(qmcv) { qmcv.width = w; qmcv.height = h; }
-  if(imgData && _sc.ctx) _sc.ctx.putImageData(imgData,0,0);
-  scRenderAll();
-}
-
-// ── RENDER ALL ──
-function scRenderAll() {
-  _scRenderStrokes();
-  _scRenderTextBlocks();
-  _scQmRender();
-}
-
-// ── UNDO/REDO ──
-function scSnapshot() {
-  var snap = {
-    textBlocks: JSON.parse(JSON.stringify(_sc.textBlocks)),
-    strokes:    JSON.parse(JSON.stringify(_sc.strokes)),
-    qmNodes:    JSON.parse(JSON.stringify(_sc.qmNodes)),
-    qmEdges:    JSON.parse(JSON.stringify(_sc.qmEdges))
-  };
-  _sc.undoStack.push(snap);
-  if(_sc.undoStack.length > 25) _sc.undoStack.shift();
-  _sc.redoStack = [];
-}
-
-function scUndo() {
-  if(!_sc.undoStack.length) { showToast('Kuch nahi undo karne ko!','error'); return; }
-  // Push current to redo
-  _sc.redoStack.push({
-    textBlocks: JSON.parse(JSON.stringify(_sc.textBlocks)),
-    strokes:    JSON.parse(JSON.stringify(_sc.strokes)),
-    qmNodes:    JSON.parse(JSON.stringify(_sc.qmNodes)),
-    qmEdges:    JSON.parse(JSON.stringify(_sc.qmEdges))
-  });
-  var prev = _sc.undoStack.pop();
-  _sc.textBlocks = prev.textBlocks;
-  _sc.strokes    = prev.strokes;
-  _sc.qmNodes    = prev.qmNodes;
-  _sc.qmEdges    = prev.qmEdges;
-  scRenderAll();
-  _scSyncTextBlocksDOM();
-  showToast('↩ Undo', 'success');
-}
-
-function scRedo() {
-  if(!_sc.redoStack.length) { showToast('Kuch nahi redo karne ko!','error'); return; }
-  _sc.undoStack.push({
-    textBlocks: JSON.parse(JSON.stringify(_sc.textBlocks)),
-    strokes:    JSON.parse(JSON.stringify(_sc.strokes)),
-    qmNodes:    JSON.parse(JSON.stringify(_sc.qmNodes)),
-    qmEdges:    JSON.parse(JSON.stringify(_sc.qmEdges))
-  });
-  var next = _sc.redoStack.pop();
-  _sc.textBlocks = next.textBlocks;
-  _sc.strokes    = next.strokes;
-  _sc.qmNodes    = next.qmNodes;
-  _sc.qmEdges    = next.qmEdges;
-  scRenderAll();
-  _scSyncTextBlocksDOM();
-  showToast('↪ Redo', 'success');
-}
-
-// ══════════════════════════════════
-// TEXT BLOCKS
-// ══════════════════════════════════
-function _scRenderTextBlocks() {
-  // Remove old DOM blocks
-  var wrap = document.getElementById('scCanvasWrap');
-  if(!wrap) return;
-  wrap.querySelectorAll('.sc-text-block').forEach(function(el){ el.remove(); });
-
-  _sc.textBlocks.forEach(function(b) {
-    _scCreateBlockDOM(b);
-  });
-}
-
-function _scCreateBlockDOM(b) {
-  var wrap = document.getElementById('scCanvasWrap');
-  if(!wrap) return;
-
-  var el = document.createElement('div');
-  el.className = 'sc-text-block';
-  el.id = 'scBlock_' + b.id;
-  el.style.left   = b.x + 'px';
-  el.style.top    = b.y + 'px';
-  el.style.width  = (b.w || 140) + 'px';
-  el.style.fontSize = (b.fontSize || 15) + 'px';
-  el.style.color    = b.color || '#1a1a1a';
-  el.style.transform = b.angle ? 'rotate(' + b.angle + 'deg)' : '';
-  el.style.fontWeight   = b.bold   ? '800' : '';
-  el.style.fontStyle    = b.italic ? 'italic' : '';
-  el.style.textDecoration = b.underline ? 'underline' : '';
-  el.innerHTML = b.html || '';
-
-  // Resize handle
-  var resizeH = document.createElement('div');
-  resizeH.className = 'sc-block-resize';
-  el.appendChild(resizeH);
-
-  // Rotate handle
-  var rotH = document.createElement('div');
-  rotH.className = 'sc-block-rotate';
-  rotH.textContent = '↻';
-  el.appendChild(rotH);
-
-  // Tap to select / edit
-  el.addEventListener('pointerdown', function(e) {
-    if(e.target === resizeH || e.target === rotH) return;
-    e.stopPropagation();
-    if(_sc.mode === 'select' || _sc.mode === 'text') {
-      scSelectBlock(b, el);
-    }
-  });
-
-  // Double tap to edit
-  var _lastTap = 0;
-  el.addEventListener('pointerdown', function(e) {
-    if(e.target === resizeH || e.target === rotH) return;
-    var now = Date.now();
-    if(now - _lastTap < 320) {
-      e.stopPropagation();
-      scEditBlock(b, el);
-    }
-    _lastTap = now;
-  });
-
-  // Drag to move
-  _scBlockDrag(b, el);
-
-  // Resize handle
-  _scBlockResize(b, el, resizeH);
-
-  // Rotate handle
-  _scBlockRotate(b, el, rotH);
-
-  wrap.appendChild(el);
-  return el;
-}
-
-function scSelectBlock(b, el) {
-  scDeselectBlock();
-  _sc.activeBlock   = el;
-  _sc.activeBlockId = b.id;
-  el.classList.add('selected');
-  _scShowBlockActions(b, el);
-}
-
-function scDeselectBlock() {
-  if(_sc.activeBlock) _sc.activeBlock.classList.remove('selected');
-  _sc.activeBlock   = null;
-  _sc.activeBlockId = null;
-  scHideAllBlockActions();
-}
-
-function scHideAllBlockActions() {
-  document.querySelectorAll('.sc-block-actions').forEach(function(a){ a.remove(); });
-}
-
-function _scShowBlockActions(b, el) {
-  scHideAllBlockActions();
-  var wrap = document.getElementById('scCanvasWrap');
-  if(!wrap) return;
-
-  var bar = document.createElement('div');
-  bar.className = 'sc-block-actions';
-
-  function mkBtn(icon, title, fn) {
-    var btn = document.createElement('button');
-    btn.className = 'sc-block-act-btn';
-    btn.title = title;
-    btn.textContent = icon;
-    btn.addEventListener('pointerdown', function(e){ e.stopPropagation(); fn(); });
-    return btn;
-  }
-
-  // Bold
-  bar.appendChild(mkBtn('B', 'Bold', function(){
-    scSnapshot(); b.bold = !b.bold; _scRefreshBlock(b);
-  }));
-  // Italic
-  var itBtn = mkBtn('I', 'Italic', function(){
-    scSnapshot(); b.italic = !b.italic; _scRefreshBlock(b);
-  });
-  itBtn.style.fontStyle = 'italic';
-  bar.appendChild(itBtn);
-  // Underline
-  var ulBtn = mkBtn('U', 'Underline', function(){
-    scSnapshot(); b.underline = !b.underline; _scRefreshBlock(b);
-  });
-  ulBtn.style.textDecoration = 'underline';
-  bar.appendChild(ulBtn);
-  // Font size -/+
-  bar.appendChild(mkBtn('A−', 'Font chhota', function(){
-    scSnapshot(); b.fontSize = Math.max(10, (b.fontSize||15)-2); _scRefreshBlock(b);
-  }));
-  bar.appendChild(mkBtn('A+', 'Font bada', function(){
-    scSnapshot(); b.fontSize = Math.min(40, (b.fontSize||15)+2); _scRefreshBlock(b);
-  }));
-  // Color dots
-  ['#1a1a1a','#1565c0','#c62828','#2e7d32','#6a1b9a','#e65100'].forEach(function(c){
-    var dot = document.createElement('div');
-    dot.style.cssText = 'width:14px;height:14px;border-radius:50%;background:'+c+';cursor:pointer;flex-shrink:0;border:1.5px solid rgba(0,0,0,0.15);';
-    dot.addEventListener('pointerdown', function(e){
-      e.stopPropagation(); scSnapshot(); b.color = c; _scRefreshBlock(b);
-    });
-    bar.appendChild(dot);
-  });
-  // Delete
-  bar.appendChild(mkBtn('🗑', 'Delete', function(){
-    scSnapshot();
-    _sc.textBlocks = _sc.textBlocks.filter(function(x){ return x.id !== b.id; });
-    el.remove(); bar.remove();
-    _sc.activeBlock = null; _sc.activeBlockId = null;
-  }));
-
-  el.appendChild(bar);
-}
-
-function scEditBlock(b, el) {
-  el.contentEditable = 'true';
-  el.focus();
-  var sel = window.getSelection();
-  var range = document.createRange();
-  range.selectNodeContents(el);
-  range.collapse(false);
-  sel.removeAllRanges();
-  sel.addRange(range);
-
-  function onBlur() {
-    el.contentEditable = 'false';
-    scSnapshot();
-    // Save HTML but strip handles
-    var clone = el.cloneNode(true);
-    clone.querySelectorAll('.sc-block-resize,.sc-block-rotate,.sc-block-actions').forEach(function(h){ h.remove(); });
-    b.html = clone.innerHTML;
-    el.removeEventListener('blur', onBlur);
-  }
-  el.addEventListener('blur', onBlur);
-}
-
-function _scRefreshBlock(b) {
-  var el = document.getElementById('scBlock_' + b.id);
-  if(!el) return;
-  el.style.fontWeight     = b.bold      ? '800' : '';
-  el.style.fontStyle      = b.italic    ? 'italic' : '';
-  el.style.textDecoration = b.underline ? 'underline' : '';
-  el.style.fontSize       = (b.fontSize||15) + 'px';
-  el.style.color          = b.color || '#1a1a1a';
-  el.style.transform      = b.angle ? 'rotate('+b.angle+'deg)' : '';
-  _scShowBlockActions(b, el);
-}
-
-function _scBlockDrag(b, el) {
-  var startX, startY, startBx, startBy;
-  var dragging = false;
-
-  el.addEventListener('pointerdown', function(e) {
-    if(e.target.classList.contains('sc-block-resize') ||
-       e.target.classList.contains('sc-block-rotate') ||
-       e.target.classList.contains('sc-block-act-btn') ||
-       el.contentEditable === 'true') return;
-    if(_sc.mode !== 'select' && _sc.mode !== 'text') return;
-    e.preventDefault();
-    try{ el.setPointerCapture(e.pointerId); } catch(x){}
-    startX = e.clientX; startY = e.clientY;
-    startBx = b.x; startBy = b.y;
-    dragging = true;
-    scSnapshot();
-  }, { passive: false });
-
-  el.addEventListener('pointermove', function(e) {
-    if(!dragging) return;
-    b.x = startBx + (e.clientX - startX);
-    b.y = startBy + (e.clientY - startY);
-    el.style.left = b.x + 'px';
-    el.style.top  = b.y + 'px';
-    // Move action bar if visible
-    var bar = el.querySelector('.sc-block-actions');
-    if(bar) {} // stays relative to el
-  }, { passive: true });
-
-  el.addEventListener('pointerup', function(){ dragging = false; }, { passive: true });
-}
-
-function _scBlockResize(b, el, handle) {
-  var startX, startY, startW;
-  var resizing = false;
-
-  handle.addEventListener('pointerdown', function(e) {
-    e.stopPropagation(); e.preventDefault();
-    try{ handle.setPointerCapture(e.pointerId); } catch(x){}
-    startX = e.clientX; startW = b.w || 140;
-    resizing = true;
-    scSnapshot();
-  }, { passive: false });
-
-  handle.addEventListener('pointermove', function(e) {
-    if(!resizing) return;
-    b.w = Math.max(60, startW + (e.clientX - startX));
-    el.style.width = b.w + 'px';
-  }, { passive: true });
-
-  handle.addEventListener('pointerup', function(){ resizing = false; }, { passive: true });
-}
-
-function _scBlockRotate(b, el, handle) {
-  var startAngle, startRot;
-  var rotating = false;
-
-  handle.addEventListener('pointerdown', function(e) {
-    e.stopPropagation(); e.preventDefault();
-    try{ handle.setPointerCapture(e.pointerId); } catch(x){}
-    var rect = el.getBoundingClientRect();
-    var cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
-    startAngle = Math.atan2(e.clientY - cy, e.clientX - cx) * 180/Math.PI;
-    startRot = b.angle || 0;
-    rotating = true;
-    scSnapshot();
-  }, { passive: false });
-
-  handle.addEventListener('pointermove', function(e) {
-    if(!rotating) return;
-    var rect = el.getBoundingClientRect();
-    var cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
-    var angle = Math.atan2(e.clientY - cy, e.clientX - cx) * 180/Math.PI;
-    b.angle = (startRot + (angle - startAngle)) % 360;
-    el.style.transform = 'rotate(' + b.angle + 'deg)';
-  }, { passive: true });
-
-  handle.addEventListener('pointerup', function(){ rotating = false; }, { passive: true });
-}
-
-// Tap on wrap to add text block
-function _scWrapTap(e) {
-  if(_sc.mode !== 'text') return;
-  // Ignore if tap is on an existing block
-  if(e.target.closest('.sc-text-block')) return;
-  if(e.target.closest('.sc-block-actions')) return;
-
-  var wrap = document.getElementById('scCanvasWrap');
-  if(!wrap) return;
-  var rect = wrap.getBoundingClientRect();
-  var x = e.clientX - rect.left;
-  var y = e.clientY - rect.top;
-
-  scSnapshot();
-  var b = {
-    id: 'scb_' + Date.now(),
-    x: x, y: y, w: 160,
-    html: '',
-    fontSize: 15, color: '#1a1a1a',
-    bold: false, italic: false, underline: false, angle: 0
-  };
-  _sc.textBlocks.push(b);
-  var el = _scCreateBlockDOM(b);
-  if(el) setTimeout(function(){ scEditBlock(b, el); }, 50);
-}
-
-function _scSyncTextBlocksDOM() {
-  var wrap = document.getElementById('scCanvasWrap');
-  if(!wrap) return;
-  wrap.querySelectorAll('.sc-text-block').forEach(function(el){ el.remove(); });
-  _sc.textBlocks.forEach(function(b){ _scCreateBlockDOM(b); });
-}
-
-// ══════════════════════════════════
-// DRAW ENGINE (reuses KalmanFilter from main app)
-// ══════════════════════════════════
-function _scRenderStrokes() {
-  var cv = _sc.canvas, ctx = _sc.ctx;
-  if(!cv || !ctx) return;
-  ctx.clearRect(0, 0, cv.width, cv.height);
-  _sc.strokes.forEach(function(stroke) {
-    if(!stroke.points || stroke.points.length < 2) return;
-    ctx.save();
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    if(stroke.tool === 'eraser') {
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.lineWidth = stroke.size * 4;
-      ctx.strokeStyle = 'rgba(0,0,0,1)';
-    } else if(stroke.tool === 'marker') {
-      ctx.globalAlpha = 0.45;
-      ctx.strokeStyle = stroke.color || '#1565c0';
-      ctx.lineWidth   = stroke.size * 2.5;
-    } else {
-      ctx.strokeStyle = stroke.color || '#1565c0';
-      ctx.lineWidth   = stroke.size;
-    }
-    ctx.beginPath();
-    ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-    for(var i=1; i<stroke.points.length; i++) {
-      var p  = stroke.points[i];
-      var pp = stroke.points[i-1];
-      var mx = (p.x + pp.x)/2, my = (p.y + pp.y)/2;
-      ctx.quadraticCurveTo(pp.x, pp.y, mx, my);
-    }
-    ctx.stroke();
-    ctx.restore();
-  });
-}
-
-function _scDrawDown(e) {
-  if(_sc.mode !== 'draw') return;
-  e.preventDefault();
-  if(!e.isPrimary) return;
-  try{ _sc.canvas.setPointerCapture(e.pointerId); } catch(x){}
-  _sc.isDrawing = true;
-  _sc.kfX = new KalmanFilter(); _sc.kfY = new KalmanFilter();
-  var pt = _scGetPt(e);
-  _sc.drawPoints = [pt];
-  scSnapshot();
-}
-
-function _scDrawMove(e) {
-  if(!_sc.isDrawing || _sc.mode !== 'draw') return;
-  e.preventDefault();
-  if(!e.isPrimary) return;
-  var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
-  evs.forEach(function(ev){
-    var pt = _scGetPt(ev);
-    _sc.drawPoints.push(pt);
-  });
-  // Live preview
-  _scRenderStrokes();
-  _scPreviewStroke(_sc.drawPoints);
-}
-
-function _scPreviewStroke(pts) {
-  var ctx = _sc.ctx;
-  if(!ctx || pts.length < 2) return;
-  ctx.save();
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  if(_sc.drawTool === 'eraser') {
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.lineWidth = _sc.drawSize * 4;
-    ctx.strokeStyle = 'rgba(0,0,0,1)';
-  } else if(_sc.drawTool === 'marker') {
-    ctx.globalAlpha = 0.45;
-    ctx.strokeStyle = _sc.drawColor;
-    ctx.lineWidth   = _sc.drawSize * 2.5;
-  } else {
-    ctx.strokeStyle = _sc.drawColor;
-    ctx.lineWidth   = _sc.drawSize;
-  }
-  ctx.beginPath();
-  ctx.moveTo(pts[0].x, pts[0].y);
-  for(var i=1; i<pts.length; i++) {
-    var p=pts[i], pp=pts[i-1];
-    ctx.quadraticCurveTo(pp.x,pp.y,(p.x+pp.x)/2,(p.y+pp.y)/2);
-  }
-  ctx.stroke();
-  ctx.restore();
-}
-
-function _scDrawUp(e) {
-  if(!_sc.isDrawing) return;
-  _sc.isDrawing = false;
-  if(_sc.drawPoints.length < 2) return;
-  _sc.strokes.push({
-    points: _sc.drawPoints.slice(),
-    color: _sc.drawColor,
-    size: _sc.drawSize,
-    tool: _sc.drawTool
-  });
-  _sc.drawPoints = [];
-  _scRenderStrokes();
-}
-
-function _scGetPt(e) {
-  var rect = _sc.canvas.getBoundingClientRect();
-  var sx = _sc.canvas.width  / rect.width;
-  var sy = _sc.canvas.height / rect.height;
-  return {
-    x: _sc.kfX.filter((e.clientX - rect.left) * sx),
-    y: _sc.kfY.filter((e.clientY - rect.top)  * sy)
-  };
-}
-
-// ── Draw toolbar setters ──
-function scSetDrawTool(t, btn) {
-  _sc.drawTool = t;
-  document.querySelectorAll('.sc-draw-tool').forEach(function(b){ b.classList.remove('active'); });
-  if(btn) btn.classList.add('active');
-}
-function scSetDrawColor(c, dot) {
-  _sc.drawColor = c;
-  document.querySelectorAll('.sc-draw-cdot').forEach(function(d){ d.classList.remove('sel'); });
-  if(dot) dot.classList.add('sel');
-}
-function scSetDrawSize(s, btn) {
-  _sc.drawSize = s;
-  document.querySelectorAll('.sc-draw-size').forEach(function(b){ b.classList.remove('active'); });
-  if(btn) btn.classList.add('active');
-}
-function scClearDraw() {
-  if(!confirm('Drawing clear karein?')) return;
-  scSnapshot(); _sc.strokes = []; _scRenderStrokes();
-}
-
-// ══════════════════════════════════
-// QUICKMAP INSIDE STUDY CANVAS
-// ══════════════════════════════════
-var _scQmNodeColors = ['#e65100','#1565c0','#2e7d32','#6a1b9a','#00695c','#c62828'];
-var _scQmNextId = 1;
-
-function _scQmRender() {
-  var cv = _sc.qmCanvas, ctx = _sc.qmCtx;
-  if(!cv || !ctx) return;
-  ctx.clearRect(0, 0, cv.width, cv.height);
-  var nodes = _sc.qmNodes, edges = _sc.qmEdges;
-  if(!nodes.length) return;
-
-  var nodeMap = {};
-  nodes.forEach(function(n){ nodeMap[n.id] = n; });
-
-  // Draw edges
-  edges.forEach(function(edge) {
-    var a = nodeMap[edge.from], b = nodeMap[edge.to];
-    if(!a || !b) return;
-    ctx.save();
-    ctx.strokeStyle = '#888'; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.65;
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-    ctx.stroke();
-    ctx.restore();
-  });
-
-  // Draw nodes
-  nodes.forEach(function(n) {
-    var r = 28;
-    ctx.save();
-    // Shadow
-    ctx.shadowColor = 'rgba(0,0,0,0.12)'; ctx.shadowBlur = 6;
-    // Fill
-    ctx.fillStyle = n.color || '#e65100';
-    ctx.globalAlpha = 0.85;
-    ctx.beginPath();
-    if(n.shape === 'box') {
-      ctx.roundRect(n.x-r, n.y-r/1.4, r*2, r*1.4, 8);
-    } else if(n.shape === 'diamond') {
-      ctx.moveTo(n.x,n.y-r); ctx.lineTo(n.x+r,n.y);
-      ctx.lineTo(n.x,n.y+r); ctx.lineTo(n.x-r,n.y);
-      ctx.closePath();
-    } else {
-      ctx.arc(n.x, n.y, r, 0, Math.PI*2);
-    }
-    ctx.fill();
-    ctx.restore();
-    // Text
-    ctx.save();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 11px "Noto Sans Devanagari","Baloo 2",sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    // Wrap text
-    var words = (n.label||'').split(' '), lines = [], cur = '';
-    words.forEach(function(w){
-      if((cur+w).length > 8 && cur) { lines.push(cur.trim()); cur = w+' '; }
-      else cur += w + ' ';
-    });
-    if(cur.trim()) lines.push(cur.trim());
-    var lh = 13;
-    lines.forEach(function(l, i){
-      ctx.fillText(l, n.x, n.y + (i - (lines.length-1)/2)*lh);
-    });
-    ctx.restore();
-  });
-}
-
-function _scQmNodeAt(x, y) {
-  var hit = null;
-  _sc.qmNodes.forEach(function(n){
-    if(Math.hypot(n.x-x, n.y-y) < 32) hit = n;
-  });
-  return hit;
-}
-
-var _scQmTouchLast = 0, _scQmConnecting = null, _scQmDragging = null;
-var _scQmDragOff = {x:0,y:0};
-
-function _scQmDown(e) {
-  if(_sc.mode !== 'qmap') return;
-  e.preventDefault();
-  var cv = _sc.qmCanvas;
-  var rect = cv.getBoundingClientRect();
-  var sx = cv.width/rect.width, sy = cv.height/rect.height;
-  var x = (e.clientX-rect.left)*sx, y = (e.clientY-rect.top)*sy;
-  var hit = _scQmNodeAt(x, y);
-
-  var now = Date.now();
-  if(hit && now - _scQmTouchLast < 350) {
-    // Double tap on node = connect mode
-    _scQmConnecting = hit;
-    if(typeof showToast==='function') showToast('🔗 Doosre node par tap karo — connect hoga', 'success');
-    _scQmTouchLast = 0;
-    return;
-  }
-  _scQmTouchLast = now;
-
-  if(hit) {
-    _scQmDragging = hit;
-    _scQmDragOff.x = x - hit.x;
-    _scQmDragOff.y = y - hit.y;
-  } else if(_scQmConnecting) {
-    // Tap on empty = cancel connect
-    _scQmConnecting = null;
-  } else {
-    // Tap on empty = add node
-    scSnapshot();
-    var label = 'Node ' + _scQmNextId++;
-    var node = {
-      id: 'qn'+Date.now(), label: label,
-      x: x, y: y,
-      color: _scQmNodeColors[(_sc.qmNodes.length) % _scQmNodeColors.length],
-      shape: 'bubble'
-    };
-    _sc.qmNodes.push(node);
-    _scQmRender();
-    // Show quick label editor
-    _scQmEditLabel(node);
-  }
-}
-
-function _scQmMove(e) {
-  if(_sc.mode !== 'qmap' || !_scQmDragging) return;
-  var cv = _sc.qmCanvas;
-  var rect = cv.getBoundingClientRect();
-  var sx = cv.width/rect.width, sy = cv.height/rect.height;
-  _scQmDragging.x = (e.clientX-rect.left)*sx - _scQmDragOff.x;
-  _scQmDragging.y = (e.clientY-rect.top)*sy  - _scQmDragOff.y;
-  _scQmRender();
-}
-
-function _scQmUp(e) {
-  if(_scQmConnecting && _scQmDragging && _scQmConnecting.id !== _scQmDragging.id) {
-    // Connect the two
-    scSnapshot();
-    _sc.qmEdges.push({ from: _scQmConnecting.id, to: _scQmDragging.id });
-    _scQmConnecting = null;
-    _scQmRender();
-  }
-  _scQmDragging = null;
-}
-
-function _scQmEditLabel(node) {
-  var label = prompt('Node ka naam:', node.label || '');
-  if(label !== null) {
-    node.label = label || node.label;
-    _scQmRender();
-  }
-}
-
-function scQmDeleteSelected() {
-  if(!_scQmDragging && !_sc.qmNodes.length) return;
-  showToast('Node tap karke select karo, phir yahan wala button dabaoge to delete hoga','error');
-}
-
-function scQmClear() {
-  if(!confirm('QuickMap clear karein?')) return;
-  scSnapshot(); _sc.qmNodes = []; _sc.qmEdges = []; _scQmNextId = 1; _scQmRender();
-}
-
-// ══════════════════════════════════
-// TOOLBAR RENDERING
-// ══════════════════════════════════
-function scRenderToolbar() {
-  var tb = document.getElementById('scToolbar');
-  if(!tb) return;
-  tb.innerHTML = '';
-
-  if(_sc.mode === 'text') {
-    tb.innerHTML = '<span style="font-size:0.68rem;color:rgba(0,0,0,0.45);font-weight:700;align-self:center;white-space:nowrap;">Tap canvas = text add</span>'
-      + '<div class="sc-sep"></div>'
-      + '<button class="sc-tbtn" onclick="scAddTextBlock()" title="Text block add karo" style="min-width:60px;">＋ Text</button>'
-      + '<button class="sc-tbtn" onclick="scAddBulletBlock()" title="Bullet list" style="min-width:52px;">• List</button>'
-      + '<button class="sc-tbtn" onclick="scAddHeadingBlock()" title="Heading" style="min-width:60px;font-weight:800;">H Heading</button>';
-
-  } else if(_sc.mode === 'draw') {
-    // Tool buttons
-    ['pen','marker','eraser'].forEach(function(t){
-      var icon = t==='pen'?'✒️':t==='marker'?'🖊️':'🧹';
-      tb.innerHTML += '<button class="sc-tbtn sc-draw-tool'+(t===_sc.drawTool?' active':'')
-        +'" onclick="scSetDrawTool(\''+t+'\',this)" title="'+t+'">'+icon+'</button>';
-    });
-    tb.innerHTML += '<div class="sc-sep"></div>';
-    // Sizes
-    [2,4,7].forEach(function(s){
-      var lbl = s===2?'S':s===4?'M':'L';
-      tb.innerHTML += '<button class="sc-tbtn sc-draw-size'+(s===_sc.drawSize?' active':'')
-        +'" onclick="scSetDrawSize('+s+',this)" style="min-width:26px;">'+lbl+'</button>';
-    });
-    tb.innerHTML += '<div class="sc-sep"></div>';
-    // Colors
-    ['#1a1a1a','#1565c0','#c62828','#2e7d32','#6a1b9a','#f57c00'].forEach(function(c){
-      tb.innerHTML += '<div class="sc-color-dot sc-draw-cdot'+(c===_sc.drawColor?' sel':'')
-        +'" style="background:'+c+';" onclick="scSetDrawColor(\''+c+'\',this)"></div>';
-    });
-    tb.innerHTML += '<input type="color" value="'+_sc.drawColor+'" onchange="scSetDrawColor(this.value)" style="width:22px;height:22px;border:none;border-radius:5px;padding:0;cursor:pointer;flex-shrink:0;">';
-    tb.innerHTML += '<div class="sc-sep"></div>';
-    tb.innerHTML += '<button class="sc-tbtn danger" onclick="scClearDraw()" title="Clear draw">🗑</button>';
-
-  } else if(_sc.mode === 'qmap') {
-    tb.innerHTML = '<span style="font-size:0.68rem;color:rgba(0,0,0,0.45);font-weight:700;align-self:center;white-space:nowrap;">Tap=add · DoubleTap=connect · Drag=move</span>'
-      + '<div class="sc-sep"></div>'
-      + '<button class="sc-tbtn" onclick="scQmClear()" title="Map clear karo">🗑 Clear</button>';
-
-  } else if(_sc.mode === 'select') {
-    tb.innerHTML = '<span style="font-size:0.68rem;color:rgba(0,0,0,0.45);font-weight:700;align-self:center;white-space:nowrap;">Block tap = select · Double tap = edit</span>';
-  }
-}
-
-// ── Quick text adders ──
-function scAddTextBlock() {
-  var wrap = document.getElementById('scCanvasWrap');
-  if(!wrap) return;
-  scSnapshot();
-  var b = {
-    id: 'scb_'+Date.now(), x: 30, y: 30+(Math.random()*80|0),
-    w: 180, html: '', fontSize:15, color:'#1a1a1a',
-    bold:false, italic:false, underline:false, angle:0
-  };
-  _sc.textBlocks.push(b);
-  var el = _scCreateBlockDOM(b);
-  if(el) setTimeout(function(){ scEditBlock(b, el); }, 50);
-}
-function scAddBulletBlock() {
-  scSnapshot();
-  var b = {
-    id: 'scb_'+Date.now(), x: 30, y: 30+(Math.random()*80|0),
-    w: 200, html: '• ', fontSize:14, color:'#1a1a1a',
-    bold:false, italic:false, underline:false, angle:0
-  };
-  _sc.textBlocks.push(b);
-  var el = _scCreateBlockDOM(b);
-  if(el) setTimeout(function(){ scEditBlock(b, el); }, 50);
-}
-function scAddHeadingBlock() {
-  scSnapshot();
-  var b = {
-    id: 'scb_'+Date.now(), x: 30, y: 20,
-    w: 220, html: 'Heading', fontSize:22, color:'#1565c0',
-    bold:true, italic:false, underline:false, angle:0
-  };
-  _sc.textBlocks.push(b);
-  _scCreateBlockDOM(b);
-}
-
-// ══════════════════════════════════
-// DRAG FROM NOTES EDITOR
-// ══════════════════════════════════
-function scNoteDragStart(e) {
-  var sel = window.getSelection();
-  var text = sel ? sel.toString().trim() : '';
-  if(!text) return;
-  _sc.dragText = text;
-  e.dataTransfer.setData('text/plain', text);
-  e.dataTransfer.effectAllowed = 'copy';
-}
-
-function scDragOver(e) {
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'copy';
-  document.getElementById('scCanvasWrap').classList.add('sc-drop-active');
-}
-function scDragLeave(e) {
-  document.getElementById('scCanvasWrap').classList.remove('sc-drop-active');
-}
-function scDrop(e) {
-  e.preventDefault();
-  document.getElementById('scCanvasWrap').classList.remove('sc-drop-active');
-  var text = e.dataTransfer.getData('text/plain') || _sc.dragText || '';
-  if(!text) return;
-
-  var wrap = document.getElementById('scCanvasWrap');
-  var rect = wrap.getBoundingClientRect();
-  var x = e.clientX - rect.left;
-  var y = e.clientY - rect.top;
-
-  scSnapshot();
-  var b = {
-    id: 'scb_'+Date.now(), x: Math.max(5,x-80), y: Math.max(5,y-15),
-    w: Math.min(280, text.length*8+40),
-    html: text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'),
-    fontSize:14, color:'#1a1a1a',
-    bold:false, italic:false, underline:false, angle:0
-  };
-  _sc.textBlocks.push(b);
-  _scCreateBlockDOM(b);
-  showToast('📋 Text canvas par add ho gaya!', 'success');
-}
-
-// ══════════════════════════════════
-// SAVE
-// ══════════════════════════════════
-function scSave() {
-  if(!_sc.tid) { showToast('Pehle notes editor kholo!', 'error'); return; }
-  var t = getTop(_sc.sid, _sc.secid, _sc.tid);
-  if(!t) { showToast('Topic nahi mila!', 'error'); return; }
-
-  // Sync HTML from DOM before saving
-  _sc.textBlocks.forEach(function(b) {
-    var el = document.getElementById('scBlock_'+b.id);
-    if(!el) return;
-    var clone = el.cloneNode(true);
-    clone.querySelectorAll('.sc-block-resize,.sc-block-rotate,.sc-block-actions').forEach(function(h){ h.remove(); });
-    b.html = clone.innerHTML;
-    b.x = parseFloat(el.style.left) || b.x;
-    b.y = parseFloat(el.style.top)  || b.y;
-  });
-
-  // Size check — strokes compress karo agar zaroori ho
-  var data = {
-    v:    1,
-    bg:   _sc.bg,
-    textBlocks: JSON.parse(JSON.stringify(_sc.textBlocks)),
-    strokes:    _scCompressStrokes(_sc.strokes),
-    qmNodes:    JSON.parse(JSON.stringify(_sc.qmNodes)),
-    qmEdges:    JSON.parse(JSON.stringify(_sc.qmEdges)),
-    savedAt:    Date.now()
-  };
-
-  // Rough size estimate
-  var sz = JSON.stringify(data).length;
-  if(sz > 700000) {
-    showToast('⚠️ Data bahut bada ho gaya! Kuch strokes ya blocks hatao pehle. (' + Math.round(sz/1024) + 'KB)', 'error');
-    return;
-  }
-
-  t.studyCanvas = data;
-  save();
-  if(typeof saveToFirebase === 'function' && window._currentUser && window._db) {
-    saveToFirebase();
-  }
-  showToast('✅ Study Canvas save ho gaya! (' + Math.round(sz/1024) + 'KB)', 'success');
-}
-
-function _scCompressStrokes(strokes) {
-  // Reduce point density for storage (keep every 2nd point for long strokes)
-  return strokes.map(function(s) {
-    var pts = s.points;
-    if(pts.length > 40) {
-      var compressed = [];
-      for(var i=0; i<pts.length; i+=2) compressed.push(pts[i]);
-      if(pts[pts.length-1] !== compressed[compressed.length-1]) compressed.push(pts[pts.length-1]);
-      pts = compressed;
-    }
-    return { points: pts.map(function(p){ return {x:Math.round(p.x*10)/10, y:Math.round(p.y*10)/10}; }),
-             color: s.color, size: s.size, tool: s.tool };
-  });
-}
 
 // ═══════════════════════════════════════════════════════════════════
 // QMap Node Action Bar — select + edit + resize + recolor + delete
@@ -22988,899 +21910,791 @@ function neQmBarDelete() {
 // ═══════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════
-// IMPROVEMENT 1: Study Canvas → Download as PDF (mobile storage)
+// FIX-1: OVERFLOW / "coding at bottom" bug prevention
+// ═══════════════════════════════════════════════════════════════════
+(function() {
+  var _hiddenSince = 0;
+  function _addGlobalOverflowStyle() {
+    var s = document.createElement('style');
+    s.textContent =
+      'body{overflow-x:hidden!important;}' +
+      '.main-content,.page-area{overflow-x:hidden!important;}' +
+      'pre,code{max-width:100%;overflow-x:auto;word-break:break-all;}';
+    document.head.appendChild(s);
+  }
+  document.addEventListener('DOMContentLoaded', _addGlobalOverflowStyle);
+  setInterval(function() {
+    if(document.body.style.overflow === 'hidden') {
+      if(!_hiddenSince) _hiddenSince = Date.now();
+      else if(Date.now() - _hiddenSince > 12000) {
+        document.body.style.overflow = '';
+        document.body.style.overflowX = 'hidden';
+        _hiddenSince = 0;
+      }
+    } else { _hiddenSince = 0; }
+  }, 2000);
+})();
+
+// ═══════════════════════════════════════════════════════════════════
+// FIX-2: FAB position reset — clears out-of-bounds saved positions
+// ═══════════════════════════════════════════════════════════════════
+(function() {
+  document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(function() {
+      ['qmapFab','factBtn','creatorBtn','neDrawBtn','neQmBtn'].forEach(function(key) {
+        try {
+          var raw = localStorage.getItem('fabPos_' + key);
+          if(raw) {
+            var pos = JSON.parse(raw);
+            var l = parseFloat(pos.left) || 0;
+            var t = parseFloat(pos.top)  || 0;
+            if(l < 0 || l > window.innerWidth || t < 0 || t > window.innerHeight) {
+              localStorage.removeItem('fabPos_' + key);
+            }
+          }
+        } catch(e) { try { localStorage.removeItem('fabPos_' + key); } catch(e2) {} }
+      });
+    }, 500);
+  });
+})();
+
+// ═══════════════════════════════════════════════════════════════════
+// IMPROVEMENT-3: Eruda/Console hidden — 10 continuous taps to show
+// ═══════════════════════════════════════════════════════════════════
+(function() {
+  var _taps = 0, _timer = null, _hideTimer = null;
+  var _panel = null;
+  var _logs  = [];
+
+  function _buildPanel() {
+    if(_panel) return;
+    _panel = document.createElement('div');
+    _panel.id = '_dbgConsole';
+    _panel.style.cssText =
+      'display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999999;' +
+      'background:rgba(10,12,20,0.97);color:#00ff88;font-family:monospace;' +
+      'font-size:0.7rem;max-height:40vh;overflow-y:auto;padding:8px 10px;' +
+      'border-top:2px solid #00ff88;box-shadow:0 -4px 20px rgba(0,255,136,0.2);';
+    _panel.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;' +
+      'margin-bottom:5px;padding-bottom:5px;border-bottom:1px solid rgba(0,255,136,0.25);">' +
+      '<b style="letter-spacing:1px;">🖥 DEBUG CONSOLE</b>' +
+      '<span style="color:rgba(255,255,255,0.4);font-size:0.65rem;">10-tap se khula • auto 8s mein hide</span>' +
+      '<button id="_dbgClose" style="background:rgba(200,0,0,0.4);border:1px solid #f55;color:#f55;' +
+      'border-radius:5px;padding:1px 8px;cursor:pointer;font-size:0.68rem;">✕</button></div>' +
+      '<div id="_dbgBody"></div>';
+    document.body.appendChild(_panel);
+    document.getElementById('_dbgClose').onclick = _hidePanel;
+
+    var olog = console.log, oerr = console.error, owarn = console.warn;
+    function _push(type, args) {
+      var msg = Array.prototype.slice.call(args).map(function(a) {
+        try { return typeof a === 'object' ? JSON.stringify(a,null,1) : String(a); } catch(e) { return String(a); }
+      }).join(' ');
+      _logs.push({ t: type, m: msg, ts: new Date().toLocaleTimeString() });
+      if(_logs.length > 150) _logs.shift();
+    }
+    console.log   = function() { _push('log',   arguments); olog.apply(console, arguments);   };
+    console.error = function() { _push('err',   arguments); oerr.apply(console, arguments);   };
+    console.warn  = function() { _push('warn',  arguments); owarn.apply(console, arguments);  };
+    window.onerror = function(msg, src, line) { _push('err', ['[JS] '+msg+' L'+line]); };
+  }
+
+  function _renderLogs() {
+    var b = document.getElementById('_dbgBody'); if(!b) return;
+    var col = { log:'#00ff88', err:'#ff5555', warn:'#ffcc44' };
+    b.innerHTML = _logs.map(function(l) {
+      var c = col[l.t] || '#aaa';
+      return '<div style="color:'+c+';border-bottom:1px solid rgba(255,255,255,0.05);padding:1px 0;">' +
+        '<span style="opacity:0.45;">['+l.ts+']</span> ' +
+        l.m.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>';
+    }).join('');
+    b.scrollTop = b.scrollHeight;
+  }
+
+  function _showPanel() {
+    _buildPanel(); _renderLogs();
+    _panel.style.display = 'block';
+    clearTimeout(_hideTimer);
+    _hideTimer = setTimeout(_hidePanel, 8000);
+    if(typeof showToast === 'function') showToast('🖥 Debug Console — 8s mein auto-hide hoga', 'success');
+  }
+  function _hidePanel() {
+    if(_panel) _panel.style.display = 'none';
+  }
+
+  document.addEventListener('click', function() {
+    clearTimeout(_timer);
+    _taps++;
+    _timer = setTimeout(function() { _taps = 0; }, 2000);
+    if(_taps >= 10) { _taps = 0; _showPanel(); }
+  }, true);
+})();
+
+// ═══════════════════════════════════════════════════════════════════
+// IMPROVEMENT-1: Study Canvas → Download as PDF
 // ═══════════════════════════════════════════════════════════════════
 function scDownloadPDF() {
-  showToast('⏳ PDF ban raha hai... please wait', 'success');
+  if(typeof _sc === 'undefined' || !_sc.slides || !_sc.slides.length) {
+    if(typeof showToast === 'function') showToast('⚠️ Pehle Study Canvas mein kuch likhiye!', 'error');
+    return;
+  }
+  if(typeof showToast === 'function') showToast('⏳ PDF ban raha hai...', 'success');
+
+  // Sync current slide DOM state
+  if(typeof _scSyncCurrentSlideFromDOM === 'function') _scSyncCurrentSlideFromDOM();
+
   setTimeout(function() {
     try {
-      _scSyncCurrentSlideFromDOM();
-      var panel = document.getElementById('studyCanvasPanel');
-      var wrap  = document.getElementById('scCanvasWrap');
-      if(!wrap) { showToast('Canvas nahi mila!','error'); return; }
+      // Build print container
+      var printWrap = document.createElement('div');
+      printWrap.id  = '_scPrintWrap';
+      printWrap.style.cssText =
+        'position:fixed;left:-99999px;top:0;width:210mm;background:#fff;' +
+        'font-family:"Noto Sans Devanagari","Baloo 2",sans-serif;z-index:-999;';
 
-      var slides = _sc.slides;
-      if(!slides || !slides.length) { showToast('Koi slides nahi hain!','error'); return; }
+      var titleEl  = document.getElementById('scTitle');
+      var docTitle = (titleEl ? titleEl.textContent : 'Study Canvas').replace(/📋/g,'').trim();
 
-      // Build a hidden A4-style print area
-      var printDiv = document.createElement('div');
-      printDiv.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:#fff;font-family:"Noto Sans Devanagari","Baloo 2",sans-serif;z-index:-1;';
-
-      var title = document.getElementById('scTitle');
-      var titleText = (title ? title.textContent : 'Study Canvas').replace('📋','').trim();
-
-      slides.forEach(function(slide, idx) {
+      _sc.slides.forEach(function(slide, si) {
         var page = document.createElement('div');
-        page.style.cssText = 'width:794px;min-height:1123px;padding:40px;box-sizing:border-box;page-break-after:always;background:'+(slide.bg||'#fffde7')+';border:1px solid #ddd;margin-bottom:8px;';
+        page.style.cssText =
+          'width:210mm;min-height:150mm;padding:14mm 14mm 10mm;box-sizing:border-box;' +
+          'page-break-after:always;background:'+(slide.bg||'#fffde7')+';';
 
-        // Page header
+        // Header row
         var hdr = document.createElement('div');
-        hdr.style.cssText = 'border-bottom:2px solid #1565c0;padding-bottom:8px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;';
-        hdr.innerHTML = '<span style="font-size:1.1rem;font-weight:800;color:#1565c0;">'+_escHtml(titleText)+'</span>'
-          +'<span style="font-size:0.8rem;color:#666;">Slide '+(idx+1)+' / '+slides.length+'</span>';
+        hdr.style.cssText =
+          'display:flex;justify-content:space-between;align-items:center;' +
+          'border-bottom:2.5px solid #1565c0;padding-bottom:5px;margin-bottom:12px;';
+        hdr.innerHTML =
+          '<span style="font-size:13pt;font-weight:800;color:#1565c0;">'+_escHtml(docTitle)+'</span>' +
+          '<span style="font-size:9pt;color:#666;">Slide '+(si+1)+' / '+_sc.slides.length+'</span>';
         page.appendChild(hdr);
 
         // Text blocks
         var blocks = slide.textBlocks || [];
         if(blocks.length) {
-          var blockWrap = document.createElement('div');
-          blockWrap.style.cssText = 'position:relative;width:714px;min-height:200px;margin-bottom:20px;';
+          var bWrap = document.createElement('div');
+          bWrap.style.cssText = 'position:relative;width:182mm;min-height:60mm;margin-bottom:8mm;';
+          // Calculate scale: canvas width → 182mm at 96dpi = ~690px
+          var canvasW = (document.getElementById('scCanvas') || {}).width || 680;
+          var scaleX = 690 / canvasW;
+          var canvasH = (document.getElementById('scCanvas') || {}).height || 480;
+          var scaleY = scaleX;
           blocks.forEach(function(b) {
             var el = document.createElement('div');
-            el.style.cssText = 'position:absolute;left:'+Math.round(b.x)+'px;top:'+Math.round(b.y)+'px;width:'+(b.w||180)+'px;'
-              +'font-size:'+(b.fontSize||14)+'px;color:'+(b.color||'#1a1a1a')+';'
-              +(b.bold?'font-weight:800;':'')+(b.italic?'font-style:italic;':'')+(b.underline?'text-decoration:underline;':'')
-              +'line-height:1.55;word-break:break-word;white-space:pre-wrap;transform:rotate('+(b.angle||0)+'deg);';
-            el.innerHTML = b.html||'';
-            blockWrap.appendChild(el);
+            el.style.cssText =
+              'position:absolute;' +
+              'left:'+Math.round(b.x * scaleX)+'px;' +
+              'top:'+Math.round(b.y * scaleY)+'px;' +
+              'width:'+Math.round((b.w||180) * scaleX)+'px;' +
+              'font-size:'+(b.fontSize||14)+'px;' +
+              'color:'+(b.color||'#1a1a1a')+';' +
+              (b.bold?'font-weight:800;':'') +
+              (b.italic?'font-style:italic;':'') +
+              (b.underline?'text-decoration:underline;':'') +
+              'line-height:1.55;word-break:break-word;white-space:pre-wrap;' +
+              'transform:rotate('+(b.angle||0)+'deg);transform-origin:top left;';
+            el.innerHTML = b.html || '';
+            bWrap.appendChild(el);
           });
-          page.appendChild(blockWrap);
+          page.appendChild(bWrap);
         }
 
-        // QMap nodes as text list
-        var qmNodes = slide.qmNodes || [];
-        if(qmNodes.length) {
-          var qmSec = document.createElement('div');
-          qmSec.style.cssText = 'margin-top:16px;padding:12px;background:rgba(21,101,192,0.06);border-radius:8px;border:1px solid rgba(21,101,192,0.2);';
-          qmSec.innerHTML = '<div style="font-size:0.85rem;font-weight:800;color:#1565c0;margin-bottom:8px;">🗺 Mind Map Nodes</div>'
-            +'<div style="display:flex;flex-wrap:wrap;gap:6px;">'
-            +qmNodes.map(function(n){
-              return '<span style="background:'+(n.color||'#e65100')+';color:#fff;padding:3px 10px;border-radius:20px;font-size:0.75rem;font-weight:700;">'+_escHtml(n.label||'')+'</span>';
-            }).join('')+'</div>';
-          page.appendChild(qmSec);
-        }
-
-        // Draw strokes note
+        // Draw strokes → rendered to canvas image
         var strokes = slide.strokes || [];
-        if(strokes.length) {
-          // Render draw canvas to image
+        if(strokes.length > 0) {
           try {
-            var tmpCv = document.createElement('canvas');
-            var cw = wrap.offsetWidth || 340, ch = wrap.offsetHeight || 400;
-            tmpCv.width = cw; tmpCv.height = ch;
+            var tmpCv  = document.createElement('canvas');
+            var srcCv  = document.getElementById('scCanvas');
+            tmpCv.width  = srcCv ? srcCv.width  : 680;
+            tmpCv.height = srcCv ? srcCv.height : 480;
             var tctx = tmpCv.getContext('2d');
             tctx.fillStyle = slide.bg || '#fffde7';
-            tctx.fillRect(0,0,cw,ch);
-            strokes.forEach(function(s){
-              if(!s.points||s.points.length<2) return;
+            tctx.fillRect(0, 0, tmpCv.width, tmpCv.height);
+            strokes.forEach(function(s) {
+              if(!s.points || s.points.length < 2) return;
               tctx.save();
-              tctx.strokeStyle = s.color||'#000';
-              tctx.lineWidth   = s.size||2;
+              tctx.strokeStyle = s.color || '#000';
+              tctx.lineWidth   = s.size  || 2;
               tctx.lineCap     = 'round';
               tctx.lineJoin    = 'round';
-              if(s.tool==='marker') tctx.globalAlpha = 0.45;
+              if(s.tool === 'marker') tctx.globalAlpha = 0.42;
               tctx.beginPath();
               tctx.moveTo(s.points[0].x, s.points[0].y);
-              for(var i=1;i<s.points.length;i++) tctx.lineTo(s.points[i].x, s.points[i].y);
+              for(var i=1; i<s.points.length; i++) tctx.lineTo(s.points[i].x, s.points[i].y);
               tctx.stroke();
               tctx.restore();
             });
-            var imgEl = document.createElement('img');
-            imgEl.src = tmpCv.toDataURL('image/png');
-            imgEl.style.cssText = 'max-width:100%;border-radius:8px;margin-top:12px;border:1px solid rgba(0,0,0,0.1);';
-            page.appendChild(imgEl);
-          } catch(ex){}
+            var img = document.createElement('img');
+            img.src = tmpCv.toDataURL('image/png');
+            img.style.cssText = 'max-width:100%;border-radius:6px;margin-top:6mm;border:1px solid rgba(0,0,0,0.08);';
+            page.appendChild(img);
+          } catch(e) {}
         }
 
-        printDiv.appendChild(page);
+        // QMap nodes
+        var qmNodes = slide.qmNodes || [];
+        if(qmNodes.length) {
+          var qmSec = document.createElement('div');
+          qmSec.style.cssText =
+            'margin-top:8mm;padding:8px 10px;background:rgba(21,101,192,0.05);' +
+            'border-radius:8px;border:1px solid rgba(21,101,192,0.18);';
+          qmSec.innerHTML =
+            '<div style="font-size:9pt;font-weight:800;color:#1565c0;margin-bottom:6px;">🗺 Mind Map Nodes</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:5px;">' +
+            qmNodes.map(function(n) {
+              return '<span style="background:'+(n.color||'#e65100')+';color:#fff;' +
+                'padding:2px 9px;border-radius:20px;font-size:8pt;font-weight:700;">' +
+                _escHtml(n.label||'')+'</span>';
+            }).join('') + '</div>';
+          page.appendChild(qmSec);
+        }
+
+        printWrap.appendChild(page);
       });
 
-      document.body.appendChild(printDiv);
+      document.body.appendChild(printWrap);
 
-      // Use html2canvas or just window.print with a special style
-      var styleEl = document.createElement('style');
-      styleEl.id = '_scPrintStyle';
-      styleEl.textContent = '@media print{'
-        +'body > *:not(#_scPrintArea){display:none!important;}'
-        +'#_scPrintArea{display:block!important;position:static!important;left:0!important;top:0!important;width:100%!important;z-index:auto!important;}'
-        +'}';
-      printDiv.id = '_scPrintArea';
-      document.head.appendChild(styleEl);
+      // Inject print CSS
+      var pStyle = document.createElement('style');
+      pStyle.id  = '_scPrintStyle';
+      pStyle.textContent =
+        '@media print{' +
+        'body>*:not(#_scPrintWrap){display:none!important;}' +
+        '#_scPrintWrap{display:block!important;position:static!important;' +
+        'left:auto!important;top:auto!important;width:100%!important;z-index:auto!important;}' +
+        '@page{margin:0;size:A4;}' +
+        '}';
+      document.head.appendChild(pStyle);
 
-      setTimeout(function(){
+      setTimeout(function() {
         window.print();
-        setTimeout(function(){
-          document.body.removeChild(printDiv);
-          var s2 = document.getElementById('_scPrintStyle');
-          if(s2) document.head.removeChild(s2);
-          showToast('✅ PDF save option aaya hoga! "Save as PDF" choose karo.', 'success');
-        }, 1500);
-      }, 400);
+        setTimeout(function() {
+          try { document.body.removeChild(printWrap); } catch(e) {}
+          try { document.head.removeChild(pStyle);    } catch(e) {}
+          if(typeof showToast==='function') showToast('✅ "Save as PDF" choose karo — mobile storage mein save ho jayega!','success');
+        }, 2000);
+      }, 300);
 
     } catch(err) {
-      showToast('PDF error: '+err.message,'error');
+      if(typeof showToast==='function') showToast('❌ PDF error: '+err.message,'error');
     }
-  }, 100);
+  }, 120);
 }
 
-function _escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
-
-// ═══════════════════════════════════════════════════════════════════
-// IMPROVEMENT 3: Console/Debug button — hide by default
-//   Show only when screen is tapped 10 times continuously
-//   Auto-hide after 8 seconds
-// ═══════════════════════════════════════════════════════════════════
-(function() {
-  // Create a hidden debug log panel
-  var _dbgPanel = null;
-  var _dbgTaps = 0;
-  var _dbgTimer = null;
-  var _dbgVisible = false;
-  var _dbgHideTimer = null;
-  var _dbgLogs = [];
-
-  function _createDbgPanel() {
-    if(_dbgPanel) return;
-    _dbgPanel = document.createElement('div');
-    _dbgPanel.id = '_debugConsolePanel';
-    _dbgPanel.style.cssText = 'display:none;position:fixed;bottom:0;left:0;right:0;z-index:999999;'
-      +'background:rgba(10,10,20,0.97);color:#00ff88;font-family:monospace;font-size:0.72rem;'
-      +'max-height:45vh;overflow-y:auto;padding:10px 12px;'
-      +'border-top:2px solid #00ff88;box-shadow:0 -4px 20px rgba(0,255,136,0.2);';
-    _dbgPanel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
-      +'<span style="font-weight:800;letter-spacing:1px;">🖥 DEBUG CONSOLE (10-tap se khula)</span>'
-      +'<button onclick="document.getElementById(\'_debugConsolePanel\').style.display=\'none\';" '
-      +'style="background:rgba(255,0,0,0.3);border:1px solid red;color:red;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:0.7rem;">✕ Close</button>'
-      +'</div><div id="_dbgLogBody" style="white-space:pre-wrap;"></div>';
-    document.body.appendChild(_dbgPanel);
-
-    // Intercept console.log/error/warn
-    var _origLog   = console.log;
-    var _origError = console.error;
-    var _origWarn  = console.warn;
-    function _addLog(type, args) {
-      var msg = Array.prototype.slice.call(args).map(function(a){
-        try{ return typeof a==='object'?JSON.stringify(a):String(a); }catch(e){return String(a);}
-      }).join(' ');
-      _dbgLogs.push({ type:type, msg:msg, t:new Date().toLocaleTimeString() });
-      if(_dbgLogs.length > 200) _dbgLogs.shift();
-      if(_dbgVisible) _renderDbgLogs();
-    }
-    console.log   = function(){ _addLog('log',   arguments); _origLog.apply(console,arguments); };
-    console.error = function(){ _addLog('error', arguments); _origError.apply(console,arguments); };
-    console.warn  = function(){ _addLog('warn',  arguments); _origWarn.apply(console,arguments); };
-
-    window.onerror = function(msg,src,line,col,err) {
-      _addLog('error', ['[JS ERROR] '+msg+' @ line '+line]);
-    };
-  }
-
-  function _renderDbgLogs() {
-    var body = document.getElementById('_dbgLogBody');
-    if(!body) return;
-    var colors = { log:'#00ff88', error:'#ff5555', warn:'#ffaa00' };
-    body.innerHTML = _dbgLogs.map(function(l){
-      return '<div style="color:'+(colors[l.type]||'#aaa')+';border-bottom:1px solid rgba(255,255,255,0.07);padding:2px 0;">'
-        +'<span style="opacity:0.5;">['+l.t+'] </span>'+_escHtmlDbg(l.msg)+'</div>';
-    }).join('');
-    body.scrollTop = body.scrollHeight;
-  }
-  function _escHtmlDbg(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
-  function _showDbgConsole() {
-    _createDbgPanel();
-    _dbgVisible = true;
-    _renderDbgLogs();
-    _dbgPanel.style.display = 'block';
-    clearTimeout(_dbgHideTimer);
-    _dbgHideTimer = setTimeout(function(){
-      if(_dbgPanel) _dbgPanel.style.display = 'none';
-      _dbgVisible = false;
-    }, 8000);
-    showToast('🖥 Debug Console visible — 8 sec mein hide hoga', 'success');
-  }
-
-  // 10-tap detector on document
-  document.addEventListener('click', function() {
-    clearTimeout(_dbgTimer);
-    _dbgTaps++;
-    _dbgTimer = setTimeout(function(){ _dbgTaps = 0; }, 2500);
-    if(_dbgTaps >= 10) {
-      _dbgTaps = 0;
-      _showDbgConsole();
-    }
-  }, true);
-
-  // Also initialize panel silently on load
-  document.addEventListener('DOMContentLoaded', function(){
-    setTimeout(_createDbgPanel, 2000);
-  });
-})();
-
+function _escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
 // ═══════════════════════════════════════════════════════════════════
-// IMPROVEMENT 4: Study Canvas QMap — Pan + Zoom the entire map
-//   Two-finger pinch = zoom, two-finger drag = pan entire map
-//   Single finger still adds/moves nodes
+// IMPROVEMENT-4: Study Canvas QMap — Pan + Zoom entire map (2-finger)
 // ═══════════════════════════════════════════════════════════════════
 (function() {
-  // State for pan/zoom
-  var _scQmPan  = { x: 0, y: 0 };
-  var _scQmZoom = 1.0;
-  var _scQmPinchActive = false;
-  var _scQmPinchStart  = null;
-  var _scQmPanStart    = null;
+  var _pan  = { x:0, y:0 };
+  var _zoom = 1.0;
+  var _pinchActive = false, _pinchStart = null;
 
-  function _scQmApplyTransform() {
-    var cv = document.getElementById('scQmCanvas');
-    if(!cv) return;
+  function _applyTransform() {
+    var cv = document.getElementById('scQmCanvas'); if(!cv) return;
     cv.style.transformOrigin = '0 0';
-    cv.style.transform = 'translate('+_scQmPan.x+'px,'+_scQmPan.y+'px) scale('+_scQmZoom+')';
+    cv.style.transform = 'translate('+_pan.x+'px,'+_pan.y+'px) scale('+_zoom+')';
+  }
+  function _resetTransform() {
+    _pan = { x:0, y:0 }; _zoom = 1.0; _applyTransform();
   }
 
-  function _scQmResetTransform() {
-    _scQmPan  = { x: 0, y: 0 };
-    _scQmZoom = 1.0;
-    _scQmApplyTransform();
-  }
+  window.scQmResetView = function() { _resetTransform(); if(typeof showToast==='function') showToast('Map reset!','success'); };
+  window.scQmZoomIn    = function() { _zoom = Math.min(3.0, _zoom+0.25); _applyTransform(); };
+  window.scQmZoomOut   = function() { _zoom = Math.max(0.25, _zoom-0.25); _applyTransform(); };
 
-  // Override scSetMode to hook into qmap mode
-  var _origScSetMode = scSetMode;
-  scSetMode = function(mode, el) {
-    _origScSetMode(mode, el);
-    if(mode !== 'qmap') {
-      // Reset transform when leaving qmap
-      _scQmResetTransform();
+  // Patch scRenderToolbar to add zoom controls in qmap mode
+  var _origTb = window.scRenderToolbar;
+  window.scRenderToolbar = function() {
+    if(typeof _origTb === 'function') _origTb();
+    if(typeof _sc !== 'undefined' && _sc.mode === 'qmap') {
+      var tb = document.getElementById('scToolbar'); if(!tb) return;
+      tb.innerHTML +=
+        '<div class="sc-sep"></div>' +
+        '<button class="sc-tbtn" onclick="scQmZoomIn()" style="min-width:26px;font-size:1rem;">＋</button>' +
+        '<button class="sc-tbtn" onclick="scQmZoomOut()" style="min-width:26px;font-size:1rem;">－</button>' +
+        '<button class="sc-tbtn" onclick="scQmResetView()" style="min-width:46px;font-size:0.68rem;">⌖Reset</button>';
     }
   };
 
-  // Patch scRenderToolbar to add Pan/Zoom reset button in qmap mode
-  var _origScRenderToolbar = scRenderToolbar;
-  scRenderToolbar = function() {
-    _origScRenderToolbar();
-    if(_sc.mode === 'qmap') {
-      var tb = document.getElementById('scToolbar');
-      if(tb) {
-        tb.innerHTML += '<div class="sc-sep"></div>'
-          +'<button class="sc-tbtn" onclick="scQmResetView()" title="Map ko center karo" style="font-size:0.7rem;min-width:52px;">⌖ Reset</button>'
-          +'<button class="sc-tbtn" onclick="scQmZoomIn()" title="Zoom In" style="min-width:28px;">＋</button>'
-          +'<button class="sc-tbtn" onclick="scQmZoomOut()" title="Zoom Out" style="min-width:28px;">－</button>';
-      }
-    }
+  // Patch scSetMode to reset transform when leaving qmap
+  var _origSetMode = window.scSetMode;
+  window.scSetMode = function(mode, el) {
+    if(typeof _origSetMode === 'function') _origSetMode(mode, el);
+    if(mode !== 'qmap') _resetTransform();
   };
 
-  window.scQmResetView = function() {
-    _scQmResetTransform();
-    showToast('Map reset ho gaya!', 'success');
-  };
-  window.scQmZoomIn = function() {
-    _scQmZoom = Math.min(3.0, _scQmZoom + 0.2);
-    _scQmApplyTransform();
-  };
-  window.scQmZoomOut = function() {
-    _scQmZoom = Math.max(0.3, _scQmZoom - 0.2);
-    _scQmApplyTransform();
-  };
-
-  // Touch events for two-finger pan/zoom on scCanvasWrap
+  // 2-finger pinch & pan on canvas wrap
   document.addEventListener('DOMContentLoaded', function() {
     setTimeout(function() {
-      var wrap = document.getElementById('scCanvasWrap');
-      if(!wrap) return;
+      var wrap = document.getElementById('scCanvasWrap'); if(!wrap) return;
 
-      var _touches = {};
-      function _getTouches(e) {
-        var t = e.touches;
-        var arr = [];
-        for(var i=0;i<t.length;i++) arr.push({ x:t[i].clientX, y:t[i].clientY, id:t[i].identifier });
-        return arr;
-      }
-      function _dist(a,b) { return Math.hypot(b.x-a.x, b.y-a.y); }
-      function _mid(a,b) { return { x:(a.x+b.x)/2, y:(a.y+b.y)/2 }; }
+      function _dist(t) { return Math.hypot(t[1].clientX-t[0].clientX, t[1].clientY-t[0].clientY); }
+      function _midX(t) { return (t[0].clientX+t[1].clientX)/2; }
+      function _midY(t) { return (t[0].clientY+t[1].clientY)/2; }
 
       wrap.addEventListener('touchstart', function(e) {
-        if(_sc.mode !== 'qmap') return;
+        if(typeof _sc === 'undefined' || _sc.mode !== 'qmap') return;
         if(e.touches.length === 2) {
           e.preventDefault();
-          _scQmPinchActive = true;
-          var t = _getTouches(e);
-          _scQmPinchStart = {
-            dist: _dist(t[0],t[1]),
-            mid:  _mid(t[0],t[1]),
-            zoom: _scQmZoom,
-            pan:  { x: _scQmPan.x, y: _scQmPan.y }
-          };
+          _pinchActive = true;
+          _pinchStart  = { dist:_dist(e.touches), mx:_midX(e.touches), my:_midY(e.touches), zoom:_zoom, px:_pan.x, py:_pan.y };
         }
-      }, { passive: false });
+      }, { passive:false });
 
       wrap.addEventListener('touchmove', function(e) {
-        if(_sc.mode !== 'qmap' || !_scQmPinchActive || e.touches.length < 2) return;
+        if(typeof _sc === 'undefined' || _sc.mode !== 'qmap' || !_pinchActive || e.touches.length < 2) return;
         e.preventDefault();
-        var t = _getTouches(e);
-        var curDist = _dist(t[0],t[1]);
-        var curMid  = _mid(t[0],t[1]);
-        var scale   = curDist / _scQmPinchStart.dist;
-        _scQmZoom   = Math.min(3.0, Math.max(0.3, _scQmPinchStart.zoom * scale));
-        _scQmPan.x  = _scQmPinchStart.pan.x + (curMid.x - _scQmPinchStart.mid.x);
-        _scQmPan.y  = _scQmPinchStart.pan.y + (curMid.y - _scQmPinchStart.mid.y);
-        _scQmApplyTransform();
-      }, { passive: false });
+        var scale = _dist(e.touches) / _pinchStart.dist;
+        _zoom  = Math.min(3.0, Math.max(0.25, _pinchStart.zoom * scale));
+        _pan.x = _pinchStart.px + (_midX(e.touches) - _pinchStart.mx);
+        _pan.y = _pinchStart.py + (_midY(e.touches) - _pinchStart.my);
+        _applyTransform();
+      }, { passive:false });
 
       wrap.addEventListener('touchend', function(e) {
-        if(e.touches.length < 2) _scQmPinchActive = false;
-      }, { passive: true });
-    }, 1500);
+        if(e.touches.length < 2) _pinchActive = false;
+      }, { passive:true });
+    }, 1800);
   });
 })();
 
-
 // ═══════════════════════════════════════════════════════════════════
-// IMPROVEMENT 5: Fix "coding at screen bottom" — overflow & body reset
-// ═══════════════════════════════════════════════════════════════════
-(function() {
-  // Ensure body overflow is never stuck in 'hidden' after modal closes
-  // Patch all modal close functions to always restore body overflow
-  function _safeRestoreOverflow() {
-    // Only restore if no modal is visibly open
-    var openModals = document.querySelectorAll('.modal-overlay.show, [style*="display:flex"][style*="position:fixed"], [style*="display: flex"][style*="position: fixed"]');
-    var hasOpen = false;
-    openModals.forEach(function(m) {
-      if(m.id && m.id !== '_debugConsolePanel') hasOpen = true;
-    });
-    if(!hasOpen) {
-      document.body.style.overflow = '';
-      document.body.style.overflowX = 'hidden';
-    }
-  }
-
-  // Fix: patch document to intercept any runaway fixed-position code divs
-  var _origCreateElement = document.createElement.bind(document);
-  // Ensure main-content has overflow-x:hidden always
-  document.addEventListener('DOMContentLoaded', function() {
-    var mc = document.querySelector('.main-content');
-    if(mc) {
-      mc.style.overflowX = 'hidden';
-      // Ensure page-area also clips
-      var pa = document.querySelector('.page-area');
-      if(pa) pa.style.overflowX = 'hidden';
-    }
-    // Add global CSS to prevent horizontal overflow leak
-    var styleEl = document.createElement('style');
-    styleEl.textContent = 'body{overflow-x:hidden!important;}'
-      +'.main-content{overflow-x:hidden!important;}'
-      +'.page-area{overflow-x:hidden!important;}'
-      +'pre,code{max-width:100%;overflow-x:auto;word-break:break-all;}';
-    document.head.appendChild(styleEl);
-  });
-
-  // Periodic check: if body.overflow is 'hidden' for >10s, reset it
-  var _overflowHiddenSince = 0;
-  setInterval(function() {
-    if(document.body.style.overflow === 'hidden') {
-      if(!_overflowHiddenSince) _overflowHiddenSince = Date.now();
-      else if(Date.now() - _overflowHiddenSince > 10000) {
-        _safeRestoreOverflow();
-        _overflowHiddenSince = 0;
-      }
-    } else {
-      _overflowHiddenSince = 0;
-    }
-  }, 2000);
-})();
-
-
-// ═══════════════════════════════════════════════════════════════════
-// IMPROVEMENT 6: Study Canvas — AI Chat + Quiz + Flashcard System
+// IMPROVEMENT-6: Study Canvas — AI Chat + Quiz + Flashcard System
 // ═══════════════════════════════════════════════════════════════════
 
-// ── Canvas content extractor ──
-function scExtractAllContent() {
-  _scSyncCurrentSlideFromDOM();
+// ── Extract all canvas text content ──
+function scExtractContent() {
+  if(typeof _scSyncCurrentSlideFromDOM === 'function') _scSyncCurrentSlideFromDOM();
   var lines = [];
-  (_sc.slides || []).forEach(function(slide, si) {
-    lines.push('=== Slide '+(si+1)+(slide.title?' — '+slide.title:'')+' ===');
+  if(typeof _sc === 'undefined' || !_sc.slides) return '';
+  _sc.slides.forEach(function(slide, si) {
+    lines.push('=== Slide '+(si+1)+(slide.title ? ' — '+slide.title : '')+' ===');
     (slide.textBlocks||[]).forEach(function(b) {
       var txt = (b.html||'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
       if(txt) lines.push(txt);
     });
-    (slide.qmNodes||[]).forEach(function(n) {
-      if(n.label) lines.push('[Map Node] '+n.label);
-    });
-    (slide.strokes||[]).length && lines.push('[Drawing present on slide '+(si+1)+']');
+    (slide.qmNodes||[]).forEach(function(n) { if(n.label) lines.push('[Node] '+n.label); });
+    if((slide.strokes||[]).length) lines.push('[Drawing on slide '+(si+1)+']');
   });
   return lines.join('\n');
 }
 
 // ── Flashcard storage ──
-var _scFlashcards = [];
-var _scFlashProgress = {}; // id → { right, wrong, lastSeen, difficulty }
-var _scQuizActive   = false;
-var _scLastScanHash = '';
+var _scFC = { cards:[], progress:{}, hash:'' };
 
-function _scGetScanHash() {
-  return scExtractAllContent().length + '_' + (_sc.slides||[]).length;
+function _scFCKey() { return 'scFC_'+(typeof _sc !== 'undefined' ? (_sc.tid||'default') : 'default'); }
+function _scFCLoad() {
+  try { var d=JSON.parse(localStorage.getItem(_scFCKey())||'{}'); _scFC.cards=d.cards||[]; _scFC.progress=d.progress||{}; _scFC.hash=d.hash||''; } catch(e) {}
+}
+function _scFCSave() {
+  try { localStorage.setItem(_scFCKey(), JSON.stringify(_scFC)); } catch(e) {}
+}
+function _scContentHash() {
+  var c = scExtractContent(); return c.length+'_'+(typeof _sc !== 'undefined' ? _sc.slides.length : 0);
 }
 
-function _scLoadFlashcards() {
-  try {
-    var raw = localStorage.getItem('scFlashcards_'+(_sc.tid||'default'));
-    if(raw) { var d=JSON.parse(raw); _scFlashcards=d.cards||[]; _scFlashProgress=d.progress||{}; _scLastScanHash=d.hash||''; }
-  } catch(e){}
-}
-function _scSaveFlashcards() {
-  try {
-    localStorage.setItem('scFlashcards_'+(_sc.tid||'default'), JSON.stringify({
-      cards: _scFlashcards, progress: _scFlashProgress, hash: _scLastScanHash
-    }));
-  } catch(e){}
-}
-
-// ── AI Chat Panel (inside canvas) ──
-var _scAiHistory = [];
+// ── AI Chat panel ──
+var _scAiMsgs = [];
 
 function scOpenAiChat() {
-  _scLoadFlashcards();
-  var panel = document.getElementById('scAiChatPanel');
-  if(!panel) { _scBuildAiChatPanel(); panel = document.getElementById('scAiChatPanel'); }
-  panel.style.display = 'flex';
-  // Auto-greet
-  if(!_scAiHistory.length) {
-    _scAiAddMsg('bot', '👋 Namaste! Main aapke Study Canvas ka AI assistant hoon.\n\nMai canvas ki saari slides scan karke aapke sawaalon ke jawab de sakta hoon. Aap ye kar sakte hain:\n• 📊 <b>Progress check</b> — progress karo\n• ❓ <b>Quiz</b> — quiz banao\n• 🃏 <b>Flashcards</b> — flashcards banao\n• Koi bhi sawaal poochho canvas ke facts ke baare mein!');
+  _scFCLoad();
+  var p = document.getElementById('_scAiPanel');
+  if(!p) { _scBuildAiPanel(); p = document.getElementById('_scAiPanel'); }
+  if(!p) return;
+  p.style.display = 'flex';
+  if(!_scAiMsgs.length) {
+    _scAiMsg('bot',
+      '👋 <b>Canvas AI Assistant</b><br><br>' +
+      'Main canvas ki saari slides scan karke kaam kar sakta hoon:<br>' +
+      '• 📊 Progress check<br>• ❓ Quiz banana<br>• 🃏 Flashcards banana<br>' +
+      '• Koi bhi sawaal canvas ke content ke baare mein poochho!');
   }
 }
 
 function scCloseAiChat() {
-  var panel = document.getElementById('scAiChatPanel');
-  if(panel) panel.style.display = 'none';
+  var p = document.getElementById('_scAiPanel'); if(p) p.style.display = 'none';
 }
 
-function _scBuildAiChatPanel() {
-  // Inject styles
-  if(!document.getElementById('scAiChatStyle')) {
+function _scBuildAiPanel() {
+  // Styles
+  if(!document.getElementById('_scAiStyle')) {
     var st = document.createElement('style');
-    st.id = 'scAiChatStyle';
-    st.textContent = '#scAiChatPanel{'
-      +'position:absolute;inset:0;z-index:80;background:var(--surface,#fff);'
-      +'display:none;flex-direction:column;border-radius:inherit;overflow:hidden;}'
-    +'#scAiChatMsgs{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;}'
-    +'.scai-msg{padding:8px 11px;border-radius:12px;font-size:0.78rem;line-height:1.6;max-width:92%;}'
-    +'.scai-msg.bot{background:rgba(21,101,192,0.08);border:1px solid rgba(21,101,192,0.18);color:var(--text,#0d1b2a);align-self:flex-start;}'
-    +'.scai-msg.user{background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;align-self:flex-end;}'
-    +'#scAiChatInput{flex:1;border:1.5px solid var(--border,#bdd5ea);border-radius:10px;padding:8px 11px;font-size:0.8rem;font-family:inherit;outline:none;background:var(--surface,#fff);color:var(--text,#0d1b2a);}'
-    +'#scAiChatSend{width:36px;height:36px;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:1.1rem;cursor:pointer;flex-shrink:0;}'
-    +'.scai-chip{padding:5px 10px;border-radius:20px;border:1.5px solid rgba(21,101,192,0.3);background:rgba(21,101,192,0.06);color:#1565c0;font-size:0.72rem;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent;white-space:nowrap;}'
-    +'#scFlashcardBox{position:absolute;inset:0;z-index:90;background:var(--surface,#fff);display:none;flex-direction:column;border-radius:inherit;overflow:hidden;}'
-    +'.scfc-card{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;cursor:pointer;}'
-    +'.scfc-front{font-size:1.05rem;font-weight:800;color:var(--accent,#1565c0);line-height:1.5;}'
-    +'.scfc-back{font-size:0.9rem;color:var(--text,#0d1b2a);line-height:1.6;margin-top:12px;padding-top:12px;border-top:2px dashed rgba(0,0,0,0.12);}'
-    +'.scfc-progress{height:4px;background:var(--bg2,#d4eaf7);flex-shrink:0;}'
-    +'.scfc-progress-fill{height:100%;background:linear-gradient(90deg,#2e7d32,#43a047);transition:width 0.4s;}'
-    +'#scQuizBox{position:absolute;inset:0;z-index:90;background:var(--surface,#fff);display:none;flex-direction:column;border-radius:inherit;overflow:hidden;padding:14px;}';
+    st.id  = '_scAiStyle';
+    st.textContent =
+      '#_scAiPanel,#_scFCPanel,#_scQzPanel{position:absolute;inset:0;z-index:80;display:none;flex-direction:column;border-radius:inherit;overflow:hidden;background:var(--surface,#fff);}' +
+      '._scAiHdr{display:flex;align-items:center;gap:8px;padding:7px 10px;flex-shrink:0;}' +
+      '._scAiHdr span{flex:1;color:#fff;font-size:0.82rem;font-weight:800;}' +
+      '._scAiHdr button{background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:7px;padding:2px 9px;cursor:pointer;font-size:0.75rem;font-weight:700;}' +
+      '#_scAiMsgs{flex:1;overflow-y:auto;padding:9px 11px;display:flex;flex-direction:column;gap:7px;}' +
+      '._scMsg{padding:7px 10px;border-radius:11px;font-size:0.77rem;line-height:1.6;max-width:93%;}' +
+      '._scMsg.bot{background:rgba(21,101,192,0.07);border:1px solid rgba(21,101,192,0.15);color:var(--text,#0d1b2a);align-self:flex-start;}' +
+      '._scMsg.user{background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;align-self:flex-end;}' +
+      '._scChips{display:flex;gap:5px;padding:5px 9px;overflow-x:auto;flex-shrink:0;border-top:1px solid rgba(0,0,0,0.06);}' +
+      '._scChip{padding:5px 11px;border-radius:20px;border:1.5px solid rgba(21,101,192,0.3);background:rgba(21,101,192,0.06);color:#1565c0;font-size:0.7rem;font-weight:700;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent;}' +
+      '._scInputRow{display:flex;gap:6px;padding:7px 9px;flex-shrink:0;border-top:1px solid rgba(0,0,0,0.07);}' +
+      '#_scAiInput{flex:1;border:1.5px solid var(--border,#bdd5ea);border-radius:9px;padding:7px 10px;font-size:0.78rem;font-family:inherit;outline:none;background:var(--surface,#fff);color:var(--text,#0d1b2a);}' +
+      '#_scAiSend{width:34px;height:34px;border-radius:9px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:1rem;cursor:pointer;flex-shrink:0;}' +
+      // Flashcard styles
+      '#_scFCPanel .scfc-hdr{background:linear-gradient(135deg,#e65100,#f57c00);}' +
+      '.scfc-bar{height:4px;background:var(--bg2,#d4eaf7);flex-shrink:0;}' +
+      '.scfc-fill{height:100%;background:linear-gradient(90deg,#2e7d32,#43a047);transition:width 0.35s;}' +
+      '.scfc-card{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px;text-align:center;cursor:pointer;user-select:none;}' +
+      '.scfc-q{font-size:1rem;font-weight:800;color:var(--accent,#1565c0);line-height:1.5;}' +
+      '.scfc-a{font-size:0.85rem;color:var(--text,#0d1b2a);margin-top:10px;padding-top:10px;border-top:2px dashed rgba(0,0,0,0.1);line-height:1.55;}' +
+      '.scfc-btns{display:flex;gap:8px;padding:10px;flex-shrink:0;}' +
+      '.scfc-btn-wrong{flex:1;padding:11px;border-radius:11px;border:none;background:rgba(198,40,40,0.1);color:#c62828;font-weight:800;font-size:0.8rem;cursor:pointer;}' +
+      '.scfc-btn-right{flex:1;padding:11px;border-radius:11px;border:none;background:rgba(46,125,50,0.1);color:#2e7d32;font-weight:800;font-size:0.8rem;cursor:pointer;}' +
+      // Quiz styles
+      '#_scQzPanel{padding:12px;overflow-y:auto;}' +
+      '._scQzHdr{display:flex;align-items:center;gap:7px;margin-bottom:10px;}' +
+      '._scQzOpt{width:100%;padding:10px 13px;border-radius:9px;border:1.5px solid var(--border,#bdd5ea);background:var(--surface,#fff);color:var(--text,#0d1b2a);font-size:0.79rem;font-weight:700;cursor:pointer;text-align:left;margin-bottom:7px;-webkit-tap-highlight-color:transparent;font-family:inherit;}';
     document.head.appendChild(st);
   }
 
-  // Build HTML
-  var panel = document.createElement('div');
-  panel.id = 'scAiChatPanel';
-  panel.innerHTML = ''
-    +'<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:linear-gradient(135deg,#1565c0,#6a1b9a);flex-shrink:0;">'
-    +'<span style="flex:1;color:#fff;font-size:0.82rem;font-weight:800;">🤖 Canvas AI Assistant</span>'
-    +'<button onclick="scCloseAiChat()" style="background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:8px;padding:3px 10px;cursor:pointer;font-size:0.78rem;font-weight:700;">✕</button>'
-    +'</div>'
-    +'<div id="scAiChatMsgs"></div>'
-    +'<div style="display:flex;gap:5px;padding:5px 10px;overflow-x:auto;flex-shrink:0;border-top:1px solid rgba(0,0,0,0.07);">'
-    +'<button class="scai-chip" onclick="scAiSendQuick(\'📊 Meri progress check karo\')">📊 Progress</button>'
-    +'<button class="scai-chip" onclick="scAiStartQuiz()">❓ Quiz</button>'
-    +'<button class="scai-chip" onclick="scAiMakeFlashcards()">🃏 Flashcards</button>'
-    +'<button class="scai-chip" onclick="scAiSendQuick(\'Canvas scan karke key facts batao\')">🔍 Scan</button>'
-    +'</div>'
-    +'<div style="display:flex;gap:7px;padding:8px 10px;flex-shrink:0;border-top:1px solid rgba(0,0,0,0.07);">'
-    +'<input id="scAiChatInput" placeholder="Canvas ke baare mein poochho..." onkeydown="if(event.key===\'Enter\')scAiSend()"/>'
-    +'<button id="scAiChatSend" onclick="scAiSend()">➤</button>'
-    +'</div>';
+  var sp = document.getElementById('studyCanvasPanel'); if(!sp) return;
 
-  // Flashcard box
-  var fcBox = document.createElement('div');
-  fcBox.id = 'scFlashcardBox';
-  fcBox.innerHTML = ''
-    +'<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:linear-gradient(135deg,#e65100,#f57c00);flex-shrink:0;">'
-    +'<span style="flex:1;color:#fff;font-size:0.82rem;font-weight:800;">🃏 Flashcards</span>'
-    +'<span id="scFcCount" style="color:rgba(255,255,255,0.8);font-size:0.72rem;"></span>'
-    +'<button onclick="scCloseFlashcards()" style="background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:8px;padding:3px 10px;cursor:pointer;font-size:0.78rem;">✕</button>'
-    +'</div>'
-    +'<div class="scfc-progress"><div class="scfc-progress-fill" id="scFcProgress" style="width:0%"></div></div>'
-    +'<div class="scfc-card" id="scFcCard" onclick="scFcFlip()">'
-    +'<div class="scfc-front" id="scFcFront"></div>'
-    +'<div class="scfc-back" id="scFcBack" style="display:none"></div>'
-    +'<div style="margin-top:16px;font-size:0.7rem;color:rgba(0,0,0,0.4);" id="scFcHint">Tap to flip 👆</div>'
-    +'</div>'
-    +'<div style="display:flex;gap:8px;padding:10px;flex-shrink:0;justify-content:center;" id="scFcBtns" style="display:none">'
-    +'<button onclick="scFcAnswer(false)" style="flex:1;padding:12px;border-radius:12px;border:none;background:rgba(198,40,40,0.12);color:#c62828;font-weight:800;font-size:0.82rem;cursor:pointer;">❌ Galat / Hard</button>'
-    +'<button onclick="scFcAnswer(true)"  style="flex:1;padding:12px;border-radius:12px;border:none;background:rgba(46,125,50,0.12);color:#2e7d32;font-weight:800;font-size:0.82rem;cursor:pointer;">✅ Sahi / Easy</button>'
-    +'</div>';
+  // AI Chat panel
+  var p = document.createElement('div'); p.id = '_scAiPanel';
+  p.innerHTML =
+    '<div class="_scAiHdr" style="background:linear-gradient(135deg,#1565c0,#6a1b9a);">' +
+    '<span>🤖 Canvas AI Assistant</span>' +
+    '<button onclick="scCloseAiChat()">✕</button></div>' +
+    '<div id="_scAiMsgs"></div>' +
+    '<div class="_scChips">' +
+    '<button class="_scChip" onclick="_scAiQuick(\'📊 Meri progress check karo aur weak areas batao\')">📊 Progress</button>' +
+    '<button class="_scChip" onclick="scAiStartQuiz()">❓ Quiz</button>' +
+    '<button class="_scChip" onclick="scAiMakeFlashcards()">🃏 Flashcards</button>' +
+    '<button class="_scChip" onclick="_scAiQuick(\'Canvas scan karo aur key facts list karo\')">🔍 Scan</button>' +
+    '</div>' +
+    '<div class="_scInputRow">' +
+    '<input id="_scAiInput" placeholder="Canvas ke baare mein poochho..." onkeydown="if(event.key===\'Enter\')scAiSend()"/>' +
+    '<button id="_scAiSend" onclick="scAiSend()">➤</button>' +
+    '</div>';
+  sp.appendChild(p);
 
-  // Quiz box
-  var qzBox = document.createElement('div');
-  qzBox.id = 'scQuizBox';
-  qzBox.innerHTML = ''
-    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">'
-    +'<span style="flex:1;font-size:0.85rem;font-weight:800;color:var(--accent,#1565c0);">❓ Canvas Quiz</span>'
-    +'<button onclick="scCloseQuiz()" style="background:rgba(198,40,40,0.1);border:1px solid rgba(198,40,40,0.3);color:#c62828;border-radius:8px;padding:3px 10px;cursor:pointer;font-size:0.75rem;font-weight:700;">✕ Band</button>'
-    +'</div>'
-    +'<div id="scQuizBody" style="flex:1;overflow-y:auto;"></div>';
+  // Flashcard panel
+  var fc = document.createElement('div'); fc.id = '_scFCPanel';
+  fc.innerHTML =
+    '<div class="_scAiHdr scfc-hdr">' +
+    '<span>🃏 Flashcards</span>' +
+    '<span id="_scFCCount" style="color:rgba(255,255,255,0.75);font-size:0.7rem;margin-left:auto;"></span>' +
+    '<button onclick="scCloseFC()">✕</button></div>' +
+    '<div class="scfc-bar"><div class="scfc-fill" id="_scFCBar" style="width:0%"></div></div>' +
+    '<div class="scfc-card" id="_scFCCard" onclick="scFCFlip()">' +
+    '<div class="scfc-q" id="_scFCQ"></div>' +
+    '<div class="scfc-a" id="_scFCA" style="display:none"></div>' +
+    '<div style="margin-top:14px;font-size:0.68rem;color:rgba(0,0,0,0.38);" id="_scFCHint">👆 Tap to flip</div>' +
+    '</div>' +
+    '<div class="scfc-btns" id="_scFCBtns" style="display:none;">' +
+    '<button class="scfc-btn-wrong" onclick="scFCAns(false)">❌ Galat / Hard</button>' +
+    '<button class="scfc-btn-right"  onclick="scFCAns(true)">✅ Sahi / Easy</button>' +
+    '</div>';
+  sp.appendChild(fc);
 
-  var studyPanel = document.getElementById('studyCanvasPanel');
-  if(studyPanel) {
-    studyPanel.appendChild(panel);
-    studyPanel.appendChild(fcBox);
-    studyPanel.appendChild(qzBox);
-  }
+  // Quiz panel
+  var qz = document.createElement('div'); qz.id = '_scQzPanel';
+  qz.innerHTML =
+    '<div class="_scQzHdr">' +
+    '<span style="flex:1;font-size:0.85rem;font-weight:800;color:var(--accent,#1565c0);">❓ Canvas Quiz</span>' +
+    '<button onclick="scCloseQz()" style="background:rgba(198,40,40,0.1);border:1px solid rgba(198,40,40,0.25);color:#c62828;border-radius:7px;padding:3px 9px;cursor:pointer;font-size:0.72rem;font-weight:700;">✕ Band</button>' +
+    '</div>' +
+    '<div id="_scQzBody"></div>';
+  sp.appendChild(qz);
 }
 
-function _scAiAddMsg(role, text) {
-  _scAiHistory.push({ role:role, text:text });
-  var msgs = document.getElementById('scAiChatMsgs');
-  if(!msgs) return;
-  var div = document.createElement('div');
-  div.className = 'scai-msg ' + role;
-  div.innerHTML = text.replace(/\n/g,'<br>');
-  msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
+// ── AI messaging ──
+function _scAiMsg(role, html) {
+  _scAiMsgs.push({ role:role, html:html });
+  var box = document.getElementById('_scAiMsgs'); if(!box) return;
+  var d = document.createElement('div');
+  d.className = '_scMsg ' + role;
+  d.innerHTML = html;
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
 }
 
 function scAiSend() {
-  var inp = document.getElementById('scAiChatInput');
-  if(!inp || !inp.value.trim()) return;
-  var q = inp.value.trim();
-  inp.value = '';
-  _scAiAddMsg('user', q);
-  _scAiCallAPI(q);
+  var inp = document.getElementById('_scAiInput'); if(!inp||!inp.value.trim()) return;
+  var q = inp.value.trim(); inp.value = '';
+  _scAiMsg('user', _escHtml(q));
+  _scAiCall(q);
 }
 
-function scAiSendQuick(q) {
-  _scAiAddMsg('user', q);
-  _scAiCallAPI(q);
-}
+function _scAiQuick(q) { _scAiMsg('user', _escHtml(q)); _scAiCall(q); }
 
-function _scAiCallAPI(question) {
-  var apiKey = (document.getElementById('apiKey')||{}).value || localStorage.getItem('groqApiKey') || '';
-  if(!apiKey) { _scAiAddMsg('bot','⚠️ API key nahi hai! Settings mein Groq API key save karo.'); return; }
+function _scAiCall(question) {
+  var apiKey = '';
+  try { apiKey = document.getElementById('apiKey').value || localStorage.getItem('groqApiKey') || ''; } catch(e) {}
+  if(!apiKey) { _scAiMsg('bot','⚠️ API key nahi hai! Settings mein Groq API key save karo.'); return; }
 
-  var content = scExtractAllContent();
-  if(!content.trim()) { _scAiAddMsg('bot','⚠️ Canvas mein koi content nahi hai! Pehle notes/map/text add karo.'); return; }
+  var content = scExtractContent();
+  if(!content.trim()) { _scAiMsg('bot','⚠️ Canvas mein koi content nahi hai! Pehle kuch likhiye.'); return; }
 
-  _scAiAddMsg('bot','⏳ Soch raha hoon...');
+  _scAiMsg('bot','<span style="opacity:0.5;">⏳ Soch raha hoon...</span>');
 
-  var systemPrompt = 'Tu ek expert Hindi teacher aur exam coach hai. User ne neeche diye gaye Study Canvas ke notes likhe hain. In notes ke SIRF andar ke facts par based jawab de. Bahar ki info mat de.\n\nCOMPLETE CANVAS CONTENT:\n---\n'+content+'\n---\nHindi aur English mix mein jawab de. Short, clear, aur helpful reh.';
-
-  var msgs = [{ role:'system', content: systemPrompt }];
-  _scAiHistory.slice(-6).forEach(function(h) {
-    msgs.push({ role: h.role==='user'?'user':'assistant', content: h.text.replace(/<[^>]*>/g,'') });
-  });
-  msgs.push({ role:'user', content: question });
-
-  fetch('https://api.anthropic.com/v1/messages', {
-    method:'POST',
-    headers:{ 'Content-Type':'application/json' },
-    body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:1000, messages: msgs.filter(function(m){return m.role!=='system';}) })
-  }).then(function(r){ return r.json(); }).then(function(data) {
-    // Remove "thinking" message
-    var msgsEl = document.getElementById('scAiChatMsgs');
-    if(msgsEl && msgsEl.lastChild) msgsEl.removeChild(msgsEl.lastChild);
-    _scAiHistory.pop();
-
-    var reply = (data.content && data.content[0] && data.content[0].text) || '❌ Koi jawab nahi mila.';
-    _scAiAddMsg('bot', reply);
-  }).catch(function(err) {
-    var msgsEl = document.getElementById('scAiChatMsgs');
-    if(msgsEl && msgsEl.lastChild) msgsEl.removeChild(msgsEl.lastChild);
-    _scAiHistory.pop();
-
-    // Fallback: use Groq
-    _scAiCallGroq(question, apiKey, content);
-  });
-}
-
-function _scAiCallGroq(question, apiKey, content) {
-  var systemPrompt = 'Tu ek expert Hindi teacher aur exam coach hai. User ke Study Canvas notes:\n---\n'+content+'\n---\nSirf in notes ke facts par based jawab de. Hindi-English mix mein.';
+  var sysPrompt = 'Tu ek expert Hindi teacher aur exam coach hai.\n\nUser ke Study Canvas ke notes:\n---\n' + content + '\n---\n\nSirf in notes ke facts ke basis par jawab de. Hindi-English mix mein, short aur helpful.';
 
   fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method:'POST',
-    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+apiKey },
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+apiKey },
     body: JSON.stringify({
-      model:'llama-3.3-70b-versatile', max_tokens:900,
-      messages:[{ role:'system', content:systemPrompt },{ role:'user', content:question }]
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 900,
+      messages: [
+        { role:'system', content: sysPrompt },
+        { role:'user',   content: question }
+      ]
     })
-  }).then(function(r){ return r.json(); }).then(function(data) {
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    var box = document.getElementById('_scAiMsgs');
+    if(box && box.lastChild) box.removeChild(box.lastChild);
+    _scAiMsgs.pop();
     var reply = (data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content) || '❌ Jawab nahi mila.';
-    _scAiAddMsg('bot', reply);
-  }).catch(function() {
-    _scAiAddMsg('bot','❌ Network error. API key check karo aur internet connection dekho.');
+    _scAiMsg('bot', reply.replace(/\n/g,'<br>'));
+  }).catch(function(e) {
+    var box = document.getElementById('_scAiMsgs');
+    if(box && box.lastChild) box.removeChild(box.lastChild);
+    _scAiMsgs.pop();
+    _scAiMsg('bot','❌ Network error: '+e.message+'. Internet aur API key check karo.');
   });
 }
 
-// ── Flashcard system ──
-var _scFcIndex = 0;
-var _scFcFlipped = false;
-var _scFcQueue = [];
+// ── Flashcards ──
+var _scFCQueue = [], _scFCIdx = 0, _scFCFlipped = false;
 
 function scAiMakeFlashcards() {
-  var content = scExtractAllContent();
-  if(!content.trim()) { _scAiAddMsg('bot','⚠️ Canvas mein koi content nahi hai!'); return; }
+  var apiKey = '';
+  try { apiKey = document.getElementById('apiKey').value || localStorage.getItem('groqApiKey') || ''; } catch(e) {}
+  if(!apiKey) { _scAiMsg('bot','⚠️ Flashcards ke liye API key chahiye!'); return; }
 
-  var curHash = _scGetScanHash();
-  var apiKey  = (document.getElementById('apiKey')||{}).value || localStorage.getItem('groqApiKey') || '';
-  if(!apiKey) { _scAiAddMsg('bot','⚠️ API key chahiye flashcards ke liye!'); return; }
+  var content = scExtractContent();
+  if(!content.trim()) { _scAiMsg('bot','⚠️ Canvas mein koi content nahi!'); return; }
 
   scCloseAiChat();
-  var fcBox = document.getElementById('scFlashcardBox');
-  if(!fcBox) { _scBuildAiChatPanel(); fcBox = document.getElementById('scFlashcardBox'); }
-  fcBox.style.display = 'flex';
-  document.getElementById('scFcFront').textContent = '⏳ Canvas scan ho rahi hai...';
-  document.getElementById('scFcBack').style.display = 'none';
-  document.getElementById('scFcHint').textContent = '';
+  var fc = document.getElementById('_scFCPanel'); if(!fc) { _scBuildAiPanel(); fc = document.getElementById('_scFCPanel'); }
+  fc.style.display = 'flex';
+  document.getElementById('_scFCQ').textContent = '⏳ Canvas scan karke flashcards ban rahe hain...';
+  document.getElementById('_scFCA').style.display = 'none';
+  document.getElementById('_scFCBtns').style.display = 'none';
+  document.getElementById('_scFCHint').textContent = '';
 
-  // Check if rescan needed
-  if(_scLastScanHash === curHash && _scFlashcards.length > 0) {
-    _scStartFlashcardSession();
-    return;
+  _scFCLoad();
+  var curHash = _scContentHash();
+  if(_scFC.hash === curHash && _scFC.cards.length > 0) {
+    _scFCStartSession(); return;
   }
 
-  // Generate new flashcards via AI
   fetch('https://api.groq.com/openai/v1/chat/completions', {
     method:'POST',
-    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+apiKey },
+    headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+apiKey },
     body: JSON.stringify({
       model:'llama-3.3-70b-versatile', max_tokens:1500,
-      messages:[{
-        role:'system',
-        content:'Create flashcards from study notes. Return ONLY valid JSON array, no other text:\n[{"q":"Question in Hindi/English","a":"Answer"},...]'
-      },{
-        role:'user',
-        content:'Canvas content:\n'+content+'\n\nCreate 10-15 flashcards from the KEY FACTS only. Return JSON array only.'
-      }]
+      messages:[
+        { role:'system', content:'Create flashcards from study notes. Return ONLY a valid JSON array, no markdown, no extra text:\n[{"q":"Question","a":"Answer"},...]' },
+        { role:'user',   content:'Notes:\n'+content+'\n\nCreate 12-15 flashcards from key facts only. Return JSON array only.' }
+      ]
     })
-  }).then(function(r){ return r.json(); }).then(function(data) {
+  }).then(function(r){return r.json();}).then(function(data){
     var raw = (data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'[]';
     try {
       var clean = raw.replace(/```json|```/g,'').trim();
       var arr = JSON.parse(clean);
-      _scFlashcards = arr.map(function(fc,i){ return { id:'fc_'+Date.now()+'_'+i, q:fc.q, a:fc.a }; });
-      _scLastScanHash = curHash;
-      _scSaveFlashcards();
-      _scStartFlashcardSession();
+      _scFC.cards = arr.map(function(fc,i){ return { id:'fc'+Date.now()+'_'+i, q:fc.q||'?', a:fc.a||'?' }; });
+      _scFC.hash  = curHash;
+      _scFCSave();
+      _scFCStartSession();
     } catch(e) {
-      document.getElementById('scFcFront').textContent = '❌ Flashcards parse error. Dobara try karo.';
+      document.getElementById('_scFCQ').textContent = '❌ Parse error. Dobara try karo.';
     }
-  }).catch(function() {
-    document.getElementById('scFcFront').textContent = '❌ Network error. Internet check karo.';
+  }).catch(function(){
+    document.getElementById('_scFCQ').textContent = '❌ Network error.';
   });
 }
 
-function _scStartFlashcardSession() {
-  // Build queue weighted by difficulty (hard cards appear more)
-  _scFcQueue = [];
-  _scFlashcards.forEach(function(fc) {
-    var p = _scFlashProgress[fc.id] || { right:0, wrong:0 };
-    var total = p.right + p.wrong;
-    // More wrong → higher weight
-    var weight = total === 0 ? 2 : Math.max(1, 1 + Math.round((p.wrong / (total||1)) * 3));
-    for(var i=0;i<weight;i++) _scFcQueue.push(fc);
+function _scFCStartSession() {
+  // Weighted queue: more wrong → appears more
+  _scFCLoad();
+  _scFCQueue = [];
+  _scFC.cards.forEach(function(fc) {
+    var p = _scFC.progress[fc.id] || { r:0, w:0 };
+    var total = p.r + p.w;
+    var weight = total === 0 ? 2 : Math.max(1, 1 + Math.round((p.w/(total||1)) * 3));
+    for(var i=0; i<weight; i++) _scFCQueue.push(fc);
   });
   // Shuffle
-  for(var i=_scFcQueue.length-1;i>0;i--){
-    var j=Math.floor(Math.random()*(i+1));
-    var tmp=_scFcQueue[i];_scFcQueue[i]=_scFcQueue[j];_scFcQueue[j]=tmp;
+  for(var i=_scFCQueue.length-1;i>0;i--){
+    var j=Math.floor(Math.random()*(i+1)), t=_scFCQueue[i];
+    _scFCQueue[i]=_scFCQueue[j]; _scFCQueue[j]=t;
   }
-  _scFcIndex   = 0;
-  _scFcFlipped = false;
-  _scShowFlashcard();
+  _scFCIdx=0; _scFCFlipped=false; _scFCShow();
 }
 
-function _scShowFlashcard() {
-  var fc = _scFcQueue[_scFcIndex];
+function _scFCShow() {
+  var fc = _scFCQueue[_scFCIdx];
   if(!fc) {
-    document.getElementById('scFcFront').textContent = '🎉 Saare flashcards khatam! Bahut achha!';
-    document.getElementById('scFcBack').style.display = 'none';
-    document.getElementById('scFcHint').textContent = 'Session complete ✅';
-    document.getElementById('scFcBtns').style.display = 'none';
-    document.getElementById('scFcProgress').style.width = '100%';
-    document.getElementById('scFcCount').textContent = _scFcIndex+'/'+_scFcQueue.length;
+    document.getElementById('_scFCQ').textContent = '🎉 Saare flashcards khatam! Great job!';
+    document.getElementById('_scFCA').style.display = 'none';
+    document.getElementById('_scFCBtns').style.display = 'none';
+    document.getElementById('_scFCHint').textContent = '✅ Session complete';
+    document.getElementById('_scFCBar').style.width = '100%';
+    document.getElementById('_scFCCount').textContent = _scFCQueue.length+'/'+_scFCQueue.length;
     return;
   }
-  var p = _scFlashProgress[fc.id]||{right:0,wrong:0};
-  var pct = Math.round((_scFcIndex/_scFcQueue.length)*100);
-  document.getElementById('scFcProgress').style.width = pct+'%';
-  document.getElementById('scFcCount').textContent = (_scFcIndex+1)+'/'+_scFcQueue.length;
-  document.getElementById('scFcFront').innerHTML = fc.q
-    + (p.wrong > p.right ? ' <span style="font-size:0.65rem;color:#c62828;background:rgba(198,40,40,0.1);padding:1px 6px;border-radius:10px;font-weight:800;">Hard</span>':'');
-  document.getElementById('scFcBack').textContent = fc.a;
-  document.getElementById('scFcBack').style.display = 'none';
-  document.getElementById('scFcHint').textContent = 'Tap to flip 👆';
-  document.getElementById('scFcBtns').style.display = 'none';
-  _scFcFlipped = false;
+  var p = _scFC.progress[fc.id] || { r:0, w:0 };
+  var pct = Math.round((_scFCIdx/_scFCQueue.length)*100);
+  document.getElementById('_scFCBar').style.width    = pct+'%';
+  document.getElementById('_scFCCount').textContent  = (_scFCIdx+1)+'/'+_scFCQueue.length;
+  document.getElementById('_scFCQ').innerHTML = _escHtml(fc.q)
+    + (p.w > p.r ? ' <span style="font-size:0.6rem;color:#c62828;background:rgba(198,40,40,0.1);padding:1px 5px;border-radius:8px;font-weight:800;">Hard</span>' : '');
+  document.getElementById('_scFCA').textContent = fc.a;
+  document.getElementById('_scFCA').style.display = 'none';
+  document.getElementById('_scFCBtns').style.display = 'none';
+  document.getElementById('_scFCHint').textContent   = '👆 Tap to flip';
+  _scFCFlipped = false;
 }
 
-window.scFcFlip = function() {
-  if(_scFcFlipped) return;
-  _scFcFlipped = true;
-  document.getElementById('scFcBack').style.display = 'block';
-  document.getElementById('scFcHint').textContent = '';
-  document.getElementById('scFcBtns').style.display = 'flex';
+window.scFCFlip = function() {
+  if(_scFCFlipped) return; _scFCFlipped = true;
+  document.getElementById('_scFCA').style.display = 'block';
+  document.getElementById('_scFCHint').textContent = '';
+  document.getElementById('_scFCBtns').style.display = 'flex';
 };
 
-window.scFcAnswer = function(correct) {
-  var fc = _scFcQueue[_scFcIndex];
-  if(!fc) return;
-  var p = _scFlashProgress[fc.id] || { right:0, wrong:0 };
-  if(correct) p.right++;
-  else        p.wrong++;
-  _scFlashProgress[fc.id] = p;
-  _scSaveFlashcards();
-  _scFcIndex++;
-  _scFcFlipped = false;
-  _scShowFlashcard();
+window.scFCAns = function(correct) {
+  var fc = _scFCQueue[_scFCIdx]; if(!fc) return;
+  var p  = _scFC.progress[fc.id] || { r:0, w:0 };
+  if(correct) p.r++; else p.w++;
+  _scFC.progress[fc.id] = p; _scFCSave();
+  _scFCIdx++; _scFCFlipped = false; _scFCShow();
 };
 
-window.scCloseFlashcards = function() {
-  var b = document.getElementById('scFlashcardBox');
-  if(b) b.style.display = 'none';
+window.scCloseFC = function() {
+  var p = document.getElementById('_scFCPanel'); if(p) p.style.display='none';
   scOpenAiChat();
 };
 
-// ── Quiz System ──
-var _scQuizQs = [];
-var _scQuizCur = 0;
-var _scQuizScore = 0;
-var _scQuizAnswered = false;
+// ── Quiz ──
+var _scQzQs=[], _scQzCur=0, _scQzScore=0, _scQzDone=false;
 
 function scAiStartQuiz() {
-  var content = scExtractAllContent();
-  if(!content.trim()) { _scAiAddMsg('bot','⚠️ Canvas mein content nahi hai!'); return; }
-  var apiKey = (document.getElementById('apiKey')||{}).value || localStorage.getItem('groqApiKey')||'';
-  if(!apiKey) { _scAiAddMsg('bot','⚠️ Quiz ke liye API key chahiye!'); return; }
+  var apiKey='';
+  try { apiKey = document.getElementById('apiKey').value || localStorage.getItem('groqApiKey')||''; } catch(e) {}
+  if(!apiKey) { _scAiMsg('bot','⚠️ Quiz ke liye API key chahiye!'); return; }
 
-  // Rescan if content changed
-  var curHash = _scGetScanHash();
-  var needScan = curHash !== _scLastScanHash;
+  var content = scExtractContent();
+  if(!content.trim()) { _scAiMsg('bot','⚠️ Canvas mein koi content nahi!'); return; }
 
   scCloseAiChat();
-  var qzBox = document.getElementById('scQuizBox');
-  if(!qzBox) { _scBuildAiChatPanel(); qzBox = document.getElementById('scQuizBox'); }
-  qzBox.style.display = 'flex';
-  document.getElementById('scQuizBody').innerHTML = '<div style="text-align:center;padding:30px;color:var(--text2);">⏳ Canvas scan ho rahi hai aur quiz ban raha hai...</div>';
+  var qzp = document.getElementById('_scQzPanel');
+  if(!qzp) { _scBuildAiPanel(); qzp = document.getElementById('_scQzPanel'); }
+  qzp.style.display = 'flex';
+  document.getElementById('_scQzBody').innerHTML =
+    '<div style="text-align:center;padding:28px;color:var(--text2,#37526d);">⏳ Canvas scan ho rahi hai aur quiz ban raha hai...</div>';
 
   fetch('https://api.groq.com/openai/v1/chat/completions', {
     method:'POST',
     headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+apiKey },
     body: JSON.stringify({
       model:'llama-3.3-70b-versatile', max_tokens:2000,
-      messages:[{
-        role:'system',
-        content:'Create MCQ quiz from study notes. Return ONLY valid JSON:\n[{"q":"Question","opts":["A","B","C","D"],"ans":0,"exp":"Explanation"},...]\nans is 0-indexed correct option.'
-      },{
-        role:'user',
-        content:'Canvas notes:\n'+content+'\n\nCreate 8 MCQ questions from KEY FACTS ONLY. Return JSON array only.'
-      }]
+      messages:[
+        { role:'system', content:'Create MCQ quiz from notes. Return ONLY valid JSON array, no markdown:\n[{"q":"Question","opts":["A","B","C","D"],"ans":0,"exp":"Explanation"},...]' },
+        { role:'user',   content:'Notes:\n'+content+'\n\nCreate 8 MCQ from key facts only. Return JSON array only.' }
+      ]
     })
-  }).then(function(r){ return r.json(); }).then(function(data) {
-    var raw = (data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'[]';
+  }).then(function(r){return r.json();}).then(function(data){
+    var raw=(data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'[]';
     try {
-      var clean = raw.replace(/```json|```/g,'').trim();
-      _scQuizQs = JSON.parse(clean);
-      if(needScan) { _scLastScanHash = curHash; _scSaveFlashcards(); }
-      _scQuizCur = 0; _scQuizScore = 0; _scQuizAnswered = false;
-      _scRenderQuizQ();
+      _scQzQs    = JSON.parse(raw.replace(/```json|```/g,'').trim());
+      _scQzCur   = 0; _scQzScore = 0; _scQzDone = false;
+      _scQzRender();
+      // Mark for rescan next time
+      _scFC.hash = ''; _scFCSave();
     } catch(e) {
-      document.getElementById('scQuizBody').innerHTML = '<div style="padding:20px;color:#c62828;">❌ Quiz parse error. Dobara try karo.</div>';
+      document.getElementById('_scQzBody').innerHTML='<div style="padding:16px;color:#c62828;">❌ Parse error. Dobara try karo.</div>';
     }
-  }).catch(function() {
-    document.getElementById('scQuizBody').innerHTML = '<div style="padding:20px;color:#c62828;">❌ Network error.</div>';
+  }).catch(function(){
+    document.getElementById('_scQzBody').innerHTML='<div style="padding:16px;color:#c62828;">❌ Network error.</div>';
   });
 }
 
-function _scRenderQuizQ() {
-  var body = document.getElementById('scQuizBody');
-  if(!body) return;
-  if(_scQuizCur >= _scQuizQs.length) {
-    // Results
-    var pct = Math.round((_scQuizScore/_scQuizQs.length)*100);
+function _scQzRender() {
+  var body = document.getElementById('_scQzBody'); if(!body) return;
+  if(_scQzCur >= _scQzQs.length) {
+    var pct  = Math.round((_scQzScore/_scQzQs.length)*100);
     var emoji = pct>=80?'🏆':pct>=60?'👍':'💪';
-    body.innerHTML = '<div style="text-align:center;padding:20px;">'
-      +'<div style="font-size:2.5rem;font-weight:800;color:var(--accent,#1565c0);">'+pct+'%</div>'
-      +'<div style="font-size:1.5rem;margin:8px 0;">'+emoji+'</div>'
-      +'<div style="font-size:0.85rem;color:var(--text2);">'+_scQuizScore+' / '+_scQuizQs.length+' sahi jawab</div>'
-      +(pct<70?'<div style="font-size:0.78rem;color:var(--accent2,#e65100);margin-top:8px;">💡 Flashcards se practice karo!</div>':'')
-      +'<button onclick="scAiStartQuiz()" style="margin-top:16px;padding:10px 24px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-weight:800;cursor:pointer;font-size:0.82rem;">🔄 Phir Khelo</button>'
-      +'</div>';
-    // Rescan on next quiz attempt
-    _scLastScanHash = '';
+    body.innerHTML =
+      '<div style="text-align:center;padding:20px;">' +
+      '<div style="font-size:2.6rem;font-weight:800;color:var(--accent,#1565c0);">'+pct+'%</div>' +
+      '<div style="font-size:1.6rem;margin:6px 0;">'+emoji+'</div>' +
+      '<div style="font-size:0.84rem;color:var(--text2,#37526d);margin-bottom:14px;">'+_scQzScore+' / '+_scQzQs.length+' sahi</div>' +
+      (pct<70?'<div style="font-size:0.76rem;color:#e65100;margin-bottom:12px;">💡 Flashcards se practice karo — weak areas par focus karo!</div>':'') +
+      '<button onclick="scAiStartQuiz()" style="padding:10px 22px;border-radius:11px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-weight:800;font-size:0.8rem;cursor:pointer;">🔄 Phir Khelo</button>' +
+      '</div>';
     return;
   }
-  var q = _scQuizQs[_scQuizCur];
-  var pct = Math.round((_scQuizCur/_scQuizQs.length)*100);
-  body.innerHTML = '<div style="height:4px;background:var(--bg2);margin-bottom:12px;border-radius:4px;"><div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,#1565c0,#42a5f5);border-radius:4px;transition:width 0.4s;"></div></div>'
-    +'<div style="font-size:0.72rem;color:var(--text2);margin-bottom:8px;font-weight:700;">Q '+((_scQuizCur+1))+' / '+_scQuizQs.length+' • Score: '+_scQuizScore+'</div>'
-    +'<div style="font-size:0.88rem;font-weight:800;color:var(--text,#0d1b2a);line-height:1.5;margin-bottom:14px;">'+_escHtml(q.q)+'</div>'
-    +'<div id="scQzOpts" style="display:flex;flex-direction:column;gap:8px;">'
-    +(q.opts||[]).map(function(opt,i){
-      return '<button onclick="scQzAnswer('+i+')" style="padding:11px 14px;border-radius:10px;border:1.5px solid var(--border,#bdd5ea);background:var(--surface,#fff);color:var(--text,#0d1b2a);font-size:0.8rem;font-weight:700;cursor:pointer;text-align:left;-webkit-tap-highlight-color:transparent;" id="scQzOpt'+i+'">'
-        +'<span style="color:var(--accent,#1565c0);font-weight:900;margin-right:8px;">'+'ABCD'[i]+'.</span>'+_escHtml(opt)+'</button>';
-    }).join('')
-    +'</div><div id="scQzExp" style="display:none;margin-top:10px;padding:10px;border-radius:8px;font-size:0.76rem;line-height:1.5;"></div>'
-    +'<div id="scQzNextWrap" style="display:none;margin-top:12px;text-align:right;">'
-    +'<button onclick="scQzNext()" style="padding:10px 22px;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-weight:800;font-size:0.8rem;cursor:pointer;">'
-    +(_scQuizCur+1>=_scQuizQs.length?'✅ Results':'Agla ➤')+'</button></div>';
+  var q   = _scQzQs[_scQzCur];
+  var pct = Math.round((_scQzCur/_scQzQs.length)*100);
+  body.innerHTML =
+    '<div style="height:4px;background:var(--bg2,#d4eaf7);border-radius:4px;margin-bottom:12px;">' +
+    '<div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,#1565c0,#42a5f5);border-radius:4px;transition:width 0.35s;"></div></div>' +
+    '<div style="font-size:0.7rem;color:var(--text2);margin-bottom:8px;font-weight:700;">Q '+(_scQzCur+1)+' / '+_scQzQs.length+' &nbsp;|&nbsp; Score: '+_scQzScore+'</div>' +
+    '<div style="font-size:0.87rem;font-weight:800;color:var(--text,#0d1b2a);line-height:1.5;margin-bottom:13px;">'+_escHtml(q.q)+'</div>' +
+    (q.opts||[]).map(function(opt,i) {
+      return '<button class="_scQzOpt" id="_scQzO'+i+'" onclick="scQzAns('+i+')">' +
+        '<span style="color:var(--accent,#1565c0);font-weight:900;margin-right:7px;">'+'ABCD'[i]+'.</span>'+_escHtml(opt)+'</button>';
+    }).join('') +
+    '<div id="_scQzExp" style="display:none;margin-top:10px;padding:9px;border-radius:8px;font-size:0.74rem;line-height:1.5;"></div>' +
+    '<div id="_scQzNext" style="display:none;text-align:right;margin-top:10px;">' +
+    '<button onclick="scQzNext()" style="padding:9px 20px;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-weight:800;font-size:0.78rem;cursor:pointer;">'+
+    (_scQzCur+1>=_scQzQs.length ? '✅ Results' : 'Agla ➤')+'</button></div>';
 }
 
-window.scQzAnswer = function(chosen) {
-  if(_scQuizAnswered) return;
-  _scQuizAnswered = true;
-  var q = _scQuizQs[_scQuizCur];
-  var correct = chosen === q.ans;
-  if(correct) _scQuizScore++;
-
-  // Color options
-  (q.opts||[]).forEach(function(o,i) {
-    var btn = document.getElementById('scQzOpt'+i);
-    if(!btn) return;
-    if(i === q.ans) { btn.style.background='rgba(46,125,50,0.15)';btn.style.borderColor='#2e7d32';btn.style.color='#2e7d32'; }
-    else if(i===chosen&&!correct) { btn.style.background='rgba(198,40,40,0.12)';btn.style.borderColor='#c62828';btn.style.color='#c62828'; }
-    btn.disabled = true;
+window.scQzAns = function(chosen) {
+  if(_scQzDone) return; _scQzDone = true;
+  var q = _scQzQs[_scQzCur]; var correct = chosen===q.ans;
+  if(correct) _scQzScore++;
+  (q.opts||[]).forEach(function(o,i){
+    var b = document.getElementById('_scQzO'+i); if(!b) return;
+    if(i===q.ans){ b.style.background='rgba(46,125,50,0.15)'; b.style.borderColor='#2e7d32'; b.style.color='#2e7d32'; }
+    else if(i===chosen&&!correct){ b.style.background='rgba(198,40,40,0.1)'; b.style.borderColor='#c62828'; b.style.color='#c62828'; }
+    b.disabled=true;
   });
-
-  var exp = document.getElementById('scQzExp');
-  if(exp) {
-    exp.style.display='block';
-    exp.style.background = correct?'rgba(46,125,50,0.08)':'rgba(198,40,40,0.07)';
-    exp.style.borderLeft = '3px solid '+(correct?'#2e7d32':'#c62828');
-    exp.innerHTML = (correct?'✅ Sahi! ':'❌ Galat. Sahi jawab: <b>'+'ABCD'[q.ans]+'</b><br>')+(q.exp||'');
-  }
-  var nw = document.getElementById('scQzNextWrap');
-  if(nw) nw.style.display='block';
+  var exp=document.getElementById('_scQzExp');
+  if(exp){ exp.style.display='block'; exp.style.background=correct?'rgba(46,125,50,0.07)':'rgba(198,40,40,0.06)'; exp.style.borderLeft='3px solid '+(correct?'#2e7d32':'#c62828'); exp.innerHTML=(correct?'✅ Sahi!':'❌ Sahi answer: <b>'+'ABCD'[q.ans]+'</b><br>')+_escHtml(q.exp||''); }
+  var nxt=document.getElementById('_scQzNext'); if(nxt) nxt.style.display='block';
 };
 
-window.scQzNext = function() {
-  _scQuizCur++;
-  _scQuizAnswered = false;
-  _scRenderQuizQ();
-};
+window.scQzNext = function() { _scQzCur++; _scQzDone=false; _scQzRender(); };
 
-window.scCloseQuiz = function() {
-  var b = document.getElementById('scQuizBox');
-  if(b) b.style.display = 'none';
+window.scCloseQz = function() {
+  var p=document.getElementById('_scQzPanel'); if(p) p.style.display='none';
   scOpenAiChat();
 };
 
-// ── Add AI button to canvas header ──
+// ── Add 🤖 AI button to canvas header on DOM ready ──
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(function() {
     var hdr = document.getElementById('scHeader');
-    if(hdr && !document.getElementById('scAiBtn')) {
-      var aiBtn = document.createElement('button');
-      aiBtn.id        = 'scAiBtn';
-      aiBtn.className = 'sc-hbtn';
-      aiBtn.title     = 'AI Chat — Quiz, Flashcards, Analysis';
-      aiBtn.style.cssText = 'background:linear-gradient(135deg,#6a1b9a,#8e24aa);color:#fff;border-color:transparent;min-width:36px;font-size:0.72rem;font-weight:800;';
-      aiBtn.textContent = '🤖';
-      aiBtn.onclick = function() { scOpenAiChat(); };
-      // Insert before expand button
+    if(hdr && !document.getElementById('_scAiBtn')) {
+      var btn = document.createElement('button');
+      btn.id        = '_scAiBtn';
+      btn.className = 'sc-hbtn';
+      btn.title     = '🤖 AI Chat — Quiz, Flashcards, Analysis';
+      btn.style.cssText = 'background:linear-gradient(135deg,#6a1b9a,#8e24aa);color:#fff;border-color:transparent;font-size:0.82rem;';
+      btn.textContent   = '🤖';
+      btn.onclick = function() { scOpenAiChat(); };
       var expandBtn = document.getElementById('scExpandBtn');
-      if(expandBtn) hdr.insertBefore(aiBtn, expandBtn);
-      else hdr.appendChild(aiBtn);
+      if(expandBtn) hdr.insertBefore(btn, expandBtn);
+      else hdr.appendChild(btn);
     }
-  }, 1200);
+  }, 1500);
 });
 </script>
 </body>
