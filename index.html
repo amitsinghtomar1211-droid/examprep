@@ -4401,7 +4401,19 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         <div class="ai-chat-title">🤖 AI Study Assistant</div>
         <div class="ai-chat-context" id="aiChatContext">Context load ho raha hai...</div>
       </div>
-      <button class="ai-chat-close" onclick="closeAiChat()">‹ Back</button>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <!-- Canvas toggle button — topic context mein hi dikhega -->
+        <button id="_aiChatCanvasBtn"
+          onclick="_aiToggleCanvasFromChat()"
+          title="Canvas slide se kholo/band karo"
+          style="display:none;background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);
+          border-radius:8px;padding:5px 9px;color:#fff;cursor:pointer;font-size:0.75rem;
+          font-weight:800;font-family:inherit;display:none;align-items:center;gap:4px;
+          -webkit-tap-highlight-color:transparent;white-space:nowrap;">
+          📋 Canvas
+        </button>
+        <button class="ai-chat-close" onclick="closeAiChat()">‹ Back</button>
+      </div>
     </div>
     <div class="ai-chat-suggestions" id="aiChatSuggestions"></div>
     <div class="ai-chat-messages" id="aiChatMessages">
@@ -8330,6 +8342,21 @@ ${s}</button>`).join('');
   document.getElementById('aiChatOverlay').classList.add('show');
   setTimeout(()=>document.getElementById('aiChatInput').focus(),300);
 
+  // ── 📋 Canvas button — topic context mein dikhao ──
+  var _canvasBtn = document.getElementById('_aiChatCanvasBtn');
+  if(_canvasBtn) {
+    if(tid) {
+      _canvasBtn.style.display = 'inline-flex';
+      var _cp = document.getElementById('studyCanvasPanel');
+      _canvasBtn.innerHTML = (_cp && _cp.classList.contains('sc-open'))
+        ? '📋 Band karo' : '📋 Canvas';
+      // Canvas data load (pull tab ke liye)
+      scOnEditorOpen(sid, secid, tid);
+    } else {
+      _canvasBtn.style.display = 'none';
+    }
+  }
+
   // ── 🗺️ Smart Node Map button — topic context mein dikhao ──
   if(tid) {
     setTimeout(function(){
@@ -8416,7 +8443,40 @@ function openAiChatQuestion(question,correctAns,explanation){
 
 function openAiChatStats(){openAiChat('stats','Meri Progress',null,null,null);}
 function useSuggestion(text){document.getElementById('aiChatInput').value=text;sendAiChat();}
-function closeAiChat(){document.getElementById('aiChatOverlay').classList.remove('show');}
+function closeAiChat(){
+  document.getElementById('aiChatOverlay').classList.remove('show');
+  document.getElementById('aiChatOverlay').classList.remove('canvas-alongside');
+  // Canvas band nahi karo — user canvas use karta rehta hai
+}
+
+// ── Canvas toggle from AI Chat header button ──
+function _aiToggleCanvasFromChat() {
+  var panel  = document.getElementById('studyCanvasPanel');
+  var btn    = document.getElementById('_aiChatCanvasBtn');
+  var overlay= document.getElementById('aiChatOverlay');
+  var isOpen = panel && panel.classList.contains('sc-open');
+
+  if(!isOpen) {
+    // Canvas kholo
+    var ctx = window._aiChatContext;
+    if(ctx && ctx.tid) {
+      // scOnEditorOpen already called in openAiChat
+      scTogglePanel(); // opens
+    } else {
+      showToast('Topic context nahi hai!','error');
+      return;
+    }
+  } else {
+    scTogglePanel(); // closes
+  }
+
+  // Update after toggle
+  setTimeout(function(){
+    var nowOpen = panel && panel.classList.contains('sc-open');
+    if(btn)     btn.innerHTML = nowOpen ? '📋 Band karo' : '📋 Canvas';
+    if(overlay) overlay.classList.toggle('canvas-alongside', !!nowOpen);
+  }, 50);
+}
 
 // Save current AI chat session to persistent storage
 function _saveAiChatSession() {
