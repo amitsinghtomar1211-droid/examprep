@@ -5991,6 +5991,7 @@ function viewTopic(sid,secid,tid){
     { id:'master',   cls:'cat-master',   icon:'⚡', name:'Master Notes',sub: t.masterNotes  ? 'AI deep notes' :'Not generated' },
     { id:'raw',      cls:'cat-raw',      icon:'📄', name:'Raw Notes',   sub: `${(t.notes||[]).length} notes`, badge:(t.notes||[]).length||null },
     { id:'facts',    cls:'cat-facts',    icon:'📌', name:'Facts',       sub: `${(t.savedFacts||[]).length} saved`, badge:(t.savedFacts||[]).length||null },
+    { id:'nodemap',  cls:'cat-master',   icon:'🗺️', name:'Node Maps',   sub: t.aiNodeMaps&&t.aiNodeMaps.length ? `${t.aiNodeMaps.length} maps saved` : 'AI se banao', badge: (t.aiNodeMaps&&t.aiNodeMaps.length)||null },
   ];
 
   const gridHtml = cats.map(c=>`
@@ -24429,49 +24430,73 @@ function _snmRenderBottom() {
 function _snmInsertCanvas() {
   var mapsToInsert = _snm.maps.filter(function(m){return m.selected;});
   if(!mapsToInsert.length) mapsToInsert = _snm.maps;
-  var cur = (typeof _scCur==='function') ? _scCur() : null;
-  if(!cur) { showToast&&showToast('⚠️ Canvas pehle kholo!','error'); return; }
-  if(typeof scSnapshot==='function') scSnapshot();
+  if(!mapsToInsert.length){ showToast&&showToast('Koi map nahi!','error'); return; }
 
-  var slideStartY = 20;
+  // Canvas open hai ya nahi check karo
+  var canvasPanel = document.getElementById('studyCanvasPanel');
+  var canvasOpen = canvasPanel && canvasPanel.classList.contains('sc-open');
+
+  if(!canvasOpen) {
+    // Canvas open karo pehle, phir insert
+    showToast&&showToast('⚠️ Pehle Canvas kholo, phir dobara insert karo!','error');
+    // Auto-open canvas if topic context available
+    if(_snm.topic && _snm.topic.tid && typeof scOnEditorOpen==='function') {
+      if(typeof scOpen==='function') scOpen(_snm.topic.sid, _snm.topic.secid, _snm.topic.tid);
+      else if(typeof openStudyCanvas==='function') openStudyCanvas(_snm.topic.sid, _snm.topic.secid, _snm.topic.tid);
+    }
+    return;
+  }
+
+  var cur = _scCur();
+  if(!cur){ showToast&&showToast('⚠️ Canvas slide nahi mili!','error'); return; }
+
+  scSnapshot();
+
   mapsToInsert.forEach(function(map, mi) {
-    // Section heading block
+    // Agar mi > 0 — naya slide banana
+    if(mi > 0) {
+      scAddSlide();
+      cur = _scCur();
+      if(!cur) return;
+    }
+
+    var cols = Math.min(3, map.nodes.length);
+    var colW = 140, rowH = 80;
+    var startX = 18, startY = 30;
+
+    // Section heading
     var hBlock = {
-      id:'scb_snm_h_'+Date.now()+'_'+mi,
-      x:20, y:slideStartY, w:320,
-      html:'<span style="font-size:11px;font-weight:900;color:'+map.color+';">'+map.icon+' '+_snmE(map.title)+'</span>',
+      id: 'scb_snm_h_'+Date.now()+'_'+mi,
+      x: startX, y: 8, w: 300,
+      html: '<span style="font-size:11px;font-weight:900;color:'+map.color+';letter-spacing:0.3px;">'+map.icon+' '+map.title.replace(/</g,'&lt;')+'</span>',
       fontSize:14, color:map.color, bold:true, italic:false, underline:false, angle:0
     };
     cur.textBlocks.push(hBlock);
-    slideStartY += 30;
+    _scCreateBlockDOM(hBlock);
 
-    // Each node as a textBlock
+    // Node blocks
     map.nodes.forEach(function(node, ni) {
       var tc = _snmTypeColor[node.type] || map.color;
+      var col = ni % cols;
+      var row = Math.floor(ni / cols);
       var block = {
-        id:'scb_snm_'+Date.now()+'_'+mi+'_'+ni,
-        x: 20 + (node.x % 380),
-        y: slideStartY + (node.y % 220),
-        w: 110,
-        html:'<span style="font-size:8px;font-weight:800;color:'+tc+';text-transform:uppercase;opacity:0.7;">'+node.type+'</span><br>'+_snmE(node.text),
-        fontSize:12, color:'#1a1a1a', bold:false, italic:false, underline:false, angle:0,
-        bg: tc+'11', borderColor: tc+'55'
+        id: 'scb_snm_'+Date.now()+'_'+mi+'_'+ni+'_'+Math.random().toString(36).slice(2,5),
+        x: startX + col*(colW+8),
+        y: startY + row*(rowH+6),
+        w: colW,
+        html: '<span style="font-size:8px;font-weight:800;color:'+tc+';text-transform:uppercase;opacity:0.7;display:block;line-height:1.2;">'+node.type+'</span>'+
+              '<span style="font-size:12px;font-weight:800;">'+node.text.replace(/</g,'&lt;')+'</span>',
+        fontSize:12, color:'#1a1a1a', bold:false, italic:false, underline:false, angle:0
       };
       cur.textBlocks.push(block);
+      _scCreateBlockDOM(block);
     });
-    slideStartY += 250;
-
-    // Add new slide for next map if needed
-    if(mi < mapsToInsert.length-1 && typeof scAddSlide==='function') {
-      scAddSlide();
-      cur = _scCur();
-      slideStartY = 20;
-    }
   });
 
-  if(typeof _scRenderAll==='function') _scRenderAll();
-  else if(typeof scRender==='function') scRender();
-  showToast&&showToast('✅ '+mapsToInsert.length+' maps canvas mein add ho gaye!','success');
+  // Re-render + save
+  scRenderAll();
+  if(typeof scSave==='function') scSave();
+  showToast&&showToast('✅ '+mapsToInsert.length+' maps canvas mein add ho gaye! Save ho gaya.','success');
   _snmClose();
 }
 
@@ -24479,19 +24504,48 @@ function _snmInsertCanvas() {
 function _snmInsertNotes() {
   var mapsToInsert = _snm.maps.filter(function(m){return m.selected;});
   if(!mapsToInsert.length) mapsToInsert = _snm.maps;
+  if(!mapsToInsert.length){ showToast&&showToast('Koi map nahi!','error'); return; }
 
+  // Plain text (for addAiResponseToNotes modal)
+  var plainText = mapsToInsert.map(function(map){
+    var lines = [map.icon+' '+map.title+':'];
+    map.nodes.forEach(function(n){ lines.push('  • ['+n.type+'] '+n.text); });
+    if(map.edges && map.edges.length){
+      lines.push('  Connections:');
+      map.edges.forEach(function(e){
+        var f=map.nodes.find(function(n){return n.id===e.from;});
+        var t=map.nodes.find(function(n){return n.id===e.to;});
+        if(f&&t) lines.push('    '+f.text+' → '+e.label+' → '+t.text);
+      });
+    }
+    return lines.join('\n');
+  }).join('\n\n---\n\n');
+
+  // Styled HTML
   var html = '<div style="margin:10px 0;font-family:inherit;">';
   mapsToInsert.forEach(function(map) {
-    html += '<div style="margin-bottom:14px;border-left:3px solid '+map.color+';padding-left:10px;">' +
-      '<div style="font-size:0.78rem;font-weight:900;color:'+map.color+';margin-bottom:6px;">'+map.icon+' '+_snmE(map.title)+'</div>' +
-      '<div style="display:flex;flex-wrap:wrap;gap:5px;">';
+    html += '<div style="margin-bottom:14px;padding:10px;border-radius:10px;'+
+      'border:1.5px solid '+map.color+'33;background:'+map.color+'08;">'+
+      '<div style="font-size:0.8rem;font-weight:900;color:'+map.color+';margin-bottom:8px;">'+
+      map.icon+' '+_snmE(map.title)+'</div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:5px;">';
     map.nodes.forEach(function(node) {
       var tc = _snmTypeColor[node.type] || map.color;
-      html += '<span style="display:inline-block;padding:3px 8px;border-radius:7px;' +
-        'background:'+tc+'11;border:1px solid '+tc+'44;' +
-        'font-size:0.72rem;font-weight:800;color:'+tc+';">'+_snmE(node.text)+'</span>';
+      html += '<span style="display:inline-block;padding:3px 8px;border-radius:7px;'+
+        'background:'+tc+'15;border:1px solid '+tc+'55;'+
+        'font-size:0.73rem;font-weight:800;color:'+tc+';">'+_snmE(node.text)+'</span>';
     });
-    html += '</div></div>';
+    html += '</div>';
+    if(map.edges && map.edges.length){
+      html += '<div style="font-size:0.65rem;color:#888;line-height:1.7;">';
+      map.edges.slice(0,5).forEach(function(e){
+        var f=map.nodes.find(function(n){return n.id===e.from;});
+        var t=map.nodes.find(function(n){return n.id===e.to;});
+        if(f&&t) html += '↳ <b>'+_snmE(f.text)+'</b> '+_snmE(e.label)+' <b>'+_snmE(t.text)+'</b><br>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
   });
   html += '</div>';
 
@@ -24500,26 +24554,40 @@ function _snmInsertNotes() {
   var editorVisible = editorOverlay && editorOverlay.classList.contains('show');
 
   if(area && editorVisible) {
+    // Editor open hai — cursor end pe, insert karo
     area.focus();
-    try { document.execCommand('insertHTML', false, html); } catch(e) { area.innerHTML += html; }
-    showToast&&showToast('✅ Node maps notes mein add ho gaye!','success');
+    var range = document.createRange();
+    var sel = window.getSelection();
+    range.selectNodeContents(area);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    try { document.execCommand('insertHTML', false, html); }
+    catch(e) { area.innerHTML += html; }
+    var ud=document.getElementById('unsavedDot'); if(ud) ud.style.display='';
+    var ud2=document.getElementById('unsavedDot2'); if(ud2) ud2.style.display='';
+    showToast&&showToast('✅ '+mapsToInsert.length+' maps notes mein add ho gaye!','success');
     _snmClose(); return;
   }
 
-  // Open editor with this content
-  var cleanText = mapsToInsert.map(function(map){
-    return map.icon+' '+map.title+':\n'+map.nodes.map(function(n){return '  • ['+n.type+'] '+n.text;}).join('\n');
-  }).join('\n\n');
-  if(_snm.topic && _snm.topic.tid && typeof addAiResponseToNotes==='function') {
-    if(window._aiChatContext) window._aiChatContext.tid = _snm.topic.tid;
-    addAiResponseToNotes(cleanText);
-  } else {
-    var ta=document.createElement('textarea');
-    ta.value=cleanText;ta.style.cssText='position:fixed;left:-9999px;';
-    document.body.appendChild(ta);ta.select();
-    try{document.execCommand('copy');showToast&&showToast('📋 Clipboard mein copy hua! Notes mein paste karo.','success');}catch(e){}
-    document.body.removeChild(ta);
+  // Editor band hai — addAiResponseToNotes modal use karo
+  if(_snm.topic && _snm.topic.tid) {
+    if(!window._aiChatContext) window._aiChatContext = {};
+    window._aiChatContext.tid   = _snm.topic.tid;
+    window._aiChatContext.sid   = _snm.topic.sid;
+    window._aiChatContext.secid = _snm.topic.secid;
+    _snmClose();
+    setTimeout(function(){
+      if(typeof addAiResponseToNotes==='function') addAiResponseToNotes(plainText);
+    }, 250);
+    return;
   }
+  // Clipboard fallback
+  var ta=document.createElement('textarea');
+  ta.value=plainText; ta.style.cssText='position:fixed;left:-9999px;';
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); showToast&&showToast('📋 Clipboard mein copy hua!','success'); }catch(e){}
+  document.body.removeChild(ta);
   _snmClose();
 }
 
@@ -24527,36 +24595,37 @@ function _snmInsertNotes() {
 function _snmInsertOverview() {
   var mapsToInsert = _snm.maps.filter(function(m){return m.selected;});
   if(!mapsToInsert.length) mapsToInsert = _snm.maps;
+  if(!mapsToInsert.length){ showToast&&showToast('Koi map nahi!','error'); return; }
   if(!_snm.topic || !_snm.topic.tid) { showToast&&showToast('Topic context nahi hai!','error'); return; }
   var t = getTop(_snm.topic.sid, _snm.topic.secid, _snm.topic.tid);
   if(!t) { showToast&&showToast('Topic nahi mila!','error'); return; }
 
-  // Store node map data in topic
   if(!t.aiNodeMaps) t.aiNodeMaps = [];
   var today = new Date().toLocaleDateString('hi-IN');
   mapsToInsert.forEach(function(map) {
-    // Remove duplicate by title
     t.aiNodeMaps = t.aiNodeMaps.filter(function(m){return m.title !== map.title;});
     t.aiNodeMaps.push({
-      id: map.id, icon: map.icon, title: map.title, color: map.color,
-      nodes: map.nodes, edges: map.edges, createdAt: today
+      id:map.id, icon:map.icon, title:map.title, color:map.color,
+      nodes:JSON.parse(JSON.stringify(map.nodes)),
+      edges:JSON.parse(JSON.stringify(map.edges)),
+      createdAt:today
     });
   });
   if(typeof save==='function') save();
-  showToast&&showToast('✅ '+mapsToInsert.length+' maps overview card mein save ho gaye!','success');
+  showToast&&showToast('✅ '+mapsToInsert.length+' maps topic mein save ho gaye!','success');
 
-  // If overview is open, refresh it
-  if(typeof tvShowSub==='function' && _snm.topic) {
-    // Don't close snm panel — just notify
-  }
+  var capSid=_snm.topic.sid, capSecid=_snm.topic.secid, capTid=_snm.topic.tid;
   _snmClose();
 
-  // Re-open topic view at overview
+  // Topic view mein Node Maps section dikhao
   setTimeout(function() {
-    if(_snm.topic && typeof tvShowSub==='function') {
-      tvShowSub('nodemap', _snm.topic.sid, _snm.topic.secid, _snm.topic.tid);
-    }
-  }, 400);
+    // Open topic view modal if not already open
+    if(typeof openTopicView==='function') openTopicView(capSid, capSecid, capTid);
+    else if(typeof showTopicModal==='function') showTopicModal(capSid, capSecid, capTid);
+    setTimeout(function(){
+      if(typeof tvShowSub==='function') tvShowSub('nodemap', capSid, capSecid, capTid);
+    }, 350);
+  }, 300);
 }
 
 /* ── Show JSON ── */
