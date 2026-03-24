@@ -13916,8 +13916,9 @@ function qmCtxClose(){
   _qmCtxNode=null;
 }
 function qmCtxEdit(){
+  var nodeToEdit = _qmCtxNode; // save BEFORE qmCtxClose nulls it
   qmCtxClose();
-  if(_qmCtxNode) _showQmNodeFullEdit(_qmCtxNode);
+  if(nodeToEdit) _showQmNodeFullEdit(nodeToEdit);
 }
 
 // ── Full Node Style Editor Modal (Fix: edit menu ab kaam karega) ──
@@ -23438,9 +23439,252 @@ function _scQmShowCtx(node, px, py){
 }
 function _scQmCtxClose(){var m=document.getElementById('scQmCtxMenu');if(m)m.style.display='none';_scQmCtxNode=null;}
 function _scQmCtxEdit(){
+  var nodeToEdit = _scQmCtxNode; // save BEFORE _scQmCtxClose nulls it
   _scQmCtxClose();
-  if(!_scQmCtxNode) return;
-  _scQmShowInlineEdit(_scQmCtxNode, null, null);
+  if(!nodeToEdit) return;
+  _scQmShowFullEdit(nodeToEdit);
+}
+
+// ── Canvas Pages — Full Node Style Editor ──
+function _scQmShowFullEdit(node) {
+  var old = document.getElementById('_scQmFullEditModal');
+  if(old) old.remove();
+
+  var overlay = document.createElement('div');
+  overlay.id = '_scQmFullEditModal';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.62);display:flex;align-items:center;justify-content:center;padding:12px;';
+
+  var modal = document.createElement('div');
+  modal.style.cssText = [
+    'background:#fff;border-radius:18px;padding:18px 16px;',
+    'width:100%;max-width:370px;',
+    'box-shadow:0 10px 50px rgba(0,0,0,0.4);',
+    'font-family:"Noto Sans Devanagari","Baloo 2",sans-serif;',
+    'max-height:94vh;overflow-y:auto;color:#111;'
+  ].join('');
+
+  // Current state
+  var st = {
+    label:     node.label || '',
+    color:     node.color || '#e65100',
+    textColor: node.textColor || '#ffffff',
+    shape:     node.shape  || 'circle',
+    sizeBoost: node.sizeBoost || 0
+  };
+
+  // ── Helper: make a section label ──
+  function mkLabel(txt) {
+    var d = document.createElement('div');
+    d.style.cssText = 'font-size:0.7rem;font-weight:800;color:#555;margin:10px 0 5px;letter-spacing:0.3px;text-transform:uppercase;';
+    d.textContent = txt;
+    return d;
+  }
+
+  // ── Header ──
+  var hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:2px solid #e3f0ff;padding-bottom:10px;';
+  var ht = document.createElement('div');
+  ht.style.cssText = 'font-size:1.05rem;font-weight:800;color:#1565c0;';
+  ht.textContent = '✏️ Node Edit karo';
+  var xBtn = document.createElement('button');
+  xBtn.textContent = '✕';
+  xBtn.style.cssText = 'background:rgba(0,0,0,0.06);border:none;border-radius:50%;width:30px;height:30px;font-size:1rem;cursor:pointer;color:#555;display:flex;align-items:center;justify-content:center;';
+  xBtn.onclick = function(){ overlay.remove(); };
+  hdr.appendChild(ht); hdr.appendChild(xBtn);
+  modal.appendChild(hdr);
+
+  // ── Text / Label ──
+  modal.appendChild(mkLabel('📝 Label / Text'));
+  var ta = document.createElement('textarea');
+  ta.value = st.label;
+  ta.rows = 3;
+  ta.placeholder = 'Node ka text likhein...';
+  ta.style.cssText = [
+    'width:100%;border:1.5px solid #ddd;border-radius:10px;',
+    'padding:9px 10px;font-size:0.92rem;font-family:inherit;',
+    'background:#f8f9fa;color:#111;outline:none;',
+    'resize:none;box-sizing:border-box;line-height:1.5;'
+  ].join('');
+  ta.onfocus = function(){ ta.style.borderColor='#1565c0'; };
+  ta.onblur  = function(){ ta.style.borderColor='#ddd'; };
+  modal.appendChild(ta);
+
+  // ── Shape ──
+  modal.appendChild(mkLabel('🔷 Shape'));
+  var shapeRow = document.createElement('div');
+  shapeRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:2px;';
+  var shapeMap = [{k:'circle',icon:'⬤',lbl:'Circle'},{k:'box',icon:'▬',lbl:'Box'},{k:'diamond',icon:'◆',lbl:'Diamond'}];
+  var sBtns = {};
+  shapeMap.forEach(function(sp){
+    var b = document.createElement('button');
+    b.innerHTML = sp.icon + ' <span style="font-size:0.72rem;">' + sp.lbl + '</span>';
+    var isSel = st.shape === sp.k;
+    b.style.cssText = [
+      'padding:7px 14px;border-radius:9px;cursor:pointer;font-weight:700;',
+      'border:2px solid '+(isSel?'#1565c0':'#ddd')+';',
+      'background:'+(isSel?'#e3f0ff':'#fafafa')+';',
+      'color:'+(isSel?'#1565c0':'#444')+';',
+      'font-size:0.88rem;-webkit-tap-highlight-color:transparent;flex:1;'
+    ].join('');
+    b.onclick = function(){
+      st.shape = sp.k;
+      Object.keys(sBtns).forEach(function(k){
+        sBtns[k].style.border='2px solid #ddd';
+        sBtns[k].style.background='#fafafa';
+        sBtns[k].style.color='#444';
+      });
+      b.style.border='2px solid #1565c0';
+      b.style.background='#e3f0ff';
+      b.style.color='#1565c0';
+    };
+    sBtns[sp.k] = b;
+    shapeRow.appendChild(b);
+  });
+  modal.appendChild(shapeRow);
+
+  // ── Node Color ──
+  modal.appendChild(mkLabel('🎨 Node Color (Fill)'));
+  var ncRow = document.createElement('div');
+  ncRow.style.cssText = 'display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:2px;';
+  var nodeColors = ['#e65100','#1565c0','#2e7d32','#6a1b9a','#00695c','#c62828','#f57f17','#0277bd','#00838f','#37474f','#880e4f','#558b2f'];
+  var ncDots = [];
+  nodeColors.forEach(function(c){
+    var d = document.createElement('div');
+    var isSel = st.color === c;
+    d.style.cssText = [
+      'width:30px;height:30px;border-radius:50%;background:'+c+';',
+      'cursor:pointer;flex-shrink:0;',
+      'border:3px solid '+(isSel?'#222':'rgba(0,0,0,0.1)')+';',
+      'box-sizing:border-box;',
+      'box-shadow:'+(isSel?'0 0 0 2px '+c+',0 0 0 4px #fff':'none')+';'
+    ].join('');
+    d.onclick = function(){
+      st.color = c;
+      ncDots.forEach(function(x){ x.style.border='3px solid rgba(0,0,0,0.1)'; x.style.boxShadow='none'; });
+      d.style.border='3px solid #222';
+      d.style.boxShadow='0 0 0 2px '+c+',0 0 0 4px #fff';
+      ncPicker.value = c;
+    };
+    ncDots.push(d);
+    ncRow.appendChild(d);
+  });
+  var ncPicker = document.createElement('input');
+  ncPicker.type='color'; ncPicker.value=st.color;
+  ncPicker.title='Custom color';
+  ncPicker.style.cssText='width:30px;height:30px;border:2px solid #ddd;padding:1px;cursor:pointer;border-radius:8px;flex-shrink:0;background:none;';
+  ncPicker.oninput = function(){
+    st.color = ncPicker.value;
+    ncDots.forEach(function(d){ d.style.border='3px solid rgba(0,0,0,0.1)'; d.style.boxShadow='none'; });
+  };
+  ncRow.appendChild(ncPicker);
+  modal.appendChild(ncRow);
+
+  // ── Text Color ──
+  modal.appendChild(mkLabel('🖋 Text Color'));
+  var tcRow = document.createElement('div');
+  tcRow.style.cssText = 'display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:2px;';
+  var textColors = ['#ffffff','#1a1a1a','#fff8e1','#e3f0ff','#1565c0','#c62828','#2e7d32','#f57f17','#6a1b9a','#ffeb3b'];
+  var tcDots = [];
+  textColors.forEach(function(c){
+    var d = document.createElement('div');
+    var isSel = (st.textColor||'#ffffff') === c;
+    d.style.cssText = [
+      'width:30px;height:30px;border-radius:50%;background:'+c+';',
+      'cursor:pointer;flex-shrink:0;',
+      'border:3px solid '+(isSel?'#1565c0':'rgba(0,0,0,0.15)')+';',
+      'box-sizing:border-box;',
+      'box-shadow:'+(isSel?'0 0 0 2px #1565c0':'none')+';'
+    ].join('');
+    d.onclick = function(){
+      st.textColor = c;
+      tcDots.forEach(function(x){ x.style.border='3px solid rgba(0,0,0,0.15)'; x.style.boxShadow='none'; });
+      d.style.border='3px solid #1565c0';
+      d.style.boxShadow='0 0 0 2px #1565c0';
+      tcPicker.value = c;
+    };
+    tcDots.push(d);
+    tcRow.appendChild(d);
+  });
+  var tcPicker = document.createElement('input');
+  tcPicker.type='color'; tcPicker.value=st.textColor||'#ffffff';
+  tcPicker.title='Custom text color';
+  tcPicker.style.cssText='width:30px;height:30px;border:2px solid #ddd;padding:1px;cursor:pointer;border-radius:8px;flex-shrink:0;background:none;';
+  tcPicker.oninput = function(){
+    st.textColor = tcPicker.value;
+    tcDots.forEach(function(d){ d.style.border='3px solid rgba(0,0,0,0.15)'; d.style.boxShadow='none'; });
+  };
+  tcRow.appendChild(tcPicker);
+  modal.appendChild(tcRow);
+
+  // ── Node Size ──
+  modal.appendChild(mkLabel('📏 Node Size'));
+  var szRow = document.createElement('div');
+  szRow.style.cssText = 'display:flex;gap:8px;margin-bottom:2px;';
+  var szDefs = [{l:'XS',v:-24},{l:'S',v:-12},{l:'M',v:0},{l:'L',v:16},{l:'XL',v:32}];
+  var szBtns = [];
+  szDefs.forEach(function(sz){
+    var b = document.createElement('button');
+    b.textContent = sz.l;
+    var isSel = Math.abs(st.sizeBoost - sz.v) < 10;
+    b.style.cssText = [
+      'flex:1;padding:7px 4px;border-radius:9px;cursor:pointer;font-weight:800;',
+      'border:2px solid '+(isSel?'#1565c0':'#ddd')+';',
+      'background:'+(isSel?'#e3f0ff':'#fafafa')+';',
+      'color:'+(isSel?'#1565c0':'#444')+';',
+      'font-size:0.82rem;-webkit-tap-highlight-color:transparent;'
+    ].join('');
+    b.onclick = function(){
+      st.sizeBoost = sz.v;
+      szBtns.forEach(function(x){ x.style.border='2px solid #ddd'; x.style.background='#fafafa'; x.style.color='#444'; });
+      b.style.border='2px solid #1565c0'; b.style.background='#e3f0ff'; b.style.color='#1565c0';
+    };
+    szBtns.push(b);
+    szRow.appendChild(b);
+  });
+  modal.appendChild(szRow);
+
+  // ── Buttons ──
+  var btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:9px;margin-top:16px;';
+
+  var okBtn = document.createElement('button');
+  okBtn.textContent = '✓ Save karo';
+  okBtn.style.cssText = [
+    'flex:1;padding:12px;border-radius:11px;border:none;',
+    'background:linear-gradient(135deg,#1565c0,#1976d2);',
+    'color:#fff;font-weight:800;font-size:0.92rem;',
+    'cursor:pointer;font-family:inherit;',
+    '-webkit-tap-highlight-color:transparent;'
+  ].join('');
+  okBtn.onclick = function(){
+    scSnapshot && scSnapshot();
+    node.label     = ta.value.trim() || node.label || '';
+    node.color     = st.color;
+    node.textColor = st.textColor;
+    node.shape     = st.shape;
+    node.sizeBoost = st.sizeBoost;
+    _scQmRender();
+    overlay.remove();
+    showToast && showToast('✅ Node update ho gaya!', 'success');
+  };
+
+  var cancelBtn = document.createElement('button');
+  cancelBtn.textContent = '✕ Cancel';
+  cancelBtn.style.cssText = [
+    'padding:12px 16px;border-radius:11px;',
+    'border:1.5px solid #ddd;background:none;',
+    'color:#888;font-weight:700;cursor:pointer;font-family:inherit;'
+  ].join('');
+  cancelBtn.onclick = function(){ overlay.remove(); };
+
+  btnRow.appendChild(okBtn);
+  btnRow.appendChild(cancelBtn);
+  modal.appendChild(btnRow);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  overlay.addEventListener('pointerdown', function(e){ if(e.target===overlay) overlay.remove(); });
+  setTimeout(function(){ ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 60);
 }
 function _scQmCtxDel(){
   if(!_scQmCtxNode){_scQmCtxClose();return;}
