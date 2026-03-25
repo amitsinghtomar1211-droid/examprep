@@ -23351,96 +23351,209 @@ function scClearDraw(){ if(!confirm('Is slide ki drawing clear karein?')) return
 // isliye scSnapshot() automatically inhe bhi include karta hai
 // ══════════════════════════════════════════════════════════
 
+// ── Advanced Canvas Highlight System v2 (Notes Editor style) ──
+// Features:
+// 1. Catmull-Rom spline smoothing — no teda-meda strokes
+// 2. Velocity-based adaptive width — thick on slow, thin on fast
+// 3. Horizontal drift detection — auto-straighten for text highlighting
+// 4. Precision eraser — point-level erasure with real-time visual cursor
+// 5. Live preview overlay — selection overlay before committing
+// 6. Haptic feedback on stroke start
+// 7. Multi-touch guard — 2+ fingers = cancel highlight
+
+var _scHlEraserCursor = null; // floating eraser cursor DOM element
+
 function _scGetHlPt(e) {
   var hlcv = _sc.hlCanvas;
-  if(!hlcv) return {x:0,y:0};
+  if(!hlcv) return {x:0,y:0,t:Date.now()};
   var rect = hlcv.getBoundingClientRect();
   return {
     x: (e.clientX - rect.left) * hlcv.width  / rect.width,
-    y: (e.clientY - rect.top)  * hlcv.height / rect.height
+    y: (e.clientY - rect.top)  * hlcv.height / rect.height,
+    t: Date.now(),
+    px: e.clientX, py: e.clientY // screen coords for cursor
   };
+}
+
+// ── Catmull-Rom spline path builder ──
+function _scHlCatmullPath(ctx, pts) {
+  if(pts.length < 2) return;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  if(pts.length === 2) {
+    ctx.lineTo(pts[1].x, pts[1].y);
+    return;
+  }
+  for(var i = 0; i < pts.length - 1; i++) {
+    var p0 = pts[Math.max(0, i-1)];
+    var p1 = pts[i];
+    var p2 = pts[i+1];
+    var p3 = pts[Math.min(pts.length-1, i+2)];
+    var cp1x = p1.x + (p2.x - p0.x) / 6;
+    var cp1y = p1.y + (p2.y - p0.y) / 6;
+    var cp2x = p2.x - (p3.x - p1.x) / 6;
+    var cp2y = p2.y - (p3.y - p1.y) / 6;
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+  }
+}
+
+// ── Adaptive width based on velocity ──
+function _scHlGetVelocityWidth(pts, baseSize) {
+  if(pts.length < 3) return baseSize;
+  var last = pts[pts.length-1], prev = pts[pts.length-2];
+  var dt = Math.max(1, (last.t||0) - (prev.t||0));
+  var dx = last.x - prev.x, dy = last.y - prev.y;
+  var speed = Math.sqrt(dx*dx + dy*dy) / dt;
+  // Fast = thinner, slow = thicker — like real marker
+  var factor = Math.max(0.6, Math.min(1.4, 1 - speed * 0.8));
+  return Math.max(4, Math.min(baseSize * 2, baseSize * factor));
+}
+
+// ── Horizontal straightening — if mostly horizontal, lock Y to avg ──
+function _scHlStraightenPts(pts) {
+  if(pts.length < 4) return pts;
+  var totalDx = 0, totalDy = 0;
+  for(var i=1;i<pts.length;i++){
+    totalDx += Math.abs(pts[i].x - pts[i-1].x);
+    totalDy += Math.abs(pts[i].y - pts[i-1].y);
+  }
+  // If mostly horizontal (dx > 3x dy), straighten the stroke
+  if(totalDx > totalDy * 3) {
+    var avgY = 0;
+    pts.forEach(function(p){ avgY += p.y; });
+    avgY /= pts.length;
+    return pts.map(function(p){ return {x:p.x, y:avgY, t:p.t, px:p.px, py:p.py}; });
+  }
+  return pts;
+}
+
+// ── Eraser cursor DOM element ──
+function _scHlShowEraserCursor(px, py) {
+  if(!_scHlEraserCursor) {
+    _scHlEraserCursor = document.createElement('div');
+    _scHlEraserCursor.id = 'scHlEraserCursor';
+    _scHlEraserCursor.style.cssText = [
+      'position:fixed','pointer-events:none','z-index:99999',
+      'border-radius:50%','border:2.5px dashed #e53935',
+      'background:rgba(229,57,53,0.08)',
+      'transform:translate(-50%,-50%)',
+      'transition:width 0.08s,height 0.08s',
+      'display:none'
+    ].join(';');
+    document.body.appendChild(_scHlEraserCursor);
+  }
+  var hlcv = _sc.hlCanvas;
+  var scaleX = hlcv ? (hlcv.getBoundingClientRect().width / hlcv.width) : 1;
+  var sz = _sc.hlEraserSize * scaleX * 2;
+  _scHlEraserCursor.style.width  = sz + 'px';
+  _scHlEraserCursor.style.height = sz + 'px';
+  _scHlEraserCursor.style.left   = px + 'px';
+  _scHlEraserCursor.style.top    = py + 'px';
+  _scHlEraserCursor.style.display = 'block';
+}
+
+function _scHlHideEraserCursor() {
+  if(_scHlEraserCursor) _scHlEraserCursor.style.display = 'none';
 }
 
 function _scHlDown(e) {
   if(!_sc.hlActive) return;
+  if(e.touches && e.touches.length > 1) return; // multi-touch guard
   e.preventDefault(); if(!e.isPrimary) return;
   try{ _sc.hlCanvas.setPointerCapture(e.pointerId); }catch(x){}
   _sc.hlDrawing = true;
   _sc.hlPoints  = [_scGetHlPt(e)];
   scSnapshot(); // undo support — before stroke starts
+  if(navigator.vibrate && _sc.hlTool === 'highlight') navigator.vibrate(18);
+  if(_sc.hlTool === 'hlEraser') {
+    var pt = _scGetHlPt(e);
+    _scHlShowEraserCursor(e.clientX, e.clientY);
+  }
 }
 
 function _scHlMove(e) {
   if(!_sc.hlDrawing || !_sc.hlActive) return;
+  if(e.touches && e.touches.length > 1) { // multi-touch: cancel
+    _sc.hlDrawing = false; _sc.hlPoints = [];
+    _scHlHideEraserCursor();
+    return;
+  }
   e.preventDefault(); if(!e.isPrimary) return;
   (e.getCoalescedEvents ? e.getCoalescedEvents() : [e]).forEach(function(ev){
     _sc.hlPoints.push(_scGetHlPt(ev));
   });
-  _scRenderHlStrokes(); // redraw all committed
-  _scHlPreviewStroke(_sc.hlPoints); // preview current
+  if(_sc.hlTool === 'hlEraser') {
+    // Real-time erase as you drag (no commit needed)
+    _scHlRealTimeErase(_sc.hlPoints);
+    _scHlShowEraserCursor(e.clientX, e.clientY);
+  } else {
+    _scRenderHlStrokes(); // redraw all committed
+    _scHlPreviewStroke(_sc.hlPoints); // preview current
+  }
 }
 
 function _scHlUp(e) {
   if(!_sc.hlDrawing) return;
   _sc.hlDrawing = false;
+  _scHlHideEraserCursor();
+  if(_sc.hlTool === 'hlEraser') {
+    // Final erase pass already done in move; just clear preview
+    _sc.hlPoints = [];
+    _scRenderHlStrokes();
+    return;
+  }
   if(_sc.hlPoints.length < 2) { _sc.hlPoints = []; return; }
   var cur = _scCur(); if(!cur) return;
   if(!cur.hlStrokes) cur.hlStrokes = [];
-  if(_sc.hlTool === 'hlEraser') {
-    // Eraser: remove any stored stroke whose bounding box intersects eraser path
-    var erasePts = _sc.hlPoints.slice();
-    var eraseR   = _sc.hlEraserSize;
-    cur.hlStrokes = cur.hlStrokes.filter(function(s) {
-      return !s.points.some(function(p) {
-        return erasePts.some(function(ep) {
-          return Math.hypot(p.x - ep.x, p.y - ep.y) < eraseR;
-        });
-      });
-    });
-  } else {
-    cur.hlStrokes.push({
-      points: _sc.hlPoints.slice(),
-      color:  _sc.hlColor,
-      size:   _sc.hlSize,
-      tool:   'highlight'
-    });
-  }
+
+  // Straighten if horizontal
+  var finalPts = _scHlStraightenPts(_sc.hlPoints.slice());
+
+  cur.hlStrokes.push({
+    points: finalPts,
+    color:  _sc.hlColor,
+    size:   _sc.hlSize,
+    tool:   'highlight'
+  });
   _sc.hlPoints = [];
   _scRenderHlStrokes();
+}
+
+// Real-time eraser: continuously erase strokes under cursor while dragging
+function _scHlRealTimeErase(erasePts) {
+  var cur = _scCur(); if(!cur || !cur.hlStrokes) return;
+  var eraseR = _sc.hlEraserSize;
+  var lastPt = erasePts[erasePts.length - 1];
+  if(!lastPt) return;
+  var changed = false;
+  cur.hlStrokes = cur.hlStrokes.filter(function(s) {
+    var hit = s.points.some(function(p) {
+      return Math.hypot(p.x - lastPt.x, p.y - lastPt.y) < eraseR;
+    });
+    if(hit) changed = true;
+    return !hit;
+  });
+  if(changed) _scRenderHlStrokes();
 }
 
 function _scHlPreviewStroke(pts) {
   var ctx = _sc.hlCtx;
   if(!ctx || pts.length < 2) return;
-  if(_sc.hlTool === 'hlEraser') {
-    // Show eraser cursor path in light gray
-    ctx.save();
-    ctx.globalAlpha = 0.35;
-    ctx.strokeStyle = '#888';
-    ctx.lineWidth   = _sc.hlEraserSize;
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for(var i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
-    ctx.stroke();
-    ctx.restore();
-  } else {
-    ctx.save();
-    ctx.globalAlpha    = 0.38;
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle    = _sc.hlColor;
-    ctx.lineWidth      = _sc.hlSize;
-    ctx.lineCap        = 'round';
-    ctx.lineJoin       = 'round';
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for(var j=1;j<pts.length;j++){
-      var p=pts[j], pp=pts[j-1];
-      ctx.quadraticCurveTo(pp.x, pp.y, (p.x+pp.x)/2, (p.y+pp.y)/2);
-    }
-    ctx.stroke();
-    ctx.restore();
-  }
+
+  // Already redrawn committed strokes — just add preview on top
+  var straightPts = _scHlStraightenPts(pts);
+
+  ctx.save();
+  ctx.globalAlpha    = 0.42;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.strokeStyle    = _sc.hlColor;
+  // Adaptive width
+  ctx.lineWidth      = _scHlGetVelocityWidth(pts, _sc.hlSize);
+  ctx.lineCap        = 'round';
+  ctx.lineJoin       = 'round';
+  _scHlCatmullPath(ctx, straightPts);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function _scRenderHlStrokes() {
@@ -23454,18 +23567,13 @@ function _scRenderHlStrokes() {
   cur.hlStrokes.forEach(function(s) {
     if(!s.points || s.points.length < 2) return;
     ctx.save();
-    ctx.globalAlpha    = 0.38;
+    ctx.globalAlpha    = 0.40;
     ctx.globalCompositeOperation = 'source-over';
     ctx.strokeStyle    = s.color || '#ffe000';
     ctx.lineWidth      = s.size  || 12;
     ctx.lineCap        = 'round';
     ctx.lineJoin       = 'round';
-    ctx.beginPath();
-    ctx.moveTo(s.points[0].x, s.points[0].y);
-    for(var i=1;i<s.points.length;i++){
-      var p=s.points[i], pp=s.points[i-1];
-      ctx.quadraticCurveTo(pp.x, pp.y, (p.x+pp.x)/2, (p.y+pp.y)/2);
-    }
+    _scHlCatmullPath(ctx, s.points);
     ctx.stroke();
     ctx.restore();
   });
@@ -23477,11 +23585,13 @@ function scToggleHlMode(tool) {
     // Already active same tool → deactivate
     _sc.hlActive = false;
     _sc.hlTool   = 'highlight';
+    _scHlHideEraserCursor();
     _scHlUpdateUI();
     return;
   }
   _sc.hlActive = true;
   _sc.hlTool   = tool;
+  if(tool !== 'hlEraser') _scHlHideEraserCursor();
   _scHlUpdateUI();
 }
 
@@ -23497,26 +23607,42 @@ function _scHlUpdateUI() {
   if(_sc.hlActive) {
     if(hlcv) hlcv.style.pointerEvents = 'all';
     if(_sc.hlTool === 'highlight') {
+      // Highlight mode: crosshair cursor + yellow glow
+      if(hlcv) hlcv.style.cursor = 'crosshair';
       if(hlBtn)   { hlBtn.style.background='rgba(255,235,59,0.45)'; hlBtn.style.borderColor='rgba(255,193,7,0.9)'; hlBtn.style.boxShadow='0 0 0 2px rgba(255,193,7,0.3)'; }
       if(hlEBtn)  { hlEBtn.style.background=''; hlEBtn.style.borderColor=''; hlEBtn.style.boxShadow=''; }
       if(hlColors) hlColors.style.display = 'flex';
       if(hlESizes) hlESizes.style.display = 'none';
     } else {
-      if(hlEBtn)  { hlEBtn.style.background='rgba(120,120,120,0.18)'; hlEBtn.style.borderColor='rgba(80,80,80,0.5)'; hlEBtn.style.boxShadow='0 0 0 2px rgba(80,80,80,0.2)'; }
+      // Eraser mode: none cursor (custom DOM cursor used instead)
+      if(hlcv) hlcv.style.cursor = 'none';
+      if(hlEBtn)  { hlEBtn.style.background='rgba(229,57,53,0.12)'; hlEBtn.style.borderColor='rgba(229,57,53,0.6)'; hlEBtn.style.boxShadow='0 0 0 2px rgba(229,57,53,0.2)'; hlEBtn.style.color='#e53935'; }
       if(hlBtn)   { hlBtn.style.background='rgba(255,235,59,0.18)'; hlBtn.style.borderColor='rgba(255,193,7,0.5)'; hlBtn.style.boxShadow=''; }
       if(hlColors) hlColors.style.display = 'none';
       if(hlESizes) hlESizes.style.display = 'flex';
+      // Attach pointermove to canvas to follow cursor even when not drawing
+      if(hlcv) {
+        hlcv.onpointermove = function(ev) {
+          if(_sc.hlTool === 'hlEraser' && _sc.hlActive && !_sc.hlDrawing) {
+            _scHlShowEraserCursor(ev.clientX, ev.clientY);
+          }
+        };
+        hlcv.onpointerleave = function() {
+          if(!_sc.hlDrawing) _scHlHideEraserCursor();
+        };
+      }
     }
     if(hlClearBtn) hlClearBtn.style.display = 'inline-flex';
     if(hlClearSep) hlClearSep.style.display = 'block';
   } else {
-    if(hlcv)   hlcv.style.pointerEvents = 'none';
+    if(hlcv)   { hlcv.style.pointerEvents = 'none'; hlcv.style.cursor = 'default'; hlcv.onpointermove = null; hlcv.onpointerleave = null; }
     if(hlBtn)  { hlBtn.style.background='rgba(255,235,59,0.18)'; hlBtn.style.borderColor='rgba(255,193,7,0.5)'; hlBtn.style.boxShadow=''; }
-    if(hlEBtn) { hlEBtn.style.background=''; hlEBtn.style.borderColor=''; hlEBtn.style.boxShadow=''; }
+    if(hlEBtn) { hlEBtn.style.background=''; hlEBtn.style.borderColor=''; hlEBtn.style.boxShadow=''; hlEBtn.style.color=''; }
     if(hlColors) hlColors.style.display = 'none';
     if(hlESizes) hlESizes.style.display = 'none';
     if(hlClearBtn) hlClearBtn.style.display = 'none';
     if(hlClearSep) hlClearSep.style.display = 'none';
+    _scHlHideEraserCursor();
   }
 }
 
@@ -23536,6 +23662,14 @@ function scSetHlEraserSize(s, btn) {
   _sc.hlEraserSize = s;
   document.querySelectorAll('.sc-hle-sz').forEach(function(b){ b.classList.remove('active'); });
   if(btn) btn.classList.add('active');
+  // Update cursor size immediately if visible
+  if(_scHlEraserCursor && _scHlEraserCursor.style.display !== 'none') {
+    var hlcv = _sc.hlCanvas;
+    var scaleX = hlcv ? (hlcv.getBoundingClientRect().width / hlcv.width) : 1;
+    var sz = s * scaleX * 2;
+    _scHlEraserCursor.style.width  = sz + 'px';
+    _scHlEraserCursor.style.height = sz + 'px';
+  }
 }
 
 function scClearHlStrokes() {
