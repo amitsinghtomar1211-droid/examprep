@@ -5241,6 +5241,50 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     </svg>
   </div>
 
+  <!-- ══ READ MODE FLOATING MINI TOOLBAR ══ -->
+  <!-- 4 transparent buttons: Highlight, Eraser, Undo, Redo — sirf Read Mode mein dikhega -->
+  <div id="scReadMiniBar" style="
+    display:none;position:absolute;top:6px;right:6px;z-index:9998;
+    flex-direction:row;align-items:center;gap:5px;
+    background:rgba(255,255,255,0.18);
+    border:1.5px solid rgba(255,255,255,0.35);
+    border-radius:40px;padding:4px 8px;
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    box-shadow:0 2px 12px rgba(0,0,0,0.12);
+    -webkit-tap-highlight-color:transparent;
+  ">
+    <!-- Highlight -->
+    <button id="scRmHlBtn" onclick="scRmToggleHl()" title="Highlight" style="
+      width:34px;height:34px;border-radius:50%;border:1.5px solid rgba(255,193,7,0.5);
+      background:rgba(255,235,59,0.18);font-size:1rem;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+      -webkit-tap-highlight-color:transparent;transition:all 0.15s;
+    ">🖊</button>
+    <!-- Eraser -->
+    <button id="scRmEsBtn" onclick="scRmToggleEraser()" title="Highlight Erase" style="
+      width:34px;height:34px;border-radius:50%;border:1.5px solid rgba(200,200,200,0.4);
+      background:rgba(255,255,255,0.15);font-size:1rem;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+      -webkit-tap-highlight-color:transparent;transition:all 0.15s;
+    ">🧹</button>
+    <!-- Divider -->
+    <div style="width:1px;height:22px;background:rgba(0,0,0,0.12);flex-shrink:0;"></div>
+    <!-- Undo -->
+    <button onclick="scUndo&&scUndo()" title="Undo" style="
+      width:34px;height:34px;border-radius:50%;border:1.5px solid rgba(200,200,200,0.4);
+      background:rgba(255,255,255,0.15);font-size:1rem;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+      -webkit-tap-highlight-color:transparent;transition:all 0.15s;
+    ">↩</button>
+    <!-- Redo -->
+    <button onclick="scRedo&&scRedo()" title="Redo" style="
+      width:34px;height:34px;border-radius:50%;border:1.5px solid rgba(200,200,200,0.4);
+      background:rgba(255,255,255,0.15);font-size:1rem;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+      -webkit-tap-highlight-color:transparent;transition:all 0.15s;
+    ">↪</button>
+  </div>
+
   <!-- Canvas area -->
   <div id="scCanvasWrap"
     ondragover="scDragOver(event)"
@@ -29956,6 +30000,7 @@ window.scToggleReadMode = function scToggleReadMode() {
   var ghostBtn  = document.getElementById('scGhostRestoreBtn');
   var readBtn   = document.getElementById('scReadModeBtn');
   var canvasWrap = document.getElementById('scCanvasWrap');
+  var miniBar   = document.getElementById('scReadMiniBar');
 
   if(_scReadMode) {
     scToggleToolbar(false);
@@ -29963,6 +30008,7 @@ window.scToggleReadMode = function scToggleReadMode() {
     if(modeHint) { modeHint.style.display='none'; }
     if(tbBar)    { tbBar.style.display='none'; }
     if(ghostBtn) { ghostBtn.style.display='flex'; }
+    if(miniBar)  { miniBar.style.display='flex'; }
     if(readBtn)  { readBtn.style.background='rgba(21,101,192,0.18)'; readBtn.style.borderColor='rgba(21,101,192,0.6)'; readBtn.textContent='✏️ Edit'; }
     if(canvasWrap) canvasWrap.setAttribute('data-read-mode','1');
     // Auto-switch to Select mode so taps don't create/edit blocks
@@ -29984,12 +30030,14 @@ window.scExitFullRead = function scExitFullRead() {
   var ghostBtn  = document.getElementById('scGhostRestoreBtn');
   var readBtn   = document.getElementById('scReadModeBtn');
   var canvasWrap = document.getElementById('scCanvasWrap');
+  var miniBar   = document.getElementById('scReadMiniBar');
 
   scToggleToolbar(true);
   if(hlStrip)  { hlStrip.style.maxHeight=''; hlStrip.style.overflow=''; hlStrip.style.opacity='1'; hlStrip.style.minHeight='36px'; }
   if(modeHint) { modeHint.style.display=''; }
   if(tbBar)    { tbBar.style.display='flex'; }
   if(ghostBtn) { ghostBtn.style.display='none'; }
+  if(miniBar)  { miniBar.style.display='none'; }
   if(readBtn)  { readBtn.style.background='rgba(21,101,192,0.06)'; readBtn.style.borderColor='rgba(21,101,192,0.3)'; readBtn.textContent='👁️ Read'; }
   if(canvasWrap) canvasWrap.removeAttribute('data-read-mode');
   // Restore header buttons
@@ -29997,6 +30045,9 @@ window.scExitFullRead = function scExitFullRead() {
     var el = document.getElementById(id);
     if(el) el.style.display = (id === 'scExportWrap') ? 'inline-block' : '';
   });
+  // Also deactivate highlight if active
+  if(_sc && _sc.hlActive) { _sc.hlActive = false; _sc.hlTool = 'highlight'; _scHlUpdateUI && _scHlUpdateUI(); }
+  _scRmHlAutoTimer && clearTimeout(_scRmHlAutoTimer);
   _scReadModeFreeze(false);
   setTimeout(function(){ if(typeof scFitCanvas==='function') scFitCanvas(); }, 300);
 };
@@ -30134,6 +30185,88 @@ function _scReadModeFreeze(freeze) {
 })();
 
 })();
+
+// ══════════════════════════════════════════════════════════
+// FEATURE 5: Read Mode — Floating Mini Toolbar Logic
+// 4 buttons: Highlight, Eraser, Undo, Redo
+// Auto-disable: highlight 4s baad agar drawing nahi hui
+// ══════════════════════════════════════════════════════════
+var _scRmHlAutoTimer = null;
+var _SC_HL_AUTO_SEC  = 4; // seconds baad auto-off
+
+// Highlight button toggle from mini bar
+window.scRmToggleHl = function() {
+  if(_sc.hlActive && _sc.hlTool === 'highlight') {
+    _scRmDeactivateHl();
+  } else {
+    if(typeof scToggleHlMode === 'function') scToggleHlMode('highlight');
+    _scRmStartAutoTimer();
+    _scRmSyncButtons();
+  }
+};
+
+// Eraser button toggle from mini bar
+window.scRmToggleEraser = function() {
+  if(_sc.hlActive && _sc.hlTool === 'hlEraser') {
+    _scRmDeactivateHl();
+  } else {
+    if(typeof scToggleHlMode === 'function') scToggleHlMode('hlEraser');
+    _scRmStartAutoTimer();
+    _scRmSyncButtons();
+  }
+};
+
+function _scRmDeactivateHl() {
+  _scRmHlAutoTimer && clearTimeout(_scRmHlAutoTimer);
+  _scRmHlAutoTimer = null;
+  if(_sc && _sc.hlActive) {
+    _sc.hlActive = false;
+    _sc.hlTool   = 'highlight';
+    if(typeof _scHlHideEraserCursor === 'function') _scHlHideEraserCursor();
+    if(typeof _scHlUpdateUI === 'function') _scHlUpdateUI();
+  }
+  _scRmSyncButtons();
+}
+
+function _scRmStartAutoTimer() {
+  _scRmHlAutoTimer && clearTimeout(_scRmHlAutoTimer);
+  _scRmHlAutoTimer = setTimeout(function() {
+    if(_sc && _sc.hlActive && _scReadMode) {
+      _scRmDeactivateHl();
+      if(typeof showToast === 'function') showToast('🖊 Highlight auto-off — dobara tap karo', 'info');
+    }
+  }, _SC_HL_AUTO_SEC * 1000);
+}
+
+// Reset timer whenever a stroke is completed (pointerup on hlCanvas)
+(function _patchHlStrokeForAutoTimer() {
+  document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(function() {
+      var hlcv = document.getElementById('scHlCanvas');
+      if(!hlcv) return;
+      hlcv.addEventListener('pointerup', function() {
+        if(_sc && _sc.hlActive && _scReadMode) {
+          _scRmStartAutoTimer(); // har stroke ke baad timer reset
+        }
+      });
+    }, 2000);
+  });
+})();
+
+// Sync mini bar button styles to actual hl state
+function _scRmSyncButtons() {
+  var hlBtn = document.getElementById('scRmHlBtn');
+  var esBtn = document.getElementById('scRmEsBtn');
+  if(!hlBtn || !esBtn) return;
+  var hlOn = _sc && _sc.hlActive && _sc.hlTool === 'highlight';
+  var esOn = _sc && _sc.hlActive && _sc.hlTool === 'hlEraser';
+  hlBtn.style.background  = hlOn ? 'rgba(255,235,59,0.55)' : 'rgba(255,235,59,0.18)';
+  hlBtn.style.borderColor = hlOn ? 'rgba(255,193,7,0.95)'  : 'rgba(255,193,7,0.5)';
+  hlBtn.style.boxShadow   = hlOn ? '0 0 0 2px rgba(255,193,7,0.35)' : '';
+  esBtn.style.background  = esOn ? 'rgba(229,57,53,0.18)'  : 'rgba(255,255,255,0.15)';
+  esBtn.style.borderColor = esOn ? 'rgba(229,57,53,0.7)'   : 'rgba(200,200,200,0.4)';
+  esBtn.style.boxShadow   = esOn ? '0 0 0 2px rgba(229,57,53,0.25)' : '';
+}
 </script>
 
 </body>
