@@ -7249,65 +7249,41 @@ async function startQuiz(){
 
   // ── Canvas Notes source ──
   if(notesSource === 'canvas' && tid !== 'all') {
-    var fcKey = 'scFC_' + tid;
-    var canvasSlides = null;
-    // Try scFC_ key first (canvas slides text saved there)
-    try {
-      var fcRaw = localStorage.getItem(fcKey);
-      if(fcRaw) {
-        var fcData = JSON.parse(fcRaw);
-        // Build content from canvas flashcard Q&A as notes
-        if(fcData.cards && fcData.cards.length) {
-          canvasSlides = fcData.cards.map(function(c){ return (c.q||'') + '\n' + (c.a||''); }).join('\n\n');
-        }
-      }
-    } catch(e) {}
+    var canvasTopic = null;
+    var canvasText = '';
 
-    // Also try canvas slides text from topic canvasSlides key
-    try {
-      var slidesKey = 'scSlides_' + tid;
-      var slidesRaw = localStorage.getItem(slidesKey);
-      if(slidesRaw) {
-        var slidesData = JSON.parse(slidesRaw);
-        var slidesText = '';
-        if(Array.isArray(slidesData)) {
-          slidesText = slidesData.map(function(s){ return (s.text||s.content||''); }).join('\n\n');
-        } else if(typeof slidesData === 'string') {
-          slidesText = slidesData;
-        }
-        if(slidesText.trim()) canvasSlides = (canvasSlides ? canvasSlides + '\n\n' : '') + slidesText;
-      }
-    } catch(e2) {}
-
-    // Also check topic object for canvas data
-    if(!canvasSlides || canvasSlides.trim().length < 50) {
-      S.subjects.forEach(function(subj){
-        subj.sections.forEach(function(sec){
-          sec.topics.forEach(function(t){
-            if(t.id != tid) return;
-            // Try canvasNotes or canvasSlides field on topic
-            var src = t.canvasNotes || t.canvasSlides || t.canvasText || '';
-            if(src) canvasSlides = (canvasSlides||'') + src;
-            label = t.name;
-          });
+    // Directly topic object se studyCanvas.slides padhho
+    S.subjects.forEach(function(subj){
+      subj.sections.forEach(function(sec){
+        sec.topics.forEach(function(t){
+          if(t.id != tid) return;
+          canvasTopic = t;
+          label = t.name;
         });
       });
-    } else {
-      S.subjects.forEach(function(subj){
-        subj.sections.forEach(function(sec){
-          sec.topics.forEach(function(t){
-            if(t.id != tid) return;
-            label = t.name;
-          });
+    });
+
+    if(canvasTopic && canvasTopic.studyCanvas && canvasTopic.studyCanvas.slides && canvasTopic.studyCanvas.slides.length) {
+      var lines = [];
+      canvasTopic.studyCanvas.slides.forEach(function(slide, si){
+        var slideTitle = slide.title || ('Slide ' + (si+1));
+        lines.push('=== ' + slideTitle + ' ===');
+        (slide.textBlocks || []).forEach(function(blk){
+          var txt = blk.html
+            ? blk.html.replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ').trim()
+            : (blk.text || '').trim();
+          if(txt) lines.push(txt);
         });
       });
+      canvasText = lines.filter(function(l){ return l.trim(); }).join('\n');
     }
 
-    if(!canvasSlides || canvasSlides.trim().length < 30) {
-      showToast('⚠️ Is topic ke Canvas mein notes nahi hain! Pehle Canvas par notes likhkar AI se Flashcards banao.', 'error');
+    if(!canvasText || canvasText.trim().length < 30) {
+      showToast('⚠️ Is topic ke Canvas mein koi notes nahi hain! Pehle Canvas par notes likhkar Save karo.', 'error');
       return;
     }
-    content = '=== CANVAS SLIDES NOTES: ' + label + ' ===\n' + canvasSlides;
+
+    content = canvasText;
     label = label + ' (Canvas)';
 
   } else {
@@ -7331,11 +7307,14 @@ async function startQuiz(){
   if(!content){showToast('Selected area mein notes nahi hain!','error');return;}
   if(content.length>14000)content=content.substring(0,14000);
 
-  label=tid!=='all'
-    ? document.getElementById('quizTopic').options[document.getElementById('quizTopic').selectedIndex].text
-    : sid!=='all'
-      ? document.getElementById('quizSubject').options[document.getElementById('quizSubject').selectedIndex].text
-      : ae?ae.name:'Saare Topics';
+  // Canvas path mein label already set hai — raw path ke liye hi override karo
+  if(notesSource !== 'canvas') {
+    label=tid!=='all'
+      ? document.getElementById('quizTopic').options[document.getElementById('quizTopic').selectedIndex].text
+      : sid!=='all'
+        ? document.getElementById('quizSubject').options[document.getElementById('quizSubject').selectedIndex].text
+        : ae?ae.name:'Saare Topics';
+  }
 
   // ---- Filter history to same topic ----
   const topicHistory = S.quizHistory.filter(h=>{
