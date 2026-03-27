@@ -529,14 +529,18 @@ textarea:focus{border-color:var(--accent);background:var(--surface);}
 /* ===== TOPIC VIEW — Full Screen Card System ===== */
 #topicViewModal {
   align-items: flex-start !important; justify-content: stretch !important;
-  padding: 0 !important; background: rgba(0,0,0,0.55) !important; z-index: 800 !important;
+  padding: 0 !important; background: rgba(0,0,0,0.65) !important; z-index: 1300 !important;
 }
 #topicViewModal .modal {
   border-radius: 0 !important; max-width: 100% !important;
   width: 100% !important; max-height: 100dvh !important; height: 100dvh !important;
   margin: 0 !important; padding: 0 !important; box-shadow: none !important;
   display: flex; flex-direction: column; overflow: hidden;
+  position: relative; z-index: 1301;
+  background: var(--bg, #eaf4fb) !important;
 }
+/* Screen B needs flex not block */
+#tvScreenB.active { display: flex !important; flex-direction: column; }
 #topicViewModal.show .modal { animation: slideDownFull 0.28s cubic-bezier(0.4,0,0.2,1); }
 @keyframes slideDownFull { from{transform:translateY(-100%);opacity:0.7} to{transform:translateY(0);opacity:1} }
 
@@ -4141,9 +4145,16 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
           <div class="card-grid">
             <div class="field-group">
               <label class="field-label">📙 Topic:</label>
-              <select class="inp" id="quizTopic"><option value="all">Saare</option></select>
+              <select class="inp" id="quizTopic" onchange="updateQuizSourceVisibility()"><option value="all">Saare</option></select>
             </div>
             <div class="field-group">
+              <label class="field-label">📂 Notes Source:</label>
+              <select class="inp" id="quizNotesSource">
+                <option value="raw">📄 Raw Notes (Topic ke notes)</option>
+                <option value="canvas">🎨 Canvas Notes (Slides ke notes)</option>
+              </select>
+            </div>
+          </div>
               <label class="field-label">🔢 Questions: <span id="qCountDisplay" style="color:var(--accent);font-weight:800;">10</span></label>
               <div style="display:flex;align-items:center;gap:8px;">
                 <span style="font-size:0.72rem;color:var(--text2);">1</span>
@@ -6595,6 +6606,9 @@ function viewTopic(sid,secid,tid){
   document.getElementById('topicViewTitle').textContent = t.name;
   document.getElementById('topicViewModal').classList.add('show');
   document.body.style.overflow='hidden';
+  // ── Canvas panel ko peeche karo jab modal open ho ──
+  var _cp = document.getElementById('studyCanvasPanel');
+  if(_cp) _cp.style.zIndex = '1';
 
   // Build the two-screen layout inside topicViewContent
   const con = document.getElementById('topicViewContent');
@@ -7201,6 +7215,20 @@ function updateQuizTopics(){
   sel.innerHTML='<option value="all">Saare Topics</option>';
   if(sid!=='all'&&secid!=='all'){const sec=getSec(parseInt(sid),parseInt(secid));if(sec)sec.topics.forEach(t=>{sel.innerHTML+=`<option value="${t.id}">${t.name}</option>`;});}
 }
+function updateQuizSourceVisibility(){
+  // Canvas source only meaningful when a specific topic is selected
+  var tid = document.getElementById('quizTopic').value;
+  var srcSel = document.getElementById('quizNotesSource');
+  if(!srcSel) return;
+  if(tid === 'all') {
+    srcSel.value = 'raw';
+    srcSel.options[1].disabled = true;
+    srcSel.options[1].text = '🎨 Canvas Notes (Topic chunno pehle)';
+  } else {
+    srcSel.options[1].disabled = false;
+    srcSel.options[1].text = '🎨 Canvas Notes (Slides ke notes)';
+  }
+}
 function updateQuizModeInfo(){
   const ae=S.exams.find(e=>e.id==S.activeExamId);
   document.getElementById('quizModeInfo').textContent=ae?`${ae.name} Mode -- Sirf selected topics se quiz`:'Free Mode -- Saare topics se quiz';
@@ -7214,23 +7242,91 @@ async function startQuiz(){
   const count=parseInt(document.getElementById('questionCount').value)||10;
   const qtype=document.getElementById('quizType').value;
   const ae=S.exams.find(e=>e.id==S.activeExamId);
+  const notesSource = (document.getElementById('quizNotesSource') ? document.getElementById('quizNotesSource').value : 'raw') || 'raw';
 
   // ---- Collect content ----
   let content=''; let label='All';
-  S.subjects.forEach(subj=>{
-    if(sid!=='all'&&subj.id!=sid)return;
-    subj.sections.forEach(sec=>{
-      if(secid!=='all'&&sec.id!=secid)return;
-      sec.topics.forEach(t=>{
-        if(tid!=='all'&&t.id!=tid)return;
-        if(ae&&!ae.selectedTopicIds.includes(t.id)&&tid==='all')return;
-        const src=t.finalNotes
-          ? t.finalNotes.replace(/%%NEW%%|%%HIGHLIGHT%%|%%DATE%%.*?%%ENDNEW%%|%%ENDHIGHLIGHT%%/g,'')
-          : t.notes.map(n=>n.content).join('\n\n');
-        if(src)content+=`### ${subj.name} > ${sec.name} > ${t.name}\n${src}\n\n---\n\n`;
+
+  // ── Canvas Notes source ──
+  if(notesSource === 'canvas' && tid !== 'all') {
+    var fcKey = 'scFC_' + tid;
+    var canvasSlides = null;
+    // Try scFC_ key first (canvas slides text saved there)
+    try {
+      var fcRaw = localStorage.getItem(fcKey);
+      if(fcRaw) {
+        var fcData = JSON.parse(fcRaw);
+        // Build content from canvas flashcard Q&A as notes
+        if(fcData.cards && fcData.cards.length) {
+          canvasSlides = fcData.cards.map(function(c){ return (c.q||'') + '\n' + (c.a||''); }).join('\n\n');
+        }
+      }
+    } catch(e) {}
+
+    // Also try canvas slides text from topic canvasSlides key
+    try {
+      var slidesKey = 'scSlides_' + tid;
+      var slidesRaw = localStorage.getItem(slidesKey);
+      if(slidesRaw) {
+        var slidesData = JSON.parse(slidesRaw);
+        var slidesText = '';
+        if(Array.isArray(slidesData)) {
+          slidesText = slidesData.map(function(s){ return (s.text||s.content||''); }).join('\n\n');
+        } else if(typeof slidesData === 'string') {
+          slidesText = slidesData;
+        }
+        if(slidesText.trim()) canvasSlides = (canvasSlides ? canvasSlides + '\n\n' : '') + slidesText;
+      }
+    } catch(e2) {}
+
+    // Also check topic object for canvas data
+    if(!canvasSlides || canvasSlides.trim().length < 50) {
+      S.subjects.forEach(function(subj){
+        subj.sections.forEach(function(sec){
+          sec.topics.forEach(function(t){
+            if(t.id != tid) return;
+            // Try canvasNotes or canvasSlides field on topic
+            var src = t.canvasNotes || t.canvasSlides || t.canvasText || '';
+            if(src) canvasSlides = (canvasSlides||'') + src;
+            label = t.name;
+          });
+        });
+      });
+    } else {
+      S.subjects.forEach(function(subj){
+        subj.sections.forEach(function(sec){
+          sec.topics.forEach(function(t){
+            if(t.id != tid) return;
+            label = t.name;
+          });
+        });
+      });
+    }
+
+    if(!canvasSlides || canvasSlides.trim().length < 30) {
+      showToast('⚠️ Is topic ke Canvas mein notes nahi hain! Pehle Canvas par notes likhkar AI se Flashcards banao.', 'error');
+      return;
+    }
+    content = '=== CANVAS SLIDES NOTES: ' + label + ' ===\n' + canvasSlides;
+    label = label + ' (Canvas)';
+
+  } else {
+    // ── Raw Notes source (default) ──
+    S.subjects.forEach(subj=>{
+      if(sid!=='all'&&subj.id!=sid)return;
+      subj.sections.forEach(sec=>{
+        if(secid!=='all'&&sec.id!=secid)return;
+        sec.topics.forEach(t=>{
+          if(tid!=='all'&&t.id!=tid)return;
+          if(ae&&!ae.selectedTopicIds.includes(t.id)&&tid==='all')return;
+          const src=t.finalNotes
+            ? t.finalNotes.replace(/%%NEW%%|%%HIGHLIGHT%%|%%DATE%%.*?%%ENDNEW%%|%%ENDHIGHLIGHT%%/g,'')
+            : t.notes.map(n=>n.content).join('\n\n');
+          if(src)content+=`### ${subj.name} > ${sec.name} > ${t.name}\n${src}\n\n---\n\n`;
+        });
       });
     });
-  });
+  }
 
   if(!content){showToast('Selected area mein notes nahi hain!','error');return;}
   if(content.length>14000)content=content.substring(0,14000);
@@ -11636,6 +11732,11 @@ async function performWebSearch(query, topicName) {
 // ==================== MODAL ====================
 function closeModal(id){
   document.getElementById(id).classList.remove('show');
+  // ── Canvas panel z-index restore karo ──
+  if(id === 'topicViewModal') {
+    var _cp = document.getElementById('studyCanvasPanel');
+    if(_cp) _cp.style.zIndex = '';
+  }
   // Hide float back if no important overlay is open
   const topicModal = document.getElementById('topicViewModal');
   const notesEditor = document.getElementById('notesEditorOverlay');
@@ -31033,6 +31134,17 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
           });
           localStorage.setItem(fcKey, JSON.stringify({ cards: existingCards, progress: existingProgress, hash: '' }));
         } catch(fcSaveErr) {}
+
+        // ── Canvas slides raw text bhi save karo — Quiz mein kaam aayega ──
+        try {
+          if(_sc.tid != null) {
+            var slidesKey = 'scSlides_' + _sc.tid;
+            var rawSlidesText = typeof _scCollectAllSlidesText === 'function' ? _scCollectAllSlidesText() : slidesText;
+            if(rawSlidesText && rawSlidesText.trim()) {
+              localStorage.setItem(slidesKey, JSON.stringify(rawSlidesText));
+            }
+          }
+        } catch(slidesSaveErr) {}
 
         try {
           if(typeof save === 'function') save();
