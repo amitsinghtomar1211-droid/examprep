@@ -5192,6 +5192,18 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
   <div id="scFloatStrip">
     <!-- Slide title mini label -->
     <div class="sc-fstrip-btn sc-fstrip-title" id="scStripTitle">📋</div>
+    <!-- AI Chat Button — Canvas page par AI se baat karo -->
+    <button class="sc-fstrip-btn" id="scAiChatBtn" onclick="scOpenCanvasAiChat()" title="AI Chat — Canvas slides se flashcards banao" style="background:linear-gradient(135deg,rgba(21,101,192,0.18),rgba(106,27,154,0.18));border-color:rgba(106,27,154,0.4);color:#6a1b9a;font-size:0.82rem;">🤖</button>
+    <!-- Undo -->
+    <button class="sc-fstrip-btn" id="scFloatUndoBtn" onclick="scUndo&&scUndo()" title="Undo (Ctrl+Z)" style="font-size:0.82rem;opacity:0.5;">↩</button>
+    <!-- Redo -->
+    <button class="sc-fstrip-btn" id="scFloatRedoBtn" onclick="scRedo&&scRedo()" title="Redo (Ctrl+Y)" style="font-size:0.82rem;opacity:0.5;">↪</button>
+    <!-- Zoom In -->
+    <button class="sc-fstrip-btn" id="scZoomInBtn" onclick="scZoomIn()" title="Zoom In" style="font-size:0.82rem;font-weight:900;">+</button>
+    <!-- Zoom Out -->
+    <button class="sc-fstrip-btn" id="scZoomOutBtn" onclick="scZoomOut()" title="Zoom Out" style="font-size:0.82rem;font-weight:900;">−</button>
+    <!-- Zoom Reset -->
+    <button class="sc-fstrip-btn" id="scZoomResetBtn" onclick="scZoomReset()" title="Zoom Reset (100%)" style="font-size:0.55rem;font-weight:900;letter-spacing:-0.5px;">100%</button>
     <!-- Expand/Fullscreen -->
     <button class="sc-fstrip-btn" onclick="scToggleFullscreen()" title="Full Screen">⛶</button>
     <!-- Export -->
@@ -5208,6 +5220,42 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <!-- Close -->
     <button class="sc-fstrip-btn sc-fstrip-close" onclick="scTogglePanel()" title="Band karo">✕</button>
   </div>
+
+  <!-- ── Canvas AI Chat Overlay — Canvas slides scan + Flashcard ── -->
+  <div id="scAiChatOverlay" style="display:none;position:absolute;inset:0;z-index:500;background:rgba(0,0,0,0.55);border-radius:inherit;flex-direction:column;align-items:center;justify-content:flex-end;">
+    <div id="scAiChatPanel" style="width:100%;max-height:82%;background:var(--surface,#fff);border-radius:20px 20px 0 0;display:flex;flex-direction:column;box-shadow:0 -4px 30px rgba(0,0,0,0.2);overflow:hidden;">
+      <!-- Header -->
+      <div style="padding:10px 14px;background:linear-gradient(135deg,#6a1b9a,#1565c0);color:#fff;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+        <div>
+          <div style="font-weight:800;font-size:0.88rem;">🤖 Canvas AI Assistant</div>
+          <div id="scAiChatCtxLabel" style="font-size:0.7rem;opacity:0.85;margin-top:1px;">Saari slides scan karke help karunga</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button onclick="scAiMakeFlashcards()" id="scAiFlashcardBtn" title="Saari slides ke notes se Flashcards banao aur Library mein save karo" style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);border-radius:8px;padding:5px 9px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;white-space:nowrap;display:flex;align-items:center;gap:4px;">🃏 Flashcards banao</button>
+          <button onclick="scCloseCanvasAiChat()" style="background:rgba(255,255,255,0.18);border:none;border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.8rem;font-weight:700;font-family:inherit;">✕</button>
+        </div>
+      </div>
+      <!-- Quick suggestions -->
+      <div id="scAiChatSugs" style="padding:6px 10px;display:flex;gap:5px;flex-wrap:wrap;flex-shrink:0;border-bottom:1px solid var(--border,#eee);background:var(--surface2,#f4f9fe);">
+        <button class="ai-chat-sug" onclick="scAiUseSuggestion('Saari slides ka ek short summary do')">📝 Summary</button>
+        <button class="ai-chat-sug" onclick="scAiUseSuggestion('Important points bullet points mein batao')">📌 Key Points</button>
+        <button class="ai-chat-sug" onclick="scAiUseSuggestion('Exam ke liye important questions kya hain?')">❓ Exam Qs</button>
+        <button class="ai-chat-sug" onclick="scAiMakeFlashcards()">🃏 Flashcards Library mein save karo</button>
+      </div>
+      <!-- Messages -->
+      <div id="scAiChatMsgs" style="flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:7px;">
+        <div class="ai-msg bot">Namaste! 🙏 Main is topic ki saari canvas slides padh sakta hoon. <strong>🃏 Flashcards banao</strong> button dabao — main saare slides ke facts scan karke flashcards banaunga aur Library mein save kar dunga!</div>
+      </div>
+      <!-- Input -->
+      <div style="padding:8px 10px;border-top:1.5px solid var(--border,#eee);display:flex;gap:6px;flex-shrink:0;background:var(--surface,#fff);">
+        <textarea id="scAiChatInput" rows="1" placeholder="Canvas notes ke baare mein kuchh puchho..." style="flex:1;background:var(--surface2,#f4f9fe);border:1.5px solid var(--border,#ddd);border-radius:10px;padding:8px 11px;font-family:'Noto Sans Devanagari',sans-serif;font-size:0.82rem;resize:none;outline:none;max-height:90px;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();scAiChatSend();}" oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,90)+'px'"></textarea>
+        <button onclick="scAiChatSend()" style="background:var(--accent,#1565c0);color:#fff;border:none;border-radius:10px;padding:8px 13px;cursor:pointer;font-weight:700;font-size:0.82rem;font-family:inherit;flex-shrink:0;">➤</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Zoom level indicator ── -->
+  <div id="scZoomIndicator" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.65);color:#fff;border-radius:10px;padding:8px 18px;font-size:1rem;font-weight:900;z-index:9999;pointer-events:none;transition:opacity 0.4s;">100%</div>
 
   <!-- Background color row -->
   <!-- ══ TOOLBAR WRAP — Swipe/tap se hide/show ══ -->
@@ -23149,6 +23197,7 @@ function scSnapshot() {
   _sc.undoStack.push(JSON.stringify(_sc.slides));
   if(_sc.undoStack.length > 25) _sc.undoStack.shift();
   _sc.redoStack = [];
+  _scSyncUndoRedoBtns();
 }
 
 function scUndo() {
@@ -23158,6 +23207,7 @@ function scUndo() {
   _sc.curSlide = Math.min(_sc.curSlide, _sc.slides.length-1);
   _sc.activeBlock = null; _sc.activeBlockId = null;
   scRenderAll(); _scSyncTextBlocksDOM(); _scRenderSlideNav();
+  _scSyncUndoRedoBtns();
   showToast('↩ Undo', 'success');
 }
 
@@ -23168,7 +23218,15 @@ function scRedo() {
   _sc.curSlide = Math.min(_sc.curSlide, _sc.slides.length-1);
   _sc.activeBlock = null; _sc.activeBlockId = null;
   scRenderAll(); _scSyncTextBlocksDOM(); _scRenderSlideNav();
+  _scSyncUndoRedoBtns();
   showToast('↪ Redo', 'success');
+}
+
+function _scSyncUndoRedoBtns() {
+  var ub = document.getElementById('scFloatUndoBtn');
+  var rb = document.getElementById('scFloatRedoBtn');
+  if(ub) ub.style.opacity = _sc.undoStack.length > 0 ? '1' : '0.3';
+  if(rb) rb.style.opacity = _sc.redoStack.length > 0 ? '1' : '0.3';
 }
 
 // ══════════════════════════════════════
@@ -24929,6 +24987,10 @@ function neUpdateHlCanvasBtn() {
  * DOM order mein, phir smart-split karke canvas par bhejo.
  * Color ke hisaab se bhi group kar sakte hain (optional).
  */
+// ══ HIGHLIGHT BATCH MEMORY — sent highlights yaad rakhta hai, repeat nahi karta ══
+// Key: noteFile id/hash, Value: array of already-sent text strings
+window._neHlSentBatches = window._neHlSentBatches || {};
+
 window.neSendAllHighlightsToCanvas = function() {
   var area = document.getElementById('noteEditableArea');
   if(!area) { showToast && showToast('Notes editor open nahi hai!', 'error'); return; }
@@ -24942,26 +25004,32 @@ window.neSendAllHighlightsToCanvas = function() {
   // Canvas open hai ya nahi check — agar nahi to auto open karo
   var panel = document.getElementById('studyCanvasPanel');
   if(!panel || !panel.classList.contains('sc-open')) {
-    // Canvas auto-open karo — context _editorState se lo (notes editor already set karta hai)
     var _eCtx = (typeof _editorState !== 'undefined') ? _editorState : null;
     var _ctx  = window._neCanvasContext || window._aiChatContext;
     var _sid   = (_eCtx && _eCtx.sid   != null) ? _eCtx.sid   : (_ctx && _ctx.sid);
     var _secid = (_eCtx && _eCtx.secid != null) ? _eCtx.secid : (_ctx && _ctx.secid);
     var _tid   = (_eCtx && _eCtx.tid   != null) ? _eCtx.tid   : (_ctx && _ctx.tid);
-
-    if(_sid != null) {
-      scOnEditorOpen(_sid, _secid, _tid);
-    }
+    if(_sid != null) { scOnEditorOpen(_sid, _secid, _tid); }
     scTogglePanel();
-    // Thodi der baad highlights bhejo (canvas open hone ka wait)
     setTimeout(function(){ window.neSendAllHighlightsToCanvas(); }, 400);
     showToast && showToast('📋 Canvas khul raha hai — highlights aa rahe hain...', 'info');
     return;
   }
 
-  // Har mark ka text collect karo — DOM order maintain karo
-  // Saath mein color info bhi rakhte hain
-  var items = [];
+  // ── Batch key: current notes file identifier ──
+  var _eCtx2 = (typeof _editorState !== 'undefined') ? _editorState : null;
+  var _batchKey = 'ne_' + ((_eCtx2 && _eCtx2.tid != null) ? _eCtx2.tid : 'unknown') +
+                  '_' + ((_eCtx2 && _eCtx2.sid != null) ? _eCtx2.sid : '0');
+
+  // Already sent texts for this notes file
+  if(!window._neHlSentBatches[_batchKey]) {
+    window._neHlSentBatches[_batchKey] = [];
+  }
+  var _alreadySent = window._neHlSentBatches[_batchKey];
+
+  // Har mark ka text collect karo — sirf nayi highlights (jo pehle nahi bheji gayi)
+  var allItems = [];
+  var newItems = [];
   marks.forEach(function(mark) {
     var txt = mark.textContent.trim();
     if(!txt) return;
@@ -24969,8 +25037,25 @@ window.neSendAllHighlightsToCanvas = function() {
     if(mark.classList.contains('user-hl-pink'))  color = '#880e4f';
     if(mark.classList.contains('user-hl-green')) color = '#1b5e20';
     if(mark.classList.contains('user-hl'))       color = '#5d4037';
-    items.push({ text: txt, color: color });
+    allItems.push({ text: txt, color: color });
+    // Sirf nayi highlights bhejo — pehle bheji hui nahi
+    if(_alreadySent.indexOf(txt) === -1) {
+      newItems.push({ text: txt, color: color });
+    }
   });
+
+  if(newItems.length === 0) {
+    var skipped = allItems.length;
+    showToast && showToast('ℹ️ ' + skipped + ' highlight' + (skipped>1?'s':'') + ' already canvas par hain. Nayi highlights karo phir bhejo!', 'info');
+    return;
+  }
+
+  // Register newly sent items
+  newItems.forEach(function(item) {
+    _alreadySent.push(item.text);
+  });
+
+  var items = newItems;
 
   if(!items.length) {
     showToast && showToast('⚠️ Highlights mein koi text nahi mila!', 'error');
@@ -25044,15 +25129,24 @@ window.neSendAllHighlightsToCanvas = function() {
     return colY;
   }
 
-  // ── HIGHLIGHTS: NAYI DEDICATED SLIDES (kabhi existing notes slide pe nahi) ──
-  // Slide full hone par automatically agla "📌 Highlights N" slide banao
+  // ── HIGHLIGHTS: NAYI DEDICATED SLIDES — Batch naming (Sent1, Sent2...) ──
+  // Batch number = kitni baar "Highlight to Canvas" daba chuka hai user
   scSnapshot();
 
-  var _hlNum = 0; // counter for highlights slide naming
+  // Count existing highlight batch slides to determine next batch number
+  var _existingBatches = _sc.slides.filter(function(sl){ return sl.title && sl.title.indexOf('📌 Highlights') !== -1; });
+  // Figure out max batch number already present
+  var _maxBatch = 0;
+  _existingBatches.forEach(function(sl){
+    var m = sl.title.match(/Sent(\d+)/);
+    if(m) { var n = parseInt(m[1]); if(n > _maxBatch) _maxBatch = n; }
+  });
+  var _thisBatch = _maxBatch + 1;
+  var _hlNum = 0; // counter for highlights slide naming within this batch
   function _makeHlSlide() {
     _hlNum++;
-    var t = _hlNum === 1 ? '📌 Highlights' : ('📌 Highlights ' + _hlNum);
-    var ns = _scNewSlide(t);
+    var batchLabel = '📌 Highlights Sent' + _thisBatch + (_hlNum > 1 ? ' (' + _hlNum + ')' : '');
+    var ns = _scNewSlide(batchLabel);
     _sc.slides.push(ns);
     return _sc.slides.length - 1;
   }
@@ -25122,7 +25216,7 @@ window.neSendAllHighlightsToCanvas = function() {
   _scRenderSlideNav && _scRenderSlideNav();
 
   var _hlTotal = _hlNum;
-  var msg = '✅ ' + placed + ' highlight' + (placed>1?'s':'') + ' ' + _hlTotal + ' nayi slide' + (_hlTotal>1?'n':'') + ' mein distribute ho gaye!';
+  var msg = '✅ Batch Sent' + _thisBatch + ': ' + placed + ' nayi highlight' + (placed>1?'s':'') + ' → ' + _hlTotal + ' nayi slide' + (_hlTotal>1?'n':'') + ' mein!';
   showToast && showToast(msg, 'success');
 };
 
@@ -30414,6 +30508,446 @@ function _neRmSyncButtons() {
   esBtn.style.boxShadow   = esOn ? '0 0 0 2px rgba(229,57,53,0.25)':'';
   if(pill) pill.textContent = (hlOn||esOn) ? (hlOn?'🖊':'🧹') : '🖊';
 }
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     ✅ NEW FEATURES PATCH
+     1. Canvas Page par AI Chat + Flashcard Generator
+     2. Highlight-to-Canvas Batch Memory (no duplicates)
+     3. Canvas Zoom In/Out/Reset
+     ═══════════════════════════════════════════════════════════════ -->
+<style>
+/* ── Canvas Float Strip — AI + Undo/Redo/Zoom buttons ── */
+#scFloatStrip { gap: 5px !important; }
+#scAiChatBtn { animation: _scAiPulse 2.5s ease-in-out infinite; }
+@keyframes _scAiPulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(106,27,154,0); }
+  50%     { box-shadow: 0 0 0 4px rgba(106,27,154,0.18); }
+}
+/* Zoom wrap transforms */
+#scCanvasWrap {
+  transform-origin: top left !important;
+  transition: transform 0.22s cubic-bezier(0.4,0,0.2,1) !important;
+}
+/* Zoom indicator */
+#scZoomIndicator {
+  transition: opacity 0.4s !important;
+}
+/* Canvas AI Chat overlay */
+#scAiChatOverlay.sc-ai-show { display: flex !important; }
+/* Night mode canvas AI panel */
+body.night-mode #scAiChatPanel {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+body.night-mode #scAiChatPanel .ai-msg.bot {
+  background: var(--surface2);
+  border-color: var(--border);
+  color: var(--text);
+}
+</style>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+// FEATURE A: CANVAS ZOOM IN / OUT / RESET
+// ══════════════════════════════════════════════════════════════════
+(function(){
+  // Zoom state
+  window._scZoom = 1.0;
+  var ZOOM_MIN  = 0.4;
+  var ZOOM_MAX  = 3.0;
+  var ZOOM_STEP = 0.15;
+  var _zoomTimer = null;
+
+  function _applyZoom(z, skipBtn) {
+    z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+    window._scZoom = z;
+    var wrap = document.getElementById('scCanvasWrap');
+    if(wrap) wrap.style.transform = 'scale(' + z + ')';
+
+    // Update zoom reset btn label
+    var resetBtn = document.getElementById('scZoomResetBtn');
+    if(resetBtn) resetBtn.textContent = Math.round(z * 100) + '%';
+
+    // Show indicator
+    var ind = document.getElementById('scZoomIndicator');
+    if(ind) {
+      ind.textContent = Math.round(z * 100) + '%';
+      ind.style.display = 'block';
+      ind.style.opacity = '1';
+      clearTimeout(_zoomTimer);
+      _zoomTimer = setTimeout(function(){
+        if(ind) { ind.style.opacity = '0'; setTimeout(function(){ if(ind) ind.style.display = 'none'; }, 400); }
+      }, 1200);
+    }
+    // Update zoom btn states
+    var zi = document.getElementById('scZoomInBtn');
+    var zo = document.getElementById('scZoomOutBtn');
+    if(zi) zi.style.opacity = z >= ZOOM_MAX ? '0.3' : '1';
+    if(zo) zo.style.opacity = z <= ZOOM_MIN ? '0.3' : '1';
+  }
+
+  window.scZoomIn    = function() { _applyZoom(window._scZoom + ZOOM_STEP); };
+  window.scZoomOut   = function() { _applyZoom(window._scZoom - ZOOM_STEP); };
+  window.scZoomReset = function() { _applyZoom(1.0); showToast && showToast('🔍 Zoom 100%', 'info'); };
+
+  // Pinch-to-zoom on canvas wrap
+  document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(function(){
+      var wrap = document.getElementById('scCanvasWrap');
+      if(!wrap) return;
+      var _pinch = { active: false, startDist: 0, startZoom: 1 };
+
+      wrap.addEventListener('touchstart', function(e) {
+        if(e.touches.length === 2) {
+          _pinch.active = true;
+          var dx = e.touches[0].clientX - e.touches[1].clientX;
+          var dy = e.touches[0].clientY - e.touches[1].clientY;
+          _pinch.startDist = Math.sqrt(dx*dx + dy*dy);
+          _pinch.startZoom = window._scZoom;
+        }
+      }, { passive: true });
+
+      wrap.addEventListener('touchmove', function(e) {
+        if(!_pinch.active || e.touches.length !== 2) return;
+        var dx = e.touches[0].clientX - e.touches[1].clientX;
+        var dy = e.touches[0].clientY - e.touches[1].clientY;
+        var dist = Math.sqrt(dx*dx + dy*dy);
+        var ratio = dist / (_pinch.startDist || 1);
+        _applyZoom(_pinch.startZoom * ratio);
+      }, { passive: true });
+
+      wrap.addEventListener('touchend', function() { _pinch.active = false; }, { passive: true });
+
+      // Ctrl+Scroll zoom (desktop)
+      wrap.addEventListener('wheel', function(e) {
+        if(e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          if(e.deltaY < 0) scZoomIn(); else scZoomOut();
+        }
+      }, { passive: false });
+    }, 1500);
+  });
+
+  // Reset zoom on canvas close/open
+  var _origScToggle = window.scTogglePanel;
+  window.scTogglePanel = function() {
+    _origScToggle && _origScToggle.apply(this, arguments);
+    // Reset zoom when canvas re-opens
+    setTimeout(function(){
+      var panel = document.getElementById('studyCanvasPanel');
+      if(panel && panel.classList.contains('sc-open')) { _applyZoom(window._scZoom || 1.0); }
+    }, 200);
+  };
+})();
+
+// ══════════════════════════════════════════════════════════════════
+// FEATURE B: CANVAS PAGE AI CHAT + FLASHCARD GENERATOR
+// ══════════════════════════════════════════════════════════════════
+(function(){
+
+  /* ── Saari slides ka text collect karo ── */
+  function _scCollectAllSlidesText() {
+    var lines = [];
+    (_sc.slides || []).forEach(function(slide, si) {
+      lines.push('=== Slide ' + (si+1) + ': ' + (slide.title || '') + ' ===');
+      (slide.textBlocks || []).forEach(function(blk) {
+        var txt = blk.html ? blk.html.replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim() : '';
+        if(txt) lines.push(txt);
+      });
+    });
+    return lines.join('\n');
+  }
+
+  /* ── Canvas AI Chat Open ── */
+  window.scOpenCanvasAiChat = function() {
+    if(!S || !S.apiKey) {
+      showToast && showToast('⚠️ Pehle API Key daalo (topbar mein)!', 'error');
+      return;
+    }
+    var panel = document.getElementById('studyCanvasPanel');
+    if(!panel || !panel.classList.contains('sc-open')) {
+      showToast && showToast('⚠️ Canvas pehle kholo!', 'error');
+      return;
+    }
+    var overlay = document.getElementById('scAiChatOverlay');
+    if(!overlay) return;
+
+    // Update context label
+    var t = getTop && getTop(_sc.sid, _sc.secid, _sc.tid);
+    var topicName = t ? t.name : 'Canvas';
+    var lbl = document.getElementById('scAiChatCtxLabel');
+    if(lbl) lbl.textContent = '📋 ' + topicName + ' — ' + (_sc.slides || []).length + ' slides';
+
+    overlay.classList.add('sc-ai-show');
+    // Reset chat
+    window._scAiHistory = [];
+    var msgsEl = document.getElementById('scAiChatMsgs');
+    if(msgsEl) msgsEl.innerHTML = '<div class="ai-msg bot">Namaste! 🙏 Main <strong>' + topicName + '</strong> ki saari <strong>' + (_sc.slides||[]).length + ' slides</strong> padh sakta hoon. <strong>🃏 Flashcards banao</strong> dabao ya kuch bhi puchho!</div>';
+    setTimeout(function(){ var inp = document.getElementById('scAiChatInput'); if(inp) inp.focus(); }, 200);
+  };
+
+  /* ── Canvas AI Chat Close ── */
+  window.scCloseCanvasAiChat = function() {
+    var overlay = document.getElementById('scAiChatOverlay');
+    if(overlay) overlay.classList.remove('sc-ai-show');
+  };
+
+  /* ── Use suggestion ── */
+  window.scAiUseSuggestion = function(text) {
+    var inp = document.getElementById('scAiChatInput');
+    if(inp) { inp.value = text; }
+    scAiChatSend();
+  };
+
+  /* ── Send message to AI ── */
+  window.scAiChatSend = function() {
+    var inp = document.getElementById('scAiChatInput');
+    if(!inp) return;
+    var msg = inp.value.trim();
+    if(!msg) return;
+    if(!S || !S.apiKey) { showToast && showToast('API Key nahi hai!', 'error'); return; }
+
+    inp.value = '';
+    inp.style.height = 'auto';
+
+    var msgsEl = document.getElementById('scAiChatMsgs');
+    if(!msgsEl) return;
+
+    // Show user msg
+    var uDiv = document.createElement('div');
+    uDiv.className = 'ai-msg user';
+    uDiv.textContent = msg;
+    msgsEl.appendChild(uDiv);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+
+    // Typing indicator
+    var tDiv = document.createElement('div');
+    tDiv.className = 'ai-msg bot';
+    tDiv.innerHTML = '<em style="opacity:0.6;">⌛ Soch raha hoon...</em>';
+    tDiv.id = '_scAiTyping';
+    msgsEl.appendChild(tDiv);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+
+    // Collect slides context
+    var slidesText = _scCollectAllSlidesText();
+    if(!slidesText.trim()) slidesText = '(Canvas abhi khali hai)';
+
+    // Build history
+    if(!window._scAiHistory) window._scAiHistory = [];
+    window._scAiHistory.push({ role: 'user', content: msg });
+
+    var systemPrompt = 'Tu ek smart AI study assistant hai. User ke Canvas slides ka content neeche diya gaya hai. Iske basis par user ke sawaalon ka jawab de. Agar user ne koi topic ke baare mein puchha jo slides mein nahi hai, to "Yeh slides mein nahi hai" bol. Hindi aur English dono mein jawab de sakta hai jaise user ne likha ho.\n\nCURRENT CANVAS SLIDES CONTENT:\n' + slidesText.substring(0, 6000);
+
+    var messages = [{ role: 'user', content: systemPrompt + '\n\n---\n\nUser ka sawal: ' + msg }];
+    if(window._scAiHistory.length > 2) {
+      // Include last 2 turns for context
+      var hist = window._scAiHistory.slice(-4);
+      messages = [{ role: 'user', content: systemPrompt }].concat(hist.map(function(h){ return { role: h.role, content: h.content }; }));
+    }
+
+    fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': S.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 900, messages: messages })
+    }).then(function(r){ return r.json(); }).then(function(data) {
+      var reply = (data.content && data.content[0] && data.content[0].text) ? data.content[0].text : 'Kuch galat hua. Dobara try karo.';
+      window._scAiHistory.push({ role: 'assistant', content: reply });
+
+      var typing = document.getElementById('_scAiTyping');
+      if(typing) typing.remove();
+
+      var bDiv = document.createElement('div');
+      bDiv.className = 'ai-msg bot';
+      bDiv.style.whiteSpace = 'pre-wrap';
+      bDiv.textContent = reply;
+      msgsEl.appendChild(bDiv);
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    }).catch(function(err) {
+      var typing = document.getElementById('_scAiTyping');
+      if(typing) typing.remove();
+      var bDiv = document.createElement('div');
+      bDiv.className = 'ai-msg bot';
+      bDiv.style.color = '#c62828';
+      bDiv.textContent = '❌ Error: ' + (err.message || 'Network error');
+      msgsEl.appendChild(bDiv);
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    });
+  };
+
+  /* ── FLASHCARD GENERATOR — Canvas slides → Library mein save ── */
+  window.scAiMakeFlashcards = function() {
+    if(!S || !S.apiKey) { showToast && showToast('⚠️ Pehle API Key daalo!', 'error'); return; }
+
+    var slidesText = _scCollectAllSlidesText();
+    if(!slidesText.trim() || slidesText.trim() === '(Canvas abhi khali hai)') {
+      showToast && showToast('⚠️ Canvas mein koi notes nahi hain! Pehle notes canvas par bhejo.', 'error');
+      return;
+    }
+
+    var msgsEl = document.getElementById('scAiChatMsgs');
+    var btn = document.getElementById('scAiFlashcardBtn');
+    if(btn) { btn.disabled = true; btn.textContent = '⌛ Bana raha hoon...'; }
+
+    // Show loading msg
+    if(msgsEl) {
+      var loadDiv = document.createElement('div');
+      loadDiv.className = 'ai-msg bot';
+      loadDiv.id = '_scFcLoading';
+      loadDiv.innerHTML = '⌛ <strong>Saari slides scan ho rahi hain...</strong> Flashcards ban rahe hain, thoda ruko!';
+      msgsEl.appendChild(loadDiv);
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    }
+
+    var prompt = 'Neeche diye gaye Canvas Slides ke notes se SIRF flashcards banao. Response ONLY valid JSON array mein do, koi bhi extra text ya markdown nahi. Format:\n[{"q":"Question yahan","a":"Answer yahan"},{"q":"...","a":"..."},...]\n\nRules:\n- Sirf important facts, definitions, dates, key terms use karo\n- Question aur Answer dono clear aur concise hone chahiye\n- Minimum 5, maximum 20 flashcards banao\n- Hindi ya English — jaisi language notes mein hai\n\nCURRENT CANVAS SLIDES NOTES:\n' + slidesText.substring(0, 7000);
+
+    fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': S.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] })
+    }).then(function(r){ return r.json(); }).then(function(data) {
+      if(btn) { btn.disabled = false; btn.innerHTML = '🃏 Flashcards banao'; }
+      var loadEl = document.getElementById('_scFcLoading');
+      if(loadEl) loadEl.remove();
+
+      var raw = (data.content && data.content[0] && data.content[0].text) ? data.content[0].text : '';
+      // Parse JSON
+      var cards = [];
+      try {
+        var clean = raw.replace(/```json/g,'').replace(/```/g,'').trim();
+        cards = JSON.parse(clean);
+      } catch(e) {
+        // Try extracting JSON array
+        var m = raw.match(/\[[\s\S]*\]/);
+        if(m) { try { cards = JSON.parse(m[0]); } catch(e2) { cards = []; } }
+      }
+
+      if(!cards || !cards.length) {
+        if(msgsEl) {
+          var errDiv = document.createElement('div');
+          errDiv.className = 'ai-msg bot';
+          errDiv.style.color = '#c62828';
+          errDiv.textContent = '❌ Flashcards nahi ban sake. Dobara try karo.';
+          msgsEl.appendChild(errDiv);
+        }
+        return;
+      }
+
+      // ── Library mein save karo — topic ke Flashcards subsection mein ──
+      var t = _sc.tid != null ? getTop(_sc.sid, _sc.secid, _sc.tid) : null;
+      var saved = false;
+      if(t) {
+        if(!t.flashcards) t.flashcards = [];
+        var now = new Date().toLocaleDateString('hi-IN');
+        cards.forEach(function(card, ci) {
+          if(card.q && card.a) {
+            t.flashcards.push({
+              id:       'fc_sc_' + Date.now() + '_' + ci,
+              front:    card.q,
+              back:     card.a,
+              source:   'canvas',
+              addedAt:  now
+            });
+          }
+        });
+        // Invalidate flashcard hash so library shows new cards
+        t.fcHash = '';
+        saveData && saveData();
+        saved = true;
+      }
+
+      // Show success message in chat
+      if(msgsEl) {
+        var resDiv = document.createElement('div');
+        resDiv.className = 'ai-msg bot';
+        var topicName2 = t ? t.name : 'Topic';
+        resDiv.innerHTML = '🎉 <strong>' + cards.length + ' Flashcards</strong> ban gaye!' +
+          (saved ? ' Library → <strong>' + topicName2 + '</strong> ke Flashcards section mein save ho gaye! ✅' : '') +
+          '<br><br><strong>Preview (pehle 3):</strong><br>' +
+          cards.slice(0, 3).map(function(c, i){
+            return '<div style="margin-top:5px;padding:5px 8px;background:rgba(21,101,192,0.07);border-radius:6px;font-size:0.78rem;">' +
+              '<strong>Q' + (i+1) + ':</strong> ' + c.q + '<br>' +
+              '<em>A: ' + c.a + '</em></div>';
+          }).join('');
+        msgsEl.appendChild(resDiv);
+        msgsEl.scrollTop = msgsEl.scrollHeight;
+      }
+
+      showToast && showToast('🃏 ' + cards.length + ' Flashcards Library mein save ho gaye!', 'success');
+    }).catch(function(err) {
+      if(btn) { btn.disabled = false; btn.innerHTML = '🃏 Flashcards banao'; }
+      var loadEl = document.getElementById('_scFcLoading');
+      if(loadEl) loadEl.remove();
+      if(msgsEl) {
+        var errDiv = document.createElement('div');
+        errDiv.className = 'ai-msg bot';
+        errDiv.style.color = '#c62828';
+        errDiv.textContent = '❌ Error: ' + (err.message || 'Network error. Dobara try karo.');
+        msgsEl.appendChild(errDiv);
+      }
+    });
+  };
+
+  // Close canvas AI chat when canvas panel closes
+  document.addEventListener('DOMContentLoaded', function(){
+    var panel = document.getElementById('studyCanvasPanel');
+    if(!panel) return;
+    new MutationObserver(function(){
+      if(!panel.classList.contains('sc-open')) {
+        var ov = document.getElementById('scAiChatOverlay');
+        if(ov) ov.classList.remove('sc-ai-show');
+      }
+    }).observe(panel, { attributes: true, attributeFilter: ['class'] });
+  });
+
+  // Canvas AI overlay click outside to close
+  document.addEventListener('DOMContentLoaded', function(){
+    var ov = document.getElementById('scAiChatOverlay');
+    if(!ov) return;
+    ov.addEventListener('click', function(e){
+      if(e.target === ov) scCloseCanvasAiChat();
+    });
+  });
+
+})();
+
+// ══════════════════════════════════════════════════════════════════
+// FEATURE C: HIGHLIGHT BATCH MEMORY — Reset when notes editor closes
+// ══════════════════════════════════════════════════════════════════
+(function(){
+  // Jab user notes editor close kare, us notes ke batch memory reset karo
+  // Taaki agle baar fresh start ho
+  var _origClose = window.closeNotesEditor;
+  if(typeof closeNotesEditor === 'function') {
+    window.closeNotesEditor = function() {
+      // Reset batch memory for this notes file
+      var _eCtx = (typeof _editorState !== 'undefined') ? _editorState : null;
+      if(_eCtx) {
+        var key = 'ne_' + (_eCtx.tid != null ? _eCtx.tid : 'unknown') + '_' + (_eCtx.sid != null ? _eCtx.sid : '0');
+        if(window._neHlSentBatches) window._neHlSentBatches[key] = [];
+      }
+      return _origClose && _origClose.apply(this, arguments);
+    };
+  }
+
+  // Keyboard shortcut: Ctrl+Z = scUndo, Ctrl+Y = scRedo (when canvas is open)
+  document.addEventListener('keydown', function(e) {
+    var panel = document.getElementById('studyCanvasPanel');
+    if(!panel || !panel.classList.contains('sc-open')) return;
+    // Check no input is focused
+    var focused = document.activeElement;
+    if(focused && (focused.tagName === 'INPUT' || focused.tagName === 'TEXTAREA' || focused.isContentEditable)) return;
+    if((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+      e.preventDefault();
+      scUndo && scUndo();
+    }
+    if((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) {
+      e.preventDefault();
+      scRedo && scRedo();
+    }
+  });
+})();
 </script>
 
 </body>
