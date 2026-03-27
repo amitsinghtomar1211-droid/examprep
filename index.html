@@ -30738,13 +30738,25 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     if(!window._scAiHistory) window._scAiHistory = [];
     window._scAiHistory.push({ role: 'user', content: msg });
 
-    var systemPrompt = 'Tu ek smart AI study assistant hai. User ke Canvas slides ka content neeche diya gaya hai. Iske basis par user ke sawaalon ka jawab de. Agar user ne koi topic ke baare mein puchha jo slides mein nahi hai, to "Yeh slides mein nahi hai" bol. Hindi aur English dono mein jawab de sakta hai jaise user ne likha ho.\n\nCURRENT CANVAS SLIDES CONTENT:\n' + slidesText.substring(0, 6000);
+    // System prompt as first user message with slides context
+    var systemContent = 'Tu ek smart AI study assistant hai. User ke Canvas slides ka content neeche diya gaya hai. Iske basis par user ke sawaalon ka jawab de. Hindi aur English dono mein jawab de sakta hai.\n\nCANVAS SLIDES CONTENT:\n' + slidesText.substring(0, 5000);
 
-    var messages = [{ role: 'user', content: systemPrompt + '\n\n---\n\nUser ka sawal: ' + msg }];
-    if(window._scAiHistory.length > 2) {
-      // Include last 2 turns for context
-      var hist = window._scAiHistory.slice(-4);
-      messages = [{ role: 'user', content: systemPrompt }].concat(hist.map(function(h){ return { role: h.role, content: h.content }; }));
+    // Build proper alternating user/assistant messages
+    // Anthropic requires strictly alternating roles
+    var messages = [];
+    if(window._scAiHistory.length >= 2) {
+      // Use last few turns — ensure alternating
+      var hist = window._scAiHistory.slice(-6);
+      // First message must be user, inject system context into it
+      var firstUserIdx = -1;
+      for(var hi = 0; hi < hist.length; hi++) { if(hist[hi].role === 'user') { firstUserIdx = hi; break; } }
+      if(firstUserIdx >= 0) {
+        hist[firstUserIdx] = { role: 'user', content: systemContent + '\n\n---\n\n' + hist[firstUserIdx].content };
+      }
+      messages = hist.map(function(h) { return { role: h.role, content: h.content }; });
+    } else {
+      // First message — combine system + user
+      messages = [{ role: 'user', content: systemContent + '\n\n---\n\nUser ka sawal: ' + msg }];
     }
 
     fetch('https://api.anthropic.com/v1/messages', {
@@ -30752,7 +30764,19 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       headers: { 'Content-Type': 'application/json', 'x-api-key': S.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
       body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 900, messages: messages })
     }).then(function(r){ return r.json(); }).then(function(data) {
-      var reply = (data.content && data.content[0] && data.content[0].text) ? data.content[0].text : 'Kuch galat hua. Dobara try karo.';
+      // Show actual API error if present
+      if(data.error) {
+        var typing2 = document.getElementById('_scAiTyping');
+        if(typing2) typing2.remove();
+        var eDiv = document.createElement('div');
+        eDiv.className = 'ai-msg bot';
+        eDiv.style.color = '#c62828';
+        eDiv.textContent = '❌ API Error: ' + (data.error.message || JSON.stringify(data.error));
+        msgsEl.appendChild(eDiv);
+        msgsEl.scrollTop = msgsEl.scrollHeight;
+        return;
+      }
+      var reply = (data.content && data.content[0] && data.content[0].text) ? data.content[0].text : '(Koi response nahi mila — dobara try karo)';
       window._scAiHistory.push({ role: 'assistant', content: reply });
 
       var typing = document.getElementById('_scAiTyping');
