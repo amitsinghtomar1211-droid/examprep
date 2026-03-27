@@ -30750,7 +30750,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': S.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 900, messages: messages })
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 900, messages: messages })
     }).then(function(r){ return r.json(); }).then(function(data) {
       var reply = (data.content && data.content[0] && data.content[0].text) ? data.content[0].text : 'Kuch galat hua. Dobara try karo.';
       window._scAiHistory.push({ role: 'assistant', content: reply });
@@ -30805,11 +30805,24 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': S.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] })
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] })
     }).then(function(r){ return r.json(); }).then(function(data) {
       if(btn) { btn.disabled = false; btn.innerHTML = '🃏 Flashcards banao'; }
       var loadEl = document.getElementById('_scFcLoading');
       if(loadEl) loadEl.remove();
+
+      // API error check (e.g. invalid key, rate limit)
+      if(data.error) {
+        if(msgsEl) {
+          var errDiv = document.createElement('div');
+          errDiv.className = 'ai-msg bot';
+          errDiv.style.color = '#c62828';
+          errDiv.textContent = '❌ API Error: ' + (data.error.message || JSON.stringify(data.error)) + ' — API Key check karo.';
+          msgsEl.appendChild(errDiv);
+          msgsEl.scrollTop = msgsEl.scrollHeight;
+        }
+        return;
+      }
 
       var raw = (data.content && data.content[0] && data.content[0].text) ? data.content[0].text : '';
       // Parse JSON
@@ -30883,8 +30896,13 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
         var errDiv = document.createElement('div');
         errDiv.className = 'ai-msg bot';
         errDiv.style.color = '#c62828';
-        errDiv.textContent = '❌ Error: ' + (err.message || 'Network error. Dobara try karo.');
+        var errMsg = err.message || 'Network error';
+        if(errMsg.indexOf('Failed to fetch') !== -1 || errMsg.indexOf('NetworkError') !== -1) {
+          errMsg = 'Network error — Internet connection check karo ya API key verify karo.';
+        }
+        errDiv.textContent = '❌ Error: ' + errMsg;
         msgsEl.appendChild(errDiv);
+        msgsEl.scrollTop = msgsEl.scrollHeight;
       }
     });
   };
