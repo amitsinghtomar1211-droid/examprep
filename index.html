@@ -30738,45 +30738,37 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     if(!window._scAiHistory) window._scAiHistory = [];
     window._scAiHistory.push({ role: 'user', content: msg });
 
-    // System prompt as first user message with slides context
+    // System prompt with slides context
     var systemContent = 'Tu ek smart AI study assistant hai. User ke Canvas slides ka content neeche diya gaya hai. Iske basis par user ke sawaalon ka jawab de. Hindi aur English dono mein jawab de sakta hai.\n\nCANVAS SLIDES CONTENT:\n' + slidesText.substring(0, 5000);
 
-    // Build proper alternating user/assistant messages
-    // Anthropic requires strictly alternating roles
-    var messages = [];
-    if(window._scAiHistory.length >= 2) {
-      // Use last few turns — ensure alternating
+    // Build proper messages array (Groq/OpenAI format: system + user/assistant alternating)
+    var messages = [{ role: 'system', content: systemContent }];
+    if(window._scAiHistory && window._scAiHistory.length > 0) {
       var hist = window._scAiHistory.slice(-6);
-      // First message must be user, inject system context into it
-      var firstUserIdx = -1;
-      for(var hi = 0; hi < hist.length; hi++) { if(hist[hi].role === 'user') { firstUserIdx = hi; break; } }
-      if(firstUserIdx >= 0) {
-        hist[firstUserIdx] = { role: 'user', content: systemContent + '\n\n---\n\n' + hist[firstUserIdx].content };
-      }
-      messages = hist.map(function(h) { return { role: h.role, content: h.content }; });
-    } else {
-      // First message — combine system + user
-      messages = [{ role: 'user', content: systemContent + '\n\n---\n\nUser ka sawal: ' + msg }];
+      hist.forEach(function(h) { messages.push({ role: h.role, content: h.content }); });
     }
+    messages.push({ role: 'user', content: msg });
 
-    fetch('https://api.anthropic.com/v1/messages', {
+    var groqModel = (typeof S !== 'undefined' && S.model) ? S.model : 'llama-3.1-8b-instant';
+    var groqKey   = (typeof S !== 'undefined') ? S.apiKey : (document.getElementById('apiKey') ? document.getElementById('apiKey').value : '');
+
+    fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': S.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 900, messages: messages })
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
+      body: JSON.stringify({ model: groqModel, messages: messages, temperature: 0.7, max_tokens: 900 })
     }).then(function(r){ return r.json(); }).then(function(data) {
-      // Show actual API error if present
       if(data.error) {
         var typing2 = document.getElementById('_scAiTyping');
         if(typing2) typing2.remove();
         var eDiv = document.createElement('div');
         eDiv.className = 'ai-msg bot';
         eDiv.style.color = '#c62828';
-        eDiv.textContent = '❌ API Error: ' + (data.error.message || JSON.stringify(data.error));
+        eDiv.textContent = '❌ Error: ' + (data.error.message || JSON.stringify(data.error));
         msgsEl.appendChild(eDiv);
         msgsEl.scrollTop = msgsEl.scrollHeight;
         return;
       }
-      var reply = (data.content && data.content[0] && data.content[0].text) ? data.content[0].text : '(Koi response nahi mila — dobara try karo)';
+      var reply = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) ? data.choices[0].message.content : '(Koi response nahi mila)';
       window._scAiHistory.push({ role: 'assistant', content: reply });
 
       var typing = document.getElementById('_scAiTyping');
@@ -30826,29 +30818,36 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
 
     var prompt = 'Neeche diye gaye Canvas Slides ke notes se SIRF flashcards banao. Response ONLY valid JSON array mein do, koi bhi extra text ya markdown nahi. Format:\n[{"q":"Question yahan","a":"Answer yahan"},{"q":"...","a":"..."},...]\n\nRules:\n- Sirf important facts, definitions, dates, key terms use karo\n- Question aur Answer dono clear aur concise hone chahiye\n- Minimum 5, maximum 20 flashcards banao\n- Hindi ya English — jaisi language notes mein hai\n\nCURRENT CANVAS SLIDES NOTES:\n' + slidesText.substring(0, 7000);
 
-    fetch('https://api.anthropic.com/v1/messages', {
+    var groqKeyFC   = (typeof S !== 'undefined') ? S.apiKey : (document.getElementById('apiKey') ? document.getElementById('apiKey').value : '');
+    var groqModelFC = (typeof S !== 'undefined' && S.model) ? S.model : 'llama-3.1-8b-instant';
+
+    fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': S.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] })
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKeyFC },
+      body: JSON.stringify({
+        model: groqModelFC,
+        messages: [{ role: 'system', content: 'Tu ek flashcard generator hai. SIRF valid JSON array return kar, koi extra text nahi.' }, { role: 'user', content: prompt }],
+        temperature: 0.5,
+        max_tokens: 2000
+      })
     }).then(function(r){ return r.json(); }).then(function(data) {
       if(btn) { btn.disabled = false; btn.innerHTML = '🃏 Flashcards banao'; }
       var loadEl = document.getElementById('_scFcLoading');
       if(loadEl) loadEl.remove();
 
-      // API error check (e.g. invalid key, rate limit)
       if(data.error) {
         if(msgsEl) {
           var errDiv = document.createElement('div');
           errDiv.className = 'ai-msg bot';
           errDiv.style.color = '#c62828';
-          errDiv.textContent = '❌ API Error: ' + (data.error.message || JSON.stringify(data.error)) + ' — API Key check karo.';
+          errDiv.textContent = '❌ Error: ' + (data.error.message || JSON.stringify(data.error));
           msgsEl.appendChild(errDiv);
           msgsEl.scrollTop = msgsEl.scrollHeight;
         }
         return;
       }
 
-      var raw = (data.content && data.content[0] && data.content[0].text) ? data.content[0].text : '';
+      var raw = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) ? data.choices[0].message.content : '';
       // Parse JSON
       var cards = [];
       try {
