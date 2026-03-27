@@ -30883,19 +30883,39 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
         if(!t.flashcards) t.flashcards = [];
         var now = new Date().toLocaleDateString('hi-IN');
         var addedCount = 0;
+        var newCards = [];
         cards.forEach(function(card, ci) {
           if(card.q && card.a) {
-            t.flashcards.push({
-              id:      'fc_sc_' + Date.now() + '_' + ci,
+            var cardId = 'fc_sc_' + Date.now() + '_' + ci;
+            var cardObj = {
+              id:      cardId,
               front:   card.q,
               back:    card.a,
+              q:       card.q,
+              a:       card.a,
               source:  'canvas',
               addedAt: now
-            });
+            };
+            t.flashcards.push(cardObj);
+            newCards.push(cardObj);
             addedCount++;
           }
         });
         t.fcHash = '';
+
+        // ── FIX: scFC_<tid> key mein bhi save karo (library yahan se padhti hai) ──
+        try {
+          var fcKey = 'scFC_' + (_sc.tid != null ? _sc.tid : 'default');
+          var existing = {};
+          try { existing = JSON.parse(localStorage.getItem(fcKey)) || {}; } catch(pe) {}
+          var existingCards = existing.cards || [];
+          var existingProgress = existing.progress || {};
+          newCards.forEach(function(nc) {
+            existingCards.push({ id: nc.id, q: nc.q, a: nc.a, source: 'canvas', addedAt: now });
+          });
+          localStorage.setItem(fcKey, JSON.stringify({ cards: existingCards, progress: existingProgress, hash: '' }));
+        } catch(fcSaveErr) {}
+
         try {
           if(typeof save === 'function') save();
         } catch(saveErr) {
