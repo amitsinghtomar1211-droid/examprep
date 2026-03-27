@@ -6508,6 +6508,19 @@ function copyToClipboard(text) {
   });
 }
 
+// Safe copy for raw notes — avoids inline content injection in onclick
+function tvCopyRawNote(sid, secid, tid, ni) {
+  var key = sid + '_' + secid + '_' + tid + '_' + ni;
+  var text = (window._tvRawNotesCopy && window._tvRawNotesCopy[key]) || '';
+  if (!text) {
+    try {
+      var t = getTop(sid, secid, tid);
+      text = (t && t.notes && t.notes[ni] && t.notes[ni].content) || '';
+    } catch(e) { text = ''; }
+  }
+  copyToClipboard(text);
+}
+
 function updateSavedBadge() {
   let count = 0;
   S.subjects.forEach(subj => {
@@ -6710,15 +6723,21 @@ function tvShowSub(catId, sid, secid, tid){
       subBody.innerHTML='<div style="padding:20px;text-align:center;color:var(--text2);font-size:0.82rem;">Koi raw notes nahi hain.</div>';
       return;
     }
+    // Store notes content in a temporary map keyed by noteIdx for safe access
+    window._tvRawNotesCopy = window._tvRawNotesCopy || {};
+    (t.notes||[]).forEach((n,ni)=>{
+      window._tvRawNotesCopy[sid+'_'+secid+'_'+tid+'_'+ni] = n.content||'';
+    });
+
     subBody.innerHTML = (t.notes||[]).map((n,ni)=>`
       <div class="tv-note-card">
         <div class="tv-note-info">
-          <div class="tv-note-name">📄 ${n.name||'Note '+(ni+1)}</div>
+          <div class="tv-note-name">📄 ${(n.name||'Note '+(ni+1)).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
           <div class="tv-note-meta">${n.wordCount||0} words · ${n.addedAt||''}</div>
         </div>
         <div class="tv-note-actions">
           <button class="tv-nbtn primary" title="Read & Edit" onclick="closeModal('topicViewModal');setTimeout(()=>openNotesEditor(${sid},${secid},${tid},${ni}),200)">${eyeSvg}</button>
-          <button class="tv-nbtn copy" title="Copy" onclick="copyToClipboard(${JSON.stringify(n.content||'')})">${copySvg}</button>
+          <button class="tv-nbtn copy" title="Copy" onclick="tvCopyRawNote(${sid},${secid},${tid},${ni})">${copySvg}</button>
           <button class="tv-nbtn danger" title="Delete" onclick="deleteRawNote(${sid},${secid},${tid},${ni})">${delSvg}</button>
         </div>
       </div>`).join('') +
