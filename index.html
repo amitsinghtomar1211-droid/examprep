@@ -30871,35 +30871,48 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       }
 
       // ── Library mein save karo — topic ke Flashcards subsection mein ──
-      var t = _sc.tid != null ? getTop(_sc.sid, _sc.secid, _sc.tid) : null;
+      var t = null;
+      try {
+        if(_sc.tid != null && typeof getTop === 'function') {
+          t = getTop(_sc.sid, _sc.secid, _sc.tid);
+        }
+      } catch(gtErr) { t = null; }
+
       var saved = false;
       if(t) {
         if(!t.flashcards) t.flashcards = [];
         var now = new Date().toLocaleDateString('hi-IN');
+        var addedCount = 0;
         cards.forEach(function(card, ci) {
           if(card.q && card.a) {
             t.flashcards.push({
-              id:       'fc_sc_' + Date.now() + '_' + ci,
-              front:    card.q,
-              back:     card.a,
-              source:   'canvas',
-              addedAt:  now
+              id:      'fc_sc_' + Date.now() + '_' + ci,
+              front:   card.q,
+              back:    card.a,
+              source:  'canvas',
+              addedAt: now
             });
+            addedCount++;
           }
         });
-        // Invalidate flashcard hash so library shows new cards
         t.fcHash = '';
-        saveData && saveData();
-        saved = true;
+        try {
+          if(typeof save === 'function') save();
+        } catch(saveErr) {
+          try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(lsErr) {}
+        }
+        saved = (addedCount > 0);
       }
 
       // Show success message in chat
       if(msgsEl) {
         var resDiv = document.createElement('div');
         resDiv.className = 'ai-msg bot';
-        var topicName2 = t ? t.name : 'Topic';
-        resDiv.innerHTML = '🎉 <strong>' + cards.length + ' Flashcards</strong> ban gaye!' +
-          (saved ? ' Library → <strong>' + topicName2 + '</strong> ke Flashcards section mein save ho gaye! ✅' : '') +
+        var topicName2 = t ? t.name : '';
+        var saveMsg = saved
+          ? ' Library → <strong>' + topicName2 + '</strong> ke Flashcards mein save ho gaye! ✅'
+          : ' <em style="color:var(--text2,#666);font-size:0.78rem;">(Topic context nahi mila — Library mein manually save karo)</em>';
+        resDiv.innerHTML = '🎉 <strong>' + cards.length + ' Flashcards</strong> ban gaye!' + saveMsg +
           '<br><br><strong>Preview (pehle 3):</strong><br>' +
           cards.slice(0, 3).map(function(c, i){
             return '<div style="margin-top:5px;padding:5px 8px;background:rgba(21,101,192,0.07);border-radius:6px;font-size:0.78rem;">' +
@@ -30910,7 +30923,8 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
         msgsEl.scrollTop = msgsEl.scrollHeight;
       }
 
-      showToast && showToast('🃏 ' + cards.length + ' Flashcards Library mein save ho gaye!', 'success');
+      var toastMsg = saved ? '🃏 ' + cards.length + ' Flashcards Library mein save ho gaye!' : '🃏 ' + cards.length + ' Flashcards ban gaye!';
+      showToast && showToast(toastMsg, 'success');
     }).catch(function(err) {
       if(btn) { btn.disabled = false; btn.innerHTML = '🃏 Flashcards banao'; }
       var loadEl = document.getElementById('_scFcLoading');
