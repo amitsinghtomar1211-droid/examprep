@@ -6778,142 +6778,171 @@ function tvShowSub(catId, sid, secid, tid){
       return;
     }
 
-    // Categorize by difficulty
-    var hardCards=[], medCards=[], easyCards=[];
-    cards.forEach(function(c) {
-      var p = prog[c.id] || {r:0,w:0};
-      var total = p.r + p.w;
-      if(total === 0)              medCards.push({card:c,p:p,diff:'unseen'});
-      else if(p.w > p.r)           hardCards.push({card:c,p:p,diff:'hard'});
-      else if(p.r>0 && p.w===0)    easyCards.push({card:c,p:p,diff:'easy'});
-      else                         medCards.push({card:c,p:p,diff:'medium'});
-    });
-    function _ds(a,b){ return (b.p.w - b.p.r) - (a.p.w - a.p.r); }
-    hardCards.sort(_ds); medCards.sort(_ds); easyCards.sort(_ds);
-
-    // JSON export object
-    var exportObj = {
-      topic: t.name,
-      exportedAt: new Date().toLocaleString(),
-      totalCards: cards.length,
-      summary: { hard: hardCards.length, unseen: medCards.filter(x=>x.diff==='unseen').length, medium: medCards.filter(x=>x.diff==='medium').length, easy: easyCards.length },
-      categories: {
-        hard:   hardCards.map(x=>({q:x.card.q,a:x.card.a,correct:x.p.r,wrong:x.p.w})),
-        unseen: medCards.filter(x=>x.diff==='unseen').map(x=>({q:x.card.q,a:x.card.a})),
-        medium: medCards.filter(x=>x.diff==='medium').map(x=>({q:x.card.q,a:x.card.a,correct:x.p.r,wrong:x.p.w})),
-        easy:   easyCards.map(x=>({q:x.card.q,a:x.card.a,correct:x.p.r,wrong:x.p.w}))
-      }
+    // ══════════════════════════════════════════════════════════
+    // USER CONFIDENCE RATING SYSTEM
+    // confidence: 'sure' | 'notconfirm' | 'dontknow' | null
+    // Sort order: dontknow → notconfirm → null(unseen) → sure
+    // ══════════════════════════════════════════════════════════
+    var CONF_ORDER = { dontknow:0, notconfirm:1, null:2, sure:3 };
+    var CONF_META = {
+      sure:       { emoji:'✅', label:'Sure',        bg:'rgba(46,125,50,0.12)',   border:'rgba(46,125,50,0.4)',   col:'#2e7d32', barCol:'#2e7d32',  secBg:'rgba(46,125,50,0.05)'  },
+      notconfirm: { emoji:'🤔', label:'Not Confirm', bg:'rgba(245,124,0,0.12)',   border:'rgba(245,124,0,0.4)',   col:'#e65100', barCol:'#f57c00',  secBg:'rgba(245,124,0,0.05)'  },
+      dontknow:   { emoji:'❌', label:"Don't Know",  bg:'rgba(198,40,40,0.12)',   border:'rgba(198,40,40,0.4)',   col:'#c62828', barCol:'#c62828',  secBg:'rgba(198,40,40,0.05)'  },
+      unseen:     { emoji:'🔵', label:'Unseen',      bg:'rgba(33,150,243,0.08)',  border:'rgba(33,150,243,0.25)', col:'#1565c0', barCol:'#1976d2',  secBg:'rgba(33,150,243,0.04)' }
     };
-    var jsonStr = JSON.stringify(exportObj, null, 2);
 
-    function _fcCardHtml(item, idx) {
-      var c=item.card, p=item.p, d=item.diff, total=p.r+p.w;
+    // Attach confidence to each card item and sort
+    var allItems = cards.map(function(c) {
+      var p = prog[c.id] || {r:0,w:0,confidence:null};
+      if(!p.confidence) p.confidence = null;
+      return { card:c, p:p };
+    });
+
+    // Sort: dontknow(0) first → notconfirm(1) → unseen/null(2) → sure(3) last
+    allItems.sort(function(a,b){
+      var ca = CONF_ORDER[a.p.confidence] !== undefined ? CONF_ORDER[a.p.confidence] : CONF_ORDER['null'];
+      var cb = CONF_ORDER[b.p.confidence] !== undefined ? CONF_ORDER[b.p.confidence] : CONF_ORDER['null'];
+      return ca - cb;
+    });
+
+    // Group by confidence for sections
+    var dontKnowItems  = allItems.filter(function(x){ return x.p.confidence==='dontknow'; });
+    var notConfItems   = allItems.filter(function(x){ return x.p.confidence==='notconfirm'; });
+    var unseenItems    = allItems.filter(function(x){ return !x.p.confidence; });
+    var sureItems      = allItems.filter(function(x){ return x.p.confidence==='sure'; });
+
+    // Counts
+    var totalCards = cards.length;
+    var safeJson = JSON.stringify({topic:t.name,total:totalCards,sure:sureItems.length,notConfirm:notConfItems.length,dontKnow:dontKnowItems.length,unseen:unseenItems.length}).replace(/\\/g,'\\\\').replace(/'/g,'&#39;').replace(/"/g,'&quot;');
+
+    // Card HTML builder
+    function _fcCardHtml(item, globalIdx) {
+      var c=item.card, p=item.p;
+      var conf = p.confidence || null;
+      var cm = conf ? CONF_META[conf] : CONF_META.unseen;
+      var total=p.r+p.w;
       var pct = total ? Math.round((p.r/total)*100) : null;
-      var tagMap = {
-        hard:   { bg:'rgba(198,40,40,0.1)',  border:'rgba(198,40,40,0.35)',  col:'#c62828', bar:'#c62828', lbl:'🔴 Hard'   },
-        medium: { bg:'rgba(245,124,0,0.1)',  border:'rgba(245,124,0,0.35)',  col:'#e65100', bar:'#f57c00', lbl:'🟡 Medium' },
-        unseen: { bg:'rgba(33,150,243,0.08)',border:'rgba(33,150,243,0.25)', col:'#1565c0', bar:'#1976d2', lbl:'🔵 Unseen' },
-        easy:   { bg:'rgba(46,125,50,0.08)', border:'rgba(46,125,50,0.25)', col:'#2e7d32', bar:'#2e7d32', lbl:'🟢 Easy'   }
-      };
-      var tag = tagMap[d]||tagMap.unseen;
-      // Extra tags from card metadata
-      var isSaved   = p.saved   ? 'true' : 'false';
-      var isDoubt   = p.doubt   ? 'true' : 'false';
-      var isTuff    = p.tuff    ? 'true' : 'false';
-      return `<div id="fcCard_${c.id}" style="background:var(--surface);border:1.5px solid var(--border);border-radius:13px;padding:11px 13px;margin-bottom:8px;position:relative;overflow:hidden;">
-        <div style="position:absolute;top:0;left:0;bottom:0;width:4px;background:${tag.bar};border-radius:13px 0 0 13px;"></div>
-        <div style="margin-left:8px;">
-          <!-- Top row: index + tags + stats -->
-          <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:7px;flex-wrap:wrap;">
-            <span style="font-size:0.65rem;font-weight:700;color:var(--text2);flex-shrink:0;margin-top:3px;">Q${idx+1}</span>
-            <div style="display:flex;gap:4px;flex-wrap:wrap;flex:1;align-items:center;">
-              <span style="background:${tag.bg};border:1px solid ${tag.border};color:${tag.col};border-radius:20px;padding:1px 7px;font-size:0.6rem;font-weight:800;">${tag.lbl}</span>
-              ${p.saved ? '<span style="background:rgba(106,27,154,0.1);border:1px solid rgba(106,27,154,0.3);color:#6a1b9a;border-radius:20px;padding:1px 6px;font-size:0.6rem;font-weight:800;">⭐ Saved</span>' : ''}
-              ${p.doubt ? '<span style="background:rgba(230,81,0,0.1);border:1px solid rgba(230,81,0,0.3);color:#e65100;border-radius:20px;padding:1px 6px;font-size:0.6rem;font-weight:800;">❓ Doubt</span>' : ''}
-              ${p.tuff  ? '<span style="background:rgba(198,40,40,0.1);border:1px solid rgba(198,40,40,0.3);color:#c62828;border-radius:20px;padding:1px 6px;font-size:0.6rem;font-weight:800;">💪 Tuff</span>' : ''}
-            </div>
-            ${total>0?`<span style="font-size:0.58rem;color:var(--text2);font-weight:700;flex-shrink:0;">✅${p.r} ❌${p.w}${pct!==null?' '+pct+'%':''}</span>`:'<span style="font-size:0.58rem;color:var(--text2);">Naya</span>'}
+      var examRel = c.examRelevance ? `<div style="margin-top:5px;font-size:0.64rem;color:#1565c0;background:rgba(21,101,192,0.07);padding:3px 8px;border-radius:6px;border-left:2px solid #1565c0;">📋 ${_e(c.examRelevance)}</div>` : '';
+      var diffBadge = c.difficulty ? (c.difficulty==='hard'?'🔴':c.difficulty==='easy'?'🟢':'🟠')+' '+c.difficulty : '';
+
+      // 3-button confidence selector — active state highlighted
+      function _cBtn(val, emoji, lbl) {
+        var isActive = conf === val;
+        var cm2 = CONF_META[val];
+        return `<button onclick="tvFCSetConfidence('${c.id}',${tid},${sid},${secid},'${val}')"
+          title="${lbl}"
+          style="flex:1;padding:6px 4px;border-radius:9px;font-size:0.72rem;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;transition:all 0.15s;
+          border:2px solid ${isActive ? cm2.border : 'rgba(0,0,0,0.1)'};
+          background:${isActive ? cm2.bg : 'rgba(0,0,0,0.03)'};
+          color:${isActive ? cm2.col : 'var(--text2)'};
+          transform:${isActive?'scale(1.04)':'scale(1)'};
+          box-shadow:${isActive?'0 2px 8px '+cm2.border:'none'};">
+          ${emoji}<br><span style="font-size:0.58rem;">${lbl}</span>
+        </button>`;
+      }
+
+      return `<div id="fcCard_${c.id}" style="background:var(--surface);border:1.5px solid ${cm.border};border-radius:13px;padding:11px 13px;margin-bottom:9px;position:relative;overflow:hidden;transition:border 0.2s;">
+        <div style="position:absolute;top:0;left:0;bottom:0;width:4px;background:${cm.barCol};border-radius:13px 0 0 13px;"></div>
+        <div style="margin-left:10px;">
+          <!-- Top: index + confidence badge + difficulty -->
+          <div style="display:flex;align-items:center;gap:5px;margin-bottom:6px;flex-wrap:wrap;">
+            <span style="font-size:0.62rem;font-weight:800;color:var(--text2);flex-shrink:0;">#${globalIdx+1}</span>
+            <span style="background:${cm.bg};border:1px solid ${cm.border};color:${cm.col};border-radius:20px;padding:1px 8px;font-size:0.6rem;font-weight:800;">${cm.emoji} ${cm.label}</span>
+            ${diffBadge ? `<span style="font-size:0.58rem;font-weight:700;color:var(--text2);">${diffBadge}</span>` : ''}
+            ${p.saved?'<span style="background:rgba(106,27,154,0.1);border:1px solid rgba(106,27,154,0.3);color:#6a1b9a;border-radius:20px;padding:1px 6px;font-size:0.58rem;font-weight:800;">⭐</span>':''}
+            ${total>0?`<span style="font-size:0.56rem;color:var(--text2);margin-left:auto;">✅${p.r} ❌${p.w}${pct!==null?' ('+pct+'%)':''}</span>`:''}
           </div>
           <!-- Question -->
-          <div style="font-size:0.8rem;font-weight:700;color:var(--text);line-height:1.5;margin-bottom:8px;">${_e(c.q)}</div>
-          <!-- Answer (collapsible) -->
-          <details style="margin-bottom:8px;">
-            <summary style="font-size:0.7rem;color:var(--accent);font-weight:700;cursor:pointer;list-style:none;-webkit-tap-highlight-color:transparent;">👁 Answer ▾</summary>
-            <div style="margin-top:6px;padding:7px 10px;background:rgba(21,101,192,0.05);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;font-size:0.76rem;line-height:1.55;color:var(--text);">${_e(c.a)}</div>
+          <div style="font-size:0.8rem;font-weight:700;color:var(--text);line-height:1.5;margin-bottom:7px;">${_e(c.q)}</div>
+          <!-- Answer collapsible -->
+          <details style="margin-bottom:9px;">
+            <summary style="font-size:0.7rem;color:var(--accent);font-weight:700;cursor:pointer;list-style:none;-webkit-tap-highlight-color:transparent;">👁 Answer dekhein ▾</summary>
+            <div style="margin-top:5px;padding:7px 10px;background:rgba(21,101,192,0.05);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;font-size:0.75rem;line-height:1.55;color:var(--text);">${_e(c.a)}${examRel}</div>
           </details>
-          <!-- Action buttons -->
+          <!-- ★ CONFIDENCE RATING — 3 toggle buttons ★ -->
+          <div style="margin-bottom:8px;">
+            <div style="font-size:0.6rem;font-weight:800;color:var(--text2);margin-bottom:5px;letter-spacing:0.3px;">APNI RATING DO:</div>
+            <div style="display:flex;gap:5px;">
+              ${_cBtn('dontknow','❌',"Don't Know")}
+              ${_cBtn('notconfirm','🤔','Not Confirm')}
+              ${_cBtn('sure','✅','Sure')}
+            </div>
+          </div>
+          <!-- Extra action buttons -->
           <div style="display:flex;gap:5px;flex-wrap:wrap;">
             <button onclick="tvFCToggleSaved('${c.id}',${tid},${sid},${secid})"
-              style="padding:4px 9px;border-radius:8px;font-size:0.65rem;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;
-              border:1.5px solid ${p.saved?'rgba(106,27,154,0.5)':'rgba(106,27,154,0.25)'};
-              background:${p.saved?'rgba(106,27,154,0.12)':'rgba(106,27,154,0.04)'};
-              color:${p.saved?'#6a1b9a':'#9e5fb5'};">
+              style="padding:3px 8px;border-radius:7px;font-size:0.62rem;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;
+              border:1.5px solid ${p.saved?'rgba(106,27,154,0.5)':'rgba(106,27,154,0.2)'};
+              background:${p.saved?'rgba(106,27,154,0.12)':'transparent'};color:${p.saved?'#6a1b9a':'#9e5fb5'};">
               ${p.saved?'⭐ Saved':'☆ Save'}
             </button>
-            <button onclick="tvFCToggleDoubt('${c.id}',${tid},${sid},${secid})"
-              style="padding:4px 9px;border-radius:8px;font-size:0.65rem;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;
-              border:1.5px solid ${p.doubt?'rgba(230,81,0,0.5)':'rgba(230,81,0,0.2)'};
-              background:${p.doubt?'rgba(230,81,0,0.12)':'rgba(230,81,0,0.04)'};
-              color:${p.doubt?'#e65100':'#bf6020'};">
-              ${p.doubt?'❓ Doubt':'❓ Doubt?'}
-            </button>
-            <button onclick="tvFCToggleTuff('${c.id}',${tid},${sid},${secid})"
-              style="padding:4px 9px;border-radius:8px;font-size:0.65rem;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;
-              border:1.5px solid ${p.tuff?'rgba(198,40,40,0.5)':'rgba(198,40,40,0.2)'};
-              background:${p.tuff?'rgba(198,40,40,0.12)':'rgba(198,40,40,0.04)'};
-              color:${p.tuff?'#c62828':'#b04040'};">
-              ${p.tuff?'💪 Tuff':'💪 Tuff?'}
-            </button>
             <button onclick="tvFCDelete('${c.id}',${tid},${sid},${secid})"
-              style="padding:4px 9px;border-radius:8px;font-size:0.65rem;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;
-              border:1.5px solid rgba(198,40,40,0.2);background:rgba(198,40,40,0.04);color:#c62828;margin-left:auto;">
-              🗑 Delete
+              style="padding:3px 8px;border-radius:7px;font-size:0.62rem;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;
+              border:1.5px solid rgba(198,40,40,0.2);background:transparent;color:#c62828;margin-left:auto;">
+              🗑
             </button>
           </div>
         </div>
       </div>`;
     }
 
-    function _fcSection(emoji, title, items, bg, emptyMsg) {
+    function _fcSection(cmKey, title, items, emptyMsg) {
+      var cm = CONF_META[cmKey];
+      if(!items.length) return `<div style="margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:7px;padding:6px 10px;background:${cm.secBg};border-radius:9px;margin-bottom:4px;border:1px solid ${cm.border};">
+          <span>${cm.emoji}</span><span style="font-size:0.76rem;font-weight:800;color:var(--text);flex:1;">${title}</span>
+          <span style="font-size:0.65rem;color:var(--text2);">0 cards</span>
+        </div>
+        <div style="font-size:0.7rem;color:var(--text2);padding:4px 6px;font-style:italic;">${emptyMsg}</div>
+      </div>`;
       return `<div style="margin-bottom:14px;">
-        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:${bg};border-radius:10px;margin-bottom:8px;">
-          <span style="font-size:1rem;">${emoji}</span>
-          <span style="font-size:0.78rem;font-weight:800;color:var(--text);flex:1;">${title}</span>
+        <div style="display:flex;align-items:center;gap:7px;padding:7px 10px;background:${cm.secBg};border-radius:10px;margin-bottom:8px;border:1.5px solid ${cm.border};">
+          <span style="font-size:1.1rem;">${cm.emoji}</span>
+          <span style="font-size:0.78rem;font-weight:800;color:${cm.col};flex:1;">${title}</span>
           <span style="font-size:0.7rem;font-weight:800;color:var(--text2);">${items.length} cards</span>
         </div>
-        ${items.length ? items.map((x,i)=>_fcCardHtml(x,i)).join('') : `<div style="font-size:0.72rem;color:var(--text2);padding:6px 4px;font-style:italic;">${emptyMsg}</div>`}
+        ${items.map((x,i)=>_fcCardHtml(x,i)).join('')}
       </div>`;
     }
 
-    const unseenCards = medCards.filter(x=>x.diff==='unseen');
-    const mediumCards = medCards.filter(x=>x.diff==='medium');
-    const safeJson = jsonStr.replace(/\\/g,'\\\\').replace(/'/g,'&#39;').replace(/"/g,'&quot;');
+    // Progress bar visual
+    var pctSure = Math.round((sureItems.length/totalCards)*100)||0;
+    var pctNC   = Math.round((notConfItems.length/totalCards)*100)||0;
+    var pctDK   = Math.round((dontKnowItems.length/totalCards)*100)||0;
+    var pctUN   = 100 - pctSure - pctNC - pctDK;
 
     subBody.innerHTML = `<div style="padding:10px 14px 20px;">
-      <!-- Stats pills -->
-      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px;">
-        <span style="font-size:0.72rem;font-weight:700;color:var(--text2);">📊 Total: <b>${cards.length}</b></span>
-        <span style="background:rgba(198,40,40,0.1);color:#c62828;border:1px solid rgba(198,40,40,0.3);border-radius:20px;padding:2px 8px;font-size:0.65rem;font-weight:800;">🔴 ${hardCards.length} Hard</span>
-        <span style="background:rgba(33,150,243,0.08);color:#1565c0;border:1px solid rgba(33,150,243,0.2);border-radius:20px;padding:2px 8px;font-size:0.65rem;font-weight:800;">🔵 ${unseenCards.length} Unseen</span>
-        <span style="background:rgba(245,124,0,0.1);color:#e65100;border:1px solid rgba(245,124,0,0.3);border-radius:20px;padding:2px 8px;font-size:0.65rem;font-weight:800;">🟡 ${mediumCards.length} Medium</span>
-        <span style="background:rgba(46,125,50,0.08);color:#2e7d32;border:1px solid rgba(46,125,50,0.25);border-radius:20px;padding:2px 8px;font-size:0.65rem;font-weight:800;">🟢 ${easyCards.length} Easy</span>
+      <!-- Header info -->
+      <div style="background:linear-gradient(135deg,rgba(21,101,192,0.06),rgba(106,27,154,0.06));border:1.5px solid rgba(21,101,192,0.15);border-radius:12px;padding:10px 13px;margin-bottom:12px;">
+        <div style="font-size:0.72rem;font-weight:800;color:var(--text);margin-bottom:8px;">📊 Confidence Overview — ${totalCards} Flashcards</div>
+        <!-- Stacked progress bar -->
+        <div style="display:flex;height:8px;border-radius:6px;overflow:hidden;margin-bottom:8px;gap:1px;">
+          ${dontKnowItems.length  ? `<div style="flex:${dontKnowItems.length};background:#c62828;border-radius:4px;" title="Don't Know: ${dontKnowItems.length}"></div>` : ''}
+          ${notConfItems.length   ? `<div style="flex:${notConfItems.length};background:#f57c00;border-radius:4px;" title="Not Confirm: ${notConfItems.length}"></div>` : ''}
+          ${unseenItems.length    ? `<div style="flex:${unseenItems.length};background:#90caf9;border-radius:4px;" title="Unseen: ${unseenItems.length}"></div>` : ''}
+          ${sureItems.length      ? `<div style="flex:${sureItems.length};background:#2e7d32;border-radius:4px;" title="Sure: ${sureItems.length}"></div>` : ''}
+        </div>
+        <!-- Pills -->
+        <div style="display:flex;gap:5px;flex-wrap:wrap;">
+          <span style="background:rgba(198,40,40,0.1);color:#c62828;border:1px solid rgba(198,40,40,0.3);border-radius:20px;padding:2px 8px;font-size:0.62rem;font-weight:800;">❌ Don't Know: ${dontKnowItems.length}</span>
+          <span style="background:rgba(245,124,0,0.1);color:#e65100;border:1px solid rgba(245,124,0,0.3);border-radius:20px;padding:2px 8px;font-size:0.62rem;font-weight:800;">🤔 Not Confirm: ${notConfItems.length}</span>
+          <span style="background:rgba(33,150,243,0.08);color:#1565c0;border:1px solid rgba(33,150,243,0.2);border-radius:20px;padding:2px 8px;font-size:0.62rem;font-weight:800;">🔵 Unseen: ${unseenItems.length}</span>
+          <span style="background:rgba(46,125,50,0.08);color:#2e7d32;border:1px solid rgba(46,125,50,0.25);border-radius:20px;padding:2px 8px;font-size:0.62rem;font-weight:800;">✅ Sure: ${sureItems.length}</span>
+        </div>
+        <div style="font-size:0.6rem;color:var(--text2);margin-top:6px;">💡 Har flashcard par apni rating do — sort automatically ho jata hai!</div>
       </div>
-      <!-- JSON Actions -->
+      <!-- Export actions -->
       <div style="display:flex;gap:7px;margin-bottom:14px;">
         <button onclick="tvCopyFCJson(this)" data-json="${safeJson}"
-          style="flex:1;padding:8px;border-radius:9px;border:1.5px solid rgba(21,101,192,0.3);background:rgba(21,101,192,0.07);color:#1565c0;font-size:0.7rem;font-weight:800;cursor:pointer;font-family:inherit;">
-          📋 JSON Copy
-        </button>
+          style="flex:1;padding:7px;border-radius:9px;border:1.5px solid rgba(21,101,192,0.3);background:rgba(21,101,192,0.07);color:#1565c0;font-size:0.68rem;font-weight:800;cursor:pointer;font-family:inherit;">📋 Copy</button>
         <button onclick="tvDownloadFCJson(this)" data-json="${safeJson}" data-topic="${_e(t.name)}"
-          style="flex:1;padding:8px;border-radius:9px;border:1.5px solid rgba(46,125,50,0.3);background:rgba(46,125,50,0.07);color:#2e7d32;font-size:0.7rem;font-weight:800;cursor:pointer;font-family:inherit;">
-          ⬇ JSON Download
-        </button>
+          style="flex:1;padding:7px;border-radius:9px;border:1.5px solid rgba(46,125,50,0.3);background:rgba(46,125,50,0.07);color:#2e7d32;font-size:0.68rem;font-weight:800;cursor:pointer;font-family:inherit;">⬇ Download</button>
       </div>
-      <!-- Difficulty-ordered sections -->
-      ${_fcSection('🔴','Hard — Zyada practice chahiye', hardCards,  'rgba(198,40,40,0.06)',  'Koi hard card nahi ✅')}
-      ${_fcSection('🔵','Unseen — Abhi practice nahi ki', unseenCards,'rgba(33,150,243,0.06)', 'Saare cards dekhe ja chuke hain!')}
-      ${_fcSection('🟡','Medium — Kuch sahi kuch galat',  mediumCards,'rgba(245,124,0,0.06)',  'Koi medium card nahi')}
-      ${_fcSection('🟢','Easy — Achhi tarah yaad hai',    easyCards,  'rgba(46,125,50,0.06)',  'Koi easy card nahi abhi')}
+      <!-- Sections sorted by difficulty: Don't Know first → Not Confirm → Unseen → Sure last -->
+      ${_fcSection('dontknow', "❌ Don't Know — Sabse pehle practice karo", dontKnowItems, 'Koi card is category mein nahi — great! 🎉')}
+      ${_fcSection('notconfirm', '🤔 Not Confirm — Thodi aur revision chahiye', notConfItems, 'Koi card is category mein nahi')}
+      ${_fcSection('unseen', '🔵 Unseen — Abhi rate nahi kiye', unseenItems, 'Saare cards rate ho chuke hain! ✅')}
+      ${_fcSection('sure', '✅ Sure — Achhi tarah yaad hai', sureItems, 'Koi card abhi sure nahi')}
     </div>`;
 
   } else {
@@ -6972,14 +7001,16 @@ function tvGetFCBadge(tid) {
     var cards = d.cards || [];
     if(!cards.length) return 'No flashcards yet';
     var prog = d.progress || {};
-    var hard = 0, easy = 0, unseen = 0;
+    var sure=0, nc=0, dk=0, unseen=0;
     cards.forEach(function(c) {
       var p = prog[c.id];
-      if(!p || (p.r+p.w)===0) unseen++;
-      else if(p.w > p.r) hard++;
-      else easy++;
+      var conf = p ? p.confidence : null;
+      if(conf==='sure') sure++;
+      else if(conf==='notconfirm') nc++;
+      else if(conf==='dontknow') dk++;
+      else unseen++;
     });
-    return cards.length + ' cards · 🔴' + hard + ' 🟡' + unseen + ' 🟢' + easy;
+    return cards.length + ' cards · ❌'+dk+' 🤔'+nc+' 🔵'+unseen+' ✅'+sure;
   } catch(e) { return 'Flashcards'; }
 }
 
@@ -7059,6 +7090,37 @@ function _tvFCUpdateProg(cardId, tid, field, fn) {
       fn(_scFC.progress[cardId]);
     }
   } catch(e) {}
+}
+
+// ── Confidence Rating: Sure / Not Confirm / Don't Know ──
+// Ek baar rate karo, kabhi bhi change karo — sorting auto update hota hai
+function tvFCSetConfidence(cardId, tid, sid, secid, val) {
+  try {
+    var key = 'scFC_' + (tid||'default');
+    var raw = localStorage.getItem(key);
+    if(!raw) return;
+    var d = JSON.parse(raw);
+    if(!d.progress) d.progress = {};
+    if(!d.progress[cardId]) d.progress[cardId] = {r:0, w:0};
+    // Toggle: agar same value click kiya → unset (wapas unseen)
+    if(d.progress[cardId].confidence === val) {
+      d.progress[cardId].confidence = null;
+    } else {
+      d.progress[cardId].confidence = val;
+    }
+    localStorage.setItem(key, JSON.stringify(d));
+    // Sync to _scFC in-memory
+    if(typeof _scFC !== 'undefined' && typeof _sc !== 'undefined' && _sc.tid == tid) {
+      if(!_scFC.progress[cardId]) _scFC.progress[cardId] = {r:0,w:0};
+      _scFC.progress[cardId].confidence = d.progress[cardId].confidence;
+    }
+    // Refresh view
+    tvShowSub('flashcards', sid, secid, tid);
+    if(typeof showToast === 'function') {
+      var labels = {sure:'✅ Sure!', notconfirm:'🤔 Not Confirm', dontknow:"❌ Don't Know", null:'↩ Rating hatai'};
+      showToast(labels[d.progress[cardId].confidence || 'null'] || 'Updated', 'success');
+    }
+  } catch(e) { console.error('tvFCSetConfidence error:', e); }
 }
 // ── Download FC JSON as file ──
 function tvDownloadFCJson(btn) {
@@ -26777,17 +26839,51 @@ function scExtractContent() {
 }
 
 // ── Flashcard storage ──
-var _scFC = { cards:[], progress:{}, hash:'' };
+var _scFC = { cards:[], progress:{}, hash:'', coveredFacts:[], allFactsHash:'' };
 
 function _scFCKey() { return 'scFC_'+(typeof _sc !== 'undefined' ? (_sc.tid||'default') : 'default'); }
 function _scFCLoad() {
-  try { var d=JSON.parse(localStorage.getItem(_scFCKey())||'{}'); _scFC.cards=d.cards||[]; _scFC.progress=d.progress||{}; _scFC.hash=d.hash||''; } catch(e) {}
+  try {
+    var d = JSON.parse(localStorage.getItem(_scFCKey())||'{}');
+    _scFC.cards        = d.cards        || [];
+    _scFC.progress     = d.progress     || {};
+    _scFC.hash         = d.hash         || '';
+    _scFC.coveredFacts = d.coveredFacts || [];
+    _scFC.allFactsHash = d.allFactsHash || '';
+  } catch(e) {}
 }
 function _scFCSave() {
   try { localStorage.setItem(_scFCKey(), JSON.stringify(_scFC)); } catch(e) {}
 }
+
+// Strong hash: actual text checksum
+function _scStrongHash(str) {
+  var h = 0;
+  for(var i = 0; i < str.length; i++) {
+    h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+  }
+  return h.toString(36);
+}
+
 function _scContentHash() {
-  var c = scExtractContent(); return c.length+'_'+(typeof _sc !== 'undefined' ? _sc.slides.length : 0);
+  var c = scExtractContent();
+  return _scStrongHash(c);
+}
+
+// Extract individual fact-lines for deduplication
+function _scExtractFactLines(content) {
+  return content.split('\n')
+    .map(function(l){ return l.trim(); })
+    .filter(function(l){ return l && !l.startsWith('===') && l.length > 8; });
+}
+
+// Find NEW facts not yet covered by flashcards
+function _scGetNewFacts(content) {
+  var allLines = _scExtractFactLines(content);
+  var covered  = _scFC.coveredFacts || [];
+  return allLines.filter(function(line) {
+    return !covered.some(function(cf){ return cf === line; });
+  });
 }
 
 // ── AI Chat panel ──
@@ -26979,19 +27075,56 @@ function scAiMakeFlashcards() {
   var content = scExtractContent();
   if(!content.trim()) { _scAiMsg('bot','⚠️ Canvas mein koi content nahi!'); return; }
 
+  _scFCLoad();
+
+  // ── NEW FACTS CHECK ──
+  var newFacts = _scGetNewFacts(content);
+  var totalFacts = _scExtractFactLines(content);
+
+  // All facts already covered → block with info message
+  if(totalFacts.length > 0 && newFacts.length === 0) {
+    scCloseAiChat();
+    var fc0 = document.getElementById('_scFCPanel'); if(!fc0) { _scBuildAiPanel(); fc0 = document.getElementById('_scFCPanel'); }
+    fc0.style.display = 'flex';
+    document.getElementById('_scFCQ').innerHTML =
+      '✅ <b>Saare facts cover ho chuke hain!</b><br><br>' +
+      '<div style="font-size:0.72rem;line-height:1.7;color:var(--text2,#37526d);background:rgba(21,101,192,0.06);padding:10px 12px;border-radius:10px;border-left:3px solid #1565c0;">' +
+      '📊 <b>'+totalFacts.length+'</b> facts canvas par hain<br>' +
+      '🃏 <b>'+(_scFC.cards.length)+'</b> flashcards pehle se ban chuke hain<br>' +
+      '🔁 In sabhi facts se flashcards already generate ho chuke hain<br><br>' +
+      '➕ <b>Naye facts / points canvas par add karo</b> — tabhi naye flashcards banenge!<br><br>' +
+      '<span style="font-size:0.65rem;opacity:0.7;">⚠️ Purani cards ko phir se practice karna hai to session continue karo</span>' +
+      '</div>';
+    document.getElementById('_scFCA').style.display = 'none';
+    document.getElementById('_scFCBtns').style.display = 'none';
+    document.getElementById('_scFCHint').innerHTML =
+      '<div style="display:flex;gap:7px;margin-top:10px;">' +
+      '<button onclick="_scFCStartSession()" style="flex:1;padding:9px;border-radius:10px;border:none;background:rgba(21,101,192,0.12);color:#1565c0;font-weight:800;font-size:0.75rem;cursor:pointer;font-family:inherit;">🔄 Purani cards practice karo</button>' +
+      '<button onclick="scCloseFC()" style="flex:1;padding:9px;border-radius:10px;border:none;background:rgba(198,40,40,0.1);color:#c62828;font-weight:800;font-size:0.75rem;cursor:pointer;font-family:inherit;">✕ Band karo</button>' +
+      '</div>';
+    return;
+  }
+
+  // Some facts are new → generate only from new facts
+  var contentToUse = newFacts.length < totalFacts.length
+    ? '=== SIRF NAYE FACTS (pehle se covered facts hata diye) ===\n' + newFacts.join('\n')
+    : content;
+
   scCloseAiChat();
   var fc = document.getElementById('_scFCPanel'); if(!fc) { _scBuildAiPanel(); fc = document.getElementById('_scFCPanel'); }
   fc.style.display = 'flex';
-  document.getElementById('_scFCQ').innerHTML = '🔍 <b>Step 1/3:</b> Topic detect kar raha hoon...';
+
+  var newBadge = newFacts.length < totalFacts.length
+    ? '🆕 <b>'+ newFacts.length +' Naye Facts</b> se Flashcards ban rahe hain...'
+    : '🔍 <b>Step 1/3:</b> Topic detect kar raha hoon...';
+  document.getElementById('_scFCQ').innerHTML = newBadge;
   document.getElementById('_scFCA').style.display = 'none';
   document.getElementById('_scFCBtns').style.display = 'none';
   document.getElementById('_scFCHint').textContent = '';
 
-  _scFCLoad();
   var curHash = _scContentHash();
-  if(_scFC.hash === curHash && _scFC.cards.length > 0) {
-    _scFCStartSession(); return;
-  }
+  // Use contentToUse (new facts only) from here
+  content = contentToUse;
 
   // STEP 1: Topic + Exam Pattern Analysis via AI
   var topicSnippet = _scDetectTopic(content);
@@ -27063,9 +27196,25 @@ function scAiMakeFlashcards() {
         _scFC.hash  = curHash;
         _scFC.topic = analysis.topic || topicName;
         _scFC.generatedAt = new Date().toLocaleDateString('hi-IN');
+
+        // ── Mark all currently used facts as COVERED ──
+        var usedFacts = _scExtractFactLines(scExtractContent());
+        var alreadyCovered = _scFC.coveredFacts || [];
+        usedFacts.forEach(function(f){
+          if(!alreadyCovered.some(function(c){ return c === f; })) {
+            alreadyCovered.push(f);
+          }
+        });
+        _scFC.coveredFacts = alreadyCovered;
+        _scFC.allFactsHash = curHash;
+
         _scFCSave();
         // Show success message briefly
-        document.getElementById('_scFCQ').innerHTML = '✅ <b>'+_scFC.cards.length+' Master Flashcards</b> ready!<br><small style="font-size:0.65rem;opacity:0.7;">Topic: '+_scFC.topic+' • Web-enriched • Examiner-pattern based</small>';
+        var newCount = arr.length;
+        var totalCovered = _scFC.coveredFacts.length;
+        document.getElementById('_scFCQ').innerHTML =
+          '✅ <b>'+newCount+' Master Flashcards</b> ready!<br>' +
+          '<small style="font-size:0.65rem;opacity:0.7;">Topic: '+_scFC.topic+' • 🌐 Web-enriched • '+totalCovered+' facts covered</small>';
         setTimeout(function(){ _scFCStartSession(); }, 1200);
       } catch(e) {
         document.getElementById('_scFCQ').textContent = '❌ Parse error. Dobara try karo.';
@@ -27154,9 +27303,12 @@ window.scCloseFC = function() {
   scOpenAiChat();
 };
 
-// Force regenerate — clear hash so fresh web-enriched flashcards ban sake
+// Force regenerate — clear hash AND covered facts so fresh web-enriched flashcards ban sake
 window._scFCRegenerate = function() {
-  _scFC.hash = ''; // force rebuild
+  _scFCLoad();
+  _scFC.hash = '';
+  _scFC.coveredFacts = []; // Reset: sare facts naye maane jaenge
+  _scFC.allFactsHash = '';
   _scFCSave();
   var p = document.getElementById('_scFCPanel'); if(p) p.style.display='none';
   scAiMakeFlashcards();
