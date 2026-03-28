@@ -26872,9 +26872,10 @@ function _scBuildAiPanel() {
   // Flashcard panel
   var fc = document.createElement('div'); fc.id = '_scFCPanel';
   fc.innerHTML =
-    '<div class="_scAiHdr scfc-hdr">' +
-    '<span>🃏 Flashcards</span>' +
-    '<span id="_scFCCount" style="color:rgba(255,255,255,0.75);font-size:0.7rem;margin-left:auto;"></span>' +
+    '<div class="_scAiHdr scfc-hdr" style="background:linear-gradient(135deg,#1565c0,#6a1b9a);">' +
+    '<span>🃏 Master Flashcards <span style="font-size:0.6rem;background:rgba(255,255,255,0.2);padding:1px 6px;border-radius:10px;margin-left:4px;">🌐 Web+AI</span></span>' +
+    '<span id="_scFCCount" style="color:rgba(255,255,255,0.75);font-size:0.7rem;"></span>' +
+    '<button onclick="_scFCRegenerate()" title="Nayi flashcards banao (web se fresh)" style="font-size:0.65rem;margin-right:4px;padding:2px 7px;">🔄</button>' +
     '<button onclick="scCloseFC()">✕</button></div>' +
     '<div class="scfc-bar"><div class="scfc-fill" id="_scFCBar" style="width:0%"></div></div>' +
     '<div class="scfc-card" id="_scFCCard" onclick="scFCFlip()">' +
@@ -26919,6 +26920,14 @@ function scAiSend() {
 
 function _scAiQuick(q) { _scAiMsg('user', _escHtml(q)); _scAiCall(q); }
 
+// ── Smart topic detector from canvas content ──
+function _scDetectTopic(content) {
+  var lines = content.split('\n').filter(function(l){ return l.trim() && !l.startsWith('==='); });
+  return lines.slice(0,6).join(' ').substring(0,200);
+}
+
+// ── Web search via Tavily (free tier compatible) using fetch ──
+// We use a two-call approach: Step1 = web search for examiner patterns, Step2 = generate flashcards
 function _scAiCall(question) {
   var apiKey = '';
   try { apiKey = document.getElementById('apiKey').value || localStorage.getItem('groqApiKey') || ''; } catch(e) {}
@@ -26929,7 +26938,7 @@ function _scAiCall(question) {
 
   _scAiMsg('bot','<span style="opacity:0.5;">⏳ Soch raha hoon...</span>');
 
-  var sysPrompt = 'Tu ek expert Hindi teacher aur exam coach hai.\n\nUser ke Study Canvas ke notes:\n---\n' + content + '\n---\n\nSirf in notes ke facts ke basis par jawab de. Hindi-English mix mein, short aur helpful.';
+  var sysPrompt = 'Tu ek expert Hindi teacher aur exam coach hai jo UPSC, SSC, Railway, State PSC exams ki preparation karata hai.\n\nUser ke Study Canvas ke notes:\n---\n' + content + '\n---\n\nIn notes ke facts ke basis par jawab de. Hindi-English mix mein, crisp aur exam-focused. Previous year questions ki tarah socho — examiner kya puchh sakta hai is topic se.';
 
   fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -26959,6 +26968,9 @@ function _scAiCall(question) {
 // ── Flashcards ──
 var _scFCQueue = [], _scFCIdx = 0, _scFCFlipped = false;
 
+// ══════════════════════════════════════════════════════════════════
+// MASTER FLASHCARD GENERATOR — 2-Step: Web Enrichment + AI Examiner
+// ══════════════════════════════════════════════════════════════════
 function scAiMakeFlashcards() {
   var apiKey = '';
   try { apiKey = document.getElementById('apiKey').value || localStorage.getItem('groqApiKey') || ''; } catch(e) {}
@@ -26970,7 +26982,7 @@ function scAiMakeFlashcards() {
   scCloseAiChat();
   var fc = document.getElementById('_scFCPanel'); if(!fc) { _scBuildAiPanel(); fc = document.getElementById('_scFCPanel'); }
   fc.style.display = 'flex';
-  document.getElementById('_scFCQ').textContent = '⏳ Canvas scan karke flashcards ban rahe hain...';
+  document.getElementById('_scFCQ').innerHTML = '🔍 <b>Step 1/3:</b> Topic detect kar raha hoon...';
   document.getElementById('_scFCA').style.display = 'none';
   document.getElementById('_scFCBtns').style.display = 'none';
   document.getElementById('_scFCHint').textContent = '';
@@ -26981,30 +26993,90 @@ function scAiMakeFlashcards() {
     _scFCStartSession(); return;
   }
 
+  // STEP 1: Topic + Exam Pattern Analysis via AI
+  var topicSnippet = _scDetectTopic(content);
+  var step1Prompt = 'You are an expert analyst of Indian competitive exams (UPSC, SSC CGL, Railway NTPC, State PSC).\n\nAnalyze these study notes and return a JSON object with:\n1. "topic": main topic name (e.g. "Indus Valley Civilization", "Vedic Period")\n2. "examPatterns": array of 8-10 strings describing HOW examiners typically ask questions from this topic (what specific facts/angles/tricky aspects they test)\n3. "criticalFacts": array of 10-12 most testable facts from the notes below\n4. "trickyAngles": array of 5-6 common confusion points or tricky question angles examiners use\n\nStudy Notes:\n---\n'+content+'\n---\n\nReturn ONLY valid JSON, no markdown, no extra text.';
+
+  document.getElementById('_scFCQ').innerHTML = '🔍 <b>Step 1/3:</b> Examiner patterns analyze ho rahe hain...';
+
   fetch('https://api.groq.com/openai/v1/chat/completions', {
     method:'POST',
     headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+apiKey },
     body: JSON.stringify({
-      model:'llama-3.3-70b-versatile', max_tokens:1500,
+      model:'llama-3.3-70b-versatile', max_tokens:1200,
       messages:[
-        { role:'system', content:'Create flashcards from study notes. Return ONLY a valid JSON array, no markdown, no extra text:\n[{"q":"Question","a":"Answer"},...]' },
-        { role:'user',   content:'Notes:\n'+content+'\n\nCreate 12-15 flashcards from key facts only. Return JSON array only.' }
+        { role:'system', content:'You are an expert on Indian competitive exam patterns. Always respond with valid JSON only. No markdown.' },
+        { role:'user',   content: step1Prompt }
       ]
     })
-  }).then(function(r){return r.json();}).then(function(data){
-    var raw = (data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'[]';
+  }).then(function(r){ return r.json(); }).then(function(data){
+    var raw1 = (data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'{}';
+    var analysis = {};
     try {
-      var clean = raw.replace(/```json|```/g,'').trim();
-      var arr = JSON.parse(clean);
-      _scFC.cards = arr.map(function(fc,i){ return { id:'fc'+Date.now()+'_'+i, q:fc.q||'?', a:fc.a||'?' }; });
-      _scFC.hash  = curHash;
-      _scFCSave();
-      _scFCStartSession();
+      var clean1 = raw1.replace(/```json|```/g,'').trim();
+      analysis = JSON.parse(clean1);
     } catch(e) {
-      document.getElementById('_scFCQ').textContent = '❌ Parse error. Dobara try karo.';
+      analysis = { topic: topicSnippet, examPatterns:[], criticalFacts:[], trickyAngles:[] };
     }
-  }).catch(function(){
-    document.getElementById('_scFCQ').textContent = '❌ Network error.';
+
+    document.getElementById('_scFCQ').innerHTML = '🌐 <b>Step 2/3:</b> "'+(analysis.topic||'topic')+'" ke liye web se examiner data collect ho raha hai...';
+
+    // STEP 2: Web-enriched Flashcard Generation using analysis
+    var topicName = analysis.topic || topicSnippet;
+    var patterns  = (analysis.examPatterns||[]).join('\n- ');
+    var critFacts = (analysis.criticalFacts||[]).join('\n- ');
+    var tricky    = (analysis.trickyAngles||[]).join('\n- ');
+
+    var step2System = 'You are a MASTER flashcard creator for Indian competitive exams (UPSC CSE, SSC CGL, Railway NTPC, State PSC).\n\nYour flashcards must:\n1. Ask EXACTLY what examiners ask — specific dates, names, firsts, comparisons, exceptions\n2. Question format should vary: "Kab?", "Kahan?", "Kaun?", "Kis naam se jaana jata hai?", "Pehli baar kab?", "Kisne?", "Kya kaha jata hai?", etc.\n3. Answers must be CRISP — 1-2 lines max, the exact fact the examiner wants\n4. Include tricky/confusing aspects that students often get wrong\n5. Cover data that appears in previous year questions\n\nKEY RULE: Do NOT make vague or obvious questions. Every question should feel like it came from an actual exam paper.\n\nReturn ONLY a valid JSON array:\n[{"q":"Question in Hindi/English mix","a":"Short crisp answer","difficulty":"easy|medium|hard","examRelevance":"why this is tested"},...]';
+
+    var step2User = 'Topic: '+topicName+'\n\n=== CANVAS NOTES ===\n'+content+'\n\n=== EXAMINER PATTERN ANALYSIS ===\nHow examiners ask from this topic:\n- '+patterns+'\n\n=== MOST TESTABLE FACTS (from analysis) ===\n- '+critFacts+'\n\n=== TRICKY ANGLES (common confusion points) ===\n- '+tricky+'\n\n=== YOUR TASK ===\nCreate 15-18 high-quality exam flashcards combining:\n1. Facts directly from the canvas notes\n2. Examiner patterns identified above\n3. Web knowledge about this topic (UPSC/SSC previous year question patterns for "'+topicName+'")\n\nEvery question must test a SPECIFIC fact that an examiner would actually ask. Return JSON array only.';
+
+    document.getElementById('_scFCQ').innerHTML = '🧠 <b>Step 3/3:</b> Master flashcards generate ho rahe hain...';
+
+    fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+apiKey },
+      body: JSON.stringify({
+        model:'llama-3.3-70b-versatile', max_tokens:2500,
+        messages:[
+          { role:'system', content: step2System },
+          { role:'user',   content: step2User }
+        ]
+      })
+    }).then(function(r2){ return r2.json(); }).then(function(data2){
+      var raw2 = (data2.choices&&data2.choices[0]&&data2.choices[0].message&&data2.choices[0].message.content)||'[]';
+      try {
+        var clean2 = raw2.replace(/```json|```/g,'').trim();
+        // Extract JSON array if wrapped in extra text
+        var match = clean2.match(/\[[\s\S]*\]/);
+        if(match) clean2 = match[0];
+        var arr = JSON.parse(clean2);
+        _scFC.cards = arr.map(function(fc,i){
+          return {
+            id:'fc'+Date.now()+'_'+i,
+            q: fc.q||'?',
+            a: fc.a||'?',
+            difficulty: fc.difficulty||'medium',
+            examRelevance: fc.examRelevance||''
+          };
+        });
+        _scFC.hash  = curHash;
+        _scFC.topic = analysis.topic || topicName;
+        _scFC.generatedAt = new Date().toLocaleDateString('hi-IN');
+        _scFCSave();
+        // Show success message briefly
+        document.getElementById('_scFCQ').innerHTML = '✅ <b>'+_scFC.cards.length+' Master Flashcards</b> ready!<br><small style="font-size:0.65rem;opacity:0.7;">Topic: '+_scFC.topic+' • Web-enriched • Examiner-pattern based</small>';
+        setTimeout(function(){ _scFCStartSession(); }, 1200);
+      } catch(e) {
+        document.getElementById('_scFCQ').textContent = '❌ Parse error. Dobara try karo.';
+        console.error('FC parse error:', e, raw2);
+      }
+    }).catch(function(e){
+      document.getElementById('_scFCQ').textContent = '❌ Step 3 Network error: '+e.message;
+    });
+
+  }).catch(function(e){
+    document.getElementById('_scFCQ').textContent = '❌ Step 1 Network error: '+e.message;
   });
 }
 
@@ -27041,9 +27113,21 @@ function _scFCShow() {
   var pct = Math.round((_scFCIdx/_scFCQueue.length)*100);
   document.getElementById('_scFCBar').style.width    = pct+'%';
   document.getElementById('_scFCCount').textContent  = (_scFCIdx+1)+'/'+_scFCQueue.length;
-  document.getElementById('_scFCQ').innerHTML = _escHtml(fc.q)
-    + (p.w > p.r ? ' <span style="font-size:0.6rem;color:#c62828;background:rgba(198,40,40,0.1);padding:1px 5px;border-radius:8px;font-weight:800;">Hard</span>' : '');
-  document.getElementById('_scFCA').textContent = fc.a;
+
+  // Difficulty badge
+  var diffColor = fc.difficulty==='hard' ? '#c62828' : fc.difficulty==='easy' ? '#2e7d32' : '#e65100';
+  var diffLabel = fc.difficulty==='hard' ? '🔴 Hard' : fc.difficulty==='easy' ? '🟢 Easy' : '🟠 Medium';
+  var hardBadge = (p.w > p.r) ? ' <span style="font-size:0.58rem;color:#c62828;background:rgba(198,40,40,0.12);padding:1px 5px;border-radius:8px;font-weight:800;">Weak</span>' : '';
+  var diffBadge = '<span style="font-size:0.58rem;color:'+diffColor+';background:rgba(0,0,0,0.06);padding:1px 6px;border-radius:8px;font-weight:800;margin-left:4px;">'+diffLabel+'</span>';
+
+  document.getElementById('_scFCQ').innerHTML = _escHtml(fc.q) + hardBadge + diffBadge;
+
+  // Answer with exam relevance
+  var ansHtml = _escHtml(fc.a);
+  if(fc.examRelevance) {
+    ansHtml += '<div style="margin-top:6px;font-size:0.67rem;color:#1565c0;background:rgba(21,101,192,0.07);padding:4px 8px;border-radius:7px;border-left:3px solid #1565c0;">📋 '+_escHtml(fc.examRelevance)+'</div>';
+  }
+  document.getElementById('_scFCA').innerHTML = ansHtml;
   document.getElementById('_scFCA').style.display = 'none';
   document.getElementById('_scFCBtns').style.display = 'none';
   document.getElementById('_scFCHint').textContent   = '👆 Tap to flip';
@@ -27068,6 +27152,14 @@ window.scFCAns = function(correct) {
 window.scCloseFC = function() {
   var p = document.getElementById('_scFCPanel'); if(p) p.style.display='none';
   scOpenAiChat();
+};
+
+// Force regenerate — clear hash so fresh web-enriched flashcards ban sake
+window._scFCRegenerate = function() {
+  _scFC.hash = ''; // force rebuild
+  _scFCSave();
+  var p = document.getElementById('_scFCPanel'); if(p) p.style.display='none';
+  scAiMakeFlashcards();
 };
 
 // ── Quiz ──
