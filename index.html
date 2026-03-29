@@ -12775,7 +12775,8 @@ let _syncTimeout = null;
 let _justRestored = false; // Restore ke baad Firebase overwrite rokne ke liye
 let _realtimeListener = null; // onSnapshot unsubscribe handle
 let _lastSaveTime = 0;        // Apna khud ka save track karo — apni hi update se reload mat karo
-let _myWriteId = '';          // Unique ID jo hamne last save mein likha — apni echo identify karne ke liye
+let _myWriteId = '';          // Unique ID — apni echo identify karne ke liye
+let _listenerRetryTimer = null; // Listener reconnect timer
 
 // Firebase config localStorage se load karo
 function getFbConfig(){
@@ -19624,11 +19625,9 @@ async function saveToFirebase(){
     var allOps = []; // {ref, data}
 
     // ── 1. Meta doc ──
-    // Unique write ID generate karo — apni hi echo identify karne ke liye
     var writeId = Date.now().toString(36) + Math.random().toString(36).slice(2,7);
     _myWriteId = writeId;
     _lastSaveTime = Date.now();
-
     allOps.push({
       ref: _db.collection('users').doc(uid),
       data: {
@@ -19643,9 +19642,9 @@ async function saveToFirebase(){
         pausedQuiz:        S.pausedQuiz||null,
         exams:             S.exams||[],
         subjectIds:        (S.subjects||[]).map(s=>s.id),
-        topicFormat:       'v2',  // flag: per-topic format
+        topicFormat:       'v2',
         lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
-        writeId:           writeId  // Echo detection ke liye
+        writeId:           writeId
       }
     });
 
@@ -19876,43 +19875,51 @@ async function syncNow(){
 // ── REALTIME LISTENER — dusri device pe save hone par auto reload ──
 function _attachRealtimeListener(){
   if(!_db || !_currentUser) return;
-  // Pehle purana listener hatao
+  // Pehle purana listener aur retry timer hatao
   if(_realtimeListener){ _realtimeListener(); _realtimeListener = null; }
+  if(_listenerRetryTimer){ clearTimeout(_listenerRetryTimer); _listenerRetryTimer = null; }
 
   var uid = _currentUser.uid;
+  var _knownWriteId = _myWriteId || ''; // Pehli snapshot ke liye baseline
   var _firstSnapshot = true;
-  var _knownWriteId = ''; // Pehli snapshot se apna writeId baseline set karenge
 
-  _realtimeListener = _db.collection('users').doc(uid).onSnapshot(function(doc){
-    if(!doc.exists) return;
+  _realtimeListener = _db.collection('users').doc(uid).onSnapshot(
+    { includeMetadataChanges: false },
+    function(doc){
+      if(!doc.exists) return;
+      var data = doc.data();
+      var incomingWriteId = data.writeId || '';
 
-    var data = doc.data();
+      // Pehli snapshot: sirf baseline set karo
+      if(_firstSnapshot){
+        _firstSnapshot = false;
+        _knownWriteId = incomingWriteId;
+        return;
+      }
 
-    // Pehli snapshot: sirf apna current writeId baseline set karo, reload mat karo
-    if(_firstSnapshot){
-      _firstSnapshot = false;
-      _knownWriteId = data.writeId || '';
-      return;
-    }
+      // Agar writeId naya nahi — koi change nahi
+      if(!incomingWriteId || incomingWriteId === _knownWriteId) return;
 
-    var incomingWriteId = data.writeId || '';
+      // Agar yeh hamara khud ka writeId hai — apni echo, ignore karo
+      if(incomingWriteId === _myWriteId){
+        _knownWriteId = incomingWriteId;
+        return;
+      }
 
-    // Agar yeh writeId wahi hai jo humne khud likha tha — apni hi echo, ignore karo
-    // _myWriteId = jo is device ne abhi save kiya; _knownWriteId = pehle se jaanta tha
-    if(incomingWriteId && (incomingWriteId === _myWriteId || incomingWriteId === _knownWriteId)){
+      // Naya writeId aur hamara nahi — dusri device ne save kiya
       _knownWriteId = incomingWriteId;
-      return;
+      _silentReloadFromFirebase();
+    },
+    function(err){
+      // WebChannel transport error — listener gir gaya, reconnect karo
+      console.log('Realtime listener dropped, reconnecting in 5s:', err.code || err.message);
+      _realtimeListener = null;
+      // 5 seconds baad dobara attach karo
+      _listenerRetryTimer = setTimeout(function(){
+        if(_currentUser) _attachRealtimeListener();
+      }, 5000);
     }
-
-    // writeId naya aaya — dusri device ne save kiya hai
-    _knownWriteId = incomingWriteId;
-
-    // Dusri device se naya update aaya — silently reload karo
-    _silentReloadFromFirebase();
-
-  }, function(err){
-    console.log('Realtime listener error (likely offline):', err.code);
-  });
+  );
 }
 
 // ── Silent reload — UI disturb kiye bina dusri device ka data load karo ──
@@ -20024,8 +20031,13 @@ async function _silentReloadFromFirebase(){
     showToast && showToast('🔄 Dusri device se update aaya!', 'info');
 
   }catch(e){
-    // Silent fail — offline ya error
+    // Agar network issue tha — 10 sec baad retry karo
     console.log('Silent reload error:', e.message);
+    if(e.code === 'unavailable' || (e.message && e.message.includes('transport'))){
+      setTimeout(function(){
+        if(_currentUser) _silentReloadFromFirebase();
+      }, 10000);
+    }
   }
 }
 
