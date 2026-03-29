@@ -12773,6 +12773,8 @@ let _currentUser = null;
 let _fbReady = false;
 let _syncTimeout = null;
 let _justRestored = false; // Restore ke baad Firebase overwrite rokne ke liye
+let _realtimeListener = null; // onSnapshot unsubscribe handle
+let _lastSaveTime = 0;        // Apna khud ka save track karo — apni hi update se reload mat karo
 
 // Firebase config localStorage se load karo
 function getFbConfig(){
@@ -12838,9 +12840,14 @@ function initFirebase(){
         _currentUser = user;
         hideLoginScreen();
         updateUserUI(user);
-        loadFromFirebase();
+        loadFromFirebase().then(function(){
+          // Login ke baad initial load hone ke baad realtime listener lagao
+          _attachRealtimeListener();
+        });
       } else {
         _currentUser = null;
+        // Listener detach karo logout par
+        if(_realtimeListener){ _realtimeListener(); _realtimeListener = null; }
         showLoginScreen();
         updateUserUI(null);
       }
@@ -19603,6 +19610,7 @@ window.neDrawToggle = function(){
 
 async function saveToFirebase(){
   if(!_db || !_currentUser) return;
+  _lastSaveTime = Date.now(); // Mark: yeh hamara apna save hai
   setSyncStatus('syncing');
   try{
     const uid = _currentUser.uid;
@@ -19857,6 +19865,150 @@ async function syncNow(){
   closeModal('userMenuModal');
   await saveToFirebase();
   showToast('Sync ho gaya! ☁️✅','success');
+}
+
+// ── REALTIME LISTENER — dusri device pe save hone par auto reload ──
+function _attachRealtimeListener(){
+  if(!_db || !_currentUser) return;
+  // Pehle purana listener hatao
+  if(_realtimeListener){ _realtimeListener(); _realtimeListener = null; }
+
+  var uid = _currentUser.uid;
+
+  _realtimeListener = _db.collection('users').doc(uid).onSnapshot(function(doc){
+    if(!doc.exists) return;
+
+    // Agar humne khud abhi save kiya tha (last 8 sec mein) to ignore karo — apni hi echo hai
+    var now = Date.now();
+    if(now - _lastSaveTime < 8000) return;
+
+    // lastSync field check karo — server timestamp se compare karo
+    var data = doc.data();
+    var serverTs = data.lastSync && data.lastSync.toMillis ? data.lastSync.toMillis() : 0;
+
+    // Agar server par koi naya change aaya hai (8 sec grace period ke baad)
+    if(serverTs && (now - serverTs) < 30000 && (now - _lastSaveTime) > 8000){
+      // Dusri device se aaya update — silently reload karo
+      _silentReloadFromFirebase();
+    }
+  }, function(err){
+    // Listener error — ignore, offline hoga
+    console.log('Realtime listener error (likely offline):', err.code);
+  });
+}
+
+// ── Silent reload — UI disturb kiye bina dusri device ka data load karo ──
+async function _silentReloadFromFirebase(){
+  if(!_db || !_currentUser) return;
+  // Agar user kuchh actively type/edit kar raha hai to delay karo
+  if(document.querySelector('.notes-editor-modal.show, .modal.show')) {
+    // Koi modal/editor open hai — 15 sec baad retry karo
+    setTimeout(_silentReloadFromFirebase, 15000);
+    return;
+  }
+
+  try{
+    var uid = _currentUser.uid;
+    var metaDoc = await _db.collection('users').doc(uid).get();
+    if(!metaDoc.exists) return;
+
+    var meta = metaDoc.data();
+    var subjectIds = meta.subjectIds || [];
+    if(!subjectIds.length) return;
+
+    // Subject shells load karo
+    var shellDocs = await Promise.all(
+      subjectIds.map(function(id){
+        return _db.collection('users').doc(uid).collection('subjects').doc(String(id)).get();
+      })
+    );
+
+    // All topics load karo
+    var topicDocs = await _db.collection('users').doc(uid).collection('topics').get();
+    var topicMap = {};
+    topicDocs.forEach(function(d){
+      var td = d.data();
+      if(td && td.topic) topicMap[String(td.topic.id)] = td.topic;
+    });
+
+    // Reassemble subjects
+    var newSubjects = shellDocs
+      .filter(function(d){ return d.exists; })
+      .map(function(d){
+        var shell = d.data().shell;
+        if(!shell) return null;
+        shell.sections = (shell.sectionMeta||[]).map(function(sm){
+          sm.topics = (sm.topicIds||[]).map(function(tid){
+            return topicMap[String(tid)] || null;
+          }).filter(Boolean);
+          delete sm.topicIds;
+          return sm;
+        });
+        delete shell.sectionMeta;
+        return shell;
+      }).filter(Boolean);
+
+    if(!newSubjects.length) return;
+
+    // Local editor state preserve karo (jo abhi open hai)
+    var localEditorData = {};
+    (S.subjects||[]).forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
+      if(t.finalNotesHTML)  localEditorData['fn_'+t.id] = t.finalNotesHTML;
+      if(t.smartNotesHTML)  localEditorData['sn_'+t.id] = t.smartNotesHTML;
+      if(t.masterNotesHTML) localEditorData['mn_'+t.id] = t.masterNotesHTML;
+      (t.notes||[]).forEach(function(n){
+        if(n.editorRichHTML !== undefined) localEditorData['n_'+n.id] = { richHTML: n.editorRichHTML, highlights: n.editorHighlights||[] };
+      });
+    }); }); });
+
+    // S update karo
+    S.subjects          = newSubjects;
+    S.exams             = meta.exams || S.exams || [];
+    S.activeExamId      = meta.activeExamId || S.activeExamId || '';
+    S.quizHistory       = meta.quizHistory || S.quizHistory || [];
+    S.stats             = meta.stats || S.stats || {total:0,correct:0,wrong:0,topicStats:{}};
+    S.questionVault     = meta.questionVault || S.questionVault || [];
+    S.savedQuestions    = meta.savedQuestions || S.savedQuestions || [];
+    S.wrongedQuestions  = meta.wrongedQuestions || S.wrongedQuestions || [];
+    S.reportedQuestions = meta.reportedQuestions || S.reportedQuestions || [];
+    S.pausedQuiz        = meta.pausedQuiz || S.pausedQuiz || null;
+
+    // Local editor data wapas lagao
+    S.subjects.forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
+      if(!t.highlights) t.highlights=[];
+      if(!t.savedFacts) t.savedFacts=[];
+      if(!t.notes) t.notes=[];
+      if(localEditorData['fn_'+t.id]) t.finalNotesHTML  = localEditorData['fn_'+t.id];
+      if(localEditorData['sn_'+t.id]) t.smartNotesHTML  = localEditorData['sn_'+t.id];
+      if(localEditorData['mn_'+t.id]) t.masterNotesHTML = localEditorData['mn_'+t.id];
+      t.notes.forEach(function(n){
+        if(!n.editorHighlights) n.editorHighlights=[];
+        var ld = localEditorData['n_'+n.id];
+        if(ld && ld.richHTML){ n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[]; }
+      });
+    }); }); });
+
+    try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+
+    // UI refresh
+    renderExamSwitcher && renderExamSwitcher();
+    renderLibrarySelects && renderLibrarySelects();
+    renderLibraryTree && renderLibraryTree();
+    renderExamsList && renderExamsList();
+    updateQuizSelects && updateQuizSelects();
+    renderStats && renderStats();
+    updateModePill && updateModePill();
+    updateHistBadge && updateHistBadge();
+    updateSavedBadge && updateSavedBadge();
+    updateVaultBadge && updateVaultBadge();
+
+    // Subtle toast — "dusri device se update aaya"
+    showToast && showToast('🔄 Dusri device se update aaya!', 'info');
+
+  }catch(e){
+    // Silent fail — offline ya error
+    console.log('Silent reload error:', e.message);
+  }
 }
 
 // ---- OVERRIDE save() TO ALSO SYNC ----
