@@ -6911,39 +6911,199 @@ function tvShowSub(catId, sid, secid, tid){
     var pctDK   = Math.round((dontKnowItems.length/totalCards)*100)||0;
     var pctUN   = 100 - pctSure - pctNC - pctDK;
 
-    subBody.innerHTML = `<div style="padding:10px 14px 20px;">
-      <!-- Header info -->
-      <div style="background:linear-gradient(135deg,rgba(21,101,192,0.06),rgba(106,27,154,0.06));border:1.5px solid rgba(21,101,192,0.15);border-radius:12px;padding:10px 13px;margin-bottom:12px;">
-        <div style="font-size:0.72rem;font-weight:800;color:var(--text);margin-bottom:8px;">📊 Confidence Overview — ${totalCards} Flashcards</div>
-        <!-- Stacked progress bar -->
-        <div style="display:flex;height:8px;border-radius:6px;overflow:hidden;margin-bottom:8px;gap:1px;">
-          ${dontKnowItems.length  ? `<div style="flex:${dontKnowItems.length};background:#c62828;border-radius:4px;" title="Don't Know: ${dontKnowItems.length}"></div>` : ''}
-          ${notConfItems.length   ? `<div style="flex:${notConfItems.length};background:#f57c00;border-radius:4px;" title="Not Confirm: ${notConfItems.length}"></div>` : ''}
-          ${unseenItems.length    ? `<div style="flex:${unseenItems.length};background:#90caf9;border-radius:4px;" title="Unseen: ${unseenItems.length}"></div>` : ''}
-          ${sureItems.length      ? `<div style="flex:${sureItems.length};background:#2e7d32;border-radius:4px;" title="Sure: ${sureItems.length}"></div>` : ''}
-        </div>
-        <!-- Pills -->
-        <div style="display:flex;gap:5px;flex-wrap:wrap;">
-          <span style="background:rgba(198,40,40,0.1);color:#c62828;border:1px solid rgba(198,40,40,0.3);border-radius:20px;padding:2px 8px;font-size:0.62rem;font-weight:800;">❌ Don't Know: ${dontKnowItems.length}</span>
-          <span style="background:rgba(245,124,0,0.1);color:#e65100;border:1px solid rgba(245,124,0,0.3);border-radius:20px;padding:2px 8px;font-size:0.62rem;font-weight:800;">🤔 Not Confirm: ${notConfItems.length}</span>
-          <span style="background:rgba(33,150,243,0.08);color:#1565c0;border:1px solid rgba(33,150,243,0.2);border-radius:20px;padding:2px 8px;font-size:0.62rem;font-weight:800;">🔵 Unseen: ${unseenItems.length}</span>
-          <span style="background:rgba(46,125,50,0.08);color:#2e7d32;border:1px solid rgba(46,125,50,0.25);border-radius:20px;padding:2px 8px;font-size:0.62rem;font-weight:800;">✅ Sure: ${sureItems.length}</span>
-        </div>
-        <div style="font-size:0.6rem;color:var(--text2);margin-top:6px;">💡 Har flashcard par apni rating do — sort automatically ho jata hai!</div>
-      </div>
-      <!-- Export actions -->
-      <div style="display:flex;gap:7px;margin-bottom:14px;">
-        <button onclick="tvCopyFCJson(this)" data-json="${safeJson}"
-          style="flex:1;padding:7px;border-radius:9px;border:1.5px solid rgba(21,101,192,0.3);background:rgba(21,101,192,0.07);color:#1565c0;font-size:0.68rem;font-weight:800;cursor:pointer;font-family:inherit;">📋 Copy</button>
-        <button onclick="tvDownloadFCJson(this)" data-json="${safeJson}" data-topic="${_e(t.name)}"
-          style="flex:1;padding:7px;border-radius:9px;border:1.5px solid rgba(46,125,50,0.3);background:rgba(46,125,50,0.07);color:#2e7d32;font-size:0.68rem;font-weight:800;cursor:pointer;font-family:inherit;">⬇ Download</button>
-      </div>
-      <!-- Sections sorted by difficulty: Don't Know first → Not Confirm → Unseen → Sure last -->
-      ${_fcSection('dontknow', "❌ Don't Know — Sabse pehle practice karo", dontKnowItems, 'Koi card is category mein nahi — great! 🎉')}
-      ${_fcSection('notconfirm', '🤔 Not Confirm — Thodi aur revision chahiye', notConfItems, 'Koi card is category mein nahi')}
-      ${_fcSection('unseen', '🔵 Unseen — Abhi rate nahi kiye', unseenItems, 'Saare cards rate ho chuke hain! ✅')}
-      ${_fcSection('sure', '✅ Sure — Achhi tarah yaad hai', sureItems, 'Koi card abhi sure nahi')}
-    </div>`;
+    // ── State vars for this render (stored on window for button access) ──
+    window._fcState = window._fcState || {};
+    window._fcState[tid] = { answersVisible: true, examRelVisible: true, activeFilter: 'all', selectedIds: new Set(), selectMode: false };
+
+    function _fcRenderCards() {
+      var st = window._fcState[tid];
+      var filtered;
+      if     (st.activeFilter === 'dontknow')   filtered = dontKnowItems;
+      else if(st.activeFilter === 'notconfirm')  filtered = notConfItems;
+      else if(st.activeFilter === 'unseen')       filtered = unseenItems;
+      else if(st.activeFilter === 'sure')         filtered = sureItems;
+      else                                        filtered = allItems;
+
+      var listEl = document.getElementById('_fcCardList_'+tid);
+      if(!listEl) return;
+      if(!filtered.length) {
+        listEl.innerHTML = '<div style="padding:20px;text-align:center;font-size:0.75rem;color:var(--text2);font-style:italic;">Is filter mein koi card nahi hai</div>';
+        return;
+      }
+      listEl.innerHTML = filtered.map(function(item, idx) {
+        var c = item.card, p = item.p;
+        var conf = p.confidence || null;
+        var cm = conf ? CONF_META[conf] : CONF_META.unseen;
+        var total = p.r + p.w;
+        var pct = total ? Math.round((p.r/total)*100) : null;
+        var examRelHtml = c.examRelevance
+          ? '<div class="_fcExamRel" style="margin-top:5px;font-size:0.64rem;color:#1565c0;background:rgba(21,101,192,0.07);padding:3px 8px;border-radius:6px;border-left:2px solid #1565c0;' + (st.examRelVisible?'':'display:none;') + '">📋 '+_e(c.examRelevance)+'</div>'
+          : '';
+        var diffBadge = c.difficulty ? (c.difficulty==='hard'?'🔴':c.difficulty==='easy'?'🟢':'🟠')+' '+c.difficulty : '';
+        var isSelected = st.selectedIds.has(c.id);
+
+        function _cBtn(val, emoji, lbl) {
+          var isActive = conf === val;
+          var cm2 = CONF_META[val];
+          return '<button onclick="tvFCSetConfidence(\''+c.id+'\','+tid+','+sid+','+secid+',\''+val+'\')" title="'+lbl+'" style="flex:1;padding:6px 4px;border-radius:9px;font-size:0.72rem;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;transition:all 0.15s;border:2px solid '+(isActive?cm2.border:'rgba(0,0,0,0.1)')+';background:'+(isActive?cm2.bg:'rgba(0,0,0,0.03)')+';color:'+(isActive?cm2.col:'var(--text2)')+';transform:'+(isActive?'scale(1.04)':'scale(1)')+';"><span style="font-size:1rem;">'+emoji+'</span><br><span style="font-size:0.56rem;">'+lbl+'</span></button>';
+        }
+
+        var checkboxHtml = st.selectMode
+          ? '<div style="position:absolute;top:10px;right:10px;width:20px;height:20px;border-radius:5px;border:2px solid '+(isSelected?'#1565c0':'rgba(0,0,0,0.25)')+';background:'+(isSelected?'#1565c0':'transparent')+';display:flex;align-items:center;justify-content:center;cursor:pointer;" onclick="event.stopPropagation();_fcToggleSelect('+tid+',\''+c.id+'\');">'+(isSelected?'<span style="color:#fff;font-size:0.75rem;font-weight:900;">✓</span>':'')+'</div>'
+          : '';
+
+        return '<div id="fcCard_'+c.id+'" style="background:var(--surface);border:2px solid '+(isSelected?'#1565c0':cm.border)+';border-radius:13px;padding:11px 13px;margin-bottom:9px;position:relative;overflow:hidden;transition:border 0.15s;'+(isSelected?'box-shadow:0 0 0 3px rgba(21,101,192,0.15);':'')+'">'+
+          '<div style="position:absolute;top:0;left:0;bottom:0;width:4px;background:'+cm.barCol+';border-radius:13px 0 0 13px;"></div>'+
+          checkboxHtml+
+          '<div style="margin-left:10px;">'+
+            '<div style="display:flex;align-items:center;gap:5px;margin-bottom:6px;flex-wrap:wrap;'+(st.selectMode?'padding-right:28px;':'')+'">'+
+              '<span style="font-size:0.62rem;font-weight:800;color:var(--text2);">#'+(idx+1)+'</span>'+
+              '<span style="background:'+cm.bg+';border:1px solid '+cm.border+';color:'+cm.col+';border-radius:20px;padding:1px 8px;font-size:0.6rem;font-weight:800;">'+cm.emoji+' '+cm.label+'</span>'+
+              (diffBadge?'<span style="font-size:0.58rem;font-weight:700;color:var(--text2);">'+diffBadge+'</span>':'')+
+              (p.saved?'<span style="background:rgba(106,27,154,0.1);border:1px solid rgba(106,27,154,0.3);color:#6a1b9a;border-radius:20px;padding:1px 6px;font-size:0.58rem;font-weight:800;">⭐</span>':'')+
+              (total>0?'<span style="font-size:0.56rem;color:var(--text2);margin-left:auto;">✅'+p.r+' ❌'+p.w+(pct!==null?' ('+pct+'%)':'')+'</span>':'')+
+            '</div>'+
+            '<div style="font-size:0.8rem;font-weight:700;color:var(--text);line-height:1.5;margin-bottom:7px;">'+_e(c.q)+'</div>'+
+            '<div class="_fcAnsBlock" style="margin-bottom:9px;'+(st.answersVisible?'':'display:none;')+'">'+
+              '<div style="padding:7px 10px;background:rgba(21,101,192,0.05);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;font-size:0.75rem;line-height:1.55;color:var(--text);">'+_e(c.a)+examRelHtml+'</div>'+
+            '</div>'+
+            '<div style="margin-bottom:8px;">'+
+              '<div style="font-size:0.6rem;font-weight:800;color:var(--text2);margin-bottom:5px;">APNI RATING DO:</div>'+
+              '<div style="display:flex;gap:5px;">'+_cBtn('dontknow','❌',"Don't Know")+_cBtn('notconfirm','🤔','Not Confirm')+_cBtn('sure','✅','Sure')+'</div>'+
+            '</div>'+
+            '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
+              '<button onclick="tvFCToggleSaved(\''+c.id+'\','+tid+','+sid+','+secid+')" style="padding:3px 8px;border-radius:7px;font-size:0.62rem;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid '+(p.saved?'rgba(106,27,154,0.5)':'rgba(106,27,154,0.2)')+';background:'+(p.saved?'rgba(106,27,154,0.12)':'transparent')+';color:'+(p.saved?'#6a1b9a':'#9e5fb5')+';">'+(p.saved?'⭐ Saved':'☆ Save')+'</button>'+
+              '<button onclick="tvFCDelete(\''+c.id+'\','+tid+','+sid+','+secid+')" style="padding:3px 8px;border-radius:7px;font-size:0.62rem;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid rgba(198,40,40,0.2);background:transparent;color:#c62828;margin-left:auto;">🗑</button>'+
+            '</div>'+
+          '</div>'+
+        '</div>';
+      }).join('');
+    }
+
+    function _fcRenderToolbar() {
+      var st = window._fcState[tid];
+      var selCount = st.selectedIds.size;
+      var filters = [
+        {k:'all',        emoji:'🔘', lbl:'All',         count:totalCards},
+        {k:'dontknow',   emoji:'❌', lbl:"Don't Know",  count:dontKnowItems.length},
+        {k:'notconfirm', emoji:'🤔', lbl:'Not Confirm', count:notConfItems.length},
+        {k:'unseen',     emoji:'🔵', lbl:'Unseen',      count:unseenItems.length},
+        {k:'sure',       emoji:'✅', lbl:'Sure',         count:sureItems.length},
+      ];
+      var filterHTML = '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;">' +
+        filters.map(function(f){
+          var active = st.activeFilter===f.k;
+          return '<button onclick="_fcSetFilter('+tid+',\''+f.k+'\')" style="padding:4px 9px;border-radius:20px;font-size:0.62rem;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid '+(active?'var(--accent)':'rgba(0,0,0,0.15)')+';background:'+(active?'var(--accent)':'transparent')+';color:'+(active?'#fff':'var(--text2)')+';">'+f.emoji+' '+f.lbl+' <b>'+f.count+'</b></button>';
+        }).join('') + '</div>';
+
+      var actionHTML = '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">' +
+        '<button onclick="_fcToggleAnswers('+tid+')" style="padding:5px 9px;border-radius:8px;font-size:0.65rem;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid rgba(21,101,192,0.3);background:rgba(21,101,192,0.07);color:#1565c0;">' +
+          (st.answersVisible ? '🙈 Answers Hide' : '👁 Answers Show') + '</button>' +
+        '<button onclick="_fcToggleExamRel('+tid+')" style="padding:5px 9px;border-radius:8px;font-size:0.65rem;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid rgba(21,101,192,0.2);background:transparent;color:#1565c0;">' +
+          (st.examRelVisible ? '📋 Hint Hide' : '📋 Hint Show') + '</button>' +
+        '<button onclick="_fcToggleSelectMode('+tid+')" style="padding:5px 9px;border-radius:8px;font-size:0.65rem;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid rgba(106,27,154,0.3);background:'+(st.selectMode?'rgba(106,27,154,0.12)':'transparent')+';color:#6a1b9a;">' +
+          (st.selectMode ? '☑ '+selCount+' Selected' : '☑ Select') + '</button>' +
+        (st.selectMode ?
+          '<button onclick="_fcSelectAll('+tid+')" style="padding:5px 8px;border-radius:8px;font-size:0.62rem;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid rgba(21,101,192,0.3);background:transparent;color:#1565c0;">All</button>' +
+          '<button onclick="_fcDeselectAll('+tid+')" style="padding:5px 8px;border-radius:8px;font-size:0.62rem;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid rgba(0,0,0,0.15);background:transparent;color:var(--text2);">None</button>' +
+          (selCount>0 ? '<button onclick="_fcDeleteSelected('+tid+','+sid+','+secid+')" style="padding:5px 9px;border-radius:8px;font-size:0.65rem;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid rgba(198,40,40,0.4);background:rgba(198,40,40,0.1);color:#c62828;">🗑 Delete ('+selCount+')</button>' : '')
+        : '') +
+        '<span style="flex:1;"></span>' +
+        '<button onclick="tvCopyFCJson(this)" data-json="' + safeJson + '" style="padding:5px 8px;border-radius:8px;font-size:0.62rem;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid rgba(21,101,192,0.25);background:transparent;color:#1565c0;">📋</button>' +
+        '<button onclick="tvDownloadFCJson(this)" data-json="' + safeJson + '" data-topic="' + _e(t.name) + '" style="padding:5px 8px;border-radius:8px;font-size:0.62rem;font-weight:800;cursor:pointer;font-family:inherit;border:1.5px solid rgba(46,125,50,0.25);background:transparent;color:#2e7d32;">⬇</button>' +
+      '</div>';
+
+      var tb = document.getElementById('_fcToolbar_'+tid);
+      if(tb) tb.innerHTML = filterHTML + actionHTML;
+    }
+
+    subBody.innerHTML =
+      '<div style="padding:10px 14px 20px;" id="_fcRoot_'+tid+'">' +
+        '<div style="background:linear-gradient(135deg,rgba(21,101,192,0.06),rgba(106,27,154,0.06));border:1.5px solid rgba(21,101,192,0.15);border-radius:12px;padding:10px 13px;margin-bottom:10px;">' +
+          '<div style="font-size:0.72rem;font-weight:800;color:var(--text);margin-bottom:7px;">📊 Confidence Overview — '+totalCards+' Flashcards</div>' +
+          '<div style="display:flex;height:8px;border-radius:6px;overflow:hidden;margin-bottom:7px;gap:1px;">' +
+            (dontKnowItems.length ? '<div style="flex:'+dontKnowItems.length+';background:#c62828;border-radius:4px;"></div>' : '') +
+            (notConfItems.length  ? '<div style="flex:'+notConfItems.length+';background:#f57c00;border-radius:4px;"></div>' : '') +
+            (unseenItems.length   ? '<div style="flex:'+unseenItems.length+';background:#90caf9;border-radius:4px;"></div>' : '') +
+            (sureItems.length     ? '<div style="flex:'+sureItems.length+';background:#2e7d32;border-radius:4px;"></div>' : '') +
+          '</div>' +
+          '<div style="display:flex;gap:5px;flex-wrap:wrap;">' +
+            '<span style="background:rgba(198,40,40,0.1);color:#c62828;border:1px solid rgba(198,40,40,0.3);border-radius:20px;padding:2px 8px;font-size:0.6rem;font-weight:800;">❌ '+dontKnowItems.length+" Don't Know</span>" +
+            '<span style="background:rgba(245,124,0,0.1);color:#e65100;border:1px solid rgba(245,124,0,0.3);border-radius:20px;padding:2px 8px;font-size:0.6rem;font-weight:800;">🤔 '+notConfItems.length+' Not Confirm</span>' +
+            '<span style="background:rgba(33,150,243,0.08);color:#1565c0;border:1px solid rgba(33,150,243,0.2);border-radius:20px;padding:2px 8px;font-size:0.6rem;font-weight:800;">🔵 '+unseenItems.length+' Unseen</span>' +
+            '<span style="background:rgba(46,125,50,0.08);color:#2e7d32;border:1px solid rgba(46,125,50,0.25);border-radius:20px;padding:2px 8px;font-size:0.6rem;font-weight:800;">✅ '+sureItems.length+' Sure</span>' +
+          '</div>' +
+        '</div>' +
+        '<div id="_fcToolbar_'+tid+'" style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:9px 10px;margin-bottom:10px;"></div>' +
+        '<div id="_fcCardList_'+tid+'"></div>' +
+      '</div>';
+
+    // Initial render
+    _fcRenderToolbar();
+    _fcRenderCards();
+
+    // ── Global handler functions (window scope for inline onclick) ──
+    window._fcSetFilter = function(t2, f) {
+      if(!window._fcState[t2]) return;
+      window._fcState[t2].activeFilter = f;
+      window._fcState[t2].selectedIds = new Set();
+      _fcRenderToolbar(); _fcRenderCards();
+    };
+    window._fcToggleAnswers = function(t2) {
+      if(!window._fcState[t2]) return;
+      window._fcState[t2].answersVisible = !window._fcState[t2].answersVisible;
+      _fcRenderToolbar(); _fcRenderCards();
+    };
+    window._fcToggleExamRel = function(t2) {
+      if(!window._fcState[t2]) return;
+      window._fcState[t2].examRelVisible = !window._fcState[t2].examRelVisible;
+      _fcRenderToolbar(); _fcRenderCards();
+    };
+    window._fcToggleSelectMode = function(t2) {
+      if(!window._fcState[t2]) return;
+      window._fcState[t2].selectMode = !window._fcState[t2].selectMode;
+      window._fcState[t2].selectedIds = new Set();
+      _fcRenderToolbar(); _fcRenderCards();
+    };
+    window._fcToggleSelect = function(t2, cardId) {
+      if(!window._fcState[t2]) return;
+      var sel = window._fcState[t2].selectedIds;
+      if(sel.has(cardId)) sel.delete(cardId); else sel.add(cardId);
+      _fcRenderToolbar(); _fcRenderCards();
+    };
+    window._fcSelectAll = function(t2) {
+      if(!window._fcState[t2]) return;
+      var st2 = window._fcState[t2];
+      var filtered2 = st2.activeFilter==='all' ? allItems :
+        st2.activeFilter==='dontknow' ? dontKnowItems :
+        st2.activeFilter==='notconfirm' ? notConfItems :
+        st2.activeFilter==='unseen' ? unseenItems : sureItems;
+      filtered2.forEach(function(x){ st2.selectedIds.add(x.card.id); });
+      _fcRenderToolbar(); _fcRenderCards();
+    };
+    window._fcDeselectAll = function(t2) {
+      if(!window._fcState[t2]) return;
+      window._fcState[t2].selectedIds = new Set();
+      _fcRenderToolbar(); _fcRenderCards();
+    };
+    window._fcDeleteSelected = function(t2, s2, sc2) {
+      if(!window._fcState[t2]) return;
+      var sel2 = window._fcState[t2].selectedIds;
+      if(!sel2.size) return;
+      if(!confirm('⚠️ '+sel2.size+' flashcards delete karna chahte ho? Yeh wapas nahi aayenge.')) return;
+      try {
+        var key2 = 'scFC_' + (t2||'default');
+        var raw2 = localStorage.getItem(key2);
+        if(!raw2) return;
+        var d2 = JSON.parse(raw2);
+        d2.cards = (d2.cards||[]).filter(function(c){ return !sel2.has(c.id); });
+        sel2.forEach(function(id){ delete (d2.progress||{})[id]; });
+        d2.hash = '';
+        localStorage.setItem(key2, JSON.stringify(d2));
+        if(typeof showToast==='function') showToast('🗑 '+sel2.size+' flashcards delete ho gaye','success');
+      } catch(e) {}
+      tvShowSub('flashcards', s2, sc2, t2);
+    };
 
   } else {
     // Smart / Final / Master — single content
