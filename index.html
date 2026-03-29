@@ -7104,8 +7104,84 @@ function tvShowSub(catId, sid, secid, tid){
     window._fcControlsVisible = window._fcControlsVisible || {};
     if(window._fcControlsVisible[tid] === undefined) window._fcControlsVisible[tid] = false; // default: collapsed
 
+    // ── IMMERSIVE MODE: hide headers when in flashcard view ──
+    (function() {
+      var tvHdr   = document.querySelector('.tv-header');
+      var tvSubHdr= document.querySelector('.tv-sub-header');
+      if(tvHdr)    { tvHdr.setAttribute('data-fc-hidden','1');   tvHdr.style.cssText   += ';display:none!important;'; }
+      if(tvSubHdr) { tvSubHdr.setAttribute('data-fc-hidden','1'); tvSubHdr.style.cssText += ';display:none!important;'; }
+
+      // Show headers back when leaving flashcard screen (tvGoBack patching)
+      var _origGoBack = window._fcOrigGoBack || window.tvGoBack;
+      if(!window._fcOrigGoBack && typeof tvGoBack === 'function') {
+        window._fcOrigGoBack = tvGoBack;
+        window.tvGoBack = function() {
+          document.querySelectorAll('[data-fc-hidden]').forEach(function(el){
+            el.removeAttribute('data-fc-hidden');
+            el.style.display='';
+          });
+          var pill = document.getElementById('_fcImmersivePill');
+          if(pill) pill.remove();
+          var fab  = document.getElementById('_fcFabBack');
+          if(fab)  fab.remove();
+          window._fcOrigGoBack && window._fcOrigGoBack();
+        };
+      }
+
+      // ── Floating pill (top center) — tap to reveal headers ──
+      var oldPill = document.getElementById('_fcImmersivePill');
+      if(oldPill) oldPill.remove();
+      var pill = document.createElement('div');
+      pill.id = '_fcImmersivePill';
+      pill.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;' +
+        'background:rgba(21,101,192,0.92);color:#fff;border-radius:20px;padding:5px 18px;' +
+        'font-size:0.65rem;font-weight:800;font-family:inherit;cursor:pointer;' +
+        'box-shadow:0 2px 12px rgba(21,101,192,0.35);backdrop-filter:blur(4px);' +
+        'display:flex;align-items:center;gap:6px;white-space:nowrap;transition:opacity 0.2s;' +
+        '-webkit-tap-highlight-color:transparent;user-select:none;';
+      pill.innerHTML = '🃏 Flashcards <span style="opacity:0.7;font-size:0.55rem;">▼ tap for menu</span>';
+      var _pillTimeout;
+      pill.onclick = function() {
+        var tvHdr2   = document.querySelector('.tv-header');
+        var tvSubHdr2= document.querySelector('.tv-sub-header');
+        var showing  = tvHdr2 && tvHdr2.style.display !== 'none' && !tvHdr2.style.cssText.includes('display:none');
+        if(showing) {
+          if(tvHdr2)    tvHdr2.style.cssText    += ';display:none!important;';
+          if(tvSubHdr2) tvSubHdr2.style.cssText  += ';display:none!important;';
+          pill.innerHTML = '🃏 Flashcards <span style="opacity:0.7;font-size:0.55rem;">▼ tap for menu</span>';
+        } else {
+          if(tvHdr2)    { tvHdr2.style.cssText    = tvHdr2.style.cssText.replace(/display:none!important;?/g,'');    tvHdr2.style.display='flex'; }
+          if(tvSubHdr2) { tvSubHdr2.style.cssText = tvSubHdr2.style.cssText.replace(/display:none!important;?/g,''); tvSubHdr2.style.display='flex'; }
+          pill.innerHTML = '✕ Menu Hide <span style="opacity:0.7;font-size:0.55rem;">▲</span>';
+          clearTimeout(_pillTimeout);
+          _pillTimeout = setTimeout(function(){
+            if(tvHdr2)    tvHdr2.style.cssText    += ';display:none!important;';
+            if(tvSubHdr2) tvSubHdr2.style.cssText  += ';display:none!important;';
+            pill.innerHTML = '🃏 Flashcards <span style="opacity:0.7;font-size:0.55rem;">▼ tap for menu</span>';
+          }, 4000);
+        }
+      };
+      document.body.appendChild(pill);
+
+      // ── Floating Back button (bottom-right) ──
+      var oldFab = document.getElementById('_fcFabBack');
+      if(oldFab) oldFab.remove();
+      var fab = document.createElement('button');
+      fab.id = '_fcFabBack';
+      fab.style.cssText = 'position:fixed;bottom:24px;right:20px;z-index:9999;' +
+        'width:50px;height:50px;border-radius:50%;border:none;' +
+        'background:rgba(21,101,192,0.92);color:#fff;font-size:1.3rem;font-weight:800;' +
+        'cursor:pointer;box-shadow:0 4px 16px rgba(21,101,192,0.4);' +
+        'display:flex;align-items:center;justify-content:center;' +
+        'backdrop-filter:blur(4px);-webkit-tap-highlight-color:transparent;';
+      fab.innerHTML = '‹';
+      fab.title = 'Back';
+      fab.onclick = function() { window.tvGoBack && window.tvGoBack(); };
+      document.body.appendChild(fab);
+    })();
+
     subBody.innerHTML =
-      '<div style="padding:10px 14px 20px;" id="_fcRoot_'+tid+'">' +
+      '<div style="padding:10px 14px 80px;" id="_fcRoot_'+tid+'">' +
         /* ── Confidence Overview ── */
         '<div id="_fcOverview_'+tid+'" style="background:linear-gradient(135deg,rgba(21,101,192,0.06),rgba(106,27,154,0.06));border:1.5px solid rgba(21,101,192,0.15);border-radius:12px;padding:10px 13px;margin-bottom:0px;">' +
           '<div style="font-size:0.72rem;font-weight:800;color:var(--text);margin-bottom:7px;">📊 Confidence Overview — '+totalCards+' Flashcards</div>' +
@@ -7421,6 +7497,21 @@ function tvShowSub(catId, sid, secid, tid){
 }
 
 function tvGoBack(){
+  // Cleanup immersive mode elements
+  document.querySelectorAll('[data-fc-hidden]').forEach(function(el){
+    el.removeAttribute('data-fc-hidden');
+    el.style.display='';
+    el.style.cssText = el.style.cssText.replace(/display:none!important;?/g,'');
+  });
+  var pill = document.getElementById('_fcImmersivePill');
+  if(pill) pill.remove();
+  var fab  = document.getElementById('_fcFabBack');
+  if(fab)  fab.remove();
+  // Restore patched tvGoBack if was overridden
+  if(window._fcOrigGoBack) {
+    window.tvGoBack = window._fcOrigGoBack;
+    window._fcOrigGoBack = null;
+  }
   document.getElementById('tvScreenB').classList.remove('active');
   document.getElementById('tvScreenB').style.display='none';
   document.getElementById('tvScreenA').classList.add('active');
