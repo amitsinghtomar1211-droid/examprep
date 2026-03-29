@@ -19610,7 +19610,7 @@ window.neDrawToggle = function(){
 
 async function saveToFirebase(){
   if(!_db || !_currentUser) return;
-  _lastSaveTime = Date.now(); // Mark: yeh hamara apna save hai
+  _lastSaveTime = Date.now(); // Save shuru hone ka time — listener isko dekhega
   setSyncStatus('syncing');
   try{
     const uid = _currentUser.uid;
@@ -19693,6 +19693,9 @@ async function saveToFirebase(){
       chunk.forEach(function(op){ batch.set(op.ref, op.data, {merge:true}); });
       await batch.commit();
     }
+
+    // Save complete — timestamp update karo (echo ignore karne ke liye 12 sec grace)
+    _lastSaveTime = Date.now();
 
     setSyncStatus('synced');
   }catch(e){
@@ -19874,25 +19877,37 @@ function _attachRealtimeListener(){
   if(_realtimeListener){ _realtimeListener(); _realtimeListener = null; }
 
   var uid = _currentUser.uid;
+  var _listenerAttachTime = Date.now();
+  var _baselineServerTs = 0; // pehli snapshot se baseline set karenge
+  var _firstSnapshot = true;
 
   _realtimeListener = _db.collection('users').doc(uid).onSnapshot(function(doc){
     if(!doc.exists) return;
 
-    // Agar humne khud abhi save kiya tha (last 8 sec mein) to ignore karo — apni hi echo hai
-    var now = Date.now();
-    if(now - _lastSaveTime < 8000) return;
-
-    // lastSync field check karo — server timestamp se compare karo
     var data = doc.data();
     var serverTs = data.lastSync && data.lastSync.toMillis ? data.lastSync.toMillis() : 0;
 
-    // Agar server par koi naya change aaya hai (8 sec grace period ke baad)
-    if(serverTs && (now - serverTs) < 30000 && (now - _lastSaveTime) > 8000){
-      // Dusri device se aaya update — silently reload karo
-      _silentReloadFromFirebase();
+    // Pehli snapshot: sirf baseline set karo, reload mat karo
+    if(_firstSnapshot){
+      _firstSnapshot = false;
+      _baselineServerTs = serverTs;
+      return;
     }
+
+    // Agar yeh serverTs baseline se naya nahi hai — koi change nahi
+    if(!serverTs || serverTs <= _baselineServerTs) return;
+
+    // Baseline aage badhao
+    _baselineServerTs = serverTs;
+
+    // Agar humne khud abhi save kiya tha (last 10 sec mein) to ignore — apni hi echo
+    var now = Date.now();
+    if(now - _lastSaveTime < 10000) return;
+
+    // Dusri device se naya update aaya — silently reload karo
+    _silentReloadFromFirebase();
+
   }, function(err){
-    // Listener error — ignore, offline hoga
     console.log('Realtime listener error (likely offline):', err.code);
   });
 }
@@ -20016,6 +20031,7 @@ async function _silentReloadFromFirebase(){
 function save(){
   try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
   if(_currentUser && _db){
+    _lastSaveTime = Date.now(); // Abhi se grace period shuru — apni echo ignore karo
     if(_syncTimeout) clearTimeout(_syncTimeout);
     _syncTimeout = setTimeout(()=>{ saveToFirebase(); }, 3000);
   }
