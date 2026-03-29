@@ -12775,6 +12775,7 @@ let _syncTimeout = null;
 let _justRestored = false; // Restore ke baad Firebase overwrite rokne ke liye
 let _realtimeListener = null; // onSnapshot unsubscribe handle
 let _lastSaveTime = 0;        // Apna khud ka save track karo — apni hi update se reload mat karo
+let _myWriteId = '';          // Unique ID jo hamne last save mein likha — apni echo identify karne ke liye
 
 // Firebase config localStorage se load karo
 function getFbConfig(){
@@ -19610,7 +19611,6 @@ window.neDrawToggle = function(){
 
 async function saveToFirebase(){
   if(!_db || !_currentUser) return;
-  _lastSaveTime = Date.now(); // Save shuru hone ka time — listener isko dekhega
   setSyncStatus('syncing');
   try{
     const uid = _currentUser.uid;
@@ -19624,6 +19624,11 @@ async function saveToFirebase(){
     var allOps = []; // {ref, data}
 
     // ── 1. Meta doc ──
+    // Unique write ID generate karo — apni hi echo identify karne ke liye
+    var writeId = Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+    _myWriteId = writeId;
+    _lastSaveTime = Date.now();
+
     allOps.push({
       ref: _db.collection('users').doc(uid),
       data: {
@@ -19639,7 +19644,8 @@ async function saveToFirebase(){
         exams:             S.exams||[],
         subjectIds:        (S.subjects||[]).map(s=>s.id),
         topicFormat:       'v2',  // flag: per-topic format
-        lastSync:          firebase.firestore.FieldValue.serverTimestamp()
+        lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
+        writeId:           writeId  // Echo detection ke liye
       }
     });
 
@@ -19693,9 +19699,6 @@ async function saveToFirebase(){
       chunk.forEach(function(op){ batch.set(op.ref, op.data, {merge:true}); });
       await batch.commit();
     }
-
-    // Save complete — timestamp update karo (echo ignore karne ke liye 12 sec grace)
-    _lastSaveTime = Date.now();
 
     setSyncStatus('synced');
   }catch(e){
@@ -19877,32 +19880,32 @@ function _attachRealtimeListener(){
   if(_realtimeListener){ _realtimeListener(); _realtimeListener = null; }
 
   var uid = _currentUser.uid;
-  var _listenerAttachTime = Date.now();
-  var _baselineServerTs = 0; // pehli snapshot se baseline set karenge
   var _firstSnapshot = true;
+  var _knownWriteId = ''; // Pehli snapshot se apna writeId baseline set karenge
 
   _realtimeListener = _db.collection('users').doc(uid).onSnapshot(function(doc){
     if(!doc.exists) return;
 
     var data = doc.data();
-    var serverTs = data.lastSync && data.lastSync.toMillis ? data.lastSync.toMillis() : 0;
 
-    // Pehli snapshot: sirf baseline set karo, reload mat karo
+    // Pehli snapshot: sirf apna current writeId baseline set karo, reload mat karo
     if(_firstSnapshot){
       _firstSnapshot = false;
-      _baselineServerTs = serverTs;
+      _knownWriteId = data.writeId || '';
       return;
     }
 
-    // Agar yeh serverTs baseline se naya nahi hai — koi change nahi
-    if(!serverTs || serverTs <= _baselineServerTs) return;
+    var incomingWriteId = data.writeId || '';
 
-    // Baseline aage badhao
-    _baselineServerTs = serverTs;
+    // Agar yeh writeId wahi hai jo humne khud likha tha — apni hi echo, ignore karo
+    // _myWriteId = jo is device ne abhi save kiya; _knownWriteId = pehle se jaanta tha
+    if(incomingWriteId && (incomingWriteId === _myWriteId || incomingWriteId === _knownWriteId)){
+      _knownWriteId = incomingWriteId;
+      return;
+    }
 
-    // Agar humne khud abhi save kiya tha (last 10 sec mein) to ignore — apni hi echo
-    var now = Date.now();
-    if(now - _lastSaveTime < 10000) return;
+    // writeId naya aaya — dusri device ne save kiya hai
+    _knownWriteId = incomingWriteId;
 
     // Dusri device se naya update aaya — silently reload karo
     _silentReloadFromFirebase();
@@ -20031,7 +20034,6 @@ async function _silentReloadFromFirebase(){
 function save(){
   try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
   if(_currentUser && _db){
-    _lastSaveTime = Date.now(); // Abhi se grace period shuru — apni echo ignore karo
     if(_syncTimeout) clearTimeout(_syncTimeout);
     _syncTimeout = setTimeout(()=>{ saveToFirebase(); }, 3000);
   }
