@@ -31201,28 +31201,34 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       '<textarea id="_scFcFocus" rows="2" placeholder="e.g. Sirf definitions, dates aur formulas... ya specific topic like EVS Chapter 3..." style="width:100%;background:var(--surface2,#f4f9fe);border:1.5px solid var(--border,#ddd);border-radius:8px;padding:7px 9px;font-family:inherit;font-size:0.78rem;resize:none;outline:none;box-sizing:border-box;"></textarea>',
       '</div>',
 
-      // Count + Type row
-      '<div style="display:flex;gap:8px;margin-bottom:10px;">',
-      // Count
-      '<div style="flex:1;">',
-      '<div style="font-size:0.72rem;font-weight:700;margin-bottom:5px;">🔢 Kitne flashcards?</div>',
-      '<select id="_scFcCount" style="width:100%;background:var(--surface2,#f4f9fe);border:1.5px solid var(--border,#ddd);border-radius:8px;padding:6px 8px;font-family:inherit;font-size:0.78rem;outline:none;">',
-      '<option value="10">10 cards</option>',
-      '<option value="15" selected>15 cards</option>',
-      '<option value="20">20 cards</option>',
-      '<option value="25">25 cards</option>',
-      '<option value="30">30 cards (Max)</option>',
-      '</select>',
-      '</div>',
-      // Difficulty
-      '<div style="flex:1;">',
+      // New facts info badge (dynamic)
+      (function(){
+        if(typeof _scFCLoad==='function') _scFCLoad();
+        if(typeof _scGetNewFacts==='function' && typeof _scExtractFactLines==='function') {
+          var _st = typeof _scCollectAllSlidesText==='function' ? _scCollectAllSlidesText() : '';
+          var _all = _scExtractFactLines(_st);
+          var _new = _scGetNewFacts(_st);
+          var _covered = _all.length - _new.length;
+          if(_all.length > 0) {
+            return '<div style="margin-bottom:10px;padding:7px 10px;background:rgba(21,101,192,0.07);border-radius:9px;border-left:3px solid #1565c0;font-size:0.7rem;line-height:1.6;">' +
+              '📊 Canvas: <b>'+_all.length+'</b> facts total · <b style="color:#c62828;">'+_new.length+'</b> naye (uncovered) · <b style="color:#2e7d32;">'+_covered+'</b> covered<br>' +
+              (_new.length < _all.length
+                ? '🆕 <b>Sirf '+_new.length+' naye facts</b> se flashcards banenge (covered facts skip honge)'
+                : '✨ Pehli baar — <b>saare facts</b> se flashcards banenge') +
+              '</div>';
+          }
+        }
+        return '';
+      })(),
+
+      // Difficulty only (count removed)
+      '<div style="margin-bottom:10px;">',
       '<div style="font-size:0.72rem;font-weight:700;margin-bottom:5px;">💪 Difficulty Level?</div>',
       '<select id="_scFcDiff" style="width:100%;background:var(--surface2,#f4f9fe);border:1.5px solid var(--border,#ddd);border-radius:8px;padding:6px 8px;font-family:inherit;font-size:0.78rem;outline:none;">',
       '<option value="easy">😊 Easy (simple Q&A)</option>',
       '<option value="mixed" selected>🎯 Mixed (easy+hard)</option>',
       '<option value="hard">🔥 Hard (deep understanding)</option>',
       '</select>',
-      '</div>',
       '</div>',
 
       // Type chips
@@ -31264,13 +31270,11 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     var msgsEl = document.getElementById('scAiChatMsgs');
     var btn = document.getElementById('scAiFlashcardBtn');
 
-    // Collect user choices
+    // Collect user choices (count removed — auto determined by new facts)
     var focus    = (document.getElementById('_scFcFocus') ? document.getElementById('_scFcFocus').value.trim() : '') || 'Saare important points';
-    var count    = document.getElementById('_scFcCount') ? document.getElementById('_scFcCount').value : '15';
     var diff     = document.getElementById('_scFcDiff')  ? document.getElementById('_scFcDiff').value  : 'mixed';
     var langH    = document.getElementById('_scFcLangH') && document.getElementById('_scFcLangH').style.background.includes('accent') || document.getElementById('_scFcLangH') && document.getElementById('_scFcLangH').style.background.includes('1565c0');
     var langE    = document.getElementById('_scFcLangE') && document.getElementById('_scFcLangE').style.background.includes('accent') || document.getElementById('_scFcLangE') && document.getElementById('_scFcLangE').style.background.includes('1565c0');
-    var langAuto = !langH && !langE;
     var langInstr = langH ? 'Hindi mein likhna.' : langE ? 'English mein likhna.' : 'Notes ki language follow karo (Hindi ya English jo bhi ho).';
 
     // Active type chips
@@ -31286,6 +31290,20 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       hard:  'Deep understanding check karo. Why/How type. Conceptual. Comparison-based.'
     }[diff] || 'Mixed difficulty.';
 
+    // ── CRITICAL: Sirf NAYE facts use karo ──
+    var factsToUse = slidesText; // default: pehli baar sab
+    var isFirstTime = true;
+    if(typeof _scFCLoad==='function') _scFCLoad();
+    if(typeof _scGetNewFacts==='function' && typeof _scExtractFactLines==='function') {
+      var _allF = _scExtractFactLines(slidesText);
+      var _newF = _scGetNewFacts(slidesText);
+      if(_allF.length > 0 && _newF.length < _allF.length) {
+        // Kuch facts already covered — sirf naye use karo
+        isFirstTime = false;
+        factsToUse = '=== SIRF NAYE / UNCOVERED FACTS ===\n(Pehle se covered facts yahan nahi hain)\n' + _newF.join('\n');
+      }
+    }
+
     // Remove form
     var existingForm = document.getElementById('_scFcReqForm');
     if(existingForm) existingForm.remove();
@@ -31297,22 +31315,25 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       var loadDiv = document.createElement('div');
       loadDiv.className = 'ai-msg bot';
       loadDiv.id = '_scFcLoading';
-      loadDiv.innerHTML = '⌛ <strong>Saari slides scan ho rahi hain...</strong><br><span style="font-size:0.75rem;opacity:0.8;">'+count+' flashcards · '+diff+' · '+typeList.join(', ')+'</span>';
+      var loadLabel = isFirstTime
+        ? '⌛ <strong>Pehli baar — saare facts se</strong> flashcards ban rahe hain...'
+        : '🆕 <strong>Sirf naye facts se</strong> flashcards ban rahe hain...';
+      loadDiv.innerHTML = loadLabel + '<br><span style="font-size:0.75rem;opacity:0.8;">' + diff + ' difficulty · ' + typeList.join(', ') + '</span>';
       msgsEl.appendChild(loadDiv);
       msgsEl.scrollTop = msgsEl.scrollHeight;
     }
 
-    var prompt = 'Neeche diye gaye Canvas Slides ke notes se SIRF flashcards banao.\n\n' +
+    var prompt = 'Neeche diye gaye Canvas facts se SIRF flashcards banao.\n\n' +
       '=== USER KI REQUIREMENTS ===\n' +
       'Focus Area: ' + focus + '\n' +
-      'Kitne Flashcards: ' + count + '\n' +
       'Difficulty: ' + diffInstr + '\n' +
       'Question Types: ' + typeInstr + '\n' +
       'Language: ' + langInstr + '\n' +
+      'Kitne banane hain: Neeche jitne bhi facts diye hain UNME SE HAR EK se kam se kam ek flashcard zaroor banao. Koi fact skip mat karo.\n' +
       '===========================\n\n' +
       'Response ONLY valid JSON array mein do, koi bhi extra text ya markdown nahi.\n' +
       'Format: [{"q":"Question yahan","a":"Answer yahan"},...]\n\n' +
-      'CANVAS SLIDES NOTES:\n' + slidesText.substring(0, 7000);
+      'FACTS (inhi se flashcards banao):\n' + factsToUse.substring(0, 7000);
 
     var groqKeyFC   = (typeof S !== 'undefined') ? S.apiKey : '';
     var groqModelFC = (typeof S !== 'undefined' && S.model) ? S.model : 'llama-3.1-8b-instant';
@@ -31413,9 +31434,9 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
 
           // ── coveredFacts update — naye facts covered mark karo ──
           try {
-            var existing2 = JSON.parse(localStorage.getItem(fcKey)) || {};
             if(typeof _scFC !== 'undefined' && typeof _scExtractFactLines === 'function' && typeof _scNormFact === 'function') {
               _scFCLoad();
+              // Always mark ALL current canvas facts as covered (not just new ones)
               var usedF2 = _scExtractFactLines(slidesText);
               var covF2  = _scFC.coveredFacts || [];
               var covF2N = covF2.map(_scNormFact);
