@@ -26877,12 +26877,17 @@ function _scExtractFactLines(content) {
     .filter(function(l){ return l && !l.startsWith('===') && l.length > 8; });
 }
 
+// Normalize a fact line for comparison (lowercase + collapse spaces)
+function _scNormFact(s) {
+  return s.toLowerCase().replace(/\s+/g,' ').trim();
+}
+
 // Find NEW facts not yet covered by flashcards
 function _scGetNewFacts(content) {
   var allLines = _scExtractFactLines(content);
-  var covered  = _scFC.coveredFacts || [];
+  var covered  = (_scFC.coveredFacts || []).map(_scNormFact);
   return allLines.filter(function(line) {
-    return !covered.some(function(cf){ return cf === line; });
+    return covered.indexOf(_scNormFact(line)) === -1;
   });
 }
 
@@ -27123,7 +27128,7 @@ function scAiMakeFlashcards() {
   document.getElementById('_scFCHint').textContent = '';
 
   var curHash = _scContentHash();
-  // Use contentToUse (new facts only) from here
+  // Use only new facts content from here — old hash bypass removed
   content = contentToUse;
 
   // STEP 1: Topic + Exam Pattern Analysis via AI
@@ -27197,12 +27202,15 @@ function scAiMakeFlashcards() {
         _scFC.topic = analysis.topic || topicName;
         _scFC.generatedAt = new Date().toLocaleDateString('hi-IN');
 
-        // ── Mark all currently used facts as COVERED ──
+        // ── Mark all currently used facts as COVERED (normalized) ──
         var usedFacts = _scExtractFactLines(scExtractContent());
         var alreadyCovered = _scFC.coveredFacts || [];
+        var alreadyCoveredNorm = alreadyCovered.map(_scNormFact);
         usedFacts.forEach(function(f){
-          if(!alreadyCovered.some(function(c){ return c === f; })) {
-            alreadyCovered.push(f);
+          var fn = _scNormFact(f);
+          if(alreadyCoveredNorm.indexOf(fn) === -1) {
+            alreadyCovered.push(fn); // store normalized
+            alreadyCoveredNorm.push(fn);
           }
         });
         _scFC.coveredFacts = alreadyCovered;
@@ -31145,6 +31153,33 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       return;
     }
 
+    // ── COVERED FACTS CHECK (same system as canvas AI panel) ──
+    if(typeof _scFCLoad === 'function') _scFCLoad();
+    if(typeof _scGetNewFacts === 'function' && typeof _scExtractFactLines === 'function') {
+      var _allFacts2  = _scExtractFactLines(slidesText);
+      var _newFacts2  = _scGetNewFacts(slidesText);
+      if(_allFacts2.length > 0 && _newFacts2.length === 0) {
+        var msgsEl0 = document.getElementById('scAiChatMsgs');
+        if(msgsEl0) {
+          var blockDiv = document.createElement('div');
+          blockDiv.className = 'ai-msg bot';
+          blockDiv.innerHTML =
+            '✅ <b>Saare facts cover ho chuke hain!</b><br><br>' +
+            '<div style="font-size:0.78rem;line-height:1.7;color:var(--text2);">' +
+            '📊 <b>'+_allFacts2.length+'</b> facts canvas par hain<br>' +
+            '🃏 <b>'+(typeof _scFC !== 'undefined' ? _scFC.cards.length : '?')+'</b> flashcards pehle se ban chuke hain<br>' +
+            '🔁 In sabhi facts se flashcards already generate ho chuke hain<br><br>' +
+            '➕ <b>Naye facts / points canvas par add karo</b> — tabhi naye flashcards banenge!<br>' +
+            '<button onclick="if(typeof _scFCLoad===\'function\'){_scFCLoad();_scFC.coveredFacts=[];_scFC.hash=\'\';if(typeof _scFCSave===\'function\')_scFCSave();}this.parentElement.parentElement.remove();showToast&&showToast(\'Reset ho gaya!\',\'success\');" ' +
+            'style="margin-top:8px;padding:5px 12px;border-radius:8px;border:none;background:rgba(198,40,40,0.1);color:#c62828;font-weight:800;font-size:0.72rem;cursor:pointer;font-family:inherit;">🔄 Reset karke naye banao</button>' +
+            '</div>';
+          msgsEl0.appendChild(blockDiv);
+          msgsEl0.scrollTop = msgsEl0.scrollHeight;
+        }
+        return;
+      }
+    }
+
     // ── Step 1: User se requirements puchho ──
     var msgsEl = document.getElementById('scAiChatMsgs');
     if(!msgsEl) return;
@@ -31375,6 +31410,23 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
             existingCards.push({ id: nc.id, q: nc.q, a: nc.a, source: 'canvas', addedAt: now });
           });
           localStorage.setItem(fcKey, JSON.stringify({ cards: existingCards, progress: existingProgress, hash: '' }));
+
+          // ── coveredFacts update — naye facts covered mark karo ──
+          try {
+            var existing2 = JSON.parse(localStorage.getItem(fcKey)) || {};
+            if(typeof _scFC !== 'undefined' && typeof _scExtractFactLines === 'function' && typeof _scNormFact === 'function') {
+              _scFCLoad();
+              var usedF2 = _scExtractFactLines(slidesText);
+              var covF2  = _scFC.coveredFacts || [];
+              var covF2N = covF2.map(_scNormFact);
+              usedF2.forEach(function(f){
+                var fn = _scNormFact(f);
+                if(covF2N.indexOf(fn) === -1){ covF2.push(fn); covF2N.push(fn); }
+              });
+              _scFC.coveredFacts = covF2;
+              _scFCSave();
+            }
+          } catch(cfErr) {}
         } catch(fcSaveErr) {}
 
         // ── Canvas slides raw text bhi save karo — Quiz mein kaam aayega ──
