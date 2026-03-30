@@ -11486,14 +11486,15 @@ function applyHighlightFromSelection(sel) {
 
 // Core: wrap range in mark element
 function applyHighlightFromRange(range, text) {
+  // ── Scroll position PEHLE save karo (neSaveSnapshot se bhi pehle) ──
+  const scrollEl = document.getElementById('neBody') || document.querySelector('.notes-editor-body');
+  const savedScroll = scrollEl ? scrollEl.scrollTop : 0;
+
   neSaveSnapshot(); // Save state before highlight for undo
+
   const color = _editorState.hlColor;
   const cls = color === 'pink' ? 'user-hl-pink' : color === 'green' ? 'user-hl-green' : color === 'blue' ? 'user-hl-blue' : 'user-hl';
   const uid = 'hl_' + Date.now();
-
-  // ── Scroll position save karo taaki text idhr udhr na ho ──
-  const scrollEl = document.querySelector('.notes-editor-body') || document.getElementById('notesEditorModalEl');
-  const savedScroll = scrollEl ? scrollEl.scrollTop : 0;
 
   try {
     // Check range is inside noteEditableArea
@@ -11507,8 +11508,11 @@ function applyHighlightFromRange(range, text) {
     mark.title = 'Tap = Unhighlight';
     range.surroundContents(mark);
 
-    // ── Scroll restore ──
-    if(scrollEl) scrollEl.scrollTop = savedScroll;
+    // ── Scroll restore: rAF se ensure karein reflow ke baad restore ho ──
+    if(scrollEl) {
+      scrollEl.scrollTop = savedScroll;
+      requestAnimationFrame(function(){ scrollEl.scrollTop = savedScroll; });
+    }
 
     // Attach unhighlight on tap
     neAttachUnhighlightToMark(mark);
@@ -31568,27 +31572,28 @@ window.neToggleFullRead = function neToggleFullRead() {
 // ══════════════════════════════════════════════════════════
 // FEATURE 2: Notes Editor — Scroll Lock when Highlight ON
 // ══════════════════════════════════════════════════════════
+// NOTE: CSS overflow:hidden se text reflow/jump hota tha.
+// Ab touch event preventDefault() se scroll roka jata hai — layout disturb nahi hoti.
 (function _patchSetHlModeScrollLock() {
-  var _origSetHlMode = window.setHlMode || (typeof setHlMode !== 'undefined' ? setHlMode : null);
+  function _neScrollBlocker(e) {
+    // Sirf single-touch scroll rokna hai — multi-touch (pinch) allow
+    if(e.touches && e.touches.length > 1) return;
+    e.preventDefault();
+  }
   function _applyScrollLock(mode) {
-    var body = document.getElementById('notesEditorModalEl');
-    var readArea = document.querySelector('.notes-editor-body');
-    var target = readArea || body;
-    if(!target) return;
+    var readArea = document.getElementById('neBody');
+    if(!readArea) return;
     if(mode === 'highlight') {
-      target.style.overflowY = 'hidden';
-      target.style.touchAction = 'none';
+      // Scroll rokne ke liye event listener — CSS nahi touch karte
+      readArea.addEventListener('touchmove', _neScrollBlocker, { passive: false });
     } else {
-      target.style.overflowY = 'auto';
-      target.style.touchAction = '';
+      readArea.removeEventListener('touchmove', _neScrollBlocker);
     }
   }
-  // Patch via event — since setHlMode is defined later, we use DOMContentLoaded
   document.addEventListener('DOMContentLoaded', function() {
     setTimeout(function() {
       if(typeof setHlMode === 'function') {
         var _orig = setHlMode;
-        // Redefine globally
         window._origSetHlMode = _orig;
         window.setHlMode = function(mode) {
           _orig.apply(this, arguments);
