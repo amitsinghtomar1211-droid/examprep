@@ -12777,6 +12777,7 @@ let _realtimeListener = null; // onSnapshot unsubscribe handle
 let _lastSaveTime = 0;        // Apna khud ka save track karo — apni hi update se reload mat karo
 let _myWriteId = '';          // Unique ID — apni echo identify karne ke liye
 let _listenerRetryTimer = null; // Listener reconnect timer
+let _reconnectDelay = 5000;    // Exponential backoff delay (ms)
 
 // Firebase config localStorage se load karo
 function getFbConfig(){
@@ -12844,6 +12845,7 @@ function initFirebase(){
         updateUserUI(user);
         loadFromFirebase().then(function(){
           // Login ke baad initial load hone ke baad realtime listener lagao
+          _reconnectDelay = 5000; // Fresh login par delay reset
           _attachRealtimeListener();
         });
       } else {
@@ -19628,6 +19630,7 @@ async function saveToFirebase(){
     var writeId = Date.now().toString(36) + Math.random().toString(36).slice(2,7);
     _myWriteId = writeId;
     _lastSaveTime = Date.now();
+    _reconnectDelay = 5000; // Successful save par delay reset karo
     allOps.push({
       ref: _db.collection('users').doc(uid),
       data: {
@@ -19880,8 +19883,13 @@ function _attachRealtimeListener(){
   if(_listenerRetryTimer){ clearTimeout(_listenerRetryTimer); _listenerRetryTimer = null; }
 
   var uid = _currentUser.uid;
-  var _knownWriteId = _myWriteId || ''; // Pehli snapshot ke liye baseline
-  var _firstSnapshot = true;
+  // Pehli snapshot pe current writeId note karo (apni echo rok ne ke liye)
+  // lekin _firstSnapshot flag HATAO — yeh dusri device ke turant update miss karta tha
+  var _knownWriteId = _myWriteId || '';
+  var _listenerReady = false; // Short grace period — listener attach hone ka waqt
+
+  // 1 second baad ready mark karo (Firestore initial snapshot deliver karne ka time deo)
+  var _readyTimer = setTimeout(function(){ _listenerReady = true; }, 1000);
 
   _realtimeListener = _db.collection('users').doc(uid).onSnapshot(
     { includeMetadataChanges: false },
@@ -19890,34 +19898,38 @@ function _attachRealtimeListener(){
       var data = doc.data();
       var incomingWriteId = data.writeId || '';
 
-      // Pehli snapshot: sirf baseline set karo
-      if(_firstSnapshot){
-        _firstSnapshot = false;
+      // Listener abhi ready nahi — yeh sirf initial state hai, baseline set karo
+      if(!_listenerReady){
         _knownWriteId = incomingWriteId;
         return;
       }
 
-      // Agar writeId naya nahi — koi change nahi
+      // Agar writeId same hai — koi nayi change nahi
       if(!incomingWriteId || incomingWriteId === _knownWriteId) return;
 
-      // Agar yeh hamara khud ka writeId hai — apni echo, ignore karo
+      // Agar yeh hamara khud ka writeId hai — apni echo ignore karo
       if(incomingWriteId === _myWriteId){
         _knownWriteId = incomingWriteId;
         return;
       }
 
-      // Naya writeId aur hamara nahi — dusri device ne save kiya
+      // ✅ Naya writeId aur hamara nahi — DUSRI DEVICE ne save kiya!
+      console.log('[Sync] Dusri device se update aaya, reload kar rahe hain...');
       _knownWriteId = incomingWriteId;
+      _reconnectDelay = 5000; // Successful update milne par delay reset karo
       _silentReloadFromFirebase();
     },
     function(err){
-      // WebChannel transport error — listener gir gaya, reconnect karo
-      console.log('Realtime listener dropped, reconnecting in 5s:', err.code || err.message);
+      // WebChannel transport error — listener gir gaya
+      clearTimeout(_readyTimer);
       _realtimeListener = null;
-      // 5 seconds baad dobara attach karo
+      // Exponential backoff: 5s → 10s → 20s → max 60s
+      var delay = _reconnectDelay;
+      _reconnectDelay = Math.min(_reconnectDelay * 2, 60000);
+      console.log('[Sync] Listener dropped, reconnecting in ' + (delay/1000) + 's. Reason:', err.code || err.message);
       _listenerRetryTimer = setTimeout(function(){
         if(_currentUser) _attachRealtimeListener();
-      }, 5000);
+      }, delay);
     }
   );
 }
