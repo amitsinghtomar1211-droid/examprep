@@ -5131,9 +5131,6 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         contenteditable="false"
         spellcheck="true"
         onmouseup="onNEMouseUp(event)"
-        ontouchstart="onNETouchStart(event)"
-        ontouchmove="onNETouchMove(event)"
-        ontouchend="onNETouchEnd(event)"
         oninput="onNEInput()"
         onkeydown="onNEKeydown(event)"
         ondragstart="scNoteDragStart(event)"
@@ -11472,6 +11469,24 @@ function _cancelTouchSelection() {
   clearSelectionOverlay();
 }
 
+// ── CRITICAL FIX: Touch listeners ko passive:false ke saath attach karo ──
+// HTML attribute (ontouchmove) se attach karne par Chrome/Android passive:true
+// default karta hai jisse e.preventDefault() kaam nahi karta → scroll nahi rukta
+(function _attachNETouchListeners() {
+  function _attach() {
+    var area = document.getElementById('noteEditableArea');
+    if(!area) { setTimeout(_attach, 500); return; }
+    area.addEventListener('touchstart', function(e){ onNETouchStart(e); }, { passive: true });
+    area.addEventListener('touchmove',  function(e){ onNETouchMove(e);  }, { passive: false });
+    area.addEventListener('touchend',   function(e){ onNETouchEnd(e);   }, { passive: true });
+  }
+  if(document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _attach);
+  } else {
+    _attach();
+  }
+})();
+
 // Apply highlight from browser Selection object
 function applyHighlightFromSelection(sel) {
   try {
@@ -11535,8 +11550,11 @@ function applyHighlightFromRange(range, text) {
       neAttachUnhighlightToMark(mark);
       range.insertNode(mark);
 
-      // ── Scroll restore ──
-      if(scrollEl) scrollEl.scrollTop = savedScroll;
+      // ── Scroll restore: rAF se ensure karein reflow ke baad restore ho ──
+      if(scrollEl) {
+        scrollEl.scrollTop = savedScroll;
+        requestAnimationFrame(function(){ scrollEl.scrollTop = savedScroll; });
+      }
 
       _editorState.highlights.push({ id: uid, text: mark.textContent, color });
       markModified();
