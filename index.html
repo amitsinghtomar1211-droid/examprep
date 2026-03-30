@@ -20335,55 +20335,67 @@ function _applyTopicUpdate(tid, newTopicData){
     sub.sections.forEach(function(sec){
       for(var i=0; i<sec.topics.length; i++){
         if(String(sec.topics[i].id) === String(tid)){
-          // Agar yeh topic abhi edit ho raha hai — sirf non-editing fields update karo
+
           if(isActiveEdit){
-            // Only sync structural/metadata fields, not editorRichHTML etc.
+            // ── Yeh topic ABHI IS DEVICE PE EDIT HO RAHA HAI ──
+            // Sirf woh fields update karo jo editor se bahar hain
             var local = sec.topics[i];
-            var fieldsToSync = ['highlights','savedFacts','flashcards','fcHash',
+            var safeFields = ['highlights','savedFacts','flashcards','fcHash',
               'finalNotesHTML','smartNotesHTML','masterNotesHTML',
-              'finalNotesAt','smartNotesAt','newPoints','wrongBank'];
-            fieldsToSync.forEach(function(f){
+              'finalNotesAt','smartNotesAt','newPoints','wrongBank',
+              'factsHTML','finalNotesDrawStrokes','smartNotesDrawStrokes',
+              'masterNotesDrawStrokes','finalNotesCanvasObjs','smartNotesCanvasObjs',
+              'masterNotesCanvasObjs'];
+            safeFields.forEach(function(f){
               if(newTopicData[f] !== undefined) local[f] = newTopicData[f];
             });
-            // notes[] sync — sirf non-active note
+            // notes[] — remote ke changes merge karo lekin active note ka editorRichHTML protect karo
             if(newTopicData.notes){
               newTopicData.notes.forEach(function(remoteNote){
                 var found = false;
                 for(var j=0; j<(local.notes||[]).length; j++){
                   if(String(local.notes[j].id) === String(remoteNote.id)){
                     found = true;
-                    // Merge — remote ke baaki fields, local ka editorRichHTML
-                    var localRich = local.notes[j].editorRichHTML;
-                    var localHl   = local.notes[j].editorHighlights;
-                    local.notes[j] = remoteNote;
-                    if(localRich !== undefined) local.notes[j].editorRichHTML = localRich;
-                    if(localHl   !== undefined) local.notes[j].editorHighlights = localHl;
+                    var isCurrentNote = (_editorState && String(_editorState.noteIdx) !== 'null' &&
+                      local.notes[j] === local.notes[_editorState.noteIdx]);
+                    if(isCurrentNote){
+                      // Sirf non-editor fields update karo (name, addedAt, wordCount etc)
+                      var savedRich = local.notes[j].editorRichHTML;
+                      var savedHl   = local.notes[j].editorHighlights;
+                      Object.assign(local.notes[j], remoteNote);
+                      local.notes[j].editorRichHTML    = savedRich;
+                      local.notes[j].editorHighlights  = savedHl;
+                    } else {
+                      // Alag note hai — fully replace
+                      local.notes[j] = remoteNote;
+                      if(!local.notes[j].editorHighlights) local.notes[j].editorHighlights = [];
+                    }
                     break;
                   }
                 }
-                if(!found) local.notes.push(remoteNote);
+                if(!found){
+                  local.notes.push(remoteNote);
+                  if(!local.notes[local.notes.length-1].editorHighlights)
+                    local.notes[local.notes.length-1].editorHighlights = [];
+                }
               });
             }
           } else {
-            // Sirf local editor data preserve karo, baaki sab replace
-            var oldTopic = sec.topics[i];
-            var localRichMap = {};
-            (oldTopic.notes||[]).forEach(function(n){
-              if(n.editorRichHTML !== undefined) localRichMap[n.id] = { rich: n.editorRichHTML, hl: n.editorHighlights||[] };
-            });
-
+            // ── Yeh topic IS DEVICE PE EDIT NAHI HO RAHA ──
+            // Fully replace karo — editorRichHTML aur editorHighlights BHAHI aate hain remote se
             sec.topics[i] = newTopicData;
-            if(!sec.topics[i].highlights) sec.topics[i].highlights = [];
-            if(!sec.topics[i].savedFacts) sec.topics[i].savedFacts = [];
-            if(!sec.topics[i].notes) sec.topics[i].notes = [];
-
-            sec.topics[i].notes.forEach(function(n){
-              var ld = localRichMap[n.id];
-              if(ld){ n.editorRichHTML = ld.rich; n.editorHighlights = ld.hl; }
+            var tp = sec.topics[i];
+            if(!tp.highlights) tp.highlights = [];
+            if(!tp.savedFacts) tp.savedFacts = [];
+            if(!tp.notes) tp.notes = [];
+            tp.notes.forEach(function(n){
+              if(!n.editorHighlights) n.editorHighlights = [];
+              if(n.editorRichHTML === undefined) n.editorRichHTML = null;
             });
           }
 
           updated = true;
+          break;
         }
       }
     });
@@ -20391,15 +20403,46 @@ function _applyTopicUpdate(tid, newTopicData){
 
   if(!updated) return;
 
+  // localStorage update
   try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
 
-  // Minimal UI refresh — sirf affected parts
+  // ── Agar receiving device pe notes editor is tid ke liye KHULA HAI — UI refresh karo ──
+  if(!isActiveEdit && typeof _editorState !== 'undefined' && _editorState &&
+     String(_editorState.tid) === String(tid)){
+    // Editor khula hai isi topic ke liye — content reload karo
+    try{
+      var t2 = null;
+      (S.subjects||[]).forEach(function(sub){ sub.sections.forEach(function(sec){
+        sec.topics.forEach(function(tp){ if(String(tp.id)===String(tid)) t2=tp; });
+      }); });
+      if(t2 && _editorState.noteIdx != null){
+        var remoteNote = t2.notes[_editorState.noteIdx];
+        if(remoteNote){
+          // Editor area mein naya content daal do
+          var area = document.getElementById('noteEditableArea');
+          if(area && remoteNote.editorRichHTML){
+            area.innerHTML = remoteNote.editorRichHTML;
+          }
+          // Highlights state update karo
+          _editorState.richHTML    = remoteNote.editorRichHTML || null;
+          _editorState.highlights  = (remoteNote.editorHighlights||[]).slice();
+          showToast && showToast('⚡ Notes live update ho gaye!', 'info');
+        }
+      }
+    }catch(reErr){ console.warn('Editor live update err:', reErr); }
+  }
+
+  // Minimal UI refresh
   renderLibraryTree && renderLibraryTree();
   updateHistBadge && updateHistBadge();
   updateSavedBadge && updateSavedBadge();
 
   setSyncStatus('synced');
-  showToast && showToast('⚡ Live update!', 'info');
+  if(isActiveEdit){
+    // Receiving changes FROM another device while we are also editing — silent
+  } else {
+    showToast && showToast('⚡ Live update!', 'info');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════
