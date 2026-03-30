@@ -6247,6 +6247,8 @@ function addTopic(){
   if(sec.topics.find(t=>t.name.toLowerCase()===name.toLowerCase())){showToast('Pehle se hai!','error');return;}
   const nt={id:Date.now(),name,notes:[],finalNotes:'',finalNotesRaw:[],newPoints:[],highlights:[],savedFacts:[],finalNotesAt:null,createdAt:new Date().toLocaleDateString('hi-IN')};
   sec.topics.push(nt);save();
+  // ⚡ Attach listener for new topic immediately
+  if(typeof _attachSingleTopicListener === 'function') _attachSingleTopicListener(nt.id);
   document.getElementById('newTopic').value='';
   onSectionChange();
   document.getElementById('selTopic').value=nt.id; onTopicChange();
@@ -10250,6 +10252,8 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   _editorState.highlights = (n.editorHighlights || []).map(h => ({...h})); // Deep copy
   // Use richHTML if available (contains highlight markup or original formatting)
   _editorState.richHTML = n.editorRichHTML || n.richHTML || null;
+  // ⚡ Track active edit topic for smart live-sync merge
+  typeof _setActiveEditTid === 'function' && _setActiveEditTid(tid);
   _undoStack = [];
   _redoStack = [];
 
@@ -10323,6 +10327,8 @@ function _forceCloseEditor() {
   setHlMode('off');
   hideMagnifier();
   _editorState.modified = false;
+  // ⚡ Clear active edit tracking
+  typeof _clearActiveEditTid === 'function' && _clearActiveEditTid();
   // Facts page extra button hide karo
   var fpBtn = document.getElementById('fpAddFactFooterBtn');
   if(fpBtn) fpBtn.style.display = 'none';
@@ -12906,12 +12912,30 @@ let _db = null;
 let _auth = null;
 let _currentUser = null;
 let _fbReady = false;
+// ══════════════════════════════════════════════════════════════════════
+// ⚡ ULTRA-FAST REAL-TIME SYNC ENGINE v3.0
+// Target: <300ms cross-device propagation on 4G/5G
+// Architecture:
+//   • Meta doc listener  (users/{uid})           → stats/quiz/exams
+//   • Topic listeners    (users/{uid}/topics/{tid}) → per-topic granular
+//   • Granular writes    → sirf changed topic save, not full dump
+//   • Optimistic UI      → local first, cloud async
+//   • Echo suppression   → per-doc writeId, apni echo ignore
+// ══════════════════════════════════════════════════════════════════════
+
 let _syncTimeout = null;
-let _justRestored = false; // Restore ke baad Firebase overwrite rokne ke liye
-let _realtimeListener = null; // onSnapshot unsubscribe handle
-let _lastSaveTime = 0;        // Apna khud ka save track karo — apni hi update se reload mat karo
-let _myWriteId = '';          // Unique ID — apni echo identify karne ke liye
-let _listenerRetryTimer = null; // Listener reconnect timer
+let _topicSyncTimers = {};    // {tid: timeoutId} — per-topic debounce
+let _justRestored = false;
+let _realtimeListener = null; // Meta doc listener unsubscribe
+let _topicListeners = {};     // {tid: unsubscribe} — per-topic listeners
+let _lastSaveTime = 0;
+let _myWriteId = '';          // Global write session ID
+let _myTopicWriteIds = {};    // {tid: writeId} — per-topic echo suppression
+let _listenerRetryTimer = null;
+let _knownMetaWriteId = '';   // Last seen meta writeId
+let _knownTopicWriteIds = {}; // {tid: writeId} — last seen per topic
+let _syncInProgress = false;  // Full-reload guard
+let _activeEditTid = null;    // Currently editing topic (preserve its local data)
 
 // Firebase config localStorage se load karo
 function getFbConfig(){
@@ -19745,23 +19769,132 @@ window.neDrawToggle = function(){
 };
 
 
+// ── Generate a short unique write ID ──
+function _genWriteId(){
+  return Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+}
+
+// ── Clean a topic object before saving (remove large binary blobs) ──
+function _cleanTopic(t){
+  var td = JSON.parse(JSON.stringify(t));
+  delete td.finalNotesCanvasPNG;
+  delete td.smartNotesCanvasPNG;
+  delete td.masterNotesCanvasPNG;
+  (td.notes||[]).forEach(function(n){ delete n.canvasPNG; });
+  return td;
+}
+
+// ── Build subject shell (no topics array — only IDs) ──
+function _buildSubjShell(subj){
+  return {
+    id:   subj.id,
+    name: subj.name,
+    facts: subj.facts||[],
+    sectionMeta: (subj.sections||[]).map(function(sec){
+      return {
+        id:    sec.id,
+        name:  sec.name,
+        facts: sec.facts||[],
+        topicIds: (sec.topics||[]).map(function(t){ return t.id; })
+      };
+    })
+  };
+}
+
+// ══════════════════════════════════════════
+// ⚡ GRANULAR TOPIC SAVE — only changed topic
+// Called whenever a single topic changes
+// ══════════════════════════════════════════
+async function saveTopicToFirebase(tid, subjId, secId){
+  if(!_db || !_currentUser) return;
+  try{
+    var uid = _currentUser.uid;
+    // Find topic
+    var t = null;
+    var foundSubj = null, foundSec = null;
+    (S.subjects||[]).forEach(function(sub){
+      sub.sections.forEach(function(sec){
+        sec.topics.forEach(function(tp){
+          if(String(tp.id) === String(tid)){ t=tp; foundSubj=sub; foundSec=sec; }
+        });
+      });
+    });
+    if(!t) return;
+
+    var wid = _genWriteId();
+    _myTopicWriteIds[String(tid)] = wid;
+
+    var topicData = _cleanTopic(t);
+    topicData.writeId = wid;
+
+    await _db.collection('users').doc(uid).collection('topics').doc(String(tid)).set({
+      topic:    topicData,
+      subjId:   subjId || (foundSubj ? foundSubj.id : ''),
+      secId:    secId  || (foundSec  ? foundSec.id  : ''),
+      updatedAt: Date.now(),
+      writeId:  wid
+    }, {merge:true});
+
+    // Also update subject shell (in case structure changed)
+    if(foundSubj){
+      await _db.collection('users').doc(uid).collection('subjects').doc(String(foundSubj.id)).set({
+        shell:     _buildSubjShell(foundSubj),
+        updatedAt: Date.now()
+      }, {merge:true});
+    }
+
+    setSyncStatus('synced');
+  }catch(e){
+    console.warn('Topic sync error:', e.message);
+    setSyncStatus('error');
+  }
+}
+
+// ══════════════════════════════════════════
+// ⚡ META SAVE — stats, quiz, exams, etc.
+// ══════════════════════════════════════════
+async function saveMetaToFirebase(){
+  if(!_db || !_currentUser) return;
+  try{
+    var uid = _currentUser.uid;
+    var wid = _genWriteId();
+    _myWriteId = wid;
+    _lastSaveTime = Date.now();
+
+    await _db.collection('users').doc(uid).set({
+      activeExamId:      S.activeExamId||'',
+      model:             S.model||'llama-3.1-8b-instant',
+      stats:             S.stats,
+      quizHistory:       (S.quizHistory||[]).slice(0,60),
+      questionVault:     (S.questionVault||[]).slice(0,50),
+      savedQuestions:    S.savedQuestions||[],
+      wrongedQuestions:  S.wrongedQuestions||[],
+      reportedQuestions: S.reportedQuestions||[],
+      pausedQuiz:        S.pausedQuiz||null,
+      exams:             S.exams||[],
+      subjectIds:        (S.subjects||[]).map(function(s){ return s.id; }),
+      topicFormat:       'v2',
+      lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
+      writeId:           wid
+    }, {merge:true});
+  }catch(e){
+    console.warn('Meta sync error:', e.message);
+  }
+}
+
+// ══════════════════════════════════════════
+// ⚡ FULL SAVE — initial login / syncNow
+// ══════════════════════════════════════════
 async function saveToFirebase(){
   if(!_db || !_currentUser) return;
   setSyncStatus('syncing');
   try{
-    const uid = _currentUser.uid;
+    var uid = _currentUser.uid;
+    var allOps = [];
 
-    // Firebase batch limit = 500 ops. Split into chunks if needed.
-    // Structure:
-    //   users/{uid}                     ← meta (stats, quiz, settings)
-    //   users/{uid}/subjects/{sid}      ← subject shell (name, sections shell)
-    //   users/{uid}/topics/{tid}        ← one topic = one doc (~50KB max)
-
-    var allOps = []; // {ref, data}
-
-    // ── 1. Meta doc ──
-    var writeId = Date.now().toString(36) + Math.random().toString(36).slice(2,7);
-    _myWriteId = writeId;
+    // Meta
+    var wid = _genWriteId();
+    _myWriteId = wid;
     _lastSaveTime = Date.now();
     allOps.push({
       ref: _db.collection('users').doc(uid),
@@ -19769,64 +19902,41 @@ async function saveToFirebase(){
         activeExamId:      S.activeExamId||'',
         model:             S.model||'llama-3.1-8b-instant',
         stats:             S.stats,
-        quizHistory:       S.quizHistory.slice(0,60),
+        quizHistory:       (S.quizHistory||[]).slice(0,60),
         questionVault:     (S.questionVault||[]).slice(0,50),
         savedQuestions:    S.savedQuestions||[],
         wrongedQuestions:  S.wrongedQuestions||[],
         reportedQuestions: S.reportedQuestions||[],
         pausedQuiz:        S.pausedQuiz||null,
         exams:             S.exams||[],
-        subjectIds:        (S.subjects||[]).map(s=>s.id),
+        subjectIds:        (S.subjects||[]).map(function(s){ return s.id; }),
         topicFormat:       'v2',
         lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
-        writeId:           writeId
+        writeId:           wid
       }
     });
 
-    // ── 2. Subject shell docs (name, facts only — no topics array) ──
+    // Subject shells + topics
     (S.subjects||[]).forEach(function(subj){
-      var shell = {
-        id:   subj.id,
-        name: subj.name,
-        facts: subj.facts||[],
-        sectionMeta: (subj.sections||[]).map(function(sec){
-          return {
-            id:    sec.id,
-            name:  sec.name,
-            facts: sec.facts||[],
-            topicIds: (sec.topics||[]).map(function(t){ return t.id; })
-          };
-        })
-      };
       allOps.push({
         ref: _db.collection('users').doc(uid).collection('subjects').doc(String(subj.id)),
-        data: { shell: shell, updatedAt: Date.now() }
+        data: { shell: _buildSubjShell(subj), updatedAt: Date.now() }
       });
-
-      // ── 3. One doc per topic ──
       (subj.sections||[]).forEach(function(sec){
         (sec.topics||[]).forEach(function(t){
-          var topicData = JSON.parse(JSON.stringify(t));
-          // Clean PNG fields just in case
-          delete topicData.finalNotesCanvasPNG;
-          delete topicData.smartNotesCanvasPNG;
-          delete topicData.masterNotesCanvasPNG;
-          (topicData.notes||[]).forEach(function(n){ delete n.canvasPNG; });
-
+          var twid = _genWriteId();
+          _myTopicWriteIds[String(t.id)] = twid;
+          var td = _cleanTopic(t);
+          td.writeId = twid;
           allOps.push({
             ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)),
-            data: {
-              topic:    topicData,
-              subjId:   subj.id,
-              secId:    sec.id,
-              updatedAt: Date.now()
-            }
+            data: { topic: td, subjId: subj.id, secId: sec.id, updatedAt: Date.now(), writeId: twid }
           });
         });
       });
     });
 
-    // Commit in chunks of 499
+    // Batch commit in chunks of 499
     for(var i=0; i<allOps.length; i+=499){
       var chunk = allOps.slice(i, i+499);
       var batch = _db.batch();
@@ -19834,9 +19944,12 @@ async function saveToFirebase(){
       await batch.commit();
     }
 
+    // After full save, re-attach topic listeners for any new topics
+    _attachTopicListeners();
+
     setSyncStatus('synced');
   }catch(e){
-    console.error('Firebase save error:', e);
+    console.error('Firebase full save error:', e);
     setSyncStatus('error');
     showToast('Sync error — data local mein safe hai', 'error');
   }
@@ -20071,82 +20184,282 @@ async function pullFromCloud(){
 }
 
 // ── REALTIME LISTENER — dusri device pe save hone par auto reload ──
+// ══════════════════════════════════════════════════════════════════════
+// ⚡ META LISTENER — stats, quiz, exams changes detect karo
+// ══════════════════════════════════════════════════════════════════════
 function _attachRealtimeListener(){
   if(!_db || !_currentUser) return;
-  // Pehle purana listener aur retry timer hatao
   if(_realtimeListener){ _realtimeListener(); _realtimeListener = null; }
   if(_listenerRetryTimer){ clearTimeout(_listenerRetryTimer); _listenerRetryTimer = null; }
 
   var uid = _currentUser.uid;
-  var _knownWriteId = _myWriteId || ''; // Pehli snapshot ke liye baseline
-  var _firstSnapshot = true;
+  var _firstMeta = true;
 
   _realtimeListener = _db.collection('users').doc(uid).onSnapshot(
     { includeMetadataChanges: false },
     function(doc){
       if(!doc.exists) return;
       var data = doc.data();
-      var incomingWriteId = data.writeId || '';
+      var incomingWid = data.writeId || '';
 
-      // Pehli snapshot: sirf baseline set karo
-      if(_firstSnapshot){
-        _firstSnapshot = false;
-        _knownWriteId = incomingWriteId;
+      if(_firstMeta){
+        _firstMeta = false;
+        _knownMetaWriteId = incomingWid;
+        // Attach per-topic listeners after meta loads
+        _attachTopicListeners();
         return;
       }
 
-      // Agar writeId naya nahi — koi change nahi
-      if(!incomingWriteId || incomingWriteId === _knownWriteId) return;
+      if(!incomingWid || incomingWid === _knownMetaWriteId) return;
+      if(incomingWid === _myWriteId){ _knownMetaWriteId = incomingWid; return; }
 
-      // Agar yeh hamara khud ka writeId hai — apni echo, ignore karo
-      if(incomingWriteId === _myWriteId){
-        _knownWriteId = incomingWriteId;
-        return;
-      }
+      _knownMetaWriteId = incomingWid;
 
-      // Naya writeId aur hamara nahi — dusri device ne save kiya
-      _knownWriteId = incomingWriteId;
-      _silentReloadFromFirebase();
+      // Meta changed from another device — silently update meta fields only
+      _applyMetaUpdate(data);
     },
     function(err){
-      // WebChannel transport error — listener gir gaya, reconnect karo
-      console.log('Realtime listener dropped, reconnecting in 5s:', err.code || err.message);
+      console.log('Meta listener dropped, reconnecting in 3s:', err.code || err.message);
       _realtimeListener = null;
-      // 5 seconds baad dobara attach karo
       _listenerRetryTimer = setTimeout(function(){
         if(_currentUser) _attachRealtimeListener();
-      }, 5000);
+      }, 3000);
     }
   );
 }
 
-// ── Silent reload — UI disturb kiye bina dusri device ka data load karo ──
-async function _silentReloadFromFirebase(){
+// ══════════════════════════════════════════════════════════════════════
+// ⚡ TOPIC LISTENERS — har topic ka apna listener
+// Yeh sabse fast path hai — topic change hote hi 100-300ms mein aata hai
+// ══════════════════════════════════════════════════════════════════════
+function _attachTopicListeners(){
   if(!_db || !_currentUser) return;
-  // Agar user kuchh actively type/edit kar raha hai to delay karo
-  if(document.querySelector('.notes-editor-modal.show, .modal.show')) {
-    // Koi modal/editor open hai — 15 sec baad retry karo
-    setTimeout(_silentReloadFromFirebase, 15000);
+  var uid = _currentUser.uid;
+
+  // Find all current topic IDs
+  var allTids = [];
+  (S.subjects||[]).forEach(function(sub){
+    sub.sections.forEach(function(sec){
+      sec.topics.forEach(function(t){ allTids.push(String(t.id)); });
+    });
+  });
+
+  // Detach listeners for topics no longer in data
+  Object.keys(_topicListeners).forEach(function(tid){
+    if(allTids.indexOf(tid) === -1){
+      _topicListeners[tid]();
+      delete _topicListeners[tid];
+      delete _knownTopicWriteIds[tid];
+    }
+  });
+
+  // Attach listeners for new topics
+  allTids.forEach(function(tid){
+    if(_topicListeners[tid]) return; // Already listening
+
+    var _firstSnap = true;
+
+    var unsubscribe = _db.collection('users').doc(uid).collection('topics').doc(tid).onSnapshot(
+      { includeMetadataChanges: false },
+      function(doc){
+        if(!doc.exists) return;
+        var data = doc.data();
+        var incomingWid = data.writeId || '';
+
+        if(_firstSnap){
+          _firstSnap = false;
+          _knownTopicWriteIds[tid] = incomingWid;
+          return;
+        }
+
+        if(!incomingWid || incomingWid === _knownTopicWriteIds[tid]) return;
+
+        // Hamari apni echo — ignore karo
+        if(incomingWid === (_myTopicWriteIds[tid] || '')) {
+          _knownTopicWriteIds[tid] = incomingWid;
+          return;
+        }
+
+        _knownTopicWriteIds[tid] = incomingWid;
+
+        // Dusri device ne yeh topic update kiya — silently apply!
+        _applyTopicUpdate(tid, data.topic);
+      },
+      function(err){
+        console.log('Topic listener dropped tid=' + tid + ', reconnect 3s');
+        delete _topicListeners[tid];
+        setTimeout(function(){
+          if(_currentUser && !_topicListeners[tid]) _attachSingleTopicListener(tid);
+        }, 3000);
+      }
+    );
+
+    _topicListeners[tid] = unsubscribe;
+  });
+}
+
+function _attachSingleTopicListener(tid){
+  if(!_db || !_currentUser) return;
+  var uid = _currentUser.uid;
+  var _firstSnap = true;
+
+  var unsubscribe = _db.collection('users').doc(uid).collection('topics').doc(String(tid)).onSnapshot(
+    { includeMetadataChanges: false },
+    function(doc){
+      if(!doc.exists) return;
+      var data = doc.data();
+      var incomingWid = data.writeId || '';
+      if(_firstSnap){ _firstSnap = false; _knownTopicWriteIds[String(tid)] = incomingWid; return; }
+      if(!incomingWid || incomingWid === _knownTopicWriteIds[String(tid)]) return;
+      if(incomingWid === (_myTopicWriteIds[String(tid)] || '')){ _knownTopicWriteIds[String(tid)] = incomingWid; return; }
+      _knownTopicWriteIds[String(tid)] = incomingWid;
+      _applyTopicUpdate(String(tid), data.topic);
+    },
+    function(){ delete _topicListeners[String(tid)]; }
+  );
+  _topicListeners[String(tid)] = unsubscribe;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ⚡ APPLY TOPIC UPDATE — granular, instant, no full reload
+// ══════════════════════════════════════════════════════════════════════
+function _applyTopicUpdate(tid, newTopicData){
+  if(!newTopicData) return;
+  if(_syncInProgress) return;
+
+  var isActiveEdit = (String(tid) === String(_activeEditTid));
+
+  // Find and update topic in S
+  var updated = false;
+  (S.subjects||[]).forEach(function(sub){
+    sub.sections.forEach(function(sec){
+      for(var i=0; i<sec.topics.length; i++){
+        if(String(sec.topics[i].id) === String(tid)){
+          // Agar yeh topic abhi edit ho raha hai — sirf non-editing fields update karo
+          if(isActiveEdit){
+            // Only sync structural/metadata fields, not editorRichHTML etc.
+            var local = sec.topics[i];
+            var fieldsToSync = ['highlights','savedFacts','flashcards','fcHash',
+              'finalNotesHTML','smartNotesHTML','masterNotesHTML',
+              'finalNotesAt','smartNotesAt','newPoints','wrongBank'];
+            fieldsToSync.forEach(function(f){
+              if(newTopicData[f] !== undefined) local[f] = newTopicData[f];
+            });
+            // notes[] sync — sirf non-active note
+            if(newTopicData.notes){
+              newTopicData.notes.forEach(function(remoteNote){
+                var found = false;
+                for(var j=0; j<(local.notes||[]).length; j++){
+                  if(String(local.notes[j].id) === String(remoteNote.id)){
+                    found = true;
+                    // Merge — remote ke baaki fields, local ka editorRichHTML
+                    var localRich = local.notes[j].editorRichHTML;
+                    var localHl   = local.notes[j].editorHighlights;
+                    local.notes[j] = remoteNote;
+                    if(localRich !== undefined) local.notes[j].editorRichHTML = localRich;
+                    if(localHl   !== undefined) local.notes[j].editorHighlights = localHl;
+                    break;
+                  }
+                }
+                if(!found) local.notes.push(remoteNote);
+              });
+            }
+          } else {
+            // Sirf local editor data preserve karo, baaki sab replace
+            var oldTopic = sec.topics[i];
+            var localRichMap = {};
+            (oldTopic.notes||[]).forEach(function(n){
+              if(n.editorRichHTML !== undefined) localRichMap[n.id] = { rich: n.editorRichHTML, hl: n.editorHighlights||[] };
+            });
+
+            sec.topics[i] = newTopicData;
+            if(!sec.topics[i].highlights) sec.topics[i].highlights = [];
+            if(!sec.topics[i].savedFacts) sec.topics[i].savedFacts = [];
+            if(!sec.topics[i].notes) sec.topics[i].notes = [];
+
+            sec.topics[i].notes.forEach(function(n){
+              var ld = localRichMap[n.id];
+              if(ld){ n.editorRichHTML = ld.rich; n.editorHighlights = ld.hl; }
+            });
+          }
+
+          updated = true;
+        }
+      }
+    });
+  });
+
+  if(!updated) return;
+
+  try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+
+  // Minimal UI refresh — sirf affected parts
+  renderLibraryTree && renderLibraryTree();
+  updateHistBadge && updateHistBadge();
+  updateSavedBadge && updateSavedBadge();
+
+  setSyncStatus('synced');
+  showToast && showToast('⚡ Live update!', 'info');
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ⚡ APPLY META UPDATE — stats, quiz, exams — bina full reload ke
+// ══════════════════════════════════════════════════════════════════════
+function _applyMetaUpdate(meta){
+  if(_syncInProgress) return;
+
+  S.exams             = meta.exams             || S.exams || [];
+  S.activeExamId      = meta.activeExamId       || S.activeExamId || '';
+  S.quizHistory       = meta.quizHistory        || S.quizHistory || [];
+  S.stats             = meta.stats              || S.stats || {total:0,correct:0,wrong:0,topicStats:{}};
+  S.questionVault     = meta.questionVault      || S.questionVault || [];
+  S.savedQuestions    = meta.savedQuestions     || S.savedQuestions || [];
+  S.wrongedQuestions  = meta.wrongedQuestions   || S.wrongedQuestions || [];
+  S.reportedQuestions = meta.reportedQuestions  || S.reportedQuestions || [];
+  S.pausedQuiz        = meta.pausedQuiz         || S.pausedQuiz || null;
+
+  // Agar naye subjects hain (dusri device pe add hua) — full reload
+  var remoteIds = (meta.subjectIds||[]).map(String).sort().join(',');
+  var localIds  = (S.subjects||[]).map(function(s){ return String(s.id); }).sort().join(',');
+  if(remoteIds !== localIds){
+    _silentReloadFromFirebase();
     return;
   }
+
+  try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+
+  renderExamSwitcher && renderExamSwitcher();
+  renderExamsList && renderExamsList();
+  updateQuizSelects && updateQuizSelects();
+  renderStats && renderStats();
+  updateModePill && updateModePill();
+  updateHistBadge && updateHistBadge();
+  updateSavedBadge && updateSavedBadge();
+  updateVaultBadge && updateVaultBadge();
+
+  showToast && showToast('🔄 Dusri device se update!', 'info');
+}
+
+// ── Full silent reload — jab structure change ho (new subject/section/topic) ──
+async function _silentReloadFromFirebase(){
+  if(!_db || !_currentUser || _syncInProgress) return;
+  _syncInProgress = true;
 
   try{
     var uid = _currentUser.uid;
     var metaDoc = await _db.collection('users').doc(uid).get();
-    if(!metaDoc.exists) return;
+    if(!metaDoc.exists){ _syncInProgress=false; return; }
 
     var meta = metaDoc.data();
     var subjectIds = meta.subjectIds || [];
-    if(!subjectIds.length) return;
+    if(!subjectIds.length){ _syncInProgress=false; return; }
 
-    // Subject shells load karo
     var shellDocs = await Promise.all(
       subjectIds.map(function(id){
         return _db.collection('users').doc(uid).collection('subjects').doc(String(id)).get();
       })
     );
 
-    // All topics load karo
     var topicDocs = await _db.collection('users').doc(uid).collection('topics').get();
     var topicMap = {};
     topicDocs.forEach(function(d){
@@ -20154,7 +20467,6 @@ async function _silentReloadFromFirebase(){
       if(td && td.topic) topicMap[String(td.topic.id)] = td.topic;
     });
 
-    // Reassemble subjects
     var newSubjects = shellDocs
       .filter(function(d){ return d.exists; })
       .map(function(d){
@@ -20171,9 +20483,9 @@ async function _silentReloadFromFirebase(){
         return shell;
       }).filter(Boolean);
 
-    if(!newSubjects.length) return;
+    if(!newSubjects.length){ _syncInProgress=false; return; }
 
-    // Local editor state preserve karo (jo abhi open hai)
+    // Preserve local editor data
     var localEditorData = {};
     (S.subjects||[]).forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
       if(t.finalNotesHTML)  localEditorData['fn_'+t.id] = t.finalNotesHTML;
@@ -20184,19 +20496,17 @@ async function _silentReloadFromFirebase(){
       });
     }); }); });
 
-    // S update karo
     S.subjects          = newSubjects;
-    S.exams             = meta.exams || S.exams || [];
-    S.activeExamId      = meta.activeExamId || S.activeExamId || '';
-    S.quizHistory       = meta.quizHistory || S.quizHistory || [];
-    S.stats             = meta.stats || S.stats || {total:0,correct:0,wrong:0,topicStats:{}};
-    S.questionVault     = meta.questionVault || S.questionVault || [];
-    S.savedQuestions    = meta.savedQuestions || S.savedQuestions || [];
-    S.wrongedQuestions  = meta.wrongedQuestions || S.wrongedQuestions || [];
-    S.reportedQuestions = meta.reportedQuestions || S.reportedQuestions || [];
-    S.pausedQuiz        = meta.pausedQuiz || S.pausedQuiz || null;
+    S.exams             = meta.exams             || S.exams || [];
+    S.activeExamId      = meta.activeExamId       || S.activeExamId || '';
+    S.quizHistory       = meta.quizHistory        || S.quizHistory || [];
+    S.stats             = meta.stats              || S.stats || {total:0,correct:0,wrong:0,topicStats:{}};
+    S.questionVault     = meta.questionVault      || S.questionVault || [];
+    S.savedQuestions    = meta.savedQuestions     || S.savedQuestions || [];
+    S.wrongedQuestions  = meta.wrongedQuestions   || S.wrongedQuestions || [];
+    S.reportedQuestions = meta.reportedQuestions  || S.reportedQuestions || [];
+    S.pausedQuiz        = meta.pausedQuiz         || S.pausedQuiz || null;
 
-    // Local editor data wapas lagao
     S.subjects.forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
       if(!t.highlights) t.highlights=[];
       if(!t.savedFacts) t.savedFacts=[];
@@ -20213,7 +20523,6 @@ async function _silentReloadFromFirebase(){
 
     try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
 
-    // UI refresh
     renderExamSwitcher && renderExamSwitcher();
     renderLibrarySelects && renderLibrarySelects();
     renderLibraryTree && renderLibraryTree();
@@ -20225,28 +20534,86 @@ async function _silentReloadFromFirebase(){
     updateSavedBadge && updateSavedBadge();
     updateVaultBadge && updateVaultBadge();
 
-    // Subtle toast — "dusri device se update aaya"
-    showToast && showToast('🔄 Dusri device se update aaya!', 'info');
+    // Re-attach topic listeners for any new topics
+    _attachTopicListeners();
 
+    showToast && showToast('🔄 Dusri device se update aaya!', 'info');
   }catch(e){
-    // Agar network issue tha — 10 sec baad retry karo
     console.log('Silent reload error:', e.message);
     if(e.code === 'unavailable' || (e.message && e.message.includes('transport'))){
       setTimeout(function(){
         if(_currentUser) _silentReloadFromFirebase();
-      }, 10000);
+      }, 5000);
     }
+  }finally{
+    _syncInProgress = false;
   }
 }
 
-// ---- OVERRIDE save() TO ALSO SYNC ----
-// FIX: function hoisting se infinite loop hoti thi, isliye direct localStorage call
+// ══════════════════════════════════════════════════════════════════════
+// ⚡ save() — ULTRA-FAST: local instant + granular cloud sync
+//
+// Kaise kaam karta hai:
+//   1. localStorage mein FORAN save (0ms latency on same device)
+//   2. Changed topic detect karo
+//   3. 300ms debounce ke baad SIRF woh topic Firestore mein save karo
+//      (pura dump nahi — granular write)
+//   4. Meta (stats/quiz) ke liye alag debounce
+// ══════════════════════════════════════════════════════════════════════
+var _lastSavedSnapshot = {}; // {tid: JSON string} — change detection ke liye
+var _metaSyncTimer = null;
+
 function save(){
+  // Step 1: Instant local save
   try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
-  if(_currentUser && _db){
-    if(_syncTimeout) clearTimeout(_syncTimeout);
-    _syncTimeout = setTimeout(()=>{ saveToFirebase(); }, 3000);
-  }
+
+  if(!_currentUser || !_db) return;
+  setSyncStatus('syncing');
+
+  // Step 2: Find which topics changed
+  var changedTopics = [];
+  (S.subjects||[]).forEach(function(sub){
+    sub.sections.forEach(function(sec){
+      sec.topics.forEach(function(t){
+        var td = _cleanTopic(t);
+        var json = JSON.stringify(td);
+        if(_lastSavedSnapshot[String(t.id)] !== json){
+          _lastSavedSnapshot[String(t.id)] = json;
+          changedTopics.push({ tid: t.id, subjId: sub.id, secId: sec.id });
+        }
+      });
+    });
+  });
+
+  // Step 3: Per-topic debounced granular save (300ms)
+  changedTopics.forEach(function(info){
+    var key = String(info.tid);
+    if(_topicSyncTimers[key]) clearTimeout(_topicSyncTimers[key]);
+    _topicSyncTimers[key] = setTimeout(function(){
+      delete _topicSyncTimers[key];
+      saveTopicToFirebase(info.tid, info.subjId, info.secId).then(function(){
+        // After topic save, attach listener if not already attached
+        if(!_topicListeners[String(info.tid)]){
+          _attachSingleTopicListener(info.tid);
+        }
+      });
+    }, 300);
+  });
+
+  // Step 4: Meta debounced save (500ms) — stats, quiz, structure changes
+  if(_metaSyncTimer) clearTimeout(_metaSyncTimer);
+  _metaSyncTimer = setTimeout(function(){
+    _metaSyncTimer = null;
+    saveMetaToFirebase();
+  }, 500);
+}
+
+// ── Track active editing topic (for smart merge during live sync) ──
+function _setActiveEditTid(tid){
+  _activeEditTid = tid != null ? String(tid) : null;
+}
+function _clearActiveEditTid(){
+  _activeEditTid = null;
 }
 
 // ==================== START ====================
