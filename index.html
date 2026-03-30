@@ -12826,14 +12826,8 @@ function initFirebase(){
     }
     _auth = firebase.auth();
     _db = firebase.firestore();
-    // Offline persistence enable karo - network nahi ho tab bhi kaam kare
-    _db.enablePersistence({synchronizeTabs:true}).catch(err=>{
-      if(err.code === 'failed-precondition') {
-        // Multiple tabs open - ignore
-      } else if(err.code === 'unimplemented') {
-        // Browser support nahi - ignore
-      }
-    });
+    // enablePersistence HATAYA — multi-device par 'primary lease' errors deta tha
+    // aur Firestore listener crash kar deta tha. Online sync ke liye zaroori nahi.
     _fbReady = true;
 
     // Auth state listener
@@ -32533,48 +32527,36 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     }
   });
 })();
+</script>
 
-// ══════════════════════════════════════════════════════════════════
-// AUTO-SYNC: Jab app visible ho ya focus aaye — Firebase se fetch karo
-// Yeh cross-device sync ka most reliable tarika hai
-// ══════════════════════════════════════════════════════════════════
+<!-- AUTO-SYNC: App visible hone par Firebase se fetch karo -->
+<script>
 (function(){
   var _lastAutoSync = 0;
-  var MIN_INTERVAL = 30000; // 30 seconds se zyada baar baar sync mat karo
+  var MIN_INTERVAL = 20000; // 20 sec se pehle dobara sync mat karo
 
   function _autoSyncCheck(){
-    // Login nahi hai to kuch mat karo
     if(typeof _currentUser === 'undefined' || !_currentUser) return;
-    if(typeof _db === 'undefined' || !_db) return;
     if(typeof _silentReloadFromFirebase !== 'function') return;
-
     var now = Date.now();
-    // 30 second se pehle dobara mat karo
     if(now - _lastAutoSync < MIN_INTERVAL) return;
     _lastAutoSync = now;
-
-    console.log('[AutoSync] App visible/focused — Firebase se latest data fetch kar rahe hain...');
+    console.log('[AutoSync] App visible — syncing from Firebase...');
     _silentReloadFromFirebase();
   }
 
-  // 1. Jab phone se app wapas aao (tab switch, app switch)
+  // Jab phone se app wapas aao
   document.addEventListener('visibilitychange', function(){
-    if(document.visibilityState === 'visible'){
-      _autoSyncCheck();
-    }
+    if(document.visibilityState === 'visible') _autoSyncCheck();
   });
 
-  // 2. Jab window focus aaye (desktop browser tab switch)
-  window.addEventListener('focus', function(){
-    _autoSyncCheck();
-  });
+  // Jab browser window focus aaye
+  window.addEventListener('focus', _autoSyncCheck);
 
-  // 3. Jab page fresh load ho (reload/GitHub link se khola)
-  window.addEventListener('pageshow', function(e){
-    // pageshow har baar fire hota hai — bfcache se bhi
-    setTimeout(_autoSyncCheck, 2000); // 2s wait karo — Firebase login complete hone do
+  // Page load hone par bhi (2s delay — login complete hone do)
+  window.addEventListener('pageshow', function(){
+    setTimeout(_autoSyncCheck, 2500);
   });
-
 })();
 </script>
 
