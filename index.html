@@ -1593,14 +1593,14 @@ body.night-mode .sc-tbtn:hover { background: rgba(255,255,255,0.15); }
 #noteFileDropZone:hover{border-color:var(--accent);background:rgba(21,101,192,0.05);}
 /* Rich toolbar buttons hover */
 #noteRichToolbar button:hover{background:var(--bg2);border-color:var(--accent);}
-.note-read-area mark.user-hl{background:#fff176;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;}
-.note-read-area mark.user-hl-pink{background:#fce4ec;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;}
-.note-read-area mark.user-hl-green{background:#e8f5e9;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;}
-.note-read-area mark.user-hl-blue{background:#e3f2fd;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;}
-.ne-editable mark.user-hl{background:#fff176;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;}
-.ne-editable mark.user-hl-pink{background:#fce4ec;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;}
-.ne-editable mark.user-hl-green{background:#e8f5e9;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;}
-.ne-editable mark.user-hl-blue{background:#e3f2fd;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;}
+.note-read-area mark.user-hl{background:#fff176;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
+.note-read-area mark.user-hl-pink{background:#fce4ec;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
+.note-read-area mark.user-hl-green{background:#e8f5e9;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
+.note-read-area mark.user-hl-blue{background:#e3f2fd;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
+.ne-editable mark.user-hl{background:#fff176;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
+.ne-editable mark.user-hl-pink{background:#fce4ec;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
+.ne-editable mark.user-hl-green{background:#e8f5e9;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
+.ne-editable mark.user-hl-blue{background:#e3f2fd;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
 /* Edit mode */
 .note-edit-area{font-size:0.86rem;line-height:1.85;color:var(--text);background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;padding:12px;min-height:300px;resize:vertical;font-family:'Noto Sans Devanagari',sans-serif;outline:none;width:100%;}
 .note-edit-area:focus{border-color:var(--accent);background:var(--surface);}
@@ -11238,33 +11238,44 @@ function getSmartRange(startX, startY, endX, endY, dir, wordSnapStart) {
 }
 
 // ---- Visual selection overlay (live preview) ----
+// Uses position:fixed (viewport-relative) so overlays follow text even during scroll
 let _selOverlays = [];
+let _selOverlayRAF = null;
+
 function showSelectionOverlay(range) {
+  // Cancel any pending RAF
+  if(_selOverlayRAF) { cancelAnimationFrame(_selOverlayRAF); _selOverlayRAF = null; }
   clearSelectionOverlay();
   if(!range || range.collapsed) return;
-  try {
-    const rects = Array.from(range.getClientRects());
-    const area = document.getElementById('noteEditableArea');
-    const areaRect = area.getBoundingClientRect();
-    rects.forEach(function(r) {
-      const div = document.createElement('div');
-      div.style.cssText = [
-        'position:fixed',
-        'pointer-events:none',
-        'z-index:9990',
-        'background:rgba(255,235,59,0.45)',
-        'border-radius:2px',
-        'left:' + r.left + 'px',
-        'top:' + r.top + 'px',
-        'width:' + r.width + 'px',
-        'height:' + r.height + 'px'
-      ].join(';');
-      document.body.appendChild(div);
-      _selOverlays.push(div);
-    });
-  } catch(e) {}
+
+  _selOverlayRAF = requestAnimationFrame(function() {
+    try {
+      const rects = Array.from(range.getClientRects());
+      rects.forEach(function(r) {
+        if(r.width < 1 || r.height < 1) return; // skip empty rects
+        const div = document.createElement('div');
+        div.style.cssText = [
+          'position:fixed',
+          'pointer-events:none',
+          'z-index:9990',
+          'background:rgba(255,193,7,0.38)',
+          'border:1px solid rgba(249,168,37,0.6)',
+          'border-radius:2px',
+          'box-sizing:border-box',
+          'left:' + r.left + 'px',
+          'top:' + r.top + 'px',
+          'width:' + r.width + 'px',
+          'height:' + r.height + 'px'
+        ].join(';');
+        document.body.appendChild(div);
+        _selOverlays.push(div);
+      });
+    } catch(e) {}
+  });
 }
+
 function clearSelectionOverlay() {
+  if(_selOverlayRAF) { cancelAnimationFrame(_selOverlayRAF); _selOverlayRAF = null; }
   _selOverlays.forEach(function(d){ if(d.parentNode) d.parentNode.removeChild(d); });
   _selOverlays = [];
 }
@@ -11307,7 +11318,7 @@ function onNETouchStart(e) {
   hideMagnifier();
   clearSelectionOverlay();
 
-  // Long press timer (400ms) -- snap to word
+  // Long press timer (350ms) -- snap to word, earlier trigger
   _touchLongPressTimer = setTimeout(function() {
     if(_touchPhase !== 'longpress_wait') return;
     _tsWordSnapped = true;
@@ -11325,13 +11336,13 @@ function onNETouchStart(e) {
         _touchSelectedText = word.word;
         showSelectionOverlay(r);
         showMagnifier(_ts.x, _ts.y, '📌 ' + word.word, true);
-        // Vibrate for haptic feedback
-        if(navigator.vibrate) navigator.vibrate(40);
+        // Haptic feedback
+        if(navigator.vibrate) navigator.vibrate(35);
       } catch(ex) {}
     } else {
       showMagnifier(_ts.x, _ts.y, '👆 Drag karo...', false);
     }
-  }, 400);
+  }, 350);
 }
 
 function onNETouchMove(e) {
@@ -11350,7 +11361,7 @@ function onNETouchMove(e) {
   const absDy = Math.abs(dy);
   const dist = Math.sqrt(dx*dx + dy*dy);
 
-  // If long press already triggered -- we're selecting, prevent scroll always
+  // If already in selecting phase -- prevent scroll always, do live selection
   if(_touchPhase === 'selecting') {
     e.preventDefault();
     _doLiveSelect(t.clientX, t.clientY, absDx, absDy);
@@ -11359,17 +11370,19 @@ function onNETouchMove(e) {
 
   // Still in longpress_wait phase
   if(_touchPhase === 'longpress_wait') {
-    if(dist > 8) {
-      // Finger moved before long press -- quick drag mode
+    // Lower threshold: 6px se hi quick-drag mode shuru (pehle 8 tha)
+    if(dist > 6) {
       clearTimeout(_touchLongPressTimer);
       _touchLongPressTimer = null;
 
-      // Determine direction ONCE based on initial motion
+      // Direction: diagonal movement ko bhi handle karo
+      // Agar dy > 0.3 * dx → vertical consider karo (multiline)
+      // Warna horizontal (single-line char-level)
       if(_touchDir === null) {
-        _touchDir = absDy > absDx ? 'vertical' : 'horizontal';
+        _touchDir = absDy > absDx * 0.5 ? 'vertical' : 'horizontal';
       }
 
-      if(dist > 14) {
+      if(dist > 6) {
         _touchPhase = 'selecting';
         _touchSelecting = true;
         e.preventDefault();
@@ -11380,9 +11393,13 @@ function onNETouchMove(e) {
 }
 
 function _doLiveSelect(curX, curY, absDx, absDy) {
-  // Set direction if not set
+  // Direction: lock once set, but allow upgrade from horizontal→vertical
+  // if user starts going down after horizontal start
   if(_touchDir === null) {
-    _touchDir = absDy > absDx ? 'vertical' : 'horizontal';
+    _touchDir = absDy > absDx * 0.5 ? 'vertical' : 'horizontal';
+  } else if(_touchDir === 'horizontal' && absDy > absDx * 1.2) {
+    // User started horizontal but now going diagonal — upgrade to vertical
+    _touchDir = 'vertical';
   }
 
   const range = getSmartRange(_ts.x, _ts.y, curX, curY, _touchDir, _tsWordSnapped);
@@ -11499,71 +11516,130 @@ function applyHighlightFromSelection(sel) {
   }
 }
 
-// Core: wrap range in mark element
+// ══════════════════════════════════════════════════════════
+// CORE: Highlight apply — DOM-stable, multi-node safe
+// surroundContents() sirf single text node par kaam karta hai.
+// Multi-node ranges (jaise kai paragraphs across) ke liye
+// hum ek "walk" approach use karte hain:
+//   1. Range ke andar ke SAARE text nodes collect karo
+//   2. Har text node ko individually <mark> mein wrap karo
+//   3. DOM structure kabhi restructure nahi hota → text shift ZERO
+// ══════════════════════════════════════════════════════════
 function applyHighlightFromRange(range, text) {
-  // ── Scroll position PEHLE save karo (neSaveSnapshot se bhi pehle) ──
   const scrollEl = document.getElementById('neBody') || document.querySelector('.notes-editor-body');
   const savedScroll = scrollEl ? scrollEl.scrollTop : 0;
 
-  neSaveSnapshot(); // Save state before highlight for undo
+  neSaveSnapshot();
 
   const color = _editorState.hlColor;
-  const cls = color === 'pink' ? 'user-hl-pink' : color === 'green' ? 'user-hl-green' : color === 'blue' ? 'user-hl-blue' : 'user-hl';
+  const cls = color === 'pink' ? 'user-hl-pink'
+             : color === 'green' ? 'user-hl-green'
+             : color === 'blue'  ? 'user-hl-blue'
+             : 'user-hl';
   const uid = 'hl_' + Date.now();
 
-  try {
-    // Check range is inside noteEditableArea
-    const area = document.getElementById('noteEditableArea');
-    if(!area.contains(range.commonAncestorContainer)) return;
+  const area = document.getElementById('noteEditableArea');
+  if(!area || !area.contains(range.commonAncestorContainer)) return;
 
-    const mark = document.createElement('mark');
-    mark.className = cls;
-    mark.setAttribute('data-hlid', uid);
-    mark.style.cursor = 'pointer';
-    mark.title = 'Tap = Unhighlight';
-    range.surroundContents(mark);
-
-    // ── Scroll restore: rAF se ensure karein reflow ke baad restore ho ──
-    if(scrollEl) {
-      scrollEl.scrollTop = savedScroll;
-      requestAnimationFrame(function(){ scrollEl.scrollTop = savedScroll; });
+  // ── STEP 1: Range ke andar ke saare text nodes collect karo ──
+  function collectTextNodes(range) {
+    const nodes = [];
+    const walker = document.createTreeWalker(
+      range.commonAncestorContainer,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: function(node) {
+          // Node fully outside range? Reject
+          if(!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }
+    );
+    // If commonAncestor itself is a text node
+    if(range.commonAncestorContainer.nodeType === Node.TEXT_NODE) {
+      nodes.push(range.commonAncestorContainer);
+    } else {
+      let node;
+      while((node = walker.nextNode())) nodes.push(node);
     }
+    return nodes;
+  }
 
-    // Attach unhighlight on tap
-    neAttachUnhighlightToMark(mark);
+  try {
+    const textNodes = collectTextNodes(range);
+    if(!textNodes.length) { showToast('Text nahi mila, dobara try karo', 'error'); return; }
 
-    _editorState.highlights.push({ id: uid, text, color });
-    markModified();
-    showToast('Highlight ho gaya! 🖊️', 'success');
-    trackActivity('highlight', { name: text.substring(0,40), tid: _editorState.tid });
-    // Update highlights→canvas button badge
-    setTimeout(neUpdateHlCanvasBtn, 50);
-  } catch(e) {
-    // Range spans multiple nodes - use extractContents approach
-    try {
-      const frag = range.extractContents();
+    const createdMarks = [];
+
+    textNodes.forEach(function(tNode, idx) {
+      // Ye text node range mein kitna part cover karta hai?
+      let startOffset = 0;
+      let endOffset = tNode.textContent.length;
+
+      if(idx === 0 && tNode === range.startContainer) {
+        startOffset = range.startOffset;
+      }
+      if(idx === textNodes.length - 1 && tNode === range.endContainer) {
+        endOffset = range.endOffset;
+      }
+      // Special: agar single node aur dono same hai
+      if(textNodes.length === 1) {
+        startOffset = (tNode === range.startContainer) ? range.startOffset : 0;
+        endOffset   = (tNode === range.endContainer)   ? range.endOffset   : tNode.textContent.length;
+      }
+
+      // Nothing to highlight in this node? Skip
+      if(startOffset >= endOffset) return;
+
+      // ── Safe split-and-wrap (zero DOM restructure) ──
+      // Split: [before | selectedPart | after] — pure text node ops
+      // tNode ke parent mein insertBefore se position maintain hoti hai
+
+      const fullText = tNode.textContent;
+      const beforeText = fullText.slice(0, startOffset);
+      const hlText     = fullText.slice(startOffset, endOffset);
+      const afterText  = fullText.slice(endOffset);
+
       const mark = document.createElement('mark');
       mark.className = cls;
       mark.setAttribute('data-hlid', uid);
-      mark.style.cursor = 'pointer';
-      mark.appendChild(frag);
-      neAttachUnhighlightToMark(mark);
-      range.insertNode(mark);
+      mark.style.cssText = 'cursor:pointer;display:inline;';
+      mark.title = 'Tap = Unhighlight';
+      mark.textContent = hlText;
 
-      // ── Scroll restore: rAF se ensure karein reflow ke baad restore ho ──
-      if(scrollEl) {
+      const parent = tNode.parentNode;
+      if(!parent) return;
+
+      // Insert before/after nodes using a DocumentFragment (single reflow)
+      const frag = document.createDocumentFragment();
+      if(beforeText) frag.appendChild(document.createTextNode(beforeText));
+      frag.appendChild(mark);
+      if(afterText)  frag.appendChild(document.createTextNode(afterText));
+
+      parent.replaceChild(frag, tNode);
+      createdMarks.push(mark);
+    });
+
+    // ── Scroll restore (double rAF for full repaint) ──
+    if(scrollEl) {
+      scrollEl.scrollTop = savedScroll;
+      requestAnimationFrame(function(){
         scrollEl.scrollTop = savedScroll;
         requestAnimationFrame(function(){ scrollEl.scrollTop = savedScroll; });
-      }
-
-      _editorState.highlights.push({ id: uid, text: mark.textContent, color });
-      markModified();
-      showToast('Highlight ho gaya! 🖊️', 'success');
-      // Update highlights→canvas button badge
-      setTimeout(neUpdateHlCanvasBtn, 50);
-    } catch(e2) {
-      showToast('Thoda alag text select karo', 'error');
+      });
     }
+
+    // Attach eraser listener to all created marks
+    createdMarks.forEach(function(m){ neAttachUnhighlightToMark(m); });
+
+    _editorState.highlights.push({ id: uid, text: text || createdMarks.map(m=>m.textContent).join(''), color });
+    markModified();
+    showToast('Highlight ho gaya! 🖊️', 'success');
+    trackActivity('highlight', { name: (text||'').substring(0,40), tid: _editorState.tid });
+    setTimeout(neUpdateHlCanvasBtn, 50);
+
+  } catch(err) {
+    showToast('Highlight mein problem aai, dobara try karo', 'error');
   }
 }
 
