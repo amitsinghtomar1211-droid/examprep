@@ -4431,7 +4431,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
           <span id="fbSyncStatusText">🔄 Checking...</span>
         </div>
         <div class="btn-row" id="fbLoggedInBtns" style="display:none;">
-          <button class="btn btn-primary btn-sm" onclick="syncNow()">🔄 Sync Karo</button>
+          <button class="btn btn-primary btn-sm" onclick="syncNow()">☁️ Save Karo</button>
+          <button class="btn btn-success btn-sm" onclick="pullFromCloud()" style="background:#2e7d32;color:#fff;border:none;">📥 Latest Lao</button>
           <button class="btn btn-outline btn-sm" onclick="openUserMenu()">👤 Account</button>
           <button class="btn btn-danger btn-sm" onclick="logoutUser()">🚪 Logout</button>
         </div>
@@ -5763,7 +5764,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
       </div>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;">
-      <button class="btn btn-primary btn-sm" onclick="syncNow()">🔄 Abhi Sync Karo</button>
+      <button class="btn btn-primary btn-sm" onclick="syncNow()">☁️ Save Karo (Upload)</button>
+      <button class="btn btn-sm" onclick="pullFromCloud()" style="background:#2e7d32;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-weight:700;font-size:0.85rem;">📥 Latest Notes Lao (Download)</button>
       <button class="btn btn-green btn-sm" onclick="backupData()">📦 Backup Download (JSON)</button>
       <button class="btn btn-outline btn-sm" onclick="closeModal('userMenuModal');openFbConfig()">⚙️ Firebase Config</button>
       <button class="btn btn-danger btn-sm" onclick="logoutUser()">🚪 Logout</button>
@@ -12826,8 +12828,14 @@ function initFirebase(){
     }
     _auth = firebase.auth();
     _db = firebase.firestore();
-    // enablePersistence HATAYA — multi-device par 'primary lease' errors deta tha
-    // aur Firestore listener crash kar deta tha. Online sync ke liye zaroori nahi.
+    // Offline persistence enable karo - network nahi ho tab bhi kaam kare
+    _db.enablePersistence({synchronizeTabs:true}).catch(err=>{
+      if(err.code === 'failed-precondition') {
+        // Multiple tabs open - ignore
+      } else if(err.code === 'unimplemented') {
+        // Browser support nahi - ignore
+      }
+    });
     _fbReady = true;
 
     // Auth state listener
@@ -19863,7 +19871,70 @@ async function syncNow(){
   if(!_currentUser){ showToast('Pehle login karo!','error'); return; }
   closeModal('userMenuModal');
   await saveToFirebase();
-  showToast('Sync ho gaya! ☁️✅','success');
+  showToast('Data cloud pe save ho gaya! ☁️✅','success');
+}
+
+// ✅ PULL FROM CLOUD — dusri device ke latest notes force-fetch karo
+async function pullFromCloud(){
+  if(!_db || !_currentUser){ showToast('Pehle login karo!','error'); return; }
+  closeModal('userMenuModal');
+  showToast('☁️ Cloud se latest notes la rahe hain...', 'info');
+  try {
+    var uid = _currentUser.uid;
+    var metaDoc = await _db.collection('users').doc(uid).get();
+    if(!metaDoc.exists){ showToast('Cloud par koi data nahi mila.','error'); return; }
+    var meta = metaDoc.data();
+    var subjectIds = meta.subjectIds || [];
+    if(!subjectIds.length){ showToast('Cloud par koi subject nahi mila.','error'); return; }
+
+    var shellDocs = await Promise.all(
+      subjectIds.map(function(id){
+        return _db.collection('users').doc(uid).collection('subjects').doc(String(id)).get();
+      })
+    );
+    var topicDocs = await _db.collection('users').doc(uid).collection('topics').get();
+    var topicMap = {};
+    topicDocs.forEach(function(d){
+      var td = d.data();
+      if(td && td.topic) topicMap[String(td.topic.id)] = td.topic;
+    });
+    var newSubjects = shellDocs
+      .filter(function(d){ return d.exists; })
+      .map(function(d){
+        var shell = d.data().shell;
+        if(!shell) return null;
+        shell.sections = (shell.sectionMeta||[]).map(function(sm){
+          sm.topics = (sm.topicIds||[]).map(function(tid){
+            return topicMap[String(tid)] || null;
+          }).filter(Boolean);
+          delete sm.topicIds;
+          return sm;
+        });
+        delete shell.sectionMeta;
+        return shell;
+      }).filter(Boolean);
+
+    if(!newSubjects.length){ showToast('Cloud data load nahi hua.','error'); return; }
+
+    // Directly update S — koi comparison nahi, cloud ka data final hai
+    S.subjects          = newSubjects;
+    S.exams             = meta.exams || S.exams || [];
+    S.activeExamId      = meta.activeExamId || S.activeExamId || '';
+    S.quizHistory       = meta.quizHistory || S.quizHistory || [];
+    S.stats             = meta.stats || S.stats || {total:0,correct:0,wrong:0,topicStats:{}};
+    S.questionVault     = meta.questionVault || S.questionVault || [];
+    S.savedQuestions    = meta.savedQuestions || S.savedQuestions || [];
+    S.wrongedQuestions  = meta.wrongedQuestions || S.wrongedQuestions || [];
+    S.reportedQuestions = meta.reportedQuestions || S.reportedQuestions || [];
+    S.pausedQuiz        = meta.pausedQuiz || null;
+
+    save(); // localStorage update karo
+    renderSubjects();
+    showToast('✅ Latest notes aa gaye! Dusri device ke changes sync ho gaye.', 'success');
+  } catch(e) {
+    console.error('Pull error:', e);
+    showToast('❌ Cloud se data nahi aaya: ' + e.message, 'error');
+  }
 }
 
 // ── REALTIME LISTENER — dusri device pe save hone par auto reload ──
@@ -32525,37 +32596,6 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       e.preventDefault();
       scRedo && scRedo();
     }
-  });
-})();
-</script>
-
-<!-- AUTO-SYNC: App visible hone par Firebase se fetch karo -->
-<script>
-(function(){
-  var _lastAutoSync = 0;
-  var MIN_INTERVAL = 20000; // 20 sec se pehle dobara sync mat karo
-
-  function _autoSyncCheck(){
-    if(typeof _currentUser === 'undefined' || !_currentUser) return;
-    if(typeof _silentReloadFromFirebase !== 'function') return;
-    var now = Date.now();
-    if(now - _lastAutoSync < MIN_INTERVAL) return;
-    _lastAutoSync = now;
-    console.log('[AutoSync] App visible — syncing from Firebase...');
-    _silentReloadFromFirebase();
-  }
-
-  // Jab phone se app wapas aao
-  document.addEventListener('visibilitychange', function(){
-    if(document.visibilityState === 'visible') _autoSyncCheck();
-  });
-
-  // Jab browser window focus aaye
-  window.addEventListener('focus', _autoSyncCheck);
-
-  // Page load hone par bhi (2s delay — login complete hone do)
-  window.addEventListener('pageshow', function(){
-    setTimeout(_autoSyncCheck, 2500);
   });
 })();
 </script>
