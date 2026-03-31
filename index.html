@@ -33211,9 +33211,20 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     <!-- Filled by JS -->
   </div>
 
-  <!-- Main canvas area -->
-  <div id="mmCanvas" style="flex:1;overflow:auto;position:relative;display:flex;align-items:flex-start;justify-content:center;padding:20px 12px;-webkit-overflow-scrolling:touch;background:var(--bg,#eaf4fb);">
-    <!-- Mind map SVG + nodes rendered here -->
+  <!-- Zoom controls bar -->
+  <div id="mmZoomBar" style="display:flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(0,0,0,0.04);border-bottom:1px solid var(--border,#ddd);flex-shrink:0;">
+    <button onclick="mmZoomOut()" style="width:30px;height:30px;border-radius:50%;border:1.5px solid var(--border,#ccc);background:var(--surface,#fff);color:var(--text,#222);font-size:1.1rem;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;">−</button>
+    <span id="mmZoomLabel" style="font-size:0.72rem;font-weight:800;color:var(--text2,#666);min-width:38px;text-align:center;">100%</span>
+    <button onclick="mmZoomIn()" style="width:30px;height:30px;border-radius:50%;border:1.5px solid var(--border,#ccc);background:var(--surface,#fff);color:var(--text,#222);font-size:1.1rem;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;">+</button>
+    <button onclick="mmZoomFit()" style="border:1.5px solid var(--border,#ccc);background:var(--surface,#fff);color:var(--text,#222);font-size:0.68rem;font-weight:800;padding:4px 10px;border-radius:8px;cursor:pointer;font-family:inherit;">⊡ Fit</button>
+    <span style="font-size:0.62rem;color:var(--text2,#999);margin-left:4px;">· Pinch ya scroll se zoom · Drag se pan</span>
+  </div>
+  <!-- Main canvas viewport — clips content, allows pan via JS transform -->
+  <div id="mmCanvas" style="flex:1;overflow:hidden;position:relative;background:var(--bg,#eaf4fb);touch-action:none;cursor:grab;">
+    <!-- Transform wrapper — scale+translate yahan hota hai -->
+    <div id="mmMapWrap" style="position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform;">
+      <!-- Mind map SVG + nodes rendered here -->
+    </div>
   </div>
 
   <!-- Bottom action bar -->
@@ -33511,24 +33522,28 @@ function mmRender() {
   if(prevBtn) prevBtn.disabled = cur === 0;
   if(nextBtn) nextBtn.disabled = cur === slides.length - 1;
 
-  // Canvas
+  // Canvas — use mmMapWrap as the drawing container
   var canvas = document.getElementById('mmCanvas');
-  if(!canvas) return;
-  canvas.innerHTML = '';
+  var wrap   = document.getElementById('mmMapWrap');
+  if(!canvas || !wrap) return;
+  wrap.innerHTML = '';
+  // Keep current zoom/pan state
+  if(!_mm.zoom) _mm.zoom = 1;
+  if(!_mm.panX) _mm.panX = 0;
+  if(!_mm.panY) _mm.panY = 0;
 
   var slide = slides[cur] || { nodes: [], parentNodes: [] };
   var nodes = slide.nodes || [];
   var parentNodes = slide.parentNodes || [];
 
   // --- Build mind map layout ---
-  // Center circle + radial nodes
-  var W = canvas.offsetWidth || window.innerWidth;
-  var H = canvas.offsetHeight || (window.innerHeight - 200);
+  var W = canvas.offsetWidth  || window.innerWidth;
+  var H = canvas.offsetHeight || (window.innerHeight - 260);
 
-  // Use a relative container
+  // Use a relative container inside wrap
   var container = document.createElement('div');
-  container.style.cssText = 'position:relative;min-width:100%;min-height:420px;flex-shrink:0;';
-  canvas.appendChild(container);
+  container.style.cssText = 'position:relative;min-width:' + W + 'px;min-height:' + Math.max(500, H) + 'px;flex-shrink:0;';
+  wrap.appendChild(container);
 
   // SVG for lines
   var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -33564,6 +33579,12 @@ function mmRender() {
     container.appendChild(emptyMsg);
     return;
   }
+
+  // ── Apply saved zoom/pan after render ──
+  setTimeout(function() {
+    mmApplyTransform(false);
+    if(_mm.fitOnLoad) { _mm.fitOnLoad = false; mmZoomFit(); }
+  }, 0);
 
   // ── NODE CARD SIZE constants (used for layout math before DOM render) ──
   var NODE_W = 148;  // px — card max-width
@@ -33900,14 +33921,213 @@ function _escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// Re-render on window resize
+// ══════════════════════════════════════════════════════════════════
+// ZOOM + PAN + NODE-DRAG SYSTEM
+// ══════════════════════════════════════════════════════════════════
+
+var MM_ZOOM_MIN = 0.25;
+var MM_ZOOM_MAX = 3.0;
+var MM_ZOOM_STEP = 0.18;
+
+// ── Apply current zoom+pan transform ──
+window.mmApplyTransform = function(animate) {
+  var wrap = document.getElementById('mmMapWrap');
+  if(!wrap) return;
+  if(!_mm.zoom) _mm.zoom = 1;
+  if(!_mm.panX) _mm.panX = 0;
+  if(!_mm.panY) _mm.panY = 0;
+  wrap.style.transition = animate ? 'transform 0.22s ease' : 'none';
+  wrap.style.transform  = 'translate(' + _mm.panX + 'px,' + _mm.panY + 'px) scale(' + _mm.zoom + ')';
+  var lbl = document.getElementById('mmZoomLabel');
+  if(lbl) lbl.textContent = Math.round(_mm.zoom * 100) + '%';
+};
+
+window.mmZoomIn = function() {
+  _mm.zoom = Math.min(MM_ZOOM_MAX, (_mm.zoom || 1) + MM_ZOOM_STEP);
+  mmApplyTransform(true);
+};
+window.mmZoomOut = function() {
+  _mm.zoom = Math.max(MM_ZOOM_MIN, (_mm.zoom || 1) - MM_ZOOM_STEP);
+  mmApplyTransform(true);
+};
+
+// Fit entire mind map in viewport
+window.mmZoomFit = function() {
+  var canvas = document.getElementById('mmCanvas');
+  var wrap   = document.getElementById('mmMapWrap');
+  if(!canvas || !wrap) return;
+  // Temporarily reset transform to measure real size
+  wrap.style.transform = 'none';
+  var cW = canvas.offsetWidth  || window.innerWidth;
+  var cH = canvas.offsetHeight || (window.innerHeight - 260);
+  var wW = wrap.scrollWidth  || 600;
+  var wH = wrap.scrollHeight || 500;
+  var scaleX = cW / wW;
+  var scaleY = cH / wH;
+  var scale  = Math.min(scaleX, scaleY, MM_ZOOM_MAX);
+  scale = Math.max(scale, MM_ZOOM_MIN);
+  // Center it
+  _mm.zoom = scale;
+  _mm.panX = (cW - wW * scale) / 2;
+  _mm.panY = (cH - wH * scale) / 2;
+  mmApplyTransform(true);
+};
+
+// ── Mouse wheel zoom (desktop/PC) ──
+(function() {
+  function onWheel(e) {
+    var canvas = document.getElementById('mmCanvas');
+    if(!canvas) return;
+    if(!canvas.contains(e.target)) return;
+    e.preventDefault();
+    var rect   = canvas.getBoundingClientRect();
+    var mouseX = e.clientX - rect.left;
+    var mouseY = e.clientY - rect.top;
+    var delta  = e.deltaY < 0 ? MM_ZOOM_STEP : -MM_ZOOM_STEP;
+    var oldZ   = _mm.zoom || 1;
+    var newZ   = Math.min(MM_ZOOM_MAX, Math.max(MM_ZOOM_MIN, oldZ + delta));
+    // Zoom towards mouse pointer
+    _mm.panX = mouseX - (mouseX - (_mm.panX || 0)) * (newZ / oldZ);
+    _mm.panY = mouseY - (mouseY - (_mm.panY || 0)) * (newZ / oldZ);
+    _mm.zoom = newZ;
+    mmApplyTransform(false);
+  }
+  document.addEventListener('wheel', onWheel, { passive: false });
+})();
+
+// ── Touch: pinch-to-zoom + pan ──
+(function() {
+  var _t = { active: false, touches: [], lastDist: 0, lastMidX: 0, lastMidY: 0, isPinch: false, startX: 0, startY: 0 };
+
+  function dist(t1, t2) {
+    var dx = t1.clientX - t2.clientX, dy = t1.clientY - t2.clientY;
+    return Math.sqrt(dx*dx + dy*dy);
+  }
+  function midpoint(t1, t2) {
+    return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+  }
+
+  function getCanvas() { return document.getElementById('mmCanvas'); }
+
+  document.addEventListener('touchstart', function(e) {
+    var canvas = getCanvas();
+    if(!canvas) return;
+    // Check touch is inside mmCanvas but NOT on a node button (let buttons work)
+    var tgt = e.target;
+    if(tgt.tagName === 'BUTTON' || tgt.tagName === 'TEXTAREA' || tgt.tagName === 'INPUT') return;
+    if(!canvas.contains(tgt)) return;
+
+    _t.active = true;
+    _t.touches = Array.from(e.touches);
+
+    if(e.touches.length === 2) {
+      _t.isPinch    = true;
+      _t.lastDist   = dist(e.touches[0], e.touches[1]);
+      var mid       = midpoint(e.touches[0], e.touches[1]);
+      _t.lastMidX   = mid.x;
+      _t.lastMidY   = mid.y;
+    } else if(e.touches.length === 1) {
+      _t.isPinch  = false;
+      _t.startX   = e.touches[0].clientX - (_mm.panX || 0);
+      _t.startY   = e.touches[0].clientY - (_mm.panY || 0);
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function(e) {
+    if(!_t.active) return;
+    var canvas = getCanvas();
+    if(!canvas || !canvas.contains(e.target)) return;
+    // Don't interrupt button taps
+    if(e.target.tagName === 'BUTTON') return;
+
+    if(e.touches.length === 2 && _t.isPinch) {
+      e.preventDefault();
+      var d   = dist(e.touches[0], e.touches[1]);
+      var mid = midpoint(e.touches[0], e.touches[1]);
+      var rect = canvas.getBoundingClientRect();
+      var mX  = mid.x - rect.left;
+      var mY  = mid.y - rect.top;
+      var scale = d / _t.lastDist;
+      var oldZ = _mm.zoom || 1;
+      var newZ = Math.min(MM_ZOOM_MAX, Math.max(MM_ZOOM_MIN, oldZ * scale));
+      _mm.panX = mX - (mX - (_mm.panX || 0)) * (newZ / oldZ);
+      _mm.panY = mY - (mY - (_mm.panY || 0)) * (newZ / oldZ);
+      _mm.zoom = newZ;
+      _t.lastDist = d;
+      mmApplyTransform(false);
+    } else if(e.touches.length === 1 && !_t.isPinch) {
+      e.preventDefault();
+      _mm.panX = e.touches[0].clientX - _t.startX;
+      _mm.panY = e.touches[0].clientY - _t.startY;
+      mmApplyTransform(false);
+    }
+  }, { passive: false });
+
+  document.addEventListener('touchend', function(e) {
+    if(e.touches.length === 0) { _t.active = false; _t.isPinch = false; }
+    else if(e.touches.length === 1) {
+      _t.isPinch = false;
+      _t.startX  = e.touches[0].clientX - (_mm.panX || 0);
+      _t.startY  = e.touches[0].clientY - (_mm.panY || 0);
+    }
+  }, { passive: true });
+})();
+
+// ── Mouse drag to pan (desktop) ──
+(function() {
+  var _d = { dragging: false, startX: 0, startY: 0 };
+
+  document.addEventListener('mousedown', function(e) {
+    var canvas = document.getElementById('mmCanvas');
+    if(!canvas || !canvas.contains(e.target)) return;
+    if(e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    // Only drag on canvas background or wrap
+    var tgt = e.target;
+    if(tgt.closest && tgt.closest('.mm-node-card')) return; // don't pan when clicking node
+    _d.dragging = true;
+    _d.startX   = e.clientX - (_mm.panX || 0);
+    _d.startY   = e.clientY - (_mm.panY || 0);
+    canvas.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', function(e) {
+    if(!_d.dragging) return;
+    _mm.panX = e.clientX - _d.startX;
+    _mm.panY = e.clientY - _d.startY;
+    mmApplyTransform(false);
+  });
+
+  document.addEventListener('mouseup', function() {
+    if(_d.dragging) {
+      _d.dragging = false;
+      var canvas = document.getElementById('mmCanvas');
+      if(canvas) canvas.style.cursor = 'grab';
+    }
+  });
+})();
+
+// ── Reset zoom+pan when changing slides ──
+var _origMmPrev = window.mmPrevSlide;
+var _origMmNext = window.mmNextSlide;
+window.mmPrevSlide = function() { _mm.fitOnLoad = true; if(_origMmPrev) _origMmPrev(); };
+window.mmNextSlide = function() { _mm.fitOnLoad = true; if(_origMmNext) _origMmNext(); };
+
+// ── Reset zoom on mmOpenPanel ──
+var _origMmOpen = window.mmOpenPanel;
+window.mmOpenPanel = function() {
+  _mm.zoom = null; _mm.panX = 0; _mm.panY = 0; _mm.fitOnLoad = true;
+  if(_origMmOpen) _origMmOpen();
+};
+
+// ── Re-render + re-fit on resize ──
 var _mmResizeTimer;
 window.addEventListener('resize', function() {
   clearTimeout(_mmResizeTimer);
   _mmResizeTimer = setTimeout(function() {
     var panel = document.getElementById('mmPanel');
-    if(panel && panel.style.display !== 'none') mmRender();
-  }, 200);
+    if(panel && panel.style.display !== 'none') { _mm.fitOnLoad = true; mmRender(); }
+  }, 250);
 });
 
 // Close modals on overlay click
@@ -33923,7 +34143,6 @@ var _origScAiMakeFlashcards = window.scAiMakeFlashcards;
 if(typeof _origScAiMakeFlashcards === 'function') {
   window.scAiMakeFlashcards = function() {
     _origScAiMakeFlashcards.apply(this, arguments);
-    // Clear saved mind map so it rebuilds fresh next time
     try {
       var tid = (typeof _sc !== 'undefined') ? _sc.tid : null;
       if(tid != null) localStorage.removeItem(mmKey(tid));
