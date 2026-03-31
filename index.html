@@ -30962,93 +30962,197 @@ var _snmTypeColor = {
 function _snmE(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function _snmId(){ return 'n_'+Date.now()+'_'+(Math.random()*9999|0); }
 
-/* ── Extract all notes from topic ── */
+/* ── Extract highlighted facts + full context from topic ── */
 function _snmExtractTopicData(tid, sid, secid) {
   var t = getTop(sid, secid, tid);
-  if(!t) return '';
-  var parts = [];
-  // All raw notes
+  if(!t) return { highlights: [], fullContext: '' };
+
+  var highlights = [];
+
+  // 1. Collect highlights from each raw note WITH surrounding context (editorRichHTML)
+  (t.notes||[]).forEach(function(n, i) {
+    var noteHls = n.editorHighlights || [];
+    var richHTML = n.editorRichHTML || '';
+    var plainContent = n.content || '';
+
+    noteHls.forEach(function(hl) {
+      if(!hl.text || !hl.text.trim()) return;
+      var hlText = hl.text.trim();
+
+      // Find surrounding line/sentence context from plain content
+      var contextLine = '';
+      if(plainContent) {
+        var lines = plainContent.split(/\n/);
+        for(var li=0; li<lines.length; li++) {
+          if(lines[li].toLowerCase().indexOf(hlText.toLowerCase().substring(0,20)) !== -1) {
+            // Get this line + adjacent lines for context
+            var start = Math.max(0, li-1);
+            var end   = Math.min(lines.length-1, li+1);
+            contextLine = lines.slice(start, end+1).join(' ').trim();
+            break;
+          }
+        }
+      }
+      if(!contextLine) contextLine = hlText;
+
+      highlights.push({
+        text:    hlText,
+        context: contextLine,
+        color:   hl.color || 'yellow',
+        note:    n.name || ('Note '+(i+1))
+      });
+    });
+  });
+
+  // 2. Also collect t.highlights (final-notes based highlights)
+  (t.highlights||[]).forEach(function(hl) {
+    if(!hl.text || !hl.text.trim()) return;
+    // Avoid duplicate
+    var already = highlights.some(function(h){ return h.text.trim()===hl.text.trim(); });
+    if(!already) {
+      highlights.push({ text: hl.text.trim(), context: hl.text.trim(), color: 'yellow', note: 'Final Notes' });
+    }
+  });
+
+  // 3. Full notes content for AI context
+  var contextParts = [];
   (t.notes||[]).forEach(function(n, i){
     if(n.content && n.content.trim())
-      parts.push('=== RAW NOTE '+(i+1)+': '+n.name+' ===\n'+n.content.trim());
+      contextParts.push('=== NOTE '+(i+1)+': '+n.name+' ===\n'+n.content.trim());
   });
-  // Final notes
   if(t.finalNotes && t.finalNotes.trim()) {
     var clean = t.finalNotes.replace(/%%NEW%%|%%DATE%%.*?%%ENDNEW%%|%%HIGHLIGHT%%|%%ENDHIGHLIGHT%%/g,'').trim();
-    if(clean) parts.push('=== FINAL NOTES ===\n'+clean);
+    if(clean) contextParts.push('=== FINAL NOTES ===\n'+clean);
   }
-  // Smart AI notes
-  if(t.smartNotesAI && t.smartNotesAI.trim())
-    parts.push('=== SMART NOTES (AI) ===\n'+t.smartNotesAI.trim());
-  // Master notes
-  if(t.masterNotes && t.masterNotes.trim())
-    parts.push('=== MASTER NOTES ===\n'+t.masterNotes.trim());
-  return parts.join('\n\n---\n\n');
+
+  return {
+    highlights: highlights,
+    fullContext: contextParts.join('\n\n---\n\n').substring(0, 5000)
+  };
 }
 
-/* ── Build AI Prompt ── */
-function _snmBuildPrompt(allContent, topicName) {
-  return `You are an expert knowledge mapper for Indian competitive exams (UPSC, SSC, etc.).
+/* ── Build AI Prompt — Highlight-focused, spider layout ── */
+function _snmBuildPrompt(data, topicName) {
+  var highlights = data.highlights;
+  var fullContext = data.fullContext;
+
+  // Number each highlight for reference
+  var hlLines = highlights.map(function(hl, i) {
+    return 'H'+(i+1)+': [Highlighted text] "'+hl.text+'" | [Context line] "'+hl.context+'"';
+  }).join('\n');
+
+  return `You are an expert knowledge mapper. Your task is to convert highlighted study notes into a SPIDER/RADIAL node map.
 
 TOPIC: "${topicName}"
 
-ALL NOTES CONTENT:
+FULL NOTES CONTEXT (for deeper understanding):
 ---
-${allContent.substring(0,4500)}
+${fullContext.substring(0,2000)}
 ---
 
-TASK: Analyze ALL the content deeply. Identify EVERY important concept, fact, person, place, date, term, formula, event. Now create 3-7 thematic "Node Maps" that together cover the ENTIRE content with zero data loss.
+USER'S HIGHLIGHTED FACTS (H1 to H${highlights.length}):
+${hlLines || 'No highlights found — analyze full notes and pick 6-10 key facts.'}
 
-RULES:
-1. Each node text = MAXIMUM 3 words (ultra-short but full meaning)
-2. Nodes must be connected by edges with a 1-3 word relationship label
-3. Each map = one coherent theme/section (e.g. "Important Places", "Key Dates", "Main Concepts", "Key Persons", etc.)
-4. Edges show logical connections (caused-by, part-of, located-in, led-to, etc.)
-5. Nodes placed at x/y coords (0-400 x, 0-300 y) — spread them well, no overlap
-6. Total nodes across all maps: 25-45 (more for dense content)
-7. Hindi terms OK if present in notes
+═══ YOUR TASK ═══
+For EACH highlighted fact (H1, H2, ... H${highlights.length}):
+1. Read the highlighted text AND its surrounding context line
+2. Understand WHAT specific fact the user highlighted (the exact important thing they want to remember)
+3. Create a node with SHORT but MEANINGFUL text (5-12 words minimum so meaning is clear)
+4. If one highlight contains MULTIPLE distinct sub-facts, create 1 parent node + 2-4 child nodes in hierarchical order
+5. Child nodes connect ONLY to their parent node (not to the center topic)
+6. Parent nodes connect to the center topic node
 
-RETURN ONLY this JSON (no markdown, no explanation):
+LAYOUT RULES (CRITICAL):
+- Slide has max 8 PARENT nodes connected to center
+- If more than 8 parent nodes needed → create multiple slides
+- Center node = topic name only
+- Each slide: center + up to 8 parents around it (radial/spider style)
+- Parent nodes can have child nodes (sub-facts), children connect to parent NOT center
+- Node text: enough words to be meaningful (NOT just 2-3 words), NOT so long it becomes a sentence
+
+OUTPUT FORMAT — return ONLY this JSON:
 {
-  "maps": [
+  "slides": [
     {
-      "id": "map1",
-      "icon": "📍",
-      "title": "Important Places",
-      "color": "#e65100",
+      "centerLabel": "${topicName}",
       "nodes": [
-        {"id":"n1","x":50,"y":60,"text":"Harappa","type":"place"},
-        {"id":"n2","x":200,"y":60,"text":"Mohenjo-daro","type":"place"},
-        {"id":"n3","x":350,"y":60,"text":"Indus River","type":"place"}
-      ],
-      "edges": [
-        {"from":"n1","to":"n2","label":"similar to"},
-        {"from":"n1","to":"n3","label":"near"},
-        {"from":"n2","to":"n3","label":"on banks of"}
+        {
+          "id": "p1",
+          "text": "meaningful fact text here (5-12 words)",
+          "hlRef": "H1",
+          "children": [
+            {"id": "c1_1", "text": "sub-fact detail here"},
+            {"id": "c1_2", "text": "another sub-fact"}
+          ]
+        },
+        {
+          "id": "p2",
+          "text": "another fact",
+          "hlRef": "H2",
+          "children": []
+        }
       ]
     }
   ]
 }
 
-Types: main, place, date, person, term, fact, formula, event`;
+RULES:
+- hlRef MUST match one of H1-H${highlights.length}
+- children array can be empty [] if no sub-facts needed
+- Max 8 nodes[] (parent nodes) per slide
+- If total parents > 8, split into slide 2, slide 3 etc — each with same centerLabel
+- NO markdown, NO explanation — ONLY valid JSON`;
 }
 
 /* ── Open Panel ── */
 function _snmOpen(tid, sid, secid, topicName) {
   _snmBuildPanel();
-  _snm.topic = {tid:tid, sid:sid, secid:secid, name:topicName};
-  _snm.maps = [];
-  _snm.open = true;
   var panel = document.getElementById('_snmPanel');
+
+  // Check if already has maps for this topic (incremental mode)
+  var isIncremental = _snm.topic && _snm.topic.tid === tid && _snm.maps && _snm.maps.length > 0;
+  var prevHlTexts = _snm._lastHlTexts || [];
+
+  _snm.topic = {tid:tid, sid:sid, secid:secid, name:topicName};
+  _snm.open = true;
   panel.classList.add('open');
-  _snmSetStatus('🔍 Saari notes files load ho rahi hain...');
+  _snmSetStatus('🔍 Highlights scan ho rahe hain...');
   _snmSetProgress(5);
-  document.getElementById('_snmMaps').innerHTML =
-    '<div class="_snm-loading"><div class="_snm-spinner"></div>' +
-    '<div class="_snm-loading-text">Topic ki saari files analyze ho rahi hain...<br>' +
-    'Raw notes, Final notes, Smart notes, Master notes — sab ek saath process ho rahe hain.<br>' +
-    '<span style="opacity:0.6;font-size:0.7rem;">Yeh 10-20 second le sakta hai...</span></div></div>';
-  _snmGenerate(tid, sid, secid, topicName);
+
+  // Collect current highlights to compare
+  var data = _snmExtractTopicData(tid, sid, secid);
+  var currentHlTexts = data.highlights.map(function(h){ return h.text; });
+
+  if(isIncremental && prevHlTexts.length > 0) {
+    // Find only NEW highlights (not in previous run)
+    var newHls = data.highlights.filter(function(h){
+      return prevHlTexts.indexOf(h.text) === -1;
+    });
+    if(newHls.length === 0) {
+      // No new highlights — just re-open existing maps
+      _snmSetStatus('✅ Koi naya highlight nahi — existing map dikh raha hai');
+      _snmSetProgress(100);
+      document.getElementById('_snmMaps').innerHTML = '';
+      _snmRender();
+      _snm._lastHlTexts = currentHlTexts;
+      return;
+    }
+    // Only generate nodes for new highlights
+    document.getElementById('_snmMaps').innerHTML =
+      '<div class="_snm-loading"><div class="_snm-spinner"></div>' +
+      '<div class="_snm-loading-text">🆕 '+newHls.length+' naye highlights mile — sirf inke nodes ban rahe hain...</div></div>';
+    _snm._lastHlTexts = currentHlTexts;
+    _snmGenerateIncremental(tid, sid, secid, topicName, newHls, data.fullContext);
+  } else {
+    // First time or fresh generate
+    _snm.maps = [];
+    _snm._lastHlTexts = currentHlTexts;
+    document.getElementById('_snmMaps').innerHTML =
+      '<div class="_snm-loading"><div class="_snm-spinner"></div>' +
+      '<div class="_snm-loading-text">🎯 '+data.highlights.length+' highlighted facts mil gaye — spider map ban raha hai...<br>' +
+      '<span style="opacity:0.6;font-size:0.7rem;">10-20 seconds lagenge...</span></div></div>';
+    _snmGenerate(tid, sid, secid, topicName);
+  }
 }
 
 function _snmClose() {
@@ -31089,18 +31193,26 @@ function _snmSetProgress(pct) {
 async function _snmGenerate(tid, sid, secid, topicName) {
   try {
     _snmSetProgress(15);
-    _snmSetStatus('📂 Notes extract ho rahe hain...');
-    var allContent = _snmExtractTopicData(tid, sid, secid);
-    if(!allContent.trim()) {
+    _snmSetStatus('📂 Highlights extract ho rahe hain...');
+    var data = _snmExtractTopicData(tid, sid, secid);
+    var highlights = data.highlights;
+    var fullContext = data.fullContext;
+
+    if(!highlights.length && !fullContext.trim()) {
       document.getElementById('_snmMaps').innerHTML =
-        '<div class="_snm-empty">⚠️ Is topic mein koi notes nahi hain!<br>Pehle Raw Notes ya Final Notes add karo.</div>';
+        '<div class="_snm-empty">⚠️ Is topic mein koi notes ya highlights nahi hain!<br>Pehle Raw Notes add karo aur text ko highlight karo.</div>';
       return;
     }
-    _snmSetProgress(30);
-    _snmSetStatus('🤖 AI content analyze kar raha hai — ' + (allContent.length/1000).toFixed(1) + 'k chars...');
 
-    var prompt = _snmBuildPrompt(allContent, topicName);
-    var raw = await callGroq(prompt, 3500);
+    // Show highlight count
+    var hlMsg = highlights.length
+      ? '🎯 ' + highlights.length + ' highlighted facts mile — nodes ban rahe hain...'
+      : '⚠️ Koi highlight nahi mila — full notes se key facts extract ho rahe hain...';
+    _snmSetProgress(30);
+    _snmSetStatus(hlMsg);
+
+    var prompt = _snmBuildPrompt(data, topicName);
+    var raw = await callGroq(prompt, 4000);
     _snmSetProgress(75);
     _snmSetStatus('🔄 JSON parse ho raha hai...');
 
@@ -31108,29 +31220,23 @@ async function _snmGenerate(tid, sid, secid, topicName) {
     var m = raw.match(/\{[\s\S]*\}/);
     if(!m) throw new Error('JSON nahi mila AI response mein');
     var parsed = JSON.parse(m[0]);
-    if(!parsed.maps || !parsed.maps.length) throw new Error('Maps array empty hai');
+    if(!parsed.slides || !parsed.slides.length) throw new Error('Slides array empty hai');
 
-    _snm.maps = parsed.maps.map(function(map) {
-      // Assign unique IDs, ensure defaults
+    // Convert slides → _snm.maps format (for backward compat with Insert/Save buttons)
+    _snm.maps = parsed.slides.map(function(slide, si) {
       return {
-        id: map.id || _snmId(),
-        icon: map.icon || '🗂️',
-        title: map.title || 'Section',
-        color: map.color || '#1565c0',
-        nodes: (map.nodes||[]).map(function(n){
-          return { id:n.id||_snmId(), x:n.x||50, y:n.y||50, text:n.text||'Node', type:n.type||'fact' };
-        }),
-        edges: (map.edges||[]).map(function(e){
-          return { from:e.from, to:e.to, label:e.label||'' };
-        }),
+        id:       'slide_'+(si+1),
+        slideIdx: si,
+        centerLabel: slide.centerLabel || topicName,
+        rawNodes: slide.nodes || [],
         selected: false
       };
     });
 
     _snmSetProgress(95);
-    _snmSetStatus('✅ ' + _snm.maps.length + ' maps ready — ' +
-      _snm.maps.reduce(function(a,m){return a+m.nodes.length;},0) + ' total nodes');
-    document.getElementById('_snmSubtitle').textContent = topicName + ' — ' + _snm.maps.length + ' thematic maps';
+    var totalParents = _snm.maps.reduce(function(a,m){ return a+m.rawNodes.length; }, 0);
+    _snmSetStatus('✅ ' + _snm.maps.length + ' slides ready — ' + totalParents + ' nodes');
+    document.getElementById('_snmSubtitle').textContent = topicName + ' — ' + _snm.maps.length + ' slide(s)';
     _snmRender();
     _snmSetProgress(100);
   } catch(err) {
@@ -31143,7 +31249,55 @@ async function _snmGenerate(tid, sid, secid, topicName) {
   }
 }
 
-/* ── Render all maps ── */
+/* ── Generate incremental — only new highlights ke liye ── */
+async function _snmGenerateIncremental(tid, sid, secid, topicName, newHls, fullContext) {
+  try {
+    _snmSetProgress(30);
+    _snmSetStatus('🤖 Sirf naye '+newHls.length+' highlights ke nodes ban rahe hain...');
+
+    var data = { highlights: newHls, fullContext: fullContext };
+    var prompt = _snmBuildPrompt(data, topicName);
+    var raw = await callGroq(prompt, 3000);
+    _snmSetProgress(75);
+
+    var m = raw.match(/\{[\s\S]*\}/);
+    if(!m) throw new Error('JSON nahi mila');
+    var parsed = JSON.parse(m[0]);
+    if(!parsed.slides || !parsed.slides.length) throw new Error('Slides empty');
+
+    // Try merging into last slide if space available, else add new slide
+    parsed.slides.forEach(function(slide) {
+      var newNodes = slide.nodes || [];
+      var lastSlide = _snm.maps.length > 0 ? _snm.maps[_snm.maps.length-1] : null;
+      if(lastSlide && (lastSlide.rawNodes||[]).length + newNodes.length <= 8) {
+        lastSlide.rawNodes = (lastSlide.rawNodes||[]).concat(newNodes);
+      } else {
+        _snm.maps.push({
+          id: 'slide_inc_'+Date.now(),
+          slideIdx: _snm.maps.length,
+          centerLabel: slide.centerLabel || topicName,
+          rawNodes: newNodes,
+          selected: false
+        });
+      }
+    });
+
+    _snmSetProgress(95);
+    _snmSetStatus('✅ Naye nodes add ho gaye — total '+_snm.maps.length+' slides');
+    document.getElementById('_snmSubtitle').textContent = topicName + ' — ' + _snm.maps.length + ' slide(s)';
+    _snmRender();
+    _snmSetProgress(100);
+  } catch(err) {
+    _snmSetStatus('❌ Incremental error: '+err.message);
+    document.getElementById('_snmMaps').innerHTML =
+      '<div class="_snm-empty">❌ '+_snmE(err.message)+'<br><br>' +
+      '<button onclick="_snmGenerate(\''+tid+'\',\''+sid+'\',\''+secid+'\',\''+_snmE(topicName)+'\')" ' +
+      'style="padding:9px 18px;border-radius:10px;border:1.5px solid var(--accent);background:transparent;' +
+      'color:var(--accent);font-weight:700;cursor:pointer;font-family:inherit;">🔄 Full regenerate karo</button></div>';
+  }
+}
+
+/* ── Render all slides — Spider/Radial layout ── */
 function _snmRender() {
   var container = document.getElementById('_snmMaps');
   if(!container) return;
@@ -31158,29 +31312,27 @@ function _snmRender() {
     'font-size:0.7rem;font-weight:700;cursor:pointer;font-family:inherit;color:var(--text2);" ' +
     'onclick="_snmToggleAll()">☑ Sab '+(selCount===_snm.maps.length?'Deselect':'Select')+'</button>' +
     '<span class="_snm-sel-count">'+selCount+' selected</span>' +
-    '<span style="font-size:0.65rem;opacity:0.6;">Tap map header to select</span>';
+    '<span style="font-size:0.65rem;opacity:0.6;">Tap slide header to select</span>';
   container.appendChild(selBar);
 
-  _snm.maps.forEach(function(map, mi) {
+  _snm.maps.forEach(function(slideData, mi) {
     var card = document.createElement('div');
-    card.className = '_snm-map-card' + (map.selected ? ' selected' : '');
+    card.className = '_snm-map-card' + (slideData.selected ? ' selected' : '');
     card.id = '_snmCard_'+mi;
-
-    // Calculate canvas size
-    var maxX = 380, maxY = 250;
-    map.nodes.forEach(function(n){ if(n.x>maxX)maxX=n.x+150; if(n.y>maxY)maxY=n.y+80; });
 
     // Header
     var hdr = document.createElement('div');
     hdr.className = '_snm-map-hdr';
+    var parentCount = slideData.rawNodes ? slideData.rawNodes.length : 0;
+    var childCount  = slideData.rawNodes ? slideData.rawNodes.reduce(function(a,p){return a+(p.children||[]).length;},0) : 0;
     hdr.innerHTML =
-      '<span class="_snm-map-icon">'+map.icon+'</span>' +
+      '<span class="_snm-map-icon">🗺️</span>' +
       '<div>' +
-        '<div class="_snm-map-label">'+_snmE(map.title)+'</div>' +
-        '<div class="_snm-map-count">'+map.nodes.length+' nodes · '+map.edges.length+' connections</div>' +
+        '<div class="_snm-map-label">Slide '+(mi+1)+' — '+_snmE(slideData.centerLabel)+'</div>' +
+        '<div class="_snm-map-count">'+parentCount+' main nodes · '+childCount+' sub-nodes</div>' +
       '</div>' +
-      '<div class="_snm-map-sel-chk'+(map.selected?' checked':'')+'">'+
-        (map.selected?'✓':'')+'</div>';
+      '<div class="_snm-map-sel-chk'+(slideData.selected?' checked':'')+'">'+
+        (slideData.selected?'✓':'')+'</div>';
     hdr.querySelector('._snm-map-sel-chk').addEventListener('click', function(e){
       e.stopPropagation();
       _snm.maps[mi].selected = !_snm.maps[mi].selected;
@@ -31192,182 +31344,162 @@ function _snmRender() {
     });
     card.appendChild(hdr);
 
-    // Canvas area
-    var canvasWrap = document.createElement('div');
-    canvasWrap.className = '_snm-canvas';
-    var inner = document.createElement('div');
-    inner.className = '_snm-canvas-inner';
-    inner.style.width = (maxX+40)+'px';
-    inner.style.height = (maxY+40)+'px';
-
-    // SVG edges
-    var svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-    svg.setAttribute('class','_snm-edges-svg');
-    svg.setAttribute('width', maxX+40);
-    svg.setAttribute('height', maxY+40);
-    svg.setAttribute('viewBox', '0 0 '+(maxX+40)+' '+(maxY+40));
-
-    // Build node position lookup
-    var nodePos = {};
-    map.nodes.forEach(function(n){ nodePos[n.id] = {x:n.x+50, y:n.y+18}; });
-
-    // Draw edges
-    map.edges.forEach(function(edge) {
-      var from = nodePos[edge.from], to = nodePos[edge.to];
-      if(!from || !to) return;
-      var midX = (from.x+to.x)/2, midY = (from.y+to.y)/2;
-      var line = document.createElementNS('http://www.w3.org/2000/svg','path');
-      // Curved path
-      var cx = midX + (to.y - from.y) * 0.15;
-      var cy = midY - (to.x - from.x) * 0.15;
-      line.setAttribute('d','M '+from.x+' '+from.y+' Q '+cx+' '+cy+' '+to.x+' '+to.y);
-      line.setAttribute('class','_snm-edge');
-      line.setAttribute('stroke', map.color+'99');
-      line.setAttribute('marker-end','url(#arrow_'+mi+')');
-      svg.appendChild(line);
-
-      // Edge label
-      if(edge.label) {
-        var txt = document.createElementNS('http://www.w3.org/2000/svg','text');
-        txt.setAttribute('x', midX); txt.setAttribute('y', midY-4);
-        txt.setAttribute('text-anchor','middle');
-        txt.setAttribute('class','_snm-edge-label');
-        txt.textContent = edge.label;
-        svg.appendChild(txt);
-      }
-    });
-
-    // Arrow marker
-    var defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
-    var marker = document.createElementNS('http://www.w3.org/2000/svg','marker');
-    marker.setAttribute('id','arrow_'+mi);
-    marker.setAttribute('markerWidth','7'); marker.setAttribute('markerHeight','7');
-    marker.setAttribute('refX','6'); marker.setAttribute('refY','3');
-    marker.setAttribute('orient','auto');
-    var arrowPath = document.createElementNS('http://www.w3.org/2000/svg','path');
-    arrowPath.setAttribute('d','M0,0 L0,6 L7,3 z');
-    arrowPath.setAttribute('fill', map.color+'BB');
-    marker.appendChild(arrowPath);
-    defs.appendChild(marker);
-    svg.insertBefore(defs, svg.firstChild);
-
-    inner.appendChild(svg);
-
-    // Draw nodes
-    map.nodes.forEach(function(node, ni) {
-      var nodeDiv = document.createElement('div');
-      nodeDiv.className = '_snm-node';
-      nodeDiv.style.left = node.x + 'px';
-      nodeDiv.style.top  = node.y + 'px';
-      nodeDiv.style.borderColor = (map.color+'55');
-      nodeDiv.setAttribute('contenteditable','true');
-      nodeDiv.textContent = node.text;
-
-      // Color accent bar
-      var accent = document.createElement('div');
-      accent.className = '_snm-node-accent';
-      accent.style.background = map.color;
-      nodeDiv.insertBefore(accent, nodeDiv.firstChild);
-
-      // Save edits
-      nodeDiv.addEventListener('blur', function(){
-        _snm.maps[mi].nodes[ni].text = nodeDiv.textContent.trim() || node.text;
-        _snmRedrawEdges(mi);
-      });
-      nodeDiv.addEventListener('click', function(e){ e.stopPropagation(); });
-
-      // Touch/pointer drag
-      _snmMakeDraggable(nodeDiv, mi, ni, inner, svg, map);
-
-      inner.appendChild(nodeDiv);
-    });
-
-    canvasWrap.appendChild(inner);
-    card.appendChild(canvasWrap);
+    // Build spider SVG
+    var svgWrap = _snmBuildSpiderSVG(slideData, mi);
+    card.appendChild(svgWrap);
     container.appendChild(card);
   });
 
-  // Bottom action bar
   _snmRenderBottom();
 }
 
-/* ── Redraw edges for a map (after node move) ── */
-function _snmRedrawEdges(mi) {
-  var inner = document.querySelector('#_snmCard_'+mi+' ._snm-canvas-inner');
-  if(!inner) return;
-  var svg = inner.querySelector('._snm-edges-svg');
-  if(!svg) return;
-  var map = _snm.maps[mi];
-  // Recalculate positions from node divs
-  var nodePos = {};
-  inner.querySelectorAll('._snm-node').forEach(function(nd, ni){
-    var nx = parseInt(nd.style.left)||0, ny = parseInt(nd.style.top)||0;
-    if(map.nodes[ni]) nodePos[map.nodes[ni].id] = {x:nx+50, y:ny+18};
+/* ── Build Spider SVG for one slide ── */
+function _snmBuildSpiderSVG(slideData, mi) {
+  var parents = slideData.rawNodes || [];
+  var centerLabel = slideData.centerLabel || 'Topic';
+
+  // ── Layout constants ──
+  var W = 680, H = 520;
+  var cx = W/2, cy = H/2;
+  var PARENT_R   = 190;  // Radius for parent nodes from center
+  var CHILD_R    = 80;   // Radius for child nodes from parent
+
+  // ── Assign positions ──
+  // Parents: evenly on circle around center
+  parents.forEach(function(p, i) {
+    var angle = (2*Math.PI * i / parents.length) - Math.PI/2;
+    p._px = cx + PARENT_R * Math.cos(angle);
+    p._py = cy + PARENT_R * Math.sin(angle);
+    // Children: small cluster around parent, away from center
+    (p.children||[]).forEach(function(c, ci) {
+      var childCount = (p.children||[]).length;
+      // Spread children on arc on the OUTER side of parent (away from center)
+      var parentAngle = angle; // direction from center to parent
+      var spread = Math.PI * 0.5; // 90 degree spread for children
+      var childAngle = parentAngle - spread/2 + (spread * ci / Math.max(childCount-1, 1));
+      if(childCount === 1) childAngle = parentAngle; // single child goes straight out
+      c._px = p._px + CHILD_R * Math.cos(childAngle);
+      c._py = p._py + CHILD_R * Math.sin(childAngle);
+    });
   });
-  // Remove old edges (not defs, not new nodes)
-  var toRemove = [];
-  svg.childNodes.forEach(function(ch){
-    if(ch.tagName==='path'||ch.tagName==='text') toRemove.push(ch);
-  });
-  toRemove.forEach(function(ch){ svg.removeChild(ch); });
-  // Redraw
-  map.edges.forEach(function(edge){
-    var from=nodePos[edge.from], to=nodePos[edge.to];
-    if(!from||!to) return;
-    var midX=(from.x+to.x)/2, midY=(from.y+to.y)/2;
-    var cx=midX+(to.y-from.y)*0.15, cy=midY-(to.x-from.x)*0.15;
-    var line=document.createElementNS('http://www.w3.org/2000/svg','path');
-    line.setAttribute('d','M '+from.x+' '+from.y+' Q '+cx+' '+cy+' '+to.x+' '+to.y);
-    line.setAttribute('class','_snm-edge');
-    line.setAttribute('stroke',map.color+'99');
-    line.setAttribute('marker-end','url(#arrow_'+mi+')');
+
+  // ── SVG element ──
+  var NS = 'http://www.w3.org/2000/svg';
+  var svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', W);
+  svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', '0 0 '+W+' '+H);
+  svg.style.cssText = 'display:block;width:100%;max-width:'+W+'px;overflow:visible;';
+
+  // Arrow marker
+  var defs = document.createElementNS(NS, 'defs');
+  var marker = document.createElementNS(NS, 'marker');
+  marker.setAttribute('id', 'snmArrow_'+mi);
+  marker.setAttribute('markerWidth','8'); marker.setAttribute('markerHeight','8');
+  marker.setAttribute('refX','7'); marker.setAttribute('refY','3');
+  marker.setAttribute('orient','auto');
+  var ap = document.createElementNS(NS, 'path');
+  ap.setAttribute('d','M0,0 L0,6 L8,3 z');
+  ap.setAttribute('fill','#1565c099');
+  marker.appendChild(ap); defs.appendChild(marker);
+
+  var markerChild = document.createElementNS(NS, 'marker');
+  markerChild.setAttribute('id', 'snmArrowC_'+mi);
+  markerChild.setAttribute('markerWidth','7'); markerChild.setAttribute('markerHeight','7');
+  markerChild.setAttribute('refX','6'); markerChild.setAttribute('refY','3');
+  markerChild.setAttribute('orient','auto');
+  var apc = document.createElementNS(NS, 'path');
+  apc.setAttribute('d','M0,0 L0,6 L7,3 z');
+  apc.setAttribute('fill','#e6510099');
+  markerChild.appendChild(apc); defs.appendChild(markerChild);
+  svg.appendChild(defs);
+
+  // ── Draw edges: center → parents ──
+  parents.forEach(function(p) {
+    var line = document.createElementNS(NS, 'line');
+    line.setAttribute('x1', cx); line.setAttribute('y1', cy);
+    line.setAttribute('x2', p._px); line.setAttribute('y2', p._py);
+    line.setAttribute('stroke', '#1565c055');
+    line.setAttribute('stroke-width', '1.8');
+    line.setAttribute('marker-end', 'url(#snmArrow_'+mi+')');
     svg.appendChild(line);
-    if(edge.label){
-      var txt=document.createElementNS('http://www.w3.org/2000/svg','text');
-      txt.setAttribute('x',midX); txt.setAttribute('y',midY-4);
-      txt.setAttribute('text-anchor','middle');
-      txt.setAttribute('class','_snm-edge-label');
-      txt.textContent=edge.label;
-      svg.appendChild(txt);
-    }
+
+    // ── Draw edges: parent → children ──
+    (p.children||[]).forEach(function(c) {
+      var cline = document.createElementNS(NS, 'line');
+      cline.setAttribute('x1', p._px); cline.setAttribute('y1', p._py);
+      cline.setAttribute('x2', c._px); cline.setAttribute('y2', c._py);
+      cline.setAttribute('stroke', '#e6510055');
+      cline.setAttribute('stroke-width', '1.4');
+      cline.setAttribute('stroke-dasharray', '4,3');
+      cline.setAttribute('marker-end', 'url(#snmArrowC_'+mi+')');
+      svg.appendChild(cline);
+    });
   });
+
+  // ── Helper: draw a foreignObject node ──
+  function drawNode(x, y, text, isCenter, isChild) {
+    var nw = isCenter ? 110 : (isChild ? 110 : 130);
+    var nh = isCenter ? 48  : (isChild ? 42  : 52);
+    var fo = document.createElementNS(NS, 'foreignObject');
+    fo.setAttribute('x', x - nw/2);
+    fo.setAttribute('y', y - nh/2);
+    fo.setAttribute('width', nw);
+    fo.setAttribute('height', nh);
+    fo.setAttribute('overflow', 'visible');
+
+    var div = document.createElement('div');
+    div.style.cssText = [
+      'width:'+nw+'px',
+      'min-height:'+nh+'px',
+      'border-radius:'+(isCenter?'50%':'10px'),
+      'padding:'+(isCenter?'6px 8px':'5px 7px'),
+      'font-size:'+(isCenter?'11px':(isChild?'9.5px':'10px')),
+      'font-weight:'+(isCenter?'900':'700'),
+      'font-family:inherit',
+      'text-align:center',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'line-height:1.25',
+      'word-break:break-word',
+      'box-sizing:border-box',
+      'cursor:default',
+      isCenter
+        ? 'background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border:2.5px solid #0d47a1;box-shadow:0 3px 14px rgba(21,101,192,0.35);'
+        : isChild
+          ? 'background:#fff8f5;color:#b33000;border:1.5px solid #e6510055;box-shadow:0 1px 6px rgba(230,81,0,0.1);'
+          : 'background:#fff;color:#0d1b2a;border:2px solid #1565c033;box-shadow:0 2px 10px rgba(21,101,192,0.13);'
+    ].join(';');
+    div.textContent = text;
+    fo.appendChild(div);
+    svg.appendChild(fo);
+  }
+
+  // ── Draw parent nodes + children ──
+  parents.forEach(function(p) {
+    (p.children||[]).forEach(function(c) {
+      drawNode(c._px, c._py, c.text, false, true);
+    });
+    drawNode(p._px, p._py, p.text, false, false);
+  });
+
+  // ── Draw center node last (on top) ──
+  drawNode(cx, cy, centerLabel, true, false);
+
+  // Wrap in scrollable container
+  var wrap = document.createElement('div');
+  wrap.style.cssText = 'overflow-x:auto;overflow-y:hidden;padding:8px 4px;-webkit-overflow-scrolling:touch;';
+  wrap.appendChild(svg);
+  return wrap;
 }
 
-/* ── Draggable nodes ── */
+/* ── Redraw edges for a map (after node move) — legacy stub ── */
+function _snmRedrawEdges(mi) { /* radial layout auto-positions, no manual redraw needed */ }
+
+/* ── Draggable nodes — stub (radial layout is SVG-based) ── */
 function _snmMakeDraggable(el, mi, ni, container, svg, map) {
-  var startX, startY, origLeft, origTop, isDrag=false;
-
-  function onStart(ex, ey) {
-    isDrag=true;
-    startX=ex; startY=ey;
-    origLeft=parseInt(el.style.left)||0;
-    origTop=parseInt(el.style.top)||0;
-    el.classList.add('dragging');
-  }
-  function onMove(ex, ey) {
-    if(!isDrag) return;
-    var dx=ex-startX, dy=ey-startY;
-    var nx=Math.max(0,origLeft+dx), ny=Math.max(0,origTop+dy);
-    el.style.left=nx+'px'; el.style.top=ny+'px';
-    _snm.maps[mi].nodes[ni].x=nx;
-    _snm.maps[mi].nodes[ni].y=ny;
-    _snmRedrawEdges(mi);
-  }
-  function onEnd() {
-    isDrag=false;
-    el.classList.remove('dragging');
-  }
-
-  // Pointer events (works for both touch and mouse)
-  el.addEventListener('pointerdown', function(e){
-    if(el.getAttribute('contenteditable')==='true' && document.activeElement===el) return;
-    e.preventDefault();
-    el.setPointerCapture(e.pointerId);
-    onStart(e.clientX, e.clientY);
-  });
-  el.addEventListener('pointermove', function(e){ if(isDrag){e.preventDefault();onMove(e.clientX,e.clientY);} });
-  el.addEventListener('pointerup', onEnd);
-  el.addEventListener('pointercancel', onEnd);
+  // No-op: spider layout uses SVG foreignObject, not draggable divs
 }
 
 /* ── Toggle all ── */
@@ -31400,15 +31532,11 @@ function _snmInsertCanvas() {
   if(!mapsToInsert.length) mapsToInsert = _snm.maps;
   if(!mapsToInsert.length){ showToast&&showToast('Koi map nahi!','error'); return; }
 
-  // Canvas open hai ya nahi check karo
   var canvasPanel = document.getElementById('studyCanvasPanel');
   var canvasOpen = canvasPanel && canvasPanel.classList.contains('sc-open');
-
   if(!canvasOpen) {
-    // Canvas open karo pehle, phir insert
     showToast&&showToast('⚠️ Pehle Canvas kholo, phir dobara insert karo!','error');
-    // Auto-open canvas if topic context available
-    if(_snm.topic && _snm.topic.tid && typeof scOnEditorOpen==='function') {
+    if(_snm.topic && _snm.topic.tid) {
       if(typeof scOpen==='function') scOpen(_snm.topic.sid, _snm.topic.secid, _snm.topic.tid);
       else if(typeof openStudyCanvas==='function') openStudyCanvas(_snm.topic.sid, _snm.topic.secid, _snm.topic.tid);
     }
@@ -31417,54 +31545,53 @@ function _snmInsertCanvas() {
 
   var cur = _scCur();
   if(!cur){ showToast&&showToast('⚠️ Canvas slide nahi mili!','error'); return; }
-
   scSnapshot();
 
-  mapsToInsert.forEach(function(map, mi) {
-    // Agar mi > 0 — naya slide banana
-    if(mi > 0) {
-      scAddSlide();
-      cur = _scCur();
-      if(!cur) return;
-    }
+  mapsToInsert.forEach(function(slideData, mi) {
+    if(mi > 0) { scAddSlide(); cur = _scCur(); if(!cur) return; }
 
-    var cols = Math.min(3, map.nodes.length);
-    var colW = 140, rowH = 80;
-    var startX = 18, startY = 30;
+    var parents = slideData.rawNodes || [];
+    var colW = 130, rowH = 72, cols = Math.min(3, parents.length);
+    var startX = 14, startY = 30;
 
-    // Section heading
+    // Slide heading — center topic name
     var hBlock = {
       id: 'scb_snm_h_'+Date.now()+'_'+mi,
-      x: startX, y: 8, w: 300,
-      html: '<span style="font-size:11px;font-weight:900;color:'+map.color+';letter-spacing:0.3px;">'+map.icon+' '+map.title.replace(/</g,'&lt;')+'</span>',
-      fontSize:14, color:map.color, bold:true, italic:false, underline:false, angle:0
+      x: startX, y: 6, w: 320,
+      html: '<span style="font-size:11px;font-weight:900;color:#1565c0;letter-spacing:0.3px;">🗺️ '+_snmE(slideData.centerLabel)+' — Slide '+(mi+1)+'</span>',
+      fontSize:13, color:'#1565c0', bold:true, italic:false, underline:false, angle:0
     };
-    cur.textBlocks.push(hBlock);
-    _scCreateBlockDOM(hBlock);
+    cur.textBlocks.push(hBlock); _scCreateBlockDOM(hBlock);
 
-    // Node blocks
-    map.nodes.forEach(function(node, ni) {
-      var tc = _snmTypeColor[node.type] || map.color;
-      var col = ni % cols;
-      var row = Math.floor(ni / cols);
+    // Parent nodes
+    parents.forEach(function(p, ni) {
+      var col = ni % cols, row = Math.floor(ni / cols);
       var block = {
-        id: 'scb_snm_'+Date.now()+'_'+mi+'_'+ni+'_'+Math.random().toString(36).slice(2,5),
-        x: startX + col*(colW+8),
-        y: startY + row*(rowH+6),
-        w: colW,
-        html: '<span style="font-size:8px;font-weight:800;color:'+tc+';text-transform:uppercase;opacity:0.7;display:block;line-height:1.2;">'+node.type+'</span>'+
-              '<span style="font-size:12px;font-weight:800;">'+node.text.replace(/</g,'&lt;')+'</span>',
-        fontSize:12, color:'#1a1a1a', bold:false, italic:false, underline:false, angle:0
+        id: 'scb_snm_p_'+Date.now()+'_'+mi+'_'+ni,
+        x: startX + col*(colW+6), y: startY + row*(rowH+4), w: colW,
+        html: '<span style="font-size:11px;font-weight:800;color:#0d1b2a;line-height:1.3;">'+_snmE(p.text)+'</span>'+
+              (p.hlRef ? '<span style="font-size:8px;opacity:0.5;display:block;">'+_snmE(p.hlRef)+'</span>' : ''),
+        fontSize:11, color:'#0d1b2a', bold:false, italic:false, underline:false, angle:0
       };
-      cur.textBlocks.push(block);
-      _scCreateBlockDOM(block);
+      cur.textBlocks.push(block); _scCreateBlockDOM(block);
+
+      // Children as sub-blocks below parent
+      (p.children||[]).forEach(function(c, ci) {
+        var cblock = {
+          id: 'scb_snm_c_'+Date.now()+'_'+mi+'_'+ni+'_'+ci,
+          x: startX + col*(colW+6) + 8,
+          y: startY + row*(rowH+4) + 36 + ci*22, w: colW-16,
+          html: '<span style="font-size:9.5px;font-weight:700;color:#b33000;line-height:1.3;">↳ '+_snmE(c.text)+'</span>',
+          fontSize:9, color:'#b33000', bold:false, italic:false, underline:false, angle:0
+        };
+        cur.textBlocks.push(cblock); _scCreateBlockDOM(cblock);
+      });
     });
   });
 
-  // Re-render + save
   scRenderAll();
   if(typeof scSave==='function') scSave();
-  showToast&&showToast('✅ '+mapsToInsert.length+' maps canvas mein add ho gaye! Save ho gaya.','success');
+  showToast&&showToast('✅ '+mapsToInsert.length+' slides canvas mein add ho gaye!','success');
   _snmClose();
 }
 
@@ -31474,46 +31601,35 @@ function _snmInsertNotes() {
   if(!mapsToInsert.length) mapsToInsert = _snm.maps;
   if(!mapsToInsert.length){ showToast&&showToast('Koi map nahi!','error'); return; }
 
-  // Plain text (for addAiResponseToNotes modal)
-  var plainText = mapsToInsert.map(function(map){
-    var lines = [map.icon+' '+map.title+':'];
-    map.nodes.forEach(function(n){ lines.push('  • ['+n.type+'] '+n.text); });
-    if(map.edges && map.edges.length){
-      lines.push('  Connections:');
-      map.edges.forEach(function(e){
-        var f=map.nodes.find(function(n){return n.id===e.from;});
-        var t=map.nodes.find(function(n){return n.id===e.to;});
-        if(f&&t) lines.push('    '+f.text+' → '+e.label+' → '+t.text);
-      });
-    }
+  // Plain text
+  var plainText = mapsToInsert.map(function(slideData, si) {
+    var lines = ['=== Slide '+(si+1)+': '+slideData.centerLabel+' ==='];
+    (slideData.rawNodes||[]).forEach(function(p) {
+      lines.push('  • ' + p.text + (p.hlRef ? ' ['+p.hlRef+']' : ''));
+      (p.children||[]).forEach(function(c){ lines.push('      ↳ ' + c.text); });
+    });
     return lines.join('\n');
   }).join('\n\n---\n\n');
 
   // Styled HTML
   var html = '<div style="margin:10px 0;font-family:inherit;">';
-  mapsToInsert.forEach(function(map) {
-    html += '<div style="margin-bottom:14px;padding:10px;border-radius:10px;'+
-      'border:1.5px solid '+map.color+'33;background:'+map.color+'08;">'+
-      '<div style="font-size:0.8rem;font-weight:900;color:'+map.color+';margin-bottom:8px;">'+
-      map.icon+' '+_snmE(map.title)+'</div>'+
-      '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:5px;">';
-    map.nodes.forEach(function(node) {
-      var tc = _snmTypeColor[node.type] || map.color;
-      html += '<span style="display:inline-block;padding:3px 8px;border-radius:7px;'+
-        'background:'+tc+'15;border:1px solid '+tc+'55;'+
-        'font-size:0.73rem;font-weight:800;color:'+tc+';">'+_snmE(node.text)+'</span>';
-    });
-    html += '</div>';
-    if(map.edges && map.edges.length){
-      html += '<div style="font-size:0.65rem;color:#888;line-height:1.7;">';
-      map.edges.slice(0,5).forEach(function(e){
-        var f=map.nodes.find(function(n){return n.id===e.from;});
-        var t=map.nodes.find(function(n){return n.id===e.to;});
-        if(f&&t) html += '↳ <b>'+_snmE(f.text)+'</b> '+_snmE(e.label)+' <b>'+_snmE(t.text)+'</b><br>';
-      });
+  mapsToInsert.forEach(function(slideData, si) {
+    html += '<div style="margin-bottom:14px;padding:10px;border-radius:10px;border:1.5px solid #1565c033;background:#1565c008;">' +
+      '<div style="font-size:0.8rem;font-weight:900;color:#1565c0;margin-bottom:8px;">🗺️ Slide '+(si+1)+' — '+_snmE(slideData.centerLabel)+'</div>' +
+      '<div style="display:flex;flex-direction:column;gap:6px;">';
+    (slideData.rawNodes||[]).forEach(function(p) {
+      html += '<div style="padding:5px 8px;border-radius:7px;background:#fff;border:1.5px solid #1565c022;">' +
+        '<span style="font-size:0.78rem;font-weight:800;color:#0d1b2a;">'+_snmE(p.text)+'</span>';
+      if(p.children && p.children.length) {
+        html += '<div style="margin-top:4px;padding-left:10px;border-left:2px solid #e6510044;">';
+        p.children.forEach(function(c){
+          html += '<div style="font-size:0.72rem;font-weight:700;color:#b33000;line-height:1.5;">↳ '+_snmE(c.text)+'</div>';
+        });
+        html += '</div>';
+      }
       html += '</div>';
-    }
-    html += '</div>';
+    });
+    html += '</div></div>';
   });
   html += '</div>';
 
@@ -31522,35 +31638,28 @@ function _snmInsertNotes() {
   var editorVisible = editorOverlay && editorOverlay.classList.contains('show');
 
   if(area && editorVisible) {
-    // Editor open hai — cursor end pe, insert karo
     area.focus();
     var range = document.createRange();
     var sel = window.getSelection();
-    range.selectNodeContents(area);
-    range.collapse(false);
-    sel.removeAllRanges();
-    sel.addRange(range);
+    range.selectNodeContents(area); range.collapse(false);
+    sel.removeAllRanges(); sel.addRange(range);
     try { document.execCommand('insertHTML', false, html); }
     catch(e) { area.innerHTML += html; }
     var ud=document.getElementById('unsavedDot'); if(ud) ud.style.display='';
     var ud2=document.getElementById('unsavedDot2'); if(ud2) ud2.style.display='';
-    showToast&&showToast('✅ '+mapsToInsert.length+' maps notes mein add ho gaye!','success');
+    showToast&&showToast('✅ '+mapsToInsert.length+' slides notes mein add ho gaye!','success');
     _snmClose(); return;
   }
 
-  // Editor band hai — addAiResponseToNotes modal use karo
   if(_snm.topic && _snm.topic.tid) {
     if(!window._aiChatContext) window._aiChatContext = {};
     window._aiChatContext.tid   = _snm.topic.tid;
     window._aiChatContext.sid   = _snm.topic.sid;
     window._aiChatContext.secid = _snm.topic.secid;
     _snmClose();
-    setTimeout(function(){
-      if(typeof addAiResponseToNotes==='function') addAiResponseToNotes(plainText);
-    }, 250);
+    setTimeout(function(){ if(typeof addAiResponseToNotes==='function') addAiResponseToNotes(plainText); }, 250);
     return;
   }
-  // Clipboard fallback
   var ta=document.createElement('textarea');
   ta.value=plainText; ta.style.cssText='position:fixed;left:-9999px;';
   document.body.appendChild(ta); ta.select();
@@ -31570,29 +31679,40 @@ function _snmInsertOverview() {
 
   if(!t.aiNodeMaps) t.aiNodeMaps = [];
   var today = new Date().toLocaleDateString('hi-IN');
-  mapsToInsert.forEach(function(map) {
-    t.aiNodeMaps = t.aiNodeMaps.filter(function(m){return m.title !== map.title;});
+  mapsToInsert.forEach(function(slideData, si) {
+    var slideKey = slideData.centerLabel + '_slide' + (si+1);
+    t.aiNodeMaps = t.aiNodeMaps.filter(function(m){ return m.slideKey !== slideKey; });
+    // Convert rawNodes → flat nodes+edges for storage
+    var nodes = [], edges = [];
+    var centerId = 'ctr_'+si;
+    nodes.push({ id: centerId, text: slideData.centerLabel, type: 'main' });
+    (slideData.rawNodes||[]).forEach(function(p) {
+      nodes.push({ id: p.id, text: p.text, type: 'fact', hlRef: p.hlRef||'' });
+      edges.push({ from: centerId, to: p.id, label: '' });
+      (p.children||[]).forEach(function(c) {
+        nodes.push({ id: c.id, text: c.text, type: 'sub' });
+        edges.push({ from: p.id, to: c.id, label: '' });
+      });
+    });
     t.aiNodeMaps.push({
-      id:map.id, icon:map.icon, title:map.title, color:map.color,
-      nodes:JSON.parse(JSON.stringify(map.nodes)),
-      edges:JSON.parse(JSON.stringify(map.edges)),
-      createdAt:today
+      id: 'slide_'+(si+1)+'_'+Date.now(),
+      slideKey: slideKey,
+      icon: '🗺️',
+      title: slideData.centerLabel + ' (Slide '+(si+1)+')',
+      color: '#1565c0',
+      nodes: nodes, edges: edges,
+      createdAt: today
     });
   });
   if(typeof save==='function') save();
-  showToast&&showToast('✅ '+mapsToInsert.length+' maps topic mein save ho gaye!','success');
+  showToast&&showToast('✅ '+mapsToInsert.length+' slides topic mein save ho gaye!','success');
 
   var capSid=_snm.topic.sid, capSecid=_snm.topic.secid, capTid=_snm.topic.tid;
   _snmClose();
-
-  // Topic view mein Node Maps section dikhao
   setTimeout(function() {
-    // Open topic view modal if not already open
     if(typeof openTopicView==='function') openTopicView(capSid, capSecid, capTid);
     else if(typeof showTopicModal==='function') showTopicModal(capSid, capSecid, capTid);
-    setTimeout(function(){
-      if(typeof tvShowSub==='function') tvShowSub('nodemap', capSid, capSecid, capTid);
-    }, 350);
+    setTimeout(function(){ if(typeof tvShowSub==='function') tvShowSub('nodemap', capSid, capSecid, capTid); }, 350);
   }, 300);
 }
 
@@ -31600,8 +31720,8 @@ function _snmInsertOverview() {
 function _snmShowJSON() {
   var data = {
     topic: _snm.topic ? _snm.topic.name : '',
-    maps: _snm.maps.map(function(m){
-      return {id:m.id,icon:m.icon,title:m.title,color:m.color,nodes:m.nodes,edges:m.edges};
+    slides: _snm.maps.map(function(s){
+      return { slideIdx: s.slideIdx, centerLabel: s.centerLabel, nodes: s.rawNodes };
     })
   };
   var json = JSON.stringify(data, null, 2);
