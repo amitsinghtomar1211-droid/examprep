@@ -16325,131 +16325,435 @@ function clearQmDraw() {
   showToast('Drawing cleared', 'success');
 }
 
-// ── AI MAP GENERATION (integrated in QuickMap) ──
+// ── FLASHCARD-BASED MAP GENERATION (replaces AI map) ──
+// Stores flashcard data with explanations for each node
+var _qmFcData = {}; // { nodeId: { q, a, explanation, visible } }
+var _qmAllExpVisible = false; // toggle for all explanations
+
 function setQmAiType(type, btn) {
   _qmAiType = type;
   document.querySelectorAll('.qmap-aid-type-btn').forEach(function(b){ b.classList.remove('active'); });
   if(btn) btn.classList.add('active');
 }
 
-async function runQmAiDraw() {
-  var topic   = (document.getElementById('qmAiTopic')||{}).value||'';
-  if(!topic.trim()){ showToast('Topic likhein!','error'); return; }
-  var depth   = (document.getElementById('qmAiDepth')||{}).value||'medium';
+// Generate map from flashcards (no AI needed)
+function runQmAiDraw() {
+  var tid = _sc && _sc.tid;
+  if(!tid) {
+    showToast('Pehle koi topic select karo!', 'error');
+    return;
+  }
+  
+  // Load flashcards for current topic
+  var fcData = tvLoadFC(tid);
+  var cards = fcData.cards || [];
+  
+  if(!cards.length) {
+    showToast('Is topic mein koi flashcard nahi hai! Pehle AI Chat se flashcards banao.', 'error');
+    return;
+  }
+  
+  // Limit to max 10 cards per slide
+  var maxCards = 10;
+  var cardsToUse = cards.slice(0, maxCards);
+  
+  if(cards.length > maxCards) {
+    showToast('Max ' + maxCards + ' flashcards ka map bana rahe hain (' + cards.length + ' mein se)', 'success');
+  }
+  
   var loading = document.getElementById('qmAiLoading');
-  var fill    = document.getElementById('qmAiLoadingFill');
-  var btn     = document.getElementById('qmAiBtn');
-  if(loading) loading.style.display='flex';
-  if(btn) btn.disabled=true;
-
-  var prog=0;
-  var progInt = setInterval(function(){
-    prog = Math.min(prog+6,85);
-    if(fill) fill.style.width=prog+'%';
-  }, 250);
-
-  // Collect notes from current topic (same as neQm version)
-  var noteData = (typeof _neQmGetRawNotes === 'function') ? _neQmGetRawNotes() : { rawText:'', highlights:[], topicName: topic };
-  var rawText    = noteData.rawText || '';
-  var highlights = noteData.highlights || [];
-
-  var typeInstrQm = {
-    tree:       'Hierarchical tree: 1 root → parent nodes → child nodes.',
-    mindmap:    'Mind map: central topic → thematic branches → sub-facts.',
-    flowchart:  'Step-by-step flow: events/steps ek ke baad ek connected.',
-    timeline:   'Timeline: chronological order mein nodes.',
-    comparison: 'Comparison: parallel columns, corresponding points same level par.',
-    cycle:      'Cycle: circular chain of events/steps.'
-  };
-  var depthInst = {
-    simple:   'Max 6 nodes total (1 root + 5 children).',
-    medium:   'Max 14 nodes (2-3 parents, 4-5 children each).',
-    detailed: 'Max 22 nodes (3-4 parents, 5-6 children each, kuch grandchildren).'
-  };
-
-  var hlSection = highlights.length
-    ? '\n\nHIGHLIGHTED POINTS:\n' + highlights.slice(0,20).map(function(h,i){ return (i+1)+'. '+h; }).join('\n')
-    : '';
-
-  var systemPrompt = 'Tu expert Hindi educational mind map generator hai. SIRF valid JSON return kar, koi aur text nahi.';
-
-  var userPrompt = 'TOPIC: ' + topic + '\n'
-    + (rawText ? '\n=== STUDENT KE NOTES ===\n' + rawText.substring(0,3500) : '')
-    + hlSection
-    + '\n\n=== KAAM ===\n'
-    + '1. Notes ko poora padho, har fact ka context samjho.\n'
-    + '2. Highlighted points ki puri line ka matlab notes se samjho.\n'
-    + '3. Facts ko ASLI connection ke hisaab se group karo (dynasty/event/concept — geography/economy sirf tab alag karo jab alag topic ho).\n'
-    + '4. Ek fact ko do nodes mein mat baanto — ek node mein complete information do.\n'
-    + '5. Map type: ' + (typeInstrQm[_qmAiType]||typeInstrQm.mindmap) + '\n'
-    + '6. Size: ' + (depthInst[depth]||depthInst.medium) + '\n'
-    + '7. Numbers/dates: English mein, baaki text Hindi mein.\n'
-    + '\nJSON FORMAT (SIRF YEH, koi markdown nahi):\n'
-    + '{"mapTitle":"naam","nodes":[{"id":"n1","text":"Root\\nInfo","x":180,"y":100,"w":145,"h":48,"shape":"bubble","fill":"#fff3e0","stroke":"#e65100","textColor":"#333","level":"root"}],"edges":[{"from":"n1","to":"n2","color":"#e65100","type":"arrow"}]}\n'
-    + 'STYLING: root=orange(#fff3e0/#e65100), parents=green/blue/purple alternating, children=white with parent color stroke, highlighted facts=golden(#fffde7/#f9a825).\n'
-    + 'x range: 40-360, y range: 40-460.';
-
-  try {
-    var response = await fetch('https://api.anthropic.com/v1/messages', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 3000,
-        system: systemPrompt,
-        messages:[{role:'user', content: userPrompt}]
-      })
-    });
-    var data = await response.json();
-    if(data.error) throw new Error(data.error.message||'API error');
-    var text = (data.content||[]).map(function(c){return c.text||'';}).join('');
-    var jsonMatch = text.match(/\{[\s\S]*\}/);
-    if(!jsonMatch) throw new Error('No JSON found');
-    var parsed = JSON.parse(jsonMatch[0]);
-    if(parsed.nodes && parsed.nodes.length){
-      qmSaveHistory();
-      var merge = _qm.nodes.length && confirm('Existing nodes ke saath merge karo? (Cancel = Replace karo)');
-      if(!merge){ _qm.nodes=[]; _qm.edges=[]; }
-      var idMap = {};
-      var CW = _qm.canvas ? _qm.canvas.width  : 400;
-      var CH = _qm.canvas ? _qm.canvas.height : 480;
-      parsed.nodes.forEach(function(n){
-        var newId = 'n'+Date.now()+Math.floor(Math.random()*99999);
-        idMap[n.id] = newId;
-        _qm.nodes.push({
-          id: newId, text: n.text||'', shape: n.shape||'bubble',
-          fill: n.fill||'#fff3e0', stroke: n.stroke||'#e65100', textColor: n.textColor||'#333',
-          w: n.w||135, h: n.h||46, level: n.level||'child',
-          x: (n.x||180)*(CW/400), y: (n.y||180)*(CH/480)
+  var fill = document.getElementById('qmAiLoadingFill');
+  var loadingText = document.getElementById('qmAiLoadingText');
+  if(loading) loading.style.display = 'flex';
+  if(loadingText) loadingText.textContent = 'Flashcards se map bana rahe hain...';
+  if(fill) fill.style.width = '30%';
+  
+  setTimeout(function() {
+    qmSaveHistory();
+    
+    // Ask to merge or replace
+    var merge = _qm.nodes.length && confirm('Existing nodes ke saath merge karo? (Cancel = Replace karo)');
+    if(!merge) { _qm.nodes = []; _qm.edges = []; _qmFcData = {}; }
+    
+    var CW = _qm.canvas ? _qm.canvas.width : 400;
+    var CH = _qm.canvas ? _qm.canvas.height : 480;
+    var centerX = CW / 2;
+    var centerY = CH / 2;
+    
+    // Create root node (topic name)
+    var topicName = '';
+    try {
+      S.subjects.forEach(function(sub) {
+        sub.sections.forEach(function(sec) {
+          (sec.topics || []).forEach(function(t) {
+            if(t.id === tid) topicName = t.name;
+          });
         });
       });
-      (parsed.edges||[]).forEach(function(e){
-        _qm.edges.push({ from:idMap[e.from]||e.from, to:idMap[e.to]||e.to, color:e.color||'#999', type:e.type||'arrow' });
+    } catch(e) {}
+    topicName = topicName || 'Topic Overview';
+    
+    var rootId = 'fcRoot_' + Date.now();
+    _qm.nodes.push({
+      id: rootId,
+      text: topicName,
+      shape: 'bubble',
+      fill: '#fff3e0',
+      stroke: '#e65100',
+      textColor: '#e65100',
+      w: 160, h: 54,
+      x: centerX, y: 60,
+      level: 'root',
+      isFcNode: true
+    });
+    
+    if(fill) fill.style.width = '60%';
+    
+    // Create child nodes from flashcards in mind-map radial layout
+    var nodeCount = cardsToUse.length;
+    var radius = Math.min(CW * 0.38, CH * 0.32);
+    var startAngle = -Math.PI / 2; // Start from top
+    var angleStep = (2 * Math.PI) / nodeCount;
+    
+    // Color palette for nodes
+    var colors = [
+      { fill: '#e3f2fd', stroke: '#1565c0', text: '#0d47a1' },
+      { fill: '#e8f5e9', stroke: '#2e7d32', text: '#1b5e20' },
+      { fill: '#f3e5f5', stroke: '#6a1b9a', text: '#4a148c' },
+      { fill: '#fff8e1', stroke: '#f9a825', text: '#e65100' },
+      { fill: '#fce4ec', stroke: '#c2185b', text: '#880e4f' },
+      { fill: '#e0f2f1', stroke: '#00695c', text: '#004d40' },
+      { fill: '#ede7f6', stroke: '#5e35b1', text: '#311b92' },
+      { fill: '#fff3e0', stroke: '#ef6c00', text: '#e65100' },
+      { fill: '#e1f5fe', stroke: '#0277bd', text: '#01579b' },
+      { fill: '#f1f8e9', stroke: '#558b2f', text: '#33691e' }
+    ];
+    
+    cardsToUse.forEach(function(card, i) {
+      var angle = startAngle + (angleStep * i);
+      var x = centerX + radius * Math.cos(angle);
+      var y = centerY + 40 + radius * Math.sin(angle);
+      
+      var nodeId = 'fc_' + card.id + '_' + Date.now();
+      var col = colors[i % colors.length];
+      
+      // Truncate question for node display (max 50 chars)
+      var displayText = (card.q || card.front || 'Q' + (i+1));
+      if(displayText.length > 50) displayText = displayText.substring(0, 47) + '...';
+      
+      _qm.nodes.push({
+        id: nodeId,
+        text: displayText,
+        shape: 'bubble',
+        fill: col.fill,
+        stroke: col.stroke,
+        textColor: col.text,
+        w: 140, h: 52,
+        x: x, y: y,
+        level: 'child',
+        isFcNode: true,
+        fcCardId: card.id
       });
-      // Apply smart layout
-      if(typeof _neQmSmartLayout === 'function') _neQmSmartLayout(_qm.nodes, _qm.edges, CW, CH);
+      
+      // Store flashcard data
+      _qmFcData[nodeId] = {
+        q: card.q || card.front || '',
+        a: card.a || card.back || '',
+        explanation: card.a || card.back || '',
+        visible: false
+      };
+      
+      // Connect to root
+      _qm.edges.push({
+        from: rootId,
+        to: nodeId,
+        color: col.stroke,
+        type: 'arrow'
+      });
+    });
+    
+    if(fill) fill.style.width = '100%';
+    
+    setTimeout(function() {
       qmRedraw();
       switchQmTab('nodes', null);
-      // Save banner
-      var mapTitle = parsed.mapTitle || topic;
-      if(typeof _neQmAiShowSaveBanner === 'function') {
-        _neQmAiShowSaveBanner(mapTitle);
-      }
-      showToast('✅ Smart Map ready! '+_qm.nodes.length+' nodes.', 'success');
-    } else {
-      throw new Error('No nodes in response');
-    }
-  } catch(err) {
-    showToast('AI map nahi bana: '+err.message, 'error');
-  } finally {
-    clearInterval(progInt);
-    if(fill) fill.style.width='100%';
-    setTimeout(function(){
-      if(loading) loading.style.display='none';
-      if(fill) fill.style.width='0%';
-      if(btn) btn.disabled=false;
-    }, 600);
+      if(loading) loading.style.display = 'none';
+      if(fill) fill.style.width = '0%';
+      
+      // Show flashcard control panel
+      _qmShowFcControlPanel();
+      
+      showToast('Flashcard Map ready! ' + cardsToUse.length + ' questions. Node tap karo → View Answer dekho!', 'success');
+    }, 400);
+    
+  }, 200);
+}
+
+// Show flashcard control panel
+function _qmShowFcControlPanel() {
+  var old = document.getElementById('_qmFcControlPanel');
+  if(old) old.remove();
+  
+  var panel = document.createElement('div');
+  panel.id = '_qmFcControlPanel';
+  panel.style.cssText = 'position:fixed;bottom:60px;left:50%;transform:translateX(-50%);z-index:9700;background:var(--surface,#fff);border-radius:14px;padding:8px 12px;display:flex;gap:8px;align-items:center;box-shadow:0 4px 20px rgba(0,0,0,0.15);border:1.5px solid var(--border,#e0e0e0);font-family:\'Noto Sans Devanagari\',sans-serif;';
+  
+  panel.innerHTML = '\
+    <button onclick="_qmToggleAllExp()" style="padding:6px 12px;border-radius:8px;border:1.5px solid #1565c0;background:rgba(21,101,192,0.1);color:#1565c0;font-weight:700;font-size:0.72rem;cursor:pointer;font-family:inherit;white-space:nowrap;" title="Sab answers toggle karo">\
+      <span id="_qmExpToggleIcon">👁</span> Sab Answers\
+    </button>\
+    <button onclick="_qmAddParentNode()" style="padding:6px 12px;border-radius:8px;border:1.5px solid #2e7d32;background:rgba(46,125,50,0.1);color:#2e7d32;font-weight:700;font-size:0.72rem;cursor:pointer;font-family:inherit;white-space:nowrap;" title="Naya parent node add karo">\
+      + Parent Node\
+    </button>\
+    <button onclick="_qmCloseFcPanel()" style="padding:4px 8px;border-radius:6px;border:none;background:rgba(0,0,0,0.05);color:#888;font-weight:700;font-size:0.8rem;cursor:pointer;" title="Band karo">\
+      ✕\
+    </button>\
+  ';
+  
+  document.body.appendChild(panel);
+}
+
+function _qmCloseFcPanel() {
+  var panel = document.getElementById('_qmFcControlPanel');
+  if(panel) panel.remove();
+}
+
+// Toggle all explanations
+function _qmToggleAllExp() {
+  _qmAllExpVisible = !_qmAllExpVisible;
+  var icon = document.getElementById('_qmExpToggleIcon');
+  if(icon) icon.textContent = _qmAllExpVisible ? '🙈' : '👁';
+  
+  Object.keys(_qmFcData).forEach(function(nodeId) {
+    _qmFcData[nodeId].visible = _qmAllExpVisible;
+  });
+  
+  if(_qmAllExpVisible) {
+    _qmShowAllExpOverlay();
+  } else {
+    var ov = document.getElementById('_qmAllExpOverlay');
+    if(ov) ov.remove();
   }
+  
+  showToast(_qmAllExpVisible ? 'Sab answers dikh rahe hain' : 'Sab answers hide ho gaye', 'success');
+}
+
+// Show all explanations overlay
+function _qmShowAllExpOverlay() {
+  var old = document.getElementById('_qmAllExpOverlay');
+  if(old) old.remove();
+  
+  var overlay = document.createElement('div');
+  overlay.id = '_qmAllExpOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9650;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;padding:16px;';
+  
+  var modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface,#fff);border-radius:16px;padding:16px;width:100%;max-width:400px;max-height:85vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.3);';
+  
+  var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">\
+    <div style="font-size:1rem;font-weight:800;color:#1565c0;">📋 Sab Answers</div>\
+    <button onclick="document.getElementById(\'_qmAllExpOverlay\').remove();_qmAllExpVisible=false;document.getElementById(\'_qmExpToggleIcon\').textContent=\'👁\';" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:#888;">✕</button>\
+  </div>';
+  
+  _qm.nodes.forEach(function(n) {
+    if(n.isFcNode && _qmFcData[n.id]) {
+      var fc = _qmFcData[n.id];
+      html += '<div style="background:rgba(21,101,192,0.05);border-radius:10px;padding:10px;margin-bottom:10px;border-left:3px solid ' + (n.stroke||'#1565c0') + ';">\
+        <div style="font-size:0.78rem;font-weight:700;color:var(--text,#111);margin-bottom:6px;">' + _escQmHtml(fc.q || n.text) + '</div>\
+        <div style="font-size:0.72rem;color:#2e7d32;line-height:1.5;background:rgba(46,125,50,0.08);padding:8px;border-radius:6px;">\
+          <strong>Answer:</strong> ' + _escQmHtml(fc.a) + '\
+        </div>\
+      </div>';
+    }
+  });
+  
+  modal.innerHTML = html;
+  overlay.appendChild(modal);
+  overlay.onclick = function(e) { if(e.target === overlay) { overlay.remove(); _qmAllExpVisible = false; document.getElementById('_qmExpToggleIcon').textContent = '👁'; } };
+  document.body.appendChild(overlay);
+}
+
+// Add parent node with question & explanation
+function _qmAddParentNode() {
+  var old = document.getElementById('_qmAddParentModal');
+  if(old) old.remove();
+  
+  var overlay = document.createElement('div');
+  overlay.id = '_qmAddParentModal';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9700;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;padding:16px;';
+  
+  var modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface,#fff);border-radius:16px;padding:16px;width:100%;max-width:340px;box-shadow:0 8px 40px rgba(0,0,0,0.3);';
+  
+  modal.innerHTML = '\
+    <div style="font-size:0.95rem;font-weight:800;color:#2e7d32;margin-bottom:12px;">+ Naya Parent Node</div>\
+    <div style="margin-bottom:10px;">\
+      <label style="font-size:0.7rem;font-weight:700;color:#666;display:block;margin-bottom:4px;">Question / Title</label>\
+      <textarea id="_qmNewParentQ" rows="2" style="width:100%;border:1.5px solid #ccc;border-radius:8px;padding:8px;font-size:0.82rem;font-family:inherit;resize:none;box-sizing:border-box;" placeholder="Question likhein..."></textarea>\
+    </div>\
+    <div style="margin-bottom:12px;">\
+      <label style="font-size:0.7rem;font-weight:700;color:#666;display:block;margin-bottom:4px;">Answer / Explanation</label>\
+      <textarea id="_qmNewParentA" rows="3" style="width:100%;border:1.5px solid #ccc;border-radius:8px;padding:8px;font-size:0.82rem;font-family:inherit;resize:none;box-sizing:border-box;" placeholder="Answer likhein..."></textarea>\
+    </div>\
+    <div style="display:flex;gap:8px;">\
+      <button onclick="_qmSaveNewParent()" style="flex:1;padding:10px;border-radius:8px;border:none;background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;font-weight:800;font-size:0.85rem;cursor:pointer;">Add Node</button>\
+      <button onclick="document.getElementById(\'_qmAddParentModal\').remove()" style="padding:10px 14px;border-radius:8px;border:1.5px solid #ccc;background:none;color:#888;font-weight:700;cursor:pointer;">Cancel</button>\
+    </div>\
+  ';
+  
+  overlay.appendChild(modal);
+  overlay.onclick = function(e) { if(e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+  setTimeout(function() { document.getElementById('_qmNewParentQ').focus(); }, 100);
+}
+
+function _qmSaveNewParent() {
+  var q = (document.getElementById('_qmNewParentQ') || {}).value || '';
+  var a = (document.getElementById('_qmNewParentA') || {}).value || '';
+  if(!q.trim()) { showToast('Question likhein!', 'error'); return; }
+  
+  qmSaveHistory();
+  
+  var CW = _qm.canvas ? _qm.canvas.width : 400;
+  var CH = _qm.canvas ? _qm.canvas.height : 480;
+  
+  var nodeId = 'fcParent_' + Date.now();
+  var displayText = q.length > 50 ? q.substring(0, 47) + '...' : q;
+  
+  _qm.nodes.push({
+    id: nodeId,
+    text: displayText,
+    shape: 'bubble',
+    fill: '#fffde7',
+    stroke: '#f9a825',
+    textColor: '#e65100',
+    w: 150, h: 54,
+    x: CW / 2 + (Math.random() * 100 - 50),
+    y: CH / 2 + (Math.random() * 100 - 50),
+    level: 'parent',
+    isFcNode: true
+  });
+  
+  _qmFcData[nodeId] = { q: q, a: a, explanation: a, visible: false };
+  
+  // Find root and connect
+  var root = _qm.nodes.find(function(n) { return n.level === 'root'; });
+  if(root) {
+    _qm.edges.push({ from: root.id, to: nodeId, color: '#f9a825', type: 'arrow' });
+  }
+  
+  qmRedraw();
+  document.getElementById('_qmAddParentModal').remove();
+  showToast('Naya node add ho gaya!', 'success');
+}
+
+// Show single node explanation (called when node is tapped)
+function _qmShowNodeExp(nodeId) {
+  var fc = _qmFcData[nodeId];
+  var node = _qm.nodes.find(function(n) { return n.id === nodeId; });
+  if(!fc || !node) return;
+  
+  var old = document.getElementById('_qmNodeExpModal');
+  if(old) old.remove();
+  
+  var overlay = document.createElement('div');
+  overlay.id = '_qmNodeExpModal';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9700;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;padding:16px;';
+  
+  var modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface,#fff);border-radius:16px;padding:16px;width:100%;max-width:360px;box-shadow:0 8px 40px rgba(0,0,0,0.3);max-height:85vh;overflow-y:auto;border-left:4px solid ' + (node.stroke||'#1565c0') + ';';
+  
+  modal.innerHTML = '\
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">\
+      <div style="font-size:0.9rem;font-weight:800;color:' + (node.stroke||'#1565c0') + ';line-height:1.4;flex:1;">' + _escQmHtml(fc.q || node.text) + '</div>\
+      <button onclick="document.getElementById(\'_qmNodeExpModal\').remove()" style="background:none;border:none;font-size:1.1rem;cursor:pointer;color:#888;flex-shrink:0;margin-left:8px;">✕</button>\
+    </div>\
+    <div style="background:rgba(46,125,50,0.08);border-radius:10px;padding:12px;margin-bottom:12px;">\
+      <div style="font-size:0.68rem;font-weight:800;color:#2e7d32;margin-bottom:6px;">ANSWER / EXPLANATION</div>\
+      <div id="_qmExpText" style="font-size:0.82rem;color:var(--text,#111);line-height:1.6;">' + _escQmHtml(fc.a) + '</div>\
+    </div>\
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">\
+      <button onclick="_qmEditNodeExp(\'' + nodeId + '\')" style="flex:1;padding:8px;border-radius:8px;border:1.5px solid #1565c0;background:rgba(21,101,192,0.1);color:#1565c0;font-weight:700;font-size:0.72rem;cursor:pointer;">Edit</button>\
+      <button onclick="_qmDeleteNode(\'' + nodeId + '\')" style="padding:8px 12px;border-radius:8px;border:1.5px solid #c62828;background:rgba(198,40,40,0.1);color:#c62828;font-weight:700;font-size:0.72rem;cursor:pointer;">Delete</button>\
+    </div>\
+  ';
+  
+  overlay.appendChild(modal);
+  overlay.onclick = function(e) { if(e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+
+// Edit node explanation
+function _qmEditNodeExp(nodeId) {
+  var fc = _qmFcData[nodeId];
+  var node = _qm.nodes.find(function(n) { return n.id === nodeId; });
+  if(!fc || !node) return;
+  
+  document.getElementById('_qmNodeExpModal').remove();
+  
+  var overlay = document.createElement('div');
+  overlay.id = '_qmEditExpModal';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9700;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;padding:16px;';
+  
+  var modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface,#fff);border-radius:16px;padding:16px;width:100%;max-width:360px;box-shadow:0 8px 40px rgba(0,0,0,0.3);';
+  
+  modal.innerHTML = '\
+    <div style="font-size:0.95rem;font-weight:800;color:#1565c0;margin-bottom:12px;">Edit Node</div>\
+    <div style="margin-bottom:10px;">\
+      <label style="font-size:0.7rem;font-weight:700;color:#666;display:block;margin-bottom:4px;">Question / Title</label>\
+      <textarea id="_qmEditQ" rows="2" style="width:100%;border:1.5px solid #ccc;border-radius:8px;padding:8px;font-size:0.82rem;font-family:inherit;resize:none;box-sizing:border-box;">' + _escQmHtml(fc.q || node.text) + '</textarea>\
+    </div>\
+    <div style="margin-bottom:12px;">\
+      <label style="font-size:0.7rem;font-weight:700;color:#666;display:block;margin-bottom:4px;">Answer / Explanation</label>\
+      <textarea id="_qmEditA" rows="4" style="width:100%;border:1.5px solid #ccc;border-radius:8px;padding:8px;font-size:0.82rem;font-family:inherit;resize:none;box-sizing:border-box;">' + _escQmHtml(fc.a) + '</textarea>\
+    </div>\
+    <div style="display:flex;gap:8px;">\
+      <button onclick="_qmSaveEditExp(\'' + nodeId + '\')" style="flex:1;padding:10px;border-radius:8px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-weight:800;font-size:0.85rem;cursor:pointer;">Save</button>\
+      <button onclick="document.getElementById(\'_qmEditExpModal\').remove()" style="padding:10px 14px;border-radius:8px;border:1.5px solid #ccc;background:none;color:#888;font-weight:700;cursor:pointer;">Cancel</button>\
+    </div>\
+  ';
+  
+  overlay.appendChild(modal);
+  overlay.onclick = function(e) { if(e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+
+function _qmSaveEditExp(nodeId) {
+  var q = (document.getElementById('_qmEditQ') || {}).value || '';
+  var a = (document.getElementById('_qmEditA') || {}).value || '';
+  
+  var node = _qm.nodes.find(function(n) { return n.id === nodeId; });
+  if(node) {
+    var displayText = q.length > 50 ? q.substring(0, 47) + '...' : q;
+    node.text = displayText;
+  }
+  
+  if(_qmFcData[nodeId]) {
+    _qmFcData[nodeId].q = q;
+    _qmFcData[nodeId].a = a;
+    _qmFcData[nodeId].explanation = a;
+  }
+  
+  qmSaveHistory();
+  qmRedraw();
+  document.getElementById('_qmEditExpModal').remove();
+  showToast('Node update ho gaya!', 'success');
+}
+
+// Delete node
+function _qmDeleteNode(nodeId) {
+  if(!confirm('Yeh node delete karna hai?')) return;
+  
+  qmSaveHistory();
+  _qm.nodes = _qm.nodes.filter(function(n) { return n.id !== nodeId; });
+  _qm.edges = _qm.edges.filter(function(e) { return e.from !== nodeId && e.to !== nodeId; });
+  delete _qmFcData[nodeId];
+  
+  qmRedraw();
+  var modal = document.getElementById('_qmNodeExpModal');
+  if(modal) modal.remove();
+  showToast('Node delete ho gaya!', 'success');
 }
 
 // ── Saved list ──
@@ -16576,6 +16880,14 @@ function qmRedraw(){
     });
     var lh=15, sY=y-(lines2.length-1)*lh/2;
     lines2.forEach(function(l,i){ctx.fillText(l,x,sY+i*lh);});
+    
+    // Flashcard node indicator (👁 View Answer hint)
+    if(n.isFcNode && _qmFcData && _qmFcData[n.id]) {
+      ctx.font='600 9px '+FONT;
+      ctx.fillStyle = n.stroke || '#1565c0';
+      ctx.fillText('👁 Tap for Answer', x, y + hh - 6);
+    }
+    
     ctx.restore();
   });
 
@@ -16614,6 +16926,13 @@ function onQmPointerDown(e){
     return;
   }
   if(hit){
+    // Check if this is a flashcard node — show View Answer instead of context menu
+    if(hit.isFcNode && _qmFcData && _qmFcData[hit.id]) {
+      _qm.selectedNode=hit; qmRedraw();
+      _qmShowNodeExp(hit.id);
+      return;
+    }
+    
     // Single tap = action menu; double-tap = edit directly
     var now=Date.now();
     if(now-(_qm._lastTap||0)<380&&_qm._lastTapNode===hit.id){
@@ -21805,7 +22124,7 @@ initFirebase();
           <button class="qmap-tab active" id="qmtab-nodes"   onclick="switchQmTab('nodes',this)">⬭ Nodes</button>
           <button class="qmap-tab"        id="qmtab-draw"    onclick="switchQmTab('draw',this)">✏️ Draw</button>
           <button class="qmap-tab"        id="qmtab-style"   onclick="switchQmTab('style',this)">🎨 Style</button>
-          <button class="qmap-tab"        id="qmtab-aidraw"  onclick="switchQmTab('aidraw',this)">🤖 AI Map</button>
+          <button class="qmap-tab"        id="qmtab-aidraw"  onclick="switchQmTab('aidraw',this)">🃏 Flashcard Map</button>
           <button class="qmap-tab"        id="qmtab-insert"  onclick="switchQmTab('insert',this)">➕ Blocks</button>
           <button class="qmap-tab"        id="qmtab-saved"   onclick="switchQmTab('saved',this)">📂 Saved</button>
         </div>
@@ -21889,14 +22208,11 @@ initFirebase();
             <button class="qmap-tool-btn" style="font-size:0.65rem;font-weight:800;padding:0 6px;width:auto;" onclick="qmApplyStyleAll()">All ko apply</button>
           </div>
 
-          <!-- AI Map toolbar -->
-          <div id="qmtp-aidraw" style="display:none;align-items:center;gap:5px;flex-wrap:wrap;width:100%;">
-            <button class="qmap-aid-type-btn active" id="qmaid-tree"     onclick="setQmAiType('tree',this)">🌿 Tree</button>
-            <button class="qmap-aid-type-btn"        id="qmaid-mindmap"  onclick="setQmAiType('mindmap',this)">🧠 Mind Map</button>
-            <button class="qmap-aid-type-btn"        id="qmaid-flowchart" onclick="setQmAiType('flowchart',this)">🔄 Flow</button>
-            <button class="qmap-aid-type-btn"        id="qmaid-timeline" onclick="setQmAiType('timeline',this)">📅 Timeline</button>
-            <button class="qmap-aid-type-btn"        id="qmaid-compare"  onclick="setQmAiType('comparison',this)">⚖️ Compare</button>
-            <button class="qmap-aid-type-btn"        id="qmaid-cycle"    onclick="setQmAiType('cycle',this)">🔁 Cycle</button>
+          <!-- Flashcard Map toolbar -->
+          <div id="qmtp-aidraw" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;width:100%;">
+            <span style="font-size:0.72rem;font-weight:700;color:#2e7d32;">🃏 Flashcard Map:</span>
+            <span style="font-size:0.68rem;color:var(--text2);">Questions → Nodes | Tap → Answer dekho</span>
+            <span style="margin-left:auto;font-size:0.62rem;color:#666;background:rgba(0,0,0,0.05);padding:2px 8px;border-radius:10px;">Max 10 cards/slide</span>
           </div>
 
           <!-- Insert Blocks toolbar -->
@@ -21917,22 +22233,21 @@ initFirebase();
 
         </div><!-- /qmapToolPanel -->
 
-        <!-- ── AI MAP INPUT ROW (shown only in aidraw tab) ── -->
-        <div id="qmapAiRow" style="display:none;padding:7px 10px;border-bottom:1px solid var(--border);background:var(--surface2);flex-shrink:0;">
-          <div style="display:flex;gap:6px;align-items:center;">
-            <input id="qmAiTopic" placeholder="Topic likhein (jaise: Mughal Samrajya ke kaaran)"
-              style="flex:1;border:1.5px solid var(--border);border-radius:8px;padding:6px 9px;font-size:0.78rem;font-family:inherit;outline:none;background:var(--surface);color:var(--text);">
-            <select id="qmAiDepth" style="border:1.5px solid var(--border);border-radius:8px;padding:6px;font-size:0.74rem;font-family:inherit;background:var(--surface);color:var(--text);outline:none;">
-              <option value="simple">Simple</option>
-              <option value="medium" selected>Medium</option>
-              <option value="detailed">Detailed</option>
-            </select>
+        <!-- ── FLASHCARD MAP INPUT ROW (shown only in aidraw tab) ── -->
+        <div id="qmapAiRow" style="display:none;padding:10px 12px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,rgba(46,125,50,0.08),rgba(21,101,192,0.08));flex-shrink:0;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <div style="flex:1;min-width:200px;">
+              <div style="font-size:0.72rem;font-weight:800;color:#2e7d32;margin-bottom:4px;">🃏 Flashcard Map Generator</div>
+              <div style="font-size:0.68rem;color:var(--text2);line-height:1.4;">Is topic ke flashcards se directly map banega. Har node pe tap karo → Answer dekho!</div>
+            </div>
             <button onclick="runQmAiDraw()" id="qmAiBtn"
-              style="padding:7px 13px;background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;border:none;border-radius:8px;font-weight:800;cursor:pointer;font-family:inherit;font-size:0.82rem;flex-shrink:0;">
-              ✦ Generate
+              style="padding:10px 18px;background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;border:none;border-radius:10px;font-weight:800;cursor:pointer;font-family:inherit;font-size:0.85rem;flex-shrink:0;box-shadow:0 3px 12px rgba(46,125,50,0.3);">
+              🃏 Generate Map
             </button>
           </div>
-          <div id="qmAiLoadingBar" style="display:none;height:3px;border-radius:2px;background:linear-gradient(90deg,#4a148c,#ab47bc);margin-top:5px;animation:qmBarSlide 1.2s ease infinite;"></div>
+          <div style="margin-top:8px;padding:6px 10px;background:rgba(255,193,7,0.12);border-radius:8px;border-left:3px solid #f9a825;">
+            <div style="font-size:0.65rem;color:#e65100;font-weight:700;">💡 Tip: Pehle AI Chat se flashcards banao, phir yahan se map generate karo!</div>
+          </div>
         </div>
 
         <!-- ── MAIN CANVAS AREA ── -->
@@ -21941,12 +22256,12 @@ initFirebase();
           <canvas id="qmapCanvas" style="position:absolute;inset:0;width:100%;height:100%;touch-action:none;"></canvas>
           <!-- Draw overlay (pen/marker on top of map) -->
           <canvas id="qmapDrawCanvas" class="qmap-draw-layer" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
-          <!-- AI loading overlay -->
+          <!-- Flashcard Map loading overlay -->
           <div id="qmAiLoading" style="display:none;position:absolute;inset:0;background:rgba(255,255,255,0.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:100;">
-            <div style="font-size:2rem;">🤖</div>
-            <div style="font-size:0.85rem;font-weight:700;color:#4a148c;" id="qmAiLoadingText">AI map bana raha hai...</div>
+            <div style="font-size:2rem;">🃏</div>
+            <div style="font-size:0.85rem;font-weight:700;color:#2e7d32;" id="qmAiLoadingText">Flashcards se map bana rahe hain...</div>
             <div style="width:140px;height:5px;background:#e0e0e0;border-radius:4px;overflow:hidden;">
-              <div id="qmAiLoadingFill" style="height:100%;background:linear-gradient(90deg,#4a148c,#ab47bc);width:0%;transition:width 0.4s;border-radius:4px;"></div>
+              <div id="qmAiLoadingFill" style="height:100%;background:linear-gradient(90deg,#2e7d32,#66bb6a);width:0%;transition:width 0.4s;border-radius:4px;"></div>
             </div>
           </div>
         </div>
