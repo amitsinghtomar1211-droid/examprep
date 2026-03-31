@@ -33825,16 +33825,23 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
   window.svnGenerate=function(){
     var items=_getHL();
     if(!items.length){
-      _svnStatus('error','⚠️ पहले नोट्स में टेक्स्ट हाइलाइट करें!');
-      showToast&&showToast('⚠️ पहले Notes Editor में text highlight करें!','error');
+      _svnStatus('error','⚠️ Notes mein pehle text highlight karo!');
+      showToast&&showToast('⚠️ Pehle Notes Editor mein text highlight karo!','error');
       return;
     }
     if(_svn.generating) return;
 
+    var apiKey=_getKey();
+    if(!apiKey){
+      _svnStatus('error','❌ Groq API Key set nahi hai!');
+      showToast&&showToast('❌ API Key set karo!','error');
+      return;
+    }
+
     var newHash=_hash(items);
     if(newHash===_svn.lastHighlightHash&&_svn.pages.length){
-      _svnStatus('ready','✅ नई highlights नहीं हैं।');
-      showToast&&showToast('ℹ️ नई highlights नहीं हैं!','info');
+      _svnStatus('ready','✅ Nayi highlights nahi hain.');
+      showToast&&showToast('ℹ️ Nayi highlights nahi hain!','info');
       return;
     }
 
@@ -33844,7 +33851,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     var newItems=items.filter(function(i){ return prevTexts.indexOf(i.text)===-1; });
     var itemsToProcess=(_svn.pages.length===0)?items:newItems;
     if(!itemsToProcess.length&&_svn.pages.length){
-      _svnStatus('ready','✅ कोई नया fact नहीं मिला।');
+      _svnStatus('ready','✅ Koi naya fact nahi mila.');
       return;
     }
 
@@ -33857,159 +33864,135 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     var genBtn=document.getElementById('svnGenerateBtn');
     if(emptyEl) emptyEl.style.display='none';
     if(loadEl) loadEl.classList.add('show');
-    if(genBtn){ genBtn.disabled=true; genBtn.textContent='⏳ विश्लेषण...'; }
+    if(genBtn){ genBtn.disabled=true; genBtn.textContent='⏳ Generating...'; }
+    if(loadTxt) loadTxt.innerHTML='🧠 AI har highlight analyze kar raha hai...<br>Smart keywords nikal raha hai 🔍';
+    _svnStatus('thinking','Professor-level analysis chal raha hai...');
 
-    var topicEl=document.getElementById('notesEditorTitle');
-    var topicName=(topicEl?topicEl.textContent:'').replace(/[📄📌]/g,'').trim()||'विषय';
-    var rawArea=document.getElementById('noteEditableArea');
-    var rawContext=rawArea?(rawArea.innerText||rawArea.textContent||'').substring(0,2500):'';
     var isIncremental=(_svn.pages.length>0&&newItems.length>0&&newItems.length<items.length);
 
-    // ════════════════════════════════════════════════════════════
-    // PHASE 1 — Anthropic Claude + Web Search
-    // Har highlight ki web se real meaning samjho, sahi subtopic
-    // decide karo, aur ek complete node/sub-node structure banao
-    // ════════════════════════════════════════════════════════════
-    if(loadTxt) loadTxt.innerHTML='🔍 Web से तथ्य सत्यापित हो रहे हैं...<br>प्रत्येक highlight का गहन विश्लेषण 🧠';
-    _svnStatus('thinking','Phase 1: Web analysis...');
+    // Topic name + raw notes context
+    var topicEl=document.getElementById('notesEditorTitle');
+    var topicName=(topicEl?topicEl.textContent:'').replace(/[📄📌]/g,'').trim()||'Topic';
+    var rawArea=document.getElementById('noteEditableArea');
+    var rawContext=rawArea?(rawArea.innerText||rawArea.textContent||'').substring(0,2500):'';
 
+    // Build numbered highlight list — EVERY highlight must appear
     var hlLines=itemsToProcess.map(function(it,i){
-      return 'H'+(i+1)+': '+it.text;
+      return 'H'+(i+1)+' ['+it.color+']: '+it.text;
     }).join('\n');
-    var total=itemsToProcess.length;
 
-    var p1Prompt=
-      'तुम एक प्रोफेसर-स्तरीय विद्वान और Mind Map विशेषज्ञ हो।\n'+
-      'विषय: "'+topicName+'"\n\n'+
-      'छात्र के raw notes (संदर्भ के लिए):\n'+rawContext+'\n\n'+
-      '=== छात्र ने ये '+total+' तथ्य HIGHLIGHT किए हैं ===\n'+
+    var totalHL=itemsToProcess.length;
+
+    var systemPrompt=
+      'You are a professor-level Mind Map expert for Indian students.\n'+
+      'TASK: Analyze highlighted study facts. Create mind map labels in PURE HINDI (Devanagari script only).\n\n'+
+      'STRICT RULES:\n'+
+      '1. ONE node per highlight. Never split one fact into 2+ nodes.\n'+
+      '2. Node label = full core identity of that fact. Use names, dates, numbers, key terms joined with \' \u00b7 \'.\n'+
+      '3. No word limit on label — use as many words as needed so the fact is fully represented.\n'+
+      '4. ALL labels must be in SHUDDH HINDI Devanagari. Transliterate English names/numbers into Devanagari.\n'+
+      '5. Subtopics (3-6) must match the topic domain — infer smartly:\n'+
+      '   History: \u0936\u093e\u0938\u0915/\u0905\u0930\u094d\u0925/\u0938\u0902\u0938\u094d\u0915\u0943\u0924\u093f/\u092a\u094d\u0930\u0936\u093e\u0938\u0928/\u0938\u0948\u0928\u094d\u092f | Geography: \u092d\u094c\u0924\u093f\u0915/\u091c\u0932\u0935\u093e\u092f\u0941/\u0938\u0902\u0938\u093e\u0927\u0928/\u091c\u0928\u0938\u0902\u0916\u094d\u092f\u093e\n'+
+      '   Science: \u0938\u093f\u0926\u094d\u0927\u093e\u0902\u0924/\u0928\u093f\u092f\u092e/\u0935\u0948\u091c\u094d\u091e\u093e\u0928\u093f\u0915/\u0905\u0928\u0941\u092a\u094d\u0930\u092f\u094b\u0917 | Math: \u0938\u0942\u0924\u094d\u0930/\u092a\u094d\u0930\u092e\u0947\u092f/\u0917\u0941\u0923 | Others: infer\n'+
+      '6. EVERY H1 to H'+totalHL+' must appear. Zero skips. Missing hlRef = wrong answer.\n\n'+
+      'OUTPUT: ONLY valid JSON. No markdown, no extra text.\n'+
+      'FORMAT: {"topic":"\u0935\u093f\u0937\u092f","subtopics":[{"id":"h1","label":"\u0936\u093e\u0938\u0915","groupId":1,"isHub":true}],"nodes":[{"id":"root","label":"\u0935\u093f\u0937\u092f","groupId":0,"isRoot":true},{"id":"n1","label":"\u0938\u092e\u0941\u0926\u094d\u0930\u0917\u0941\u092a\u094d\u0924 \u00b7 \u0e33\u0e35\u0e35-\u0e33\u0e56\u0e50","groupId":1,"hlRef":"H1"}],"edges":[{"from":"root","to":"h1"},{"from":"h1","to":"n1"}]}\n'+
+      'CRITICAL: H1 through H'+totalHL+' — every hlRef must be present in nodes array.';
+
+    var userPrompt=
+      '\u0935\u093f\u0937\u092f: '+topicName+'\n\n'+
+      '\u091b\u093e\u0924\u094d\u0930 \u0915\u0947 raw notes (\u0938\u0902\u0926\u0930\u094d\u092d):\n'+rawContext+'\n\n'+
+      '=== \u0939\u093e\u0907\u0932\u093e\u0907\u091f \u0915\u093f\u090f \u0924\u0925\u094d\u092f — \u0938\u092d\u0940 '+totalHL+' output \u092e\u0947\u0902 \u0906\u0928\u0947 \u091a\u093e\u0939\u093f\u090f ===\n'+
       hlLines+'\n\n'+
-      'तुम्हारा कार्य (web search का उपयोग करो):\n'+
-      '1. प्रत्येक highlighted fact (H1 से H'+total+' तक) को web से search करो।\n'+
-      '   समझो: यह fact किस concept को cover करता है? छात्र ने इसे क्यों highlight किया?\n'+
-      '   कोई भी fact अधूरा या अस्पष्ट हो सकता है — web से उसकी पूरी जानकारी निकालो।\n'+
-      '2. इस topic के लिए सबसे उचित 3-6 SUBTOPICS तय करो (विषय के अनुसार):\n'+
-      '   - इतिहास → शासक, अर्थव्यवस्था, संस्कृति, प्रशासन, सैन्य\n'+
-      '   - भूगोल → भौतिक, जलवायु, संसाधन, जनसंख्या\n'+
-      '   - विज्ञान → सिद्धांत, नियम, वैज्ञानिक, अनुप्रयोग\n'+
-      '   - गणित → सूत्र, प्रमेय, गुण\n'+
-      '   - अन्य → विषय के अनुसार स्वयं तय करो\n'+
-      '3. प्रत्येक fact के लिए:\n'+
-      '   a. एक PRIMARY LABEL बनाओ — शुद्ध हिंदी में, 3-6 शब्द, जो उस fact की मुख्य पहचान हो\n'+
-      '   b. यदि fact में कई महत्वपूर्ण पहलू हैं, तो 2-3 SUB-LABELS भी बनाओ\n'+
-      '   c. Primary label में: नाम, तिथि, संख्या, तकनीकी शब्द — जो भी core हो\n'+
-      '   d. Sub-labels: उस fact के अन्य महत्वपूर्ण पहलू\n'+
-      '   e. STRICTLY शुद्ध हिंदी — कोई English/Hinglish नहीं\n'+
-      '4. सभी H1 से H'+total+' cover होने चाहिए — एक भी skip नहीं\n\n'+
-      'केवल यह JSON return करो (कोई markdown नहीं, कोई explanation नहीं):\n'+
-      '{"topic":"विषय नाम","subtopics":["उपविषय १","उपविषय २"],"facts":[{"id":"H1","label":"मुख्य लेबल","subLabels":["उप-लेबल १","उप-लेबल २"],"subtopic":"उपविषय १"},{"id":"H2","label":"मुख्य लेबल","subLabels":[],"subtopic":"उपविषय २"}]}';
-
-    fetch('https://api.anthropic.com/v1/messages',{
+      '\u0905\u092c complete JSON \u092c\u0928\u093e\u0913: root node + \u0938\u092d\u0940 subtopic hubs + H1 \u0938\u0947 H'+totalHL+' \u0924\u0915 \u092a\u094d\u0930\u0924\u094d\u092f\u0947\u0915 highlight \u0915\u0947 \u0932\u093f\u090f \u090f\u0915-\u090f\u0915 node \u0936\u0941\u0926\u094d\u0927 \u0939\u093f\u0902\u0926\u0940 \u092e\u0947\u0902';
+    fetch('https://api.groq.com/openai/v1/chat/completions',{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
       body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:5000,
-        tools:[{type:'web_search_20250305',name:'web_search'}],
-        messages:[{role:'user',content:p1Prompt}]
+        model:'llama-3.3-70b-versatile',
+        temperature:0.1,
+        max_tokens:6000,
+        messages:[
+          {role:'system', content:systemPrompt},
+          {role:'user',   content:userPrompt}
+        ]
       })
     })
     .then(function(r){ return r.json(); })
-    .then(function(p1data){
-      var p1raw=(p1data.content||[]).filter(function(b){ return b.type==='text'; }).map(function(b){ return b.text||''; }).join('');
-      var p1parsed=null;
+    .then(function(data){
+      _svn.generating=false;
+      if(genBtn){ genBtn.disabled=false; genBtn.textContent='✨ Generate'; }
+      if(loadEl) loadEl.classList.remove('show');
+
+      var raw=data&&data.choices&&data.choices[0]&&data.choices[0].message
+             ?data.choices[0].message.content:'';
+
+      var parsed=null;
       try{
-        var cl=p1raw.replace(/```json/g,'').replace(/```/g,'').trim();
-        var mm=cl.match(/\{[\s\S]*\}/);
-        if(mm) p1parsed=JSON.parse(mm[0]);
+        var clean=raw.replace(/```json/g,'').replace(/```/g,'').trim();
+        var m=clean.match(/\{[\s\S]*\}/);
+        if(m) parsed=JSON.parse(m[0]);
       }catch(e){}
 
-      // ── Fallback: web search failed, manual extract ──
-      if(!p1parsed||!p1parsed.facts||!p1parsed.facts.length){
-        var fbSubs=['मुख्य तथ्य','विवरण','अवधारणाएं'];
-        p1parsed={
-          topic:topicName,
-          subtopics:fbSubs,
-          facts:itemsToProcess.map(function(it,i){
-            var words=it.text.trim().split(/\s+/).filter(function(w){ return w.length>1; });
+      // ── Safety net: agar koi highlight node missing ho ──
+      if(parsed&&(parsed.nodes||parsed.subtopics)){
+        var allN=(parsed.subtopics||[]).concat(parsed.nodes||[]);
+        var coveredRefs=allN.map(function(n){ return n.hlRef||''; });
+        var hubIds=(parsed.subtopics||[]).map(function(h){ return h.id; });
+        var fallbackHub=hubIds.length?hubIds[0]:'h1';
+        var fallbackGrp=(parsed.subtopics&&parsed.subtopics[0])?parsed.subtopics[0].groupId:1;
+
+        itemsToProcess.forEach(function(it,i){
+          var ref='H'+(i+1);
+          if(coveredRefs.indexOf(ref)===-1){
+            // Extract best words as fallback keywords
+            var words=it.text.trim().split(/\s+/).filter(function(w){ return w.length>2; });
             words.sort(function(a,b){
-              var sc=function(w){ return (/\d/.test(w)?3:0)+(/^[\u0900-\u097FA-Z]/.test(w)?2:0)+(w.length>4?1:0); };
+              var sc=function(w){ return (/\d/.test(w)?3:0)+(/^[A-Z\u0900-\u097F]/.test(w)?2:0)+(w.length>5?1:0); };
               return sc(b)-sc(a);
             });
-            return {id:'H'+(i+1), label:words.slice(0,5).join(' '), subLabels:[], subtopic:fbSubs[i%3]};
-          })
-        };
+            var kw=words.slice(0,3).join(' · ')||it.text.substring(0,25);
+            var nid='fn'+(i+1);
+            (parsed.nodes=parsed.nodes||[]).push({id:nid,label:kw,groupId:fallbackGrp,hlRef:ref});
+            (parsed.edges=parsed.edges||[]).push({from:fallbackHub,to:nid});
+          }
+        });
       }
 
-      // ── Safety net: har H missing hai to add karo ──
-      itemsToProcess.forEach(function(it,i){
-        var ref='H'+(i+1);
-        var found=(p1parsed.facts||[]).find(function(f){ return f.id===ref; });
-        if(!found){
-          var w=it.text.trim().split(/\s+/).filter(function(x){ return x.length>1; }).slice(0,5).join(' ');
-          p1parsed.facts.push({id:ref, label:w||it.text.substring(0,30), subLabels:[], subtopic:(p1parsed.subtopics&&p1parsed.subtopics[0])||'तथ्य'});
-        }
-      });
-
-      // ════════════════════════════════════════════════════════════
-      // PHASE 2 — Groq se final mind-map JSON (layout only)
-      // Phase 1 data leke clean node/edge structure banao
-      // ════════════════════════════════════════════════════════════
-      if(loadTxt) loadTxt.innerHTML='🗺️ Mind Map तैयार हो रहा है...<br>Nodes arrange किए जा रहे हैं ✨';
-      _svnStatus('thinking','Phase 2: Map बन रहा है...');
-
-      var apiKey=_getKey();
-      if(!apiKey){
-        _svnAssembleFromP1(p1parsed, isIncremental, emptyEl, loadEl, genBtn);
+      if(!parsed||(!parsed.nodes&&!parsed.subtopics)){
+        _svnStatus('error','❌ AI response parse nahi hua. Retry karo.');
+        showToast&&showToast('❌ Retry karo!','error');
+        if(!_svn.pages.length&&emptyEl) emptyEl.style.display='flex';
         return;
       }
 
-      var p2Prompt=
-        'तुम एक Mind Map JSON generator हो। नीचे दिए verified fact-data से एक structured JSON बनाओ।\n\n'+
-        'INPUT DATA:\n'+JSON.stringify(p1parsed)+'\n\n'+
-        'STRICT RULES:\n'+
-        '1. एक ROOT node: topic name, groupId:0, isRoot:true\n'+
-        '2. प्रत्येक subtopic के लिए एक HUB node: groupId 1,2,3..., isHub:true, label शुद्ध हिंदी में\n'+
-        '3. प्रत्येक fact (H1 से H'+total+') के लिए:\n'+
-        '   - एक PRIMARY node: label = fact का label field, groupId = उसके subtopic का groupId\n'+
-        '   - यदि fact में subLabels हैं: हर subLabel के लिए एक CHILD node (isChild:true, parentId = primary node id)\n'+
-        '4. Edges: root→hub, hub→primaryNode, primaryNode→childNode\n'+
-        '5. यदि दो primary nodes आपस में जुड़े हों (same concept): cross-edge भी जोड़ो\n'+
-        '6. सभी labels शुद्ध हिंदी में — कोई English/Hinglish नहीं\n'+
-        '7. केवल valid JSON return करो:\n'+
-        '{"subtopics":[{"id":"hub1","label":"शासक","groupId":1,"isHub":true}],"nodes":[{"id":"root","label":"'+topicName+'","groupId":0,"isRoot":true},{"id":"n1","label":"समुद्रगुप्त ३३५-३८०","groupId":1},{"id":"n1c1","label":"भारत का नेपोलियन","groupId":1,"isChild":true,"parentId":"n1"}],"edges":[{"from":"root","to":"hub1"},{"from":"hub1","to":"n1"},{"from":"n1","to":"n1c1"}]}';
+      _svnPushHistory();
+      var allNodes=(parsed.subtopics||[]).concat(parsed.nodes||[]);
+      var allEdges=parsed.edges||[];
 
-      fetch('https://api.groq.com/openai/v1/chat/completions',{
-        method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
-        body:JSON.stringify({
-          model:'llama-3.3-70b-versatile',
-          temperature:0.1,
-          max_tokens:6000,
-          messages:[
-            {role:'system',content:'You are a mind map JSON generator. Return ONLY valid JSON. No markdown. No explanation. All labels must be in pure Hindi (Devanagari script).'},
-            {role:'user',content:p2Prompt}
-          ]
-        })
-      })
-      .then(function(r){ return r.json(); })
-      .then(function(p2data){
-        var raw2=p2data&&p2data.choices&&p2data.choices[0]&&p2data.choices[0].message?p2data.choices[0].message.content:'';
-        var parsed2=null;
-        try{
-          var c2=raw2.replace(/```json/g,'').replace(/```/g,'').trim();
-          var m2=c2.match(/\{[\s\S]*\}/);
-          if(m2) parsed2=JSON.parse(m2[0]);
-        }catch(e){}
-        if(!parsed2||(!parsed2.nodes&&!parsed2.subtopics)){
-          _svnAssembleFromP1(p1parsed, isIncremental, emptyEl, loadEl, genBtn);
-          return;
-        }
-        _svnFinalize(parsed2, isIncremental, emptyEl, loadEl, genBtn, total);
-      })
-      .catch(function(){
-        _svnAssembleFromP1(p1parsed, isIncremental, emptyEl, loadEl, genBtn);
-      });
+      if(isIncremental){
+        var existIds=[];
+        _svn.pages.forEach(function(pg){ pg.nodes.forEach(function(n){ existIds.push(n.id); }); });
+        allNodes=allNodes.filter(function(n){ return existIds.indexOf(n.id)===-1; });
+        var lastPg=_svn.pages[_svn.pages.length-1];
+        allNodes.forEach(function(n){ lastPg.nodes.push(n); });
+        allEdges.forEach(function(e){ lastPg.edges.push(e); });
+      } else {
+        _svn.pages=[{nodes:allNodes, edges:allEdges}];
+        _svn.currentPage=0;
+      }
+
+      _svnPaginateAndLayout();
+      _svnRenderPage(_svn.currentPage);
+      _svnFitView();
+      if(emptyEl) emptyEl.style.display='none';
+
+      var totalNodes=0; _svn.pages.forEach(function(pg){ totalNodes+=pg.nodes.length; });
+      _svnStatus('ready','✅ '+totalNodes+' keywords · '+_svn.pages.length+' page'+((_svn.pages.length>1)?'s':'')+' · '+totalHL+' highlights covered');
+      showToast&&showToast('🧠 Smart map ready! '+totalHL+' highlights → '+totalNodes+' keywords!','success');
+
+      _svnUpdatePageNav();
+      _svnSaveToFirestore();
     })
     .catch(function(err){
       _svn.generating=false;
@@ -34019,61 +34002,6 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       _svnStatus('error','❌ '+(err.message||'Network error'));
       showToast&&showToast('❌ '+(err.message||'Network error'),'error');
     });
-  };
-
-  // ── Phase 1 data se directly map banao (Groq unavailable) ──
-  function _svnAssembleFromP1(p1, isIncremental, emptyEl, loadEl, genBtn){
-    var allNodes=[], allEdges=[];
-    var topicLabel=(p1.topic||'विषय').substring(0,30);
-    allNodes.push({id:'root',label:topicLabel,groupId:0,isRoot:true});
-    var subs=p1.subtopics||['तथ्य'];
-    subs.forEach(function(s,si){
-      allNodes.push({id:'hub'+(si+1),label:s.substring(0,20),groupId:si+1,isHub:true});
-      allEdges.push({from:'root',to:'hub'+(si+1)});
-    });
-    (p1.facts||[]).forEach(function(f,fi){
-      var subIdx=subs.indexOf(f.subtopic); if(subIdx<0) subIdx=fi%subs.length;
-      var pid='pn'+(fi+1);
-      allNodes.push({id:pid,label:(f.label||f.id).substring(0,60),groupId:subIdx+1});
-      allEdges.push({from:'hub'+(subIdx+1),to:pid});
-      (f.subLabels||[]).forEach(function(sl,si2){
-        var cid=pid+'c'+(si2+1);
-        allNodes.push({id:cid,label:sl.substring(0,50),groupId:subIdx+1,isChild:true,parentId:pid});
-        allEdges.push({from:pid,to:cid});
-      });
-    });
-    _svnFinalize({subtopics:[],nodes:allNodes,edges:allEdges}, isIncremental, emptyEl, loadEl, genBtn, (p1.facts||[]).length);
-  }
-
-  // ── Final: _svn mein daalo aur render karo ──
-  function _svnFinalize(parsed, isIncremental, emptyEl, loadEl, genBtn, hlCount){
-    _svn.generating=false;
-    if(genBtn){ genBtn.disabled=false; genBtn.textContent='✨ Generate'; }
-    if(loadEl) loadEl.classList.remove('show');
-    _svnPushHistory();
-    var allNodes=(parsed.subtopics||[]).concat(parsed.nodes||[]);
-    var allEdges=parsed.edges||[];
-    if(isIncremental){
-      var existIds=[];
-      _svn.pages.forEach(function(pg){ pg.nodes.forEach(function(n){ existIds.push(n.id); }); });
-      allNodes=allNodes.filter(function(n){ return existIds.indexOf(n.id)===-1; });
-      var lastPg=_svn.pages[_svn.pages.length-1];
-      allNodes.forEach(function(n){ lastPg.nodes.push(n); });
-      allEdges.forEach(function(e){ lastPg.edges.push(e); });
-    } else {
-      _svn.pages=[{nodes:allNodes,edges:allEdges}];
-      _svn.currentPage=0;
-    }
-    _svnPaginateAndLayout();
-    _svnRenderPage(_svn.currentPage);
-    _svnFitView();
-    if(emptyEl) emptyEl.style.display='none';
-    var totalNodes=0; _svn.pages.forEach(function(pg){ totalNodes+=pg.nodes.length; });
-    var hl=hlCount||0;
-    _svnStatus('ready','✅ '+hl+' highlights → '+totalNodes+' nodes · '+_svn.pages.length+' page — web-verified!');
-    showToast&&showToast('🧠 Mind Map तैयार! '+hl+' highlights covered, '+totalNodes+' nodes!','success');
-    _svnUpdatePageNav();
-    _svnSaveToFirestore();
   };
 
   /* ═══════════════════════════════════════════════════════════
