@@ -5280,6 +5280,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <div class="sc-fstrip-btn sc-fstrip-title" id="scStripTitle">📋</div>
     <!-- AI Chat Button — Canvas page par AI se baat karo -->
     <button class="sc-fstrip-btn" id="scAiChatBtn" onclick="scOpenCanvasAiChat()" title="AI Chat — Canvas slides se flashcards banao" style="background:linear-gradient(135deg,rgba(21,101,192,0.18),rgba(106,27,154,0.18));border-color:rgba(106,27,154,0.4);color:#6a1b9a;font-size:0.82rem;">🤖</button>
+    <!-- Mind Map Button -->
+    <button class="sc-fstrip-btn" id="scMindMapBtn" onclick="mmOpenPanel()" title="Mind Map — Flashcards se Mind Map banao" style="background:linear-gradient(135deg,rgba(0,105,92,0.22),rgba(46,125,50,0.22));border-color:rgba(0,150,136,0.45);color:#00695c;font-size:0.82rem;">🧠</button>
     <!-- Undo -->
     <button class="sc-fstrip-btn" id="scFloatUndoBtn" onclick="scUndo&&scUndo()" title="Undo (Ctrl+Z)" style="font-size:0.82rem;opacity:0.5;">↩</button>
     <!-- Redo -->
@@ -5318,6 +5320,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         </div>
         <div style="display:flex;gap:6px;align-items:center;">
           <button onclick="scAiMakeFlashcards()" id="scAiFlashcardBtn" title="Saari slides ke notes se Flashcards banao aur Library mein save karo" style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);border-radius:8px;padding:5px 9px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;white-space:nowrap;display:flex;align-items:center;gap:4px;">🃏 Flashcards banao</button>
+          <button onclick="scCloseCanvasAiChat();mmOpenPanel()" title="Flashcards se Mind Map banao" style="background:rgba(0,150,136,0.35);border:1px solid rgba(0,255,200,0.35);border-radius:8px;padding:5px 9px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;white-space:nowrap;display:flex;align-items:center;gap:4px;">🧠 Mind Map</button>
           <button onclick="scCloseCanvasAiChat()" style="background:rgba(255,255,255,0.18);border:none;border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.8rem;font-weight:700;font-family:inherit;">✕</button>
         </div>
       </div>
@@ -5327,6 +5330,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         <button class="ai-chat-sug" onclick="scAiUseSuggestion('Important points bullet points mein batao')">📌 Key Points</button>
         <button class="ai-chat-sug" onclick="scAiUseSuggestion('Exam ke liye important questions kya hain?')">❓ Exam Qs</button>
         <button class="ai-chat-sug" onclick="scAiMakeFlashcards()">🃏 Flashcards Library mein save karo</button>
+        <button class="ai-chat-sug" onclick="scCloseCanvasAiChat();mmOpenPanel()" style="background:rgba(0,105,92,0.12);border-color:rgba(0,150,136,0.4);color:#00695c;">🧠 Mind Map dekho</button>
       </div>
       <!-- Messages -->
       <div id="scAiChatMsgs" style="flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:7px;">
@@ -33175,6 +33179,723 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     }
   });
 })();
+</script>
+
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- MIND MAP PANEL — Topic-wise paginated mind maps from flashcards  -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<div id="mmPanel" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:1300;background:var(--bg,#eaf4fb);flex-direction:column;overflow:hidden;">
+
+  <!-- Header -->
+  <div id="mmHeader" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:linear-gradient(135deg,#00695c,#1565c0);color:#fff;flex-shrink:0;box-shadow:0 2px 12px rgba(0,0,0,0.18);">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span style="font-size:1.1rem;">🧠</span>
+      <div>
+        <div style="font-weight:800;font-size:0.92rem;" id="mmTopicLabel">Mind Map</div>
+        <div style="font-size:0.68rem;opacity:0.85;" id="mmSlideLabel">Slide 1 / 1</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:7px;align-items:center;">
+      <!-- Bulk hide/show all nodes on current slide -->
+      <button id="mmBulkToggleBtn" onclick="mmBulkToggleExplanations()" title="Is slide ke sabhi explanations hide/show karo" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;">👁 Sab</button>
+      <!-- PDF Download -->
+      <button onclick="mmExportPDF()" title="PDF Download karo" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;">⬇ PDF</button>
+      <!-- Close -->
+      <button onclick="mmClosePanel()" style="background:rgba(198,40,40,0.35);border:none;border-radius:8px;padding:5px 11px;color:#fff;cursor:pointer;font-size:0.88rem;font-weight:800;font-family:inherit;">✕</button>
+    </div>
+  </div>
+
+  <!-- Slide nav strip -->
+  <div id="mmSlideNav" style="display:flex;align-items:center;gap:6px;padding:7px 12px;background:rgba(0,0,0,0.05);border-bottom:1.5px solid var(--border,#ccc);overflow-x:auto;flex-shrink:0;scrollbar-width:none;-webkit-overflow-scrolling:touch;">
+    <!-- Filled by JS -->
+  </div>
+
+  <!-- Main canvas area -->
+  <div id="mmCanvas" style="flex:1;overflow:auto;position:relative;display:flex;align-items:center;justify-content:center;padding:16px 8px;">
+    <!-- Mind map SVG + nodes rendered here -->
+  </div>
+
+  <!-- Bottom action bar -->
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--surface,#fff);border-top:1.5px solid var(--border,#eee);flex-shrink:0;">
+    <button onclick="mmPrevSlide()" id="mmPrevBtn" style="background:var(--surface2,#f4f9fe);border:1.5px solid var(--border,#ccc);border-radius:10px;padding:7px 16px;color:var(--text,#222);cursor:pointer;font-weight:700;font-size:0.8rem;font-family:inherit;">◀ Pichla</button>
+    <button onclick="mmAddNodeManual()" style="background:linear-gradient(135deg,#00695c,#00897b);border:none;border-radius:10px;padding:7px 14px;color:#fff;cursor:pointer;font-weight:800;font-size:0.78rem;font-family:inherit;">+ Node Add</button>
+    <button onclick="mmNextSlide()" id="mmNextBtn" style="background:var(--surface2,#f4f9fe);border:1.5px solid var(--border,#ccc);border-radius:10px;padding:7px 16px;color:var(--text,#222);cursor:pointer;font-weight:700;font-size:0.8rem;font-family:inherit;">Agla ▶</button>
+  </div>
+</div>
+
+<!-- Node Edit Modal -->
+<div id="mmEditModal" style="display:none;position:fixed;inset:0;z-index:1400;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;">
+  <div style="background:var(--surface,#fff);border-radius:16px;padding:18px;width:min(92vw,420px);box-shadow:0 8px 40px rgba(0,0,0,0.25);display:flex;flex-direction:column;gap:10px;">
+    <div style="font-weight:800;font-size:0.95rem;color:var(--text,#222);">✏️ Node Edit Karo</div>
+    <div style="font-size:0.75rem;color:var(--text2,#666);">Question (Node label)</div>
+    <textarea id="mmEditQ" rows="2" style="width:100%;background:var(--surface2,#f4f9fe);border:1.5px solid var(--border,#ddd);border-radius:9px;padding:8px 10px;font-family:'Noto Sans Devanagari',sans-serif;font-size:0.82rem;resize:none;outline:none;box-sizing:border-box;color:var(--text,#222);"></textarea>
+    <div style="font-size:0.75rem;color:var(--text2,#666);">Explanation (Answer)</div>
+    <textarea id="mmEditA" rows="3" style="width:100%;background:var(--surface2,#f4f9fe);border:1.5px solid var(--border,#ddd);border-radius:9px;padding:8px 10px;font-family:'Noto Sans Devanagari',sans-serif;font-size:0.82rem;resize:none;outline:none;box-sizing:border-box;color:var(--text,#222);"></textarea>
+    <div style="display:flex;gap:8px;margin-top:4px;">
+      <button onclick="mmEditSave()" style="flex:1;background:linear-gradient(135deg,#00695c,#1565c0);border:none;border-radius:10px;padding:9px;color:#fff;font-weight:800;font-size:0.82rem;cursor:pointer;font-family:inherit;">💾 Save</button>
+      <button onclick="mmEditClose()" style="flex:1;background:rgba(0,0,0,0.07);border:none;border-radius:10px;padding:9px;color:var(--text,#222);font-weight:700;font-size:0.82rem;cursor:pointer;font-family:inherit;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Parent Node Modal -->
+<div id="mmParentModal" style="display:none;position:fixed;inset:0;z-index:1400;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;">
+  <div style="background:var(--surface,#fff);border-radius:16px;padding:18px;width:min(92vw,420px);box-shadow:0 8px 40px rgba(0,0,0,0.25);display:flex;flex-direction:column;gap:10px;">
+    <div style="font-weight:800;font-size:0.95rem;color:var(--text,#222);">🔗 Parent Node Add Karo</div>
+    <div style="font-size:0.75rem;color:var(--text2,#666);">Kiske liye parent node banana hai?</div>
+    <div id="mmParentTargetLabel" style="font-size:0.8rem;font-weight:700;color:#00695c;padding:6px 10px;background:rgba(0,105,92,0.08);border-radius:8px;"></div>
+    <div style="font-size:0.75rem;color:var(--text2,#666);">Parent Node Question</div>
+    <textarea id="mmParentQ" rows="2" style="width:100%;background:var(--surface2,#f4f9fe);border:1.5px solid var(--border,#ddd);border-radius:9px;padding:8px 10px;font-family:'Noto Sans Devanagari',sans-serif;font-size:0.82rem;resize:none;outline:none;box-sizing:border-box;color:var(--text,#222);" placeholder="Parent node ka question..."></textarea>
+    <div style="font-size:0.75rem;color:var(--text2,#666);">Parent Node Explanation</div>
+    <textarea id="mmParentA" rows="2" style="width:100%;background:var(--surface2,#f4f9fe);border:1.5px solid var(--border,#ddd);border-radius:9px;padding:8px 10px;font-family:'Noto Sans Devanagari',sans-serif;font-size:0.82rem;resize:none;outline:none;box-sizing:border-box;color:var(--text,#222);" placeholder="Parent node ka explanation..."></textarea>
+    <div style="display:flex;gap:8px;margin-top:4px;">
+      <button onclick="mmParentSave()" style="flex:1;background:linear-gradient(135deg,#6a1b9a,#1565c0);border:none;border-radius:10px;padding:9px;color:#fff;font-weight:800;font-size:0.82rem;cursor:pointer;font-family:inherit;">➕ Add Parent</button>
+      <button onclick="mmParentClose()" style="flex:1;background:rgba(0,0,0,0.07);border:none;border-radius:10px;padding:9px;color:var(--text,#222);font-weight:700;font-size:0.82rem;cursor:pointer;font-family:inherit;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Node Manual Modal -->
+<div id="mmAddNodeModal" style="display:none;position:fixed;inset:0;z-index:1400;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;">
+  <div style="background:var(--surface,#fff);border-radius:16px;padding:18px;width:min(92vw,420px);box-shadow:0 8px 40px rgba(0,0,0,0.25);display:flex;flex-direction:column;gap:10px;">
+    <div style="font-weight:800;font-size:0.95rem;color:var(--text,#222);">➕ Naya Node Add Karo</div>
+    <div style="font-size:0.75rem;color:var(--text2,#666);">Question (Node label)</div>
+    <textarea id="mmAddQ" rows="2" style="width:100%;background:var(--surface2,#f4f9fe);border:1.5px solid var(--border,#ddd);border-radius:9px;padding:8px 10px;font-family:'Noto Sans Devanagari',sans-serif;font-size:0.82rem;resize:none;outline:none;box-sizing:border-box;color:var(--text,#222);" placeholder="Node ka question / topic..."></textarea>
+    <div style="font-size:0.75rem;color:var(--text2,#666);">Explanation (Answer)</div>
+    <textarea id="mmAddA" rows="3" style="width:100%;background:var(--surface2,#f4f9fe);border:1.5px solid var(--border,#ddd);border-radius:9px;padding:8px 10px;font-family:'Noto Sans Devanagari',sans-serif;font-size:0.82rem;resize:none;outline:none;box-sizing:border-box;color:var(--text,#222);" placeholder="Explanation / answer..."></textarea>
+    <div style="display:flex;gap:8px;margin-top:4px;">
+      <button onclick="mmAddNodeSave()" style="flex:1;background:linear-gradient(135deg,#00695c,#00897b);border:none;border-radius:10px;padding:9px;color:#fff;font-weight:800;font-size:0.82rem;cursor:pointer;font-family:inherit;">✅ Add Karo</button>
+      <button onclick="document.getElementById('mmAddNodeModal').style.display='none';" style="flex:1;background:rgba(0,0,0,0.07);border:none;border-radius:10px;padding:9px;color:var(--text,#222);font-weight:700;font-size:0.82rem;cursor:pointer;font-family:inherit;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<style>
+/* ── Mind Map Panel Styles ── */
+#mmPanel { font-family:'Noto Sans Devanagari','Baloo 2',sans-serif; }
+.mm-slide-dot {
+  width:28px;height:28px;border-radius:50%;border:2px solid rgba(0,105,92,0.35);
+  background:rgba(0,105,92,0.08);color:#00695c;font-size:0.7rem;font-weight:800;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  transition:all 0.18s;
+}
+.mm-slide-dot.active { background:#00695c;color:#fff;border-color:#00695c; }
+.mm-add-slide-btn {
+  width:28px;height:28px;border-radius:50%;border:2px dashed rgba(0,105,92,0.45);
+  background:transparent;color:#00695c;font-size:1rem;font-weight:800;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  transition:all 0.18s;
+}
+/* Node card styles */
+.mm-node-card {
+  background:#fff;
+  border:2px solid #f9a825;
+  border-radius:14px;
+  padding:9px 11px;
+  min-width:90px;max-width:140px;
+  box-shadow:0 2px 10px rgba(249,168,37,0.18);
+  position:relative;
+  cursor:pointer;
+  transition:box-shadow 0.18s, transform 0.15s;
+}
+.mm-node-card:active { transform:scale(0.97); }
+.mm-node-card.center-node {
+  background:linear-gradient(135deg,#f9a825,#ff8f00);
+  border-color:#e65100;
+  color:#fff;
+  font-weight:800;
+  min-width:90px;max-width:120px;
+  box-shadow:0 4px 18px rgba(249,168,37,0.38);
+  border-radius:50px;
+  text-align:center;
+}
+.mm-node-card.parent-node {
+  background:linear-gradient(135deg,#e8eaf6,#c5cae9);
+  border-color:#5c6bc0;
+  border-style:dashed;
+}
+.mm-node-q {
+  font-size:0.72rem;font-weight:700;color:#37526d;
+  line-height:1.35;text-align:center;
+}
+.mm-node-card.center-node .mm-node-q { color:#fff; font-size:0.78rem; }
+.mm-node-a {
+  font-size:0.67rem;color:#555;margin-top:5px;line-height:1.4;
+  padding:4px 6px;background:rgba(249,168,37,0.08);border-radius:7px;
+  border-left:2.5px solid #f9a825;display:none;
+}
+.mm-node-a.visible { display:block; }
+.mm-node-actions {
+  display:flex;gap:3px;justify-content:center;margin-top:5px;flex-wrap:wrap;
+}
+.mm-node-btn {
+  border:none;border-radius:6px;padding:2px 6px;font-size:0.6rem;font-weight:800;
+  cursor:pointer;font-family:inherit;transition:background 0.15s;
+}
+.mm-node-btn.hide-btn { background:rgba(255,193,7,0.2);color:#f57f17; }
+.mm-node-btn.edit-btn { background:rgba(21,101,192,0.12);color:#1565c0; }
+.mm-node-btn.del-btn { background:rgba(198,40,40,0.1);color:#c62828; }
+.mm-node-btn.parent-btn { background:rgba(106,27,154,0.12);color:#6a1b9a; }
+body.night-mode .mm-node-card {
+  background:var(--surface,#1c2128);
+  border-color:#f9a825;
+  color:var(--text,#e6edf3);
+}
+body.night-mode .mm-node-q { color:var(--text2,#8b949e); }
+body.night-mode .mm-node-card.center-node { color:#fff; }
+body.night-mode .mm-node-a { background:rgba(249,168,37,0.06);color:var(--text2,#8b949e); }
+</style>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+// MIND MAP PAGE — Complete implementation
+// ══════════════════════════════════════════════════════════════════
+(function(){
+
+// ── Storage key ──
+function mmKey(tid) { return 'mmData_' + (tid != null ? tid : 'default'); }
+
+// ── State ──
+var _mm = {
+  tid: null, sid: null, secid: null,
+  topicName: '',
+  slides: [],      // each slide: { nodes:[], parentNodes:[] }
+  curSlide: 0,
+  editTarget: null,  // { slideIdx, nodeIdx, isParent }
+  parentTarget: null // { slideIdx, nodeIdx }
+};
+
+// ── Load/Save ──
+function mmLoad(tid) {
+  try {
+    var d = JSON.parse(localStorage.getItem(mmKey(tid)) || 'null');
+    if(d && d.slides) return d;
+  } catch(e) {}
+  return null;
+}
+function mmSave() {
+  try {
+    localStorage.setItem(mmKey(_mm.tid), JSON.stringify({ slides: _mm.slides, topicName: _mm.topicName }));
+  } catch(e) {}
+}
+
+// ── Open panel ──
+window.mmOpenPanel = function() {
+  // Get current topic context from canvas (_sc) or from _editorState
+  var tid = null, sid = null, secid = null, topicName = '';
+  try {
+    if(typeof _sc !== 'undefined' && _sc.tid != null) {
+      tid = _sc.tid; sid = _sc.sid; secid = _sc.secid;
+      var t = (typeof getTop === 'function') ? getTop(sid, secid, tid) : null;
+      topicName = t ? t.name : ('Topic ' + tid);
+    }
+  } catch(e) {}
+
+  _mm.tid = tid; _mm.sid = sid; _mm.secid = secid;
+  _mm.topicName = topicName || 'Mind Map';
+  _mm.curSlide = 0;
+
+  // Load saved data or build from flashcards
+  var saved = mmLoad(tid);
+  if(saved && saved.slides && saved.slides.length) {
+    _mm.slides = saved.slides;
+    _mm.topicName = saved.topicName || _mm.topicName;
+  } else {
+    // Build from flashcards
+    mmBuildFromFlashcards();
+  }
+
+  // Show panel
+  var panel = document.getElementById('mmPanel');
+  if(panel) { panel.style.display = 'flex'; }
+  document.getElementById('mmTopicLabel').textContent = '🧠 ' + _mm.topicName;
+  mmRender();
+};
+
+// ── Close ──
+window.mmClosePanel = function() {
+  var panel = document.getElementById('mmPanel');
+  if(panel) panel.style.display = 'none';
+};
+
+// ── Build slides from flashcards (8 per slide) ──
+function mmBuildFromFlashcards() {
+  var tid = _mm.tid;
+  var cards = [];
+  try {
+    var fcData = JSON.parse(localStorage.getItem('scFC_' + (tid != null ? tid : 'default')) || '{}');
+    cards = fcData.cards || [];
+  } catch(e) {}
+
+  // Fallback: check _scFC if available and same tid
+  if(!cards.length && typeof _scFC !== 'undefined' && typeof _sc !== 'undefined' && _sc.tid == tid) {
+    cards = _scFC.cards || [];
+  }
+
+  if(!cards.length) {
+    // Empty state — one blank slide
+    _mm.slides = [{ nodes: [], parentNodes: [] }];
+    return;
+  }
+
+  _mm.slides = [];
+  var NODES_PER_SLIDE = 8;
+  for(var i = 0; i < cards.length; i += NODES_PER_SLIDE) {
+    var chunk = cards.slice(i, i + NODES_PER_SLIDE);
+    var nodes = chunk.map(function(c) {
+      return {
+        id: c.id || ('mm_' + Date.now() + '_' + Math.random().toString(36).slice(2)),
+        q: c.q || c.front || '',
+        a: c.a || c.back || '',
+        visible: false  // explanation hidden by default
+      };
+    });
+    _mm.slides.push({ nodes: nodes, parentNodes: [] });
+  }
+  mmSave();
+}
+
+// ── Render current slide ──
+function mmRender() {
+  var slides = _mm.slides;
+  var cur    = _mm.curSlide;
+  if(cur >= slides.length) { _mm.curSlide = slides.length - 1; }
+  if(_mm.curSlide < 0) _mm.curSlide = 0;
+  cur = _mm.curSlide;
+
+  // Slide nav
+  var nav = document.getElementById('mmSlideNav');
+  if(nav) {
+    nav.innerHTML = '';
+    slides.forEach(function(sl, si) {
+      var dot = document.createElement('button');
+      dot.className = 'mm-slide-dot' + (si === cur ? ' active' : '');
+      dot.textContent = si + 1;
+      dot.title = 'Slide ' + (si + 1);
+      dot.onclick = (function(idx){ return function(){ _mm.curSlide = idx; mmRender(); }; })(si);
+      nav.appendChild(dot);
+    });
+    // Delete slide button
+    if(slides.length > 1) {
+      var delBtn = document.createElement('button');
+      delBtn.className = 'mm-add-slide-btn';
+      delBtn.title = 'Is slide ko delete karo';
+      delBtn.textContent = '🗑';
+      delBtn.style.borderColor = 'rgba(198,40,40,0.45)';
+      delBtn.style.color = '#c62828';
+      delBtn.onclick = function() { mmDeleteSlide(cur); };
+      nav.appendChild(delBtn);
+    }
+    // Add slide button
+    var addBtn = document.createElement('button');
+    addBtn.className = 'mm-add-slide-btn';
+    addBtn.title = 'Naya slide add karo';
+    addBtn.textContent = '+';
+    addBtn.onclick = function() { mmAddSlide(); };
+    nav.appendChild(addBtn);
+  }
+
+  // Slide label
+  var lbl = document.getElementById('mmSlideLabel');
+  if(lbl) lbl.textContent = 'Slide ' + (cur + 1) + ' / ' + slides.length;
+
+  // Topic label
+  var tl = document.getElementById('mmTopicLabel');
+  if(tl) tl.textContent = '🧠 ' + (_mm.topicName || 'Mind Map');
+
+  // Prev/Next
+  var prevBtn = document.getElementById('mmPrevBtn');
+  var nextBtn = document.getElementById('mmNextBtn');
+  if(prevBtn) prevBtn.disabled = cur === 0;
+  if(nextBtn) nextBtn.disabled = cur === slides.length - 1;
+
+  // Canvas
+  var canvas = document.getElementById('mmCanvas');
+  if(!canvas) return;
+  canvas.innerHTML = '';
+
+  var slide = slides[cur] || { nodes: [], parentNodes: [] };
+  var nodes = slide.nodes || [];
+  var parentNodes = slide.parentNodes || [];
+
+  // --- Build mind map layout ---
+  // Center circle + radial nodes
+  var W = canvas.offsetWidth || window.innerWidth;
+  var H = canvas.offsetHeight || (window.innerHeight - 200);
+
+  // Use a relative container
+  var container = document.createElement('div');
+  container.style.cssText = 'position:relative;width:100%;min-height:' + Math.max(420, H - 20) + 'px;';
+  canvas.appendChild(container);
+
+  // SVG for lines
+  var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible;';
+  container.appendChild(svg);
+
+  var cW = container.offsetWidth || W;
+  var cH = parseInt(container.style.minHeight) || 520;
+
+  var cx = cW / 2;
+  var cy = cH / 2;
+  var R  = Math.min(cW, cH) * 0.33;
+  if(R < 120) R = 120;
+  if(R > 220) R = 220;
+
+  // Center node
+  var centerDiv = document.createElement('div');
+  centerDiv.className = 'mm-node-card center-node';
+  var shortName = (_mm.topicName || 'Topic').length > 22 ? (_mm.topicName||'Topic').slice(0,22)+'…' : (_mm.topicName||'Topic');
+  centerDiv.innerHTML = '<div class="mm-node-q">' + _escHtml(shortName) + '</div>';
+  centerDiv.style.cssText += 'position:absolute;z-index:2;transform:translate(-50%,-50%);';
+  centerDiv.style.left = cx + 'px';
+  centerDiv.style.top  = cy + 'px';
+  container.appendChild(centerDiv);
+
+  // Radial main nodes
+  var n = nodes.length;
+  if(n === 0) {
+    // Empty state
+    var emptyMsg = document.createElement('div');
+    emptyMsg.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-70%);text-align:center;color:var(--text2,#888);font-size:0.82rem;margin-top:60px;';
+    emptyMsg.innerHTML = '<div style="font-size:2rem;">🧠</div><div style="margin-top:8px;font-weight:700;">Koi nodes nahi hain</div><div style="font-size:0.72rem;margin-top:4px;">Pehle <b>🃏 Flashcards banao</b> — phir <b>🧠</b> dabao</div><div style="font-size:0.72rem;margin-top:4px;">Ya <b>+ Node Add</b> se manually add karo</div>';
+    container.appendChild(emptyMsg);
+    return;
+  }
+
+  nodes.forEach(function(node, ni) {
+    var angle = (2 * Math.PI * ni / n) - Math.PI / 2;
+    var nx = cx + R * Math.cos(angle);
+    var ny = cy + R * Math.sin(angle);
+
+    // Draw line center→node
+    var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', cx); line.setAttribute('y1', cy);
+    line.setAttribute('x2', nx); line.setAttribute('y2', ny);
+    line.setAttribute('stroke', '#f9a825');
+    line.setAttribute('stroke-width', '2');
+    line.setAttribute('stroke-dasharray', node.visible ? 'none' : '5,4');
+    line.setAttribute('opacity', '0.7');
+    line.id = 'mmLine_' + cur + '_' + ni;
+    svg.appendChild(line);
+
+    // Node card
+    var card = document.createElement('div');
+    card.className = 'mm-node-card';
+    card.id = 'mmNode_' + cur + '_' + ni;
+    card.style.cssText = 'position:absolute;z-index:3;transform:translate(-50%,-50%);';
+    card.style.left = nx + 'px';
+    card.style.top  = ny + 'px';
+
+    var shortQ = node.q.length > 55 ? node.q.slice(0,55) + '…' : node.q;
+
+    card.innerHTML =
+      '<div class="mm-node-q">' + _escHtml(shortQ) + '</div>' +
+      '<div class="mm-node-a' + (node.visible ? ' visible' : '') + '" id="mmAns_' + cur + '_' + ni + '">' + _escHtml(node.a) + '</div>' +
+      '<div class="mm-node-actions">' +
+        '<button class="mm-node-btn hide-btn" onclick="mmToggleNode(' + cur + ',' + ni + ',false)" title="Hide/Show Explanation">' + (node.visible ? '🙈 Hide' : '👁 Show') + '</button>' +
+        '<button class="mm-node-btn edit-btn" onclick="mmEditNode(' + cur + ',' + ni + ',false)" title="Edit">✏️</button>' +
+        '<button class="mm-node-btn del-btn" onclick="mmDeleteNode(' + cur + ',' + ni + ',false)" title="Delete">🗑</button>' +
+        '<button class="mm-node-btn parent-btn" onclick="mmOpenParentModal(' + cur + ',' + ni + ')" title="Parent Node Add">🔗</button>' +
+      '</div>';
+    container.appendChild(card);
+
+    // Draw parent nodes for this node
+    var pNodes = (slide.parentNodes || []).filter(function(p) { return p.parentOf === ni; });
+    pNodes.forEach(function(pNode, pi) {
+      var pIdx = (slide.parentNodes || []).indexOf(pNode);
+      var pAngle = angle + (pi - (pNodes.length - 1) / 2) * 0.45;
+      var pR = R * 0.5;
+      var px2 = nx + pR * Math.cos(pAngle);
+      var py2 = ny + pR * Math.sin(pAngle);
+
+      // Keep within bounds
+      px2 = Math.max(70, Math.min(cW - 70, px2));
+      py2 = Math.max(40, Math.min(cH - 40, py2));
+
+      // Line node→parent
+      var pLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      pLine.setAttribute('x1', nx); pLine.setAttribute('y1', ny);
+      pLine.setAttribute('x2', px2); pLine.setAttribute('y2', py2);
+      pLine.setAttribute('stroke', '#7c4dff');
+      pLine.setAttribute('stroke-width', '1.5');
+      pLine.setAttribute('stroke-dasharray', '4,3');
+      pLine.setAttribute('opacity', '0.65');
+      svg.appendChild(pLine);
+
+      // Parent node card
+      var pCard = document.createElement('div');
+      pCard.className = 'mm-node-card parent-node';
+      pCard.style.cssText = 'position:absolute;z-index:3;transform:translate(-50%,-50%);';
+      pCard.style.left = px2 + 'px';
+      pCard.style.top  = py2 + 'px';
+
+      var shortPQ = pNode.q.length > 45 ? pNode.q.slice(0,45) + '…' : pNode.q;
+      pCard.innerHTML =
+        '<div class="mm-node-q" style="color:#5c6bc0;">' + _escHtml(shortPQ) + '</div>' +
+        '<div class="mm-node-a' + (pNode.visible ? ' visible' : '') + '">' + _escHtml(pNode.a) + '</div>' +
+        '<div class="mm-node-actions">' +
+          '<button class="mm-node-btn hide-btn" onclick="mmToggleNode(' + cur + ',' + pIdx + ',true)" title="Hide/Show">' + (pNode.visible ? '🙈 Hide' : '👁 Show') + '</button>' +
+          '<button class="mm-node-btn edit-btn" onclick="mmEditNode(' + cur + ',' + pIdx + ',true)" title="Edit">✏️</button>' +
+          '<button class="mm-node-btn del-btn" onclick="mmDeleteNode(' + cur + ',' + pIdx + ',true)" title="Delete">🗑</button>' +
+        '</div>';
+      container.appendChild(pCard);
+    });
+  });
+}
+
+// ── Toggle single node explanation ──
+window.mmToggleNode = function(slideIdx, nodeIdx, isParent) {
+  var slide = _mm.slides[slideIdx];
+  if(!slide) return;
+  var arr = isParent ? (slide.parentNodes || []) : (slide.nodes || []);
+  if(!arr[nodeIdx]) return;
+  arr[nodeIdx].visible = !arr[nodeIdx].visible;
+  mmSave();
+  mmRender();
+};
+
+// ── Bulk toggle all explanations on current slide ──
+window.mmBulkToggleExplanations = function() {
+  var slide = _mm.slides[_mm.curSlide];
+  if(!slide) return;
+  // Check if any are visible
+  var anyVisible = (slide.nodes || []).some(function(n){ return n.visible; }) ||
+                   (slide.parentNodes || []).some(function(n){ return n.visible; });
+  var newVal = !anyVisible;
+  (slide.nodes || []).forEach(function(n){ n.visible = newVal; });
+  (slide.parentNodes || []).forEach(function(n){ n.visible = newVal; });
+  mmSave();
+  mmRender();
+  // Update button label
+  var btn = document.getElementById('mmBulkToggleBtn');
+  if(btn) btn.textContent = newVal ? '🙈 Sab Band' : '👁 Sab';
+};
+
+// ── Edit node ──
+window.mmEditNode = function(slideIdx, nodeIdx, isParent) {
+  var slide = _mm.slides[slideIdx];
+  if(!slide) return;
+  var arr = isParent ? (slide.parentNodes || []) : (slide.nodes || []);
+  if(!arr[nodeIdx]) return;
+  var node = arr[nodeIdx];
+  _mm.editTarget = { slideIdx: slideIdx, nodeIdx: nodeIdx, isParent: isParent };
+  document.getElementById('mmEditQ').value = node.q || '';
+  document.getElementById('mmEditA').value = node.a || '';
+  document.getElementById('mmEditModal').style.display = 'flex';
+};
+window.mmEditSave = function() {
+  if(!_mm.editTarget) return;
+  var et = _mm.editTarget;
+  var slide = _mm.slides[et.slideIdx];
+  if(!slide) return;
+  var arr = et.isParent ? (slide.parentNodes || []) : (slide.nodes || []);
+  if(!arr[et.nodeIdx]) return;
+  arr[et.nodeIdx].q = document.getElementById('mmEditQ').value.trim() || arr[et.nodeIdx].q;
+  arr[et.nodeIdx].a = document.getElementById('mmEditA').value.trim();
+  mmSave(); mmEditClose(); mmRender();
+};
+window.mmEditClose = function() {
+  _mm.editTarget = null;
+  document.getElementById('mmEditModal').style.display = 'none';
+};
+
+// ── Delete node ──
+window.mmDeleteNode = function(slideIdx, nodeIdx, isParent) {
+  if(!confirm('Is node ko delete karna hai?')) return;
+  var slide = _mm.slides[slideIdx];
+  if(!slide) return;
+  if(isParent) {
+    slide.parentNodes = (slide.parentNodes || []);
+    slide.parentNodes.splice(nodeIdx, 1);
+  } else {
+    // Also remove parent nodes that belong to this node
+    slide.parentNodes = (slide.parentNodes || []).filter(function(p){ return p.parentOf !== nodeIdx; });
+    // Adjust parentOf indices for nodes after deleted
+    slide.parentNodes.forEach(function(p){ if(p.parentOf > nodeIdx) p.parentOf--; });
+    slide.nodes.splice(nodeIdx, 1);
+  }
+  mmSave(); mmRender();
+};
+
+// ── Open parent modal ──
+window.mmOpenParentModal = function(slideIdx, nodeIdx) {
+  _mm.parentTarget = { slideIdx: slideIdx, nodeIdx: nodeIdx };
+  var slide = _mm.slides[slideIdx];
+  var node  = slide && slide.nodes && slide.nodes[nodeIdx];
+  var lbl = document.getElementById('mmParentTargetLabel');
+  if(lbl && node) lbl.textContent = '🔗 "' + (node.q.length > 50 ? node.q.slice(0,50)+'…' : node.q) + '"';
+  document.getElementById('mmParentQ').value = '';
+  document.getElementById('mmParentA').value = '';
+  document.getElementById('mmParentModal').style.display = 'flex';
+};
+window.mmParentSave = function() {
+  if(!_mm.parentTarget) return;
+  var pt = _mm.parentTarget;
+  var q = document.getElementById('mmParentQ').value.trim();
+  var a = document.getElementById('mmParentA').value.trim();
+  if(!q) { alert('Question khaali nahi ho sakta!'); return; }
+  var slide = _mm.slides[pt.slideIdx];
+  if(!slide) return;
+  if(!slide.parentNodes) slide.parentNodes = [];
+  slide.parentNodes.push({
+    id: 'par_' + Date.now(),
+    q: q, a: a,
+    visible: false,
+    parentOf: pt.nodeIdx
+  });
+  mmSave(); mmParentClose(); mmRender();
+};
+window.mmParentClose = function() {
+  _mm.parentTarget = null;
+  document.getElementById('mmParentModal').style.display = 'none';
+};
+
+// ── Add node manually ──
+window.mmAddNodeManual = function() {
+  document.getElementById('mmAddQ').value = '';
+  document.getElementById('mmAddA').value = '';
+  document.getElementById('mmAddNodeModal').style.display = 'flex';
+};
+window.mmAddNodeSave = function() {
+  var q = document.getElementById('mmAddQ').value.trim();
+  var a = document.getElementById('mmAddA').value.trim();
+  if(!q) { alert('Question khaali nahi ho sakta!'); return; }
+  var slide = _mm.slides[_mm.curSlide];
+  if(!slide) return;
+  slide.nodes.push({ id: 'mn_' + Date.now(), q: q, a: a, visible: false });
+  mmSave();
+  document.getElementById('mmAddNodeModal').style.display = 'none';
+  mmRender();
+  showToast && showToast('✅ Node add ho gaya!', 'success');
+};
+
+// ── Slide navigation ──
+window.mmPrevSlide = function() {
+  if(_mm.curSlide > 0) { _mm.curSlide--; mmRender(); }
+};
+window.mmNextSlide = function() {
+  if(_mm.curSlide < _mm.slides.length - 1) { _mm.curSlide++; mmRender(); }
+};
+window.mmAddSlide = function() {
+  _mm.slides.push({ nodes: [], parentNodes: [] });
+  _mm.curSlide = _mm.slides.length - 1;
+  mmSave(); mmRender();
+  showToast && showToast('✅ Naya slide add ho gaya!', 'success');
+};
+window.mmDeleteSlide = function(idx) {
+  if(_mm.slides.length <= 1) { showToast && showToast('⚠️ Kam se kam 1 slide chahiye!', 'error'); return; }
+  if(!confirm('Ye slide delete karna hai?')) return;
+  _mm.slides.splice(idx, 1);
+  if(_mm.curSlide >= _mm.slides.length) _mm.curSlide = _mm.slides.length - 1;
+  mmSave(); mmRender();
+};
+
+// ── PDF Export ──
+window.mmExportPDF = function() {
+  showToast && showToast('⏳ PDF ban raha hai...', 'success');
+  var topicName = _mm.topicName || 'Mind Map';
+  var printWrap = document.createElement('div');
+  printWrap.style.cssText = 'position:fixed;left:-99999px;top:0;font-family:"Noto Sans Devanagari","Baloo 2",sans-serif;background:#fff;z-index:-999;width:210mm;';
+
+  _mm.slides.forEach(function(slide, si) {
+    var page = document.createElement('div');
+    page.style.cssText = 'width:190mm;min-height:130mm;padding:10mm;box-sizing:border-box;page-break-after:always;background:#fffde7;position:relative;';
+
+    // Header
+    var hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;border-bottom:2.5px solid #00695c;padding-bottom:5px;margin-bottom:10px;';
+    hdr.innerHTML = '<span style="font-size:12pt;font-weight:800;color:#00695c;">🧠 ' + _escHtml(topicName) + ' — Mind Map</span>' +
+                    '<span style="font-size:8pt;color:#666;font-weight:600;">Slide ' + (si+1) + ' / ' + _mm.slides.length + '</span>';
+    page.appendChild(hdr);
+
+    // Center label
+    var cLabel = document.createElement('div');
+    cLabel.style.cssText = 'text-align:center;font-weight:800;font-size:10pt;color:#f9a825;background:linear-gradient(135deg,#f9a825,#ff8f00);color:#fff;border-radius:30px;padding:5px 18px;display:inline-block;margin:0 auto 12px;';
+    cLabel.textContent = topicName;
+    var cWrap = document.createElement('div');
+    cWrap.style.textAlign = 'center';
+    cWrap.appendChild(cLabel);
+    page.appendChild(cWrap);
+
+    // Nodes list
+    var nodesDiv = document.createElement('div');
+    nodesDiv.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;justify-content:center;';
+    (slide.nodes || []).forEach(function(node, ni) {
+      var nd = document.createElement('div');
+      nd.style.cssText = 'border:2px solid #f9a825;border-radius:10px;padding:7px 10px;min-width:80pt;max-width:130pt;background:#fff;';
+      nd.innerHTML = '<div style="font-size:8pt;font-weight:700;color:#37526d;margin-bottom:3px;">' + _escHtml(node.q) + '</div>' +
+                     '<div style="font-size:7pt;color:#555;border-top:1px solid #f9a825;padding-top:3px;margin-top:3px;">' + _escHtml(node.a) + '</div>';
+      nodesDiv.appendChild(nd);
+
+      // Parent nodes
+      (slide.parentNodes || []).filter(function(p){ return p.parentOf === ni; }).forEach(function(pn) {
+        var pnd = document.createElement('div');
+        pnd.style.cssText = 'border:2px dashed #7c4dff;border-radius:10px;padding:7px 10px;min-width:70pt;max-width:110pt;background:#f3e5f5;margin-left:8px;';
+        pnd.innerHTML = '<div style="font-size:7pt;font-weight:700;color:#5c6bc0;">↳ ' + _escHtml(pn.q) + '</div>' +
+                        '<div style="font-size:6.5pt;color:#888;margin-top:2px;">' + _escHtml(pn.a) + '</div>';
+        nodesDiv.appendChild(pnd);
+      });
+    });
+    page.appendChild(nodesDiv);
+    printWrap.appendChild(page);
+  });
+
+  document.body.appendChild(printWrap);
+  var style = document.createElement('style');
+  style.textContent = '@media print { body > *:not(#_mmPrintWrap) { display:none!important; } @page { size:A4; margin:8mm; } }';
+  style.id = '_mmPrintStyle';
+  document.head.appendChild(style);
+  printWrap.id = '_mmPrintWrap';
+
+  window.print();
+  setTimeout(function() {
+    document.body.removeChild(printWrap);
+    var ps = document.getElementById('_mmPrintStyle');
+    if(ps) document.head.removeChild(ps);
+  }, 2000);
+};
+
+// ── Helper ──
+function _escHtml(s) {
+  if(!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Re-render on window resize
+var _mmResizeTimer;
+window.addEventListener('resize', function() {
+  clearTimeout(_mmResizeTimer);
+  _mmResizeTimer = setTimeout(function() {
+    var panel = document.getElementById('mmPanel');
+    if(panel && panel.style.display !== 'none') mmRender();
+  }, 200);
+});
+
+// Close modals on overlay click
+['mmEditModal','mmParentModal','mmAddNodeModal'].forEach(function(id) {
+  var el = document.getElementById(id);
+  if(el) el.addEventListener('click', function(e) {
+    if(e.target === el) el.style.display = 'none';
+  });
+});
+
+// Expose for canvas AI flashcard button — after flashcards are saved, update mind map
+var _origScAiMakeFlashcards = window.scAiMakeFlashcards;
+if(typeof _origScAiMakeFlashcards === 'function') {
+  window.scAiMakeFlashcards = function() {
+    _origScAiMakeFlashcards.apply(this, arguments);
+    // Clear saved mind map so it rebuilds fresh next time
+    try {
+      var tid = (typeof _sc !== 'undefined') ? _sc.tid : null;
+      if(tid != null) localStorage.removeItem(mmKey(tid));
+    } catch(e) {}
+  };
+}
+
+})();
+// ══ END MIND MAP ══
 </script>
 
 </body>
