@@ -5710,6 +5710,13 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <button class="svn-tbtn danger" onclick="svnClearAll()" title="Saab saaf karo" id="svnClearBtn">🗑</button>
   </div>
 
+  <!-- Page Navigation (shown when multiple pages) -->
+  <div id="svnPageNav" style="display:none;align-items:center;justify-content:center;gap:8px;padding:4px 10px;background:rgba(46,125,50,0.06);border-bottom:1px solid rgba(46,125,50,0.12);flex-shrink:0;">
+    <button id="svnPagePrev" class="svn-tbtn" onclick="svnPagePrev()" style="min-width:28px;" disabled>‹</button>
+    <span id="svnPageLabel" style="font-size:0.72rem;font-weight:800;color:#2e7d32;min-width:60px;text-align:center;">Page 1/1</span>
+    <button id="svnPageNext" class="svn-tbtn" onclick="svnPageNext()" style="min-width:28px;" disabled>›</button>
+  </div>
+
   <!-- Status bar -->
   <div id="svnStatusBar">
     <div id="svnStatusDot"></div>
@@ -33685,881 +33692,889 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
 })();
 
 // ══════════════════════════════════════════════════════════════════
-// 🧠 SMART VISUAL NOTES (SVN) — Complete Engine
-// Left-side panel, AI-powered keyword extraction, visual mind-map
+// 🧠 SMART VISUAL NOTES (SVN) v2 — Subtopic Clusters + Multi-Slide
+// No overlap, Firestore sync, proper section-based layout
 // ══════════════════════════════════════════════════════════════════
 (function(){
   'use strict';
 
-  /* ── State ── */
+  /* ─────────────────────────── STATE ─────────────────────────── */
   var _svn = {
     open: false,
     fullscreen: false,
-    layout: 'star',       // 'star' | 'tree' | 'web'
-    nodes: [],            // [{id, label, group, x, y, color, shape}]
-    edges: [],            // [{from, to, label}]
-    scale: 1,
-    panX: 0,
-    panY: 0,
-    history: [],          // undo stack [{nodes,edges}]
-    redoStack: [],
+    layout: 'cluster',   // 'cluster' | 'tree' | 'web'
+    // pages: array of pages, each = {nodes:[], edges:[]}
+    pages: [],
+    currentPage: 0,
+    scale: 1, panX: 0, panY: 0,
+    history: [], redoStack: [],
     editingNodeId: null,
-    aiHistory: [],
     lastHighlightHash: '',
     generating: false,
     topicName: '',
+    firestoreKey: null,   // for cross-device sync
+    syncUnsubscribe: null,
   };
 
-  /* ── Color palette per group ── */
-  var GROUP_COLORS = [
-    { fill:'#e8f5e9', stroke:'#2e7d32', text:'#1b5e20', arrow:'svnArrow' },
-    { fill:'#e3f2fd', stroke:'#1565c0', text:'#0d47a1', arrow:'svnArrowBlue' },
-    { fill:'#fff8e1', stroke:'#f9a825', text:'#e65100', arrow:'svnArrowOrange' },
-    { fill:'#fce4ec', stroke:'#c2185b', text:'#880e4f', arrow:'svnArrow' },
-    { fill:'#f3e5f5', stroke:'#7b1fa2', text:'#4a148c', arrow:'svnArrow' },
-    { fill:'#e0f7fa', stroke:'#00838f', text:'#006064', arrow:'svnArrowBlue' },
+  /* ── Subtopic color palette (6 groups) ── */
+  var GC = [
+    { fill:'#e8f5e9', stroke:'#2e7d32', text:'#1b5e20', hub:'#2e7d32', hubTxt:'#fff', arrow:'svnArrow' },
+    { fill:'#e3f2fd', stroke:'#1565c0', text:'#0d47a1', hub:'#1565c0', hubTxt:'#fff', arrow:'svnArrowBlue' },
+    { fill:'#fff8e1', stroke:'#f9a825', text:'#7b3f00', hub:'#f9a825', hubTxt:'#fff', arrow:'svnArrowOrange' },
+    { fill:'#fce4ec', stroke:'#c2185b', text:'#880e4f', hub:'#c2185b', hubTxt:'#fff', arrow:'svnArrow' },
+    { fill:'#f3e5f5', stroke:'#7b1fa2', text:'#4a148c', hub:'#7b1fa2', hubTxt:'#fff', arrow:'svnArrow' },
+    { fill:'#e0f7fa', stroke:'#00838f', text:'#006064', hub:'#00838f', hubTxt:'#fff', arrow:'svnArrowBlue' },
   ];
 
-  /* ── Collect highlighted text from Notes Editor ── */
-  function _getHighlights() {
+  /* ─────────── Helper: get highlighted facts from notes editor ─── */
+  function _getHL() {
     var area = document.getElementById('noteEditableArea');
     if(!area) return [];
-    var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue');
-    var items = [];
-    marks.forEach(function(m) {
+    var marks = area.querySelectorAll('mark.user-hl,mark.user-hl-pink,mark.user-hl-green,mark.user-hl-blue');
+    var out = [];
+    marks.forEach(function(m){
       var t = m.textContent.trim();
-      if(t && t.length > 1) {
-        var color = 'yellow';
-        if(m.classList.contains('user-hl-pink'))  color = 'pink';
-        else if(m.classList.contains('user-hl-green')) color = 'green';
-        else if(m.classList.contains('user-hl-blue'))  color = 'blue';
-        items.push({ text: t, color: color });
-      }
+      if(!t || t.length < 2) return;
+      var c = 'yellow';
+      if(m.classList.contains('user-hl-pink'))  c='pink';
+      else if(m.classList.contains('user-hl-green')) c='green';
+      else if(m.classList.contains('user-hl-blue'))  c='blue';
+      out.push({ text: t, color: c });
     });
-    return items;
+    return out;
   }
 
-  /* ── Hash highlights for change detection ── */
-  function _hashHL(items) {
-    return items.map(function(i){ return i.color+':'+i.text; }).join('||');
+  function _hash(items){ return items.map(function(i){ return i.color+':'+i.text; }).join('||'); }
+
+  /* ─────────── API Key helper ─────────── */
+  function _getKey(){
+    var k='';
+    try { var s=JSON.parse(localStorage.getItem('epp5')||'{}'); k=s.groqKey||s.apiKey||''; } catch(e){}
+    if(!k){ var el=document.querySelector('.api-pill input'); if(el) k=el.value.trim(); }
+    return k;
   }
 
-  /* ── Panel toggle ── */
-  window.svnTogglePanel = function() {
-    var panel = document.getElementById('smartVisualPanel');
-    var tab   = document.getElementById('svnPullTab');
+  /* ─────────── Panel toggle ─────────── */
+  window.svnTogglePanel = function(){
+    var panel=document.getElementById('smartVisualPanel');
+    var tab=document.getElementById('svnPullTab');
     if(!panel) return;
-    _svn.open = !_svn.open;
-    if(_svn.open) {
+    _svn.open=!_svn.open;
+    if(_svn.open){
       panel.classList.add('svn-open');
-      if(tab) tab.style.display = 'none';
-      _svnFitView();
+      if(tab) tab.style.display='none';
+      setTimeout(function(){ _svnRenderPage(_svn.currentPage); _svnFitView(); },80);
     } else {
       panel.classList.remove('svn-open');
-      // Show tab only if notes editor is open
-      var ned = document.getElementById('notesEditorOverlay');
-      if(ned && ned.classList.contains('show') && tab) tab.classList.add('svn-visible');
+      var ned=document.getElementById('notesEditorOverlay');
+      if(ned&&ned.classList.contains('show')&&tab) tab.classList.add('svn-visible');
     }
   };
 
-  window.svnToggleFullscreen = function() {
-    var panel = document.getElementById('smartVisualPanel');
-    _svn.fullscreen = !_svn.fullscreen;
+  window.svnToggleFullscreen=function(){
+    var panel=document.getElementById('smartVisualPanel');
+    _svn.fullscreen=!_svn.fullscreen;
     if(_svn.fullscreen) panel.classList.add('svn-fullscreen');
     else panel.classList.remove('svn-fullscreen');
-    setTimeout(_svnFitView, 100);
+    setTimeout(function(){ _svnRenderPage(_svn.currentPage); _svnFitView(); },100);
   };
 
-  /* ── Show/hide pull tab when notes editor opens/closes ── */
-  function _svnWatchEditor() {
-    var ned = document.getElementById('notesEditorOverlay');
+  /* ─────────── Watch Notes Editor open/close ─────────── */
+  function _watchEditor(){
+    var ned=document.getElementById('notesEditorOverlay');
     if(!ned) return;
-    var tab = document.getElementById('svnPullTab');
-    new MutationObserver(function() {
+    var tab=document.getElementById('svnPullTab');
+    new MutationObserver(function(){
       if(!tab) return;
-      if(ned.classList.contains('show')) {
+      if(ned.classList.contains('show')){
         tab.classList.add('svn-visible');
-        // Update topic name
-        var titleEl = document.getElementById('notesEditorTitle');
-        if(titleEl) _svn.topicName = titleEl.textContent.replace(/^📄\s*/,'').trim();
-        var svnTitle = document.getElementById('svnHeaderTitle');
-        if(svnTitle && _svn.topicName) svnTitle.textContent = '🧠 ' + _svn.topicName;
+        var titleEl=document.getElementById('notesEditorTitle');
+        if(titleEl){ _svn.topicName=titleEl.textContent.replace(/^📄\s*/,'').trim(); }
+        var hdr=document.getElementById('svnHeaderTitle');
+        if(hdr&&_svn.topicName) hdr.textContent='🧠 '+_svn.topicName;
+        // Build Firestore key
+        try{
+          var st=typeof _editorState!=='undefined'?_editorState:null;
+          if(st&&st.tid!=null) _svn.firestoreKey='svn_'+st.sid+'_'+st.secid+'_'+st.tid;
+          else _svn.firestoreKey=null;
+        }catch(e){ _svn.firestoreKey=null; }
+        _svnStartSync();
       } else {
         tab.classList.remove('svn-visible');
         if(_svn.open) svnTogglePanel();
+        _svnStopSync();
       }
-    }).observe(ned, { attributes: true, attributeFilter: ['class'] });
+    }).observe(ned,{attributes:true,attributeFilter:['class']});
   }
 
-  /* ── Layout setters ── */
-  window.svnSetLayout = function(layout, btn) {
-    _svn.layout = layout;
+  /* ─────────── Layout button ─────────── */
+  window.svnSetLayout=function(layout,btn){
+    _svn.layout=layout;
     document.querySelectorAll('#svnToolStrip .svn-tbtn[id^="svnLayout"]').forEach(function(b){ b.classList.remove('active'); });
     if(btn) btn.classList.add('active');
-    if(_svn.nodes.length) { _svnComputePositions(); _svnRender(); }
+    if(_svn.pages.length){
+      _svnPaginateAndLayout();
+      _svnRenderPage(0);
+      _svnFitView();
+    }
   };
 
-  /* ── Generate: collect highlights → AI → render ── */
-  window.svnGenerate = function() {
-    var items = _getHighlights();
-    if(!items.length) {
-      _svnStatus('error', '⚠️ Koi highlight nahi mili! Notes Editor mein pehle text highlight karo.');
-      showToast && showToast('⚠️ Pehle Notes Editor mein text highlight karo!', 'error');
+  /* ═══════════════════════════════════════════════════════════
+     GENERATE — Main entry point
+     ═══════════════════════════════════════════════════════════ */
+  window.svnGenerate=function(){
+    var items=_getHL();
+    if(!items.length){
+      _svnStatus('error','⚠️ Notes mein pehle text highlight karo!');
+      showToast&&showToast('⚠️ Pehle Notes Editor mein text highlight karo!','error');
       return;
     }
     if(_svn.generating) return;
 
-    // Check for new highlights
-    var newHash = _hashHL(items);
-    var isNew = (newHash !== _svn.lastHighlightHash);
-
-    if(!isNew && _svn.nodes.length > 0) {
-      _svnStatus('ready', '✅ Already updated hai. Nayi highlights karo phir Generate karo.');
-      showToast && showToast('ℹ️ Nayi highlights nahi hain — pehle naya text highlight karo!', 'info');
+    var newHash=_hash(items);
+    var isNew=(newHash!==_svn.lastHighlightHash);
+    if(!isNew&&_svn.pages.length){
+      _svnStatus('ready','✅ Nayi highlights nahi hain.');
+      showToast&&showToast('ℹ️ Nayi highlights nahi hain — pehle naya text highlight karo!','info');
       return;
     }
 
-    // Find only NEW items for incremental update
-    var prevHash = _svn.lastHighlightHash;
-    var prevItems = prevHash ? prevHash.split('||').map(function(s){
-      var p = s.indexOf(':'); return { color: s.slice(0,p), text: s.slice(p+1) };
-    }) : [];
-    var prevTexts = prevItems.map(function(i){ return i.text; });
-    var newItems = items.filter(function(i){ return prevTexts.indexOf(i.text) === -1; });
-
-    if(newItems.length === 0 && _svn.nodes.length > 0) {
-      _svnStatus('ready', '✅ Koi nayi highlights nahi hain.');
+    // Find only NEW items for incremental
+    var prevTexts=_svn.lastHighlightHash
+      ? _svn.lastHighlightHash.split('||').map(function(s){ var p=s.indexOf(':'); return s.slice(p+1); })
+      : [];
+    var newItems=items.filter(function(i){ return prevTexts.indexOf(i.text)===-1; });
+    var itemsToProcess=(_svn.pages.length===0)?items:newItems;
+    if(!itemsToProcess.length&&_svn.pages.length){
+      _svnStatus('ready','✅ Koi naya fact nahi mila.');
       return;
     }
 
-    // If first time OR hash fully changed — use all items
-    var itemsToProcess = (_svn.nodes.length === 0) ? items : newItems;
+    _svn.generating=true;
+    _svn.lastHighlightHash=newHash;
 
-    _svn.generating = true;
-    _svn.lastHighlightHash = newHash;
+    var emptyEl=document.getElementById('svnEmptyState');
+    var loadEl=document.getElementById('svnLoadingOverlay');
+    var loadTxt=document.getElementById('svnLoadingText');
+    if(emptyEl) emptyEl.style.display='none';
+    if(loadEl) loadEl.classList.add('show');
+    if(loadTxt) loadTxt.innerHTML='AI subtopics identify kar raha hai...<br>Keywords nikal raha hai 🧠';
 
-    // Show empty state hidden, loading visible
-    var emptyEl = document.getElementById('svnEmptyState');
-    var loadEl  = document.getElementById('svnLoadingOverlay');
-    if(emptyEl) emptyEl.style.display = 'none';
-    if(loadEl)  loadEl.classList.add('show');
+    var genBtn=document.getElementById('svnGenerateBtn');
+    if(genBtn){ genBtn.disabled=true; genBtn.textContent='⏳ Generating...'; }
+    _svnStatus('thinking','AI analysis kar raha hai...');
 
-    var genBtn = document.getElementById('svnGenerateBtn');
-    if(genBtn) { genBtn.disabled = true; genBtn.textContent = '⏳ Generating...'; }
-
-    _svnStatus('thinking', 'AI keywords nikal raha hai...');
-
-    // Build the highlights text for AI
-    var hlText = itemsToProcess.map(function(item, i){
-      return (i+1) + '. [' + item.color.toUpperCase() + '] ' + item.text;
+    var hlText=itemsToProcess.map(function(item,i){
+      return (i+1)+'. ['+item.color.toUpperCase()+'] '+item.text;
     }).join('\n');
 
-    var isIncremental = (_svn.nodes.length > 0 && newItems.length > 0 && newItems.length < items.length);
-    var prompt = isIncremental
-      ? ('Tu ek UPSC exam ki preparation ke liye Smart Visual Notes banata hai.\n' +
-         'Pehle se kuch nodes hain. Ab SIRF YEH NAYE highlighted facts ke keywords nikal:\n\n' + hlText + '\n\n' +
-         'RULES:\n' +
-         '1. Har fact se sirf 2-4 KEY WORDS nikalo — jo puri line ka meaning de\n' +
-         '2. Important: dates (1320 AD), names (Ghiyasuddin), terms (Diwan-e-Amir-Kohi), events (Delhi Sultanate), locations (Tughlaqabad)\n' +
-         '3. Ek hi topic se related nodes ko same group mein rakho (group 0-5)\n' +
-         '4. Jo node kisi pehle ke se connected ho, uska parentId optional mein do\n' +
-         '5. JSON ONLY return karo — koi text nahi:\n' +
-         '{"nodes":[{"id":"n1","label":"Ghiyasuddin 1320","group":0},{"id":"n2","label":"Tughlaqabad Fort","group":0}],' +
-         '"edges":[{"from":"n1","to":"n2"}]}')
-      : ('Tu ek UPSC exam ki preparation ke liye Smart Visual Notes banata hai.\n' +
-         'Niche diye highlighted facts se VISUAL MIND MAP ke liye keywords nikalo:\n\n' + hlText + '\n\n' +
-         'RULES:\n' +
-         '1. Har fact se sirf 2-4 KEY WORDS — jo puri line ka meaning de\n' +
-         '2. Zaroor include: dates, names, important terms, locations, events\n' +
-         '3. Related nodes ko same group (0-5) mein rakho\n' +
-         '4. Connected nodes ke beech edges banao (jo related ho unhe connect karo)\n' +
-         '5. Ek central "root" node banao — topic ka naam ya main theme\n' +
-         '6. SIRF JSON return karo:\n' +
-         '{"nodes":[{"id":"root","label":"Tughlaq Vansh","group":0,"isRoot":true},{"id":"n1","label":"Ghiyasuddin 1320","group":0},{"id":"n2","label":"Tughlaqabad","group":0}],' +
-         '"edges":[{"from":"root","to":"n1"},{"from":"n1","to":"n2"}]}');
+    var isIncremental=(_svn.pages.length>0&&newItems.length>0&&newItems.length<items.length);
 
-    var apiKey = '';
-    try {
-      var st = JSON.parse(localStorage.getItem('epp5') || '{}');
-      apiKey = (st && st.groqKey) ? st.groqKey : '';
-      if(!apiKey) apiKey = (st && st.apiKey) ? st.apiKey : '';
-    } catch(e) {}
+    var prompt = 'Tu ek UPSC exam expert hai jo Visual Mind Map ke liye data prepare karta hai.\n'+
+      'Niche diye highlighted facts ko SUBTOPIC CLUSTERS mein organize karo:\n\n'+hlText+'\n\n'+
+      'RULES:\n'+
+      '1. Pehle 3-6 SUBTOPICS identify karo (jaise: Rulers/Shasak, Economy/Arthvyavastha, Culture/Sanskriti, Administration/Prashasan, Military/Sainik, Religion/Dharm, Art/Kala, Geography/Bhugol)\n'+
+      '2. Har subtopic ke liye ek HUB node banao\n'+
+      '3. Har fact se sirf 2-4 KEY WORDS nikalo — dates, names, terms zaroor include karo\n'+
+      '4. Har keyword node ko sahi subtopic hub se connect karo\n'+
+      '5. Ek central ROOT node banao — main topic ka naam\n'+
+      '6. Edges: root→hub, hub→keyword (related keywords ko aapas mein bhi connect karo)\n'+
+      '7. groupId: 0=root, 1-6=subtopics, keywords ko apne subtopic ka groupId do\n'+
+      '8. SIRF valid JSON return karo:\n'+
+      '{"subtopics":['+
+        '{"id":"hub1","label":"Shasak/Rulers","groupId":1,"isHub":true},'+
+        '{"id":"hub2","label":"Arthvyavastha","groupId":2,"isHub":true}'+
+      '],"nodes":['+
+        '{"id":"root","label":"Gupta Vansh","groupId":0,"isRoot":true},'+
+        '{"id":"n1","label":"Samudragupta 335","groupId":1},'+
+        '{"id":"n2","label":"Chandragupta II","groupId":1},'+
+        '{"id":"n3","label":"Sone ke Sikke","groupId":2}'+
+      '],"edges":['+
+        '{"from":"root","to":"hub1"},{"from":"root","to":"hub2"},'+
+        '{"from":"hub1","to":"n1"},{"from":"hub1","to":"n2"},'+
+        '{"from":"hub2","to":"n3"}'+
+      ']}';
 
-    if(!apiKey) {
-      // Try from DOM
-      var keyInput = document.querySelector('.api-pill input');
-      if(keyInput) apiKey = keyInput.value.trim();
-    }
-
-    if(!apiKey) {
+    var apiKey=_getKey();
+    if(!apiKey){
       if(loadEl) loadEl.classList.remove('show');
-      if(emptyEl) emptyEl.style.display = 'flex';
-      if(genBtn) { genBtn.disabled = false; genBtn.textContent = '✨ Generate'; }
-      _svn.generating = false;
-      _svnStatus('error', '❌ API Key nahi mili! Pehle API key set karo.');
-      showToast && showToast('❌ API Key set karo phir Generate karo!', 'error');
+      if(emptyEl) emptyEl.style.display='flex';
+      if(genBtn){ genBtn.disabled=false; genBtn.textContent='✨ Generate'; }
+      _svn.generating=false;
+      _svnStatus('error','❌ API Key nahi mili! Pehle set karo.');
+      showToast&&showToast('❌ API Key set karo!','error');
       return;
     }
 
-    // Call Groq API
-    fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-      body: JSON.stringify({
-        model: 'llama-3.1-8b-instant',
-        temperature: 0.3,
-        max_tokens: 2000,
-        messages: [
-          { role: 'system', content: 'You are a UPSC exam assistant. Extract keywords and build visual mind maps. ALWAYS respond with valid JSON only, no explanation, no markdown.' },
-          { role: 'user', content: prompt }
+    fetch('https://api.groq.com/openai/v1/chat/completions',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
+      body:JSON.stringify({
+        model:'llama-3.3-70b-versatile',
+        temperature:0.25,
+        max_tokens:3000,
+        messages:[
+          {role:'system',content:'You are a UPSC exam expert. Extract subtopic-clustered keywords for visual mind maps. Return ONLY valid JSON. No markdown, no explanation.'},
+          {role:'user',content:prompt}
         ]
       })
-    }).then(function(r){ return r.json(); })
-    .then(function(data) {
-      _svn.generating = false;
-      if(genBtn) { genBtn.disabled = false; genBtn.textContent = '✨ Generate'; }
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      _svn.generating=false;
+      if(genBtn){ genBtn.disabled=false; genBtn.textContent='✨ Generate'; }
       if(loadEl) loadEl.classList.remove('show');
 
-      var raw = data && data.choices && data.choices[0] && data.choices[0].message
-                ? data.choices[0].message.content : '';
-      var parsed = null;
-      try {
-        var clean = raw.replace(/```json/g,'').replace(/```/g,'').trim();
-        parsed = JSON.parse(clean);
-      } catch(e) {
-        var m = raw.match(/\{[\s\S]*\}/);
-        if(m) { try { parsed = JSON.parse(m[0]); } catch(e2){} }
-      }
+      var raw=data&&data.choices&&data.choices[0]&&data.choices[0].message
+             ?data.choices[0].message.content:'';
+      var parsed=null;
+      try{ var clean=raw.replace(/```json/g,'').replace(/```/g,'').trim(); parsed=JSON.parse(clean); }
+      catch(e){ var m=raw.match(/\{[\s\S]*\}/); if(m){ try{ parsed=JSON.parse(m[0]); }catch(e2){} } }
 
-      if(!parsed || !parsed.nodes || !parsed.nodes.length) {
-        _svnStatus('error', '❌ AI se response nahi aaya. Dobara try karo.');
-        showToast && showToast('❌ AI response error — dobara try karo', 'error');
-        if(!_svn.nodes.length && emptyEl) emptyEl.style.display = 'flex';
+      if(!parsed||(!parsed.nodes&&!parsed.subtopics)){
+        _svnStatus('error','❌ AI response parse nahi hua. Retry karo.');
+        showToast&&showToast('❌ Retry karo!','error');
+        if(!_svn.pages.length&&emptyEl) emptyEl.style.display='flex';
         return;
       }
 
-      // Save history for undo
       _svnPushHistory();
 
-      if(isIncremental) {
-        // Merge new nodes/edges
-        var existingIds = _svn.nodes.map(function(n){ return n.id; });
-        parsed.nodes.forEach(function(n){
-          if(existingIds.indexOf(n.id) === -1) _svn.nodes.push(n);
-        });
-        parsed.edges && parsed.edges.forEach(function(e){
-          _svn.edges.push(e);
-        });
+      // Combine subtopics + nodes
+      var allNodes=(parsed.subtopics||[]).concat(parsed.nodes||[]);
+      var allEdges=parsed.edges||[];
+
+      if(isIncremental){
+        var existIds=[];
+        _svn.pages.forEach(function(pg){ pg.nodes.forEach(function(n){ existIds.push(n.id); }); });
+        allNodes=allNodes.filter(function(n){ return existIds.indexOf(n.id)===-1; });
+        // Merge into pages
+        var lastPg=_svn.pages[_svn.pages.length-1];
+        allNodes.forEach(function(n){ lastPg.nodes.push(n); });
+        allEdges.forEach(function(e){ lastPg.edges.push(e); });
       } else {
-        _svn.nodes = parsed.nodes || [];
-        _svn.edges = parsed.edges || [];
+        // Fresh: reset
+        _svn.pages=[{ nodes: allNodes, edges: allEdges }];
+        _svn.currentPage=0;
       }
 
-      _svnComputePositions();
-      _svnRender();
+      _svnPaginateAndLayout();
+      _svnRenderPage(_svn.currentPage);
       _svnFitView();
-      if(emptyEl) emptyEl.style.display = 'none';
+      if(emptyEl) emptyEl.style.display='none';
 
-      var cnt = (isIncremental ? newItems.length : items.length);
-      _svnStatus('ready', '✅ ' + _svn.nodes.length + ' keywords, ' + _svn.edges.length + ' connections banaye');
-      showToast && showToast('🧠 ' + cnt + ' facts → ' + _svn.nodes.length + ' keywords visual map mein!', 'success');
+      var totalNodes=0; _svn.pages.forEach(function(pg){ totalNodes+=pg.nodes.length; });
+      _svnStatus('ready','✅ '+totalNodes+' keywords, '+_svn.pages.length+' page'+((_svn.pages.length>1)?'s':'')+' mein organize kiya');
+      showToast&&showToast('🧠 Visual map ready! '+_svn.pages.length+' page(s) mein '+totalNodes+' keywords!','success');
+
+      _svnUpdatePageNav();
+      _svnSaveToFirestore();
     })
-    .catch(function(err) {
-      _svn.generating = false;
-      if(genBtn) { genBtn.disabled = false; genBtn.textContent = '✨ Generate'; }
+    .catch(function(err){
+      _svn.generating=false;
+      if(genBtn){ genBtn.disabled=false; genBtn.textContent='✨ Generate'; }
       if(loadEl) loadEl.classList.remove('show');
-      if(!_svn.nodes.length && emptyEl) emptyEl.style.display = 'flex';
-      _svnStatus('error', '❌ Network error — internet check karo');
-      showToast && showToast('❌ Error: ' + (err.message || 'Network error'), 'error');
+      if(!_svn.pages.length&&emptyEl) emptyEl.style.display='flex';
+      _svnStatus('error','❌ Network error');
+      showToast&&showToast('❌ Error: '+(err.message||'Network error'),'error');
     });
   };
 
-  /* ── Layout computation ── */
-  function _svnComputePositions() {
-    var nodes = _svn.nodes;
-    var edges = _svn.edges;
-    if(!nodes.length) return;
+  /* ═══════════════════════════════════════════════════════════
+     PAGINATION + LAYOUT — No overlap, multi-page
+     ═══════════════════════════════════════════════════════════ */
+  var PAGE_W = 1400, PAGE_H = 1000;
+  var MARGIN = 60;
+  var NODE_W = 120, NODE_H = 38;  // max node bounding box
+  var HUB_R  = 30;
+  var ROOT_R = 42;
 
-    var W = 1200, H = 900;
-    var cx = W/2, cy = H/2;
+  function _svnPaginateAndLayout(){
+    // Collect all nodes/edges from pages[0] (raw from AI)
+    if(!_svn.pages.length) return;
 
-    if(_svn.layout === 'star') {
-      // Find root node
-      var rootNode = nodes.find(function(n){ return n.isRoot; }) || nodes[0];
-      rootNode.x = cx; rootNode.y = cy;
+    var allNodes=[];
+    var allEdges=[];
+    _svn.pages.forEach(function(pg){ allNodes=allNodes.concat(pg.nodes); allEdges=allEdges.concat(pg.edges); });
 
-      // Group nodes by group number
-      var groups = {};
-      nodes.forEach(function(n){
-        if(n === rootNode) return;
-        var g = n.group || 0;
-        if(!groups[g]) groups[g] = [];
-        groups[g].push(n);
+    // Identify root, hubs, keywords
+    var rootNode=allNodes.find(function(n){ return n.isRoot; })||allNodes[0];
+    var hubs=allNodes.filter(function(n){ return n.isHub; });
+    var keywords=allNodes.filter(function(n){ return !n.isRoot&&!n.isHub; });
+
+    // Build hub→keywords map
+    var hubKw={};
+    hubs.forEach(function(h){ hubKw[h.id]=[]; });
+    // Try edges first
+    allEdges.forEach(function(e){
+      var hub=hubs.find(function(h){ return h.id===e.from; });
+      var kw=keywords.find(function(k){ return k.id===e.to; });
+      if(hub&&kw&&hubKw[hub.id].indexOf(kw)===-1) hubKw[hub.id].push(kw);
+    });
+    // Fallback: groupId matching
+    hubs.forEach(function(h){
+      keywords.forEach(function(k){
+        if(k.groupId===h.groupId&&hubKw[h.id].indexOf(k)===-1) hubKw[h.id].push(k);
       });
-
-      var gKeys = Object.keys(groups);
-      var numGroups = gKeys.length;
-
-      gKeys.forEach(function(gk, gi) {
-        var groupNodes = groups[gk];
-        var groupAngle = (2 * Math.PI * gi / Math.max(numGroups, 1));
-        var groupR = 280;
-        var gcx = cx + groupR * Math.cos(groupAngle);
-        var gcy = cy + groupR * Math.sin(groupAngle);
-
-        // Hub node for this group (first node)
-        groupNodes[0].x = gcx;
-        groupNodes[0].y = gcy;
-
-        // Remaining nodes in sub-cluster around hub
-        for(var i = 1; i < groupNodes.length; i++) {
-          var subAngle = groupAngle + (i * 2 * Math.PI / Math.max(groupNodes.length, 2)) * 0.5;
-          var subR = 120 + Math.floor(i/4) * 40;
-          groupNodes[i].x = gcx + subR * Math.cos(subAngle);
-          groupNodes[i].y = gcy + subR * Math.sin(subAngle);
-        }
-      });
-
-    } else if(_svn.layout === 'tree') {
-      // BFS tree layout
-      var rootNode2 = nodes.find(function(n){ return n.isRoot; }) || nodes[0];
-      var visited = {};
-      var queue = [{ node: rootNode2, depth: 0, indexAtDepth: 0 }];
-      var depthCounts = {};
-      var nodeDepths = {};
-      visited[rootNode2.id] = true;
-      nodeDepths[rootNode2.id] = 0;
-      depthCounts[0] = 1;
-
-      // Build adjacency
-      var adj = {};
-      nodes.forEach(function(n){ adj[n.id] = []; });
-      edges.forEach(function(e){
-        if(adj[e.from]) adj[e.from].push(e.to);
-      });
-
-      // BFS to assign depths
-      var bfsQ = [rootNode2.id];
-      var depthOf = {}; depthOf[rootNode2.id] = 0;
-      var orderAt = {}; // order within depth
-      var cntAt = {};
-      while(bfsQ.length) {
-        var cur = bfsQ.shift();
-        var d = depthOf[cur];
-        if(cntAt[d] === undefined) cntAt[d] = 0;
-        orderAt[cur] = cntAt[d]++;
-        (adj[cur]||[]).forEach(function(nid){
-          if(depthOf[nid] === undefined) {
-            depthOf[nid] = d + 1;
-            bfsQ.push(nid);
-          }
-        });
-      }
-
-      // Assign positions
-      var maxDepth = Math.max.apply(null, Object.values(depthOf)) || 0;
-      var levelH = Math.min(H / (maxDepth + 1), 160);
-      nodes.forEach(function(n){
-        var d = depthOf[n.id] !== undefined ? depthOf[n.id] : maxDepth;
-        var cnt = cntAt[d] || 1;
-        var ord = orderAt[n.id] !== undefined ? orderAt[n.id] : 0;
-        n.x = 80 + (W - 160) * (ord + 0.5) / cnt;
-        n.y = 80 + d * levelH;
-      });
-
-    } else if(_svn.layout === 'web') {
-      // Force-directed style — circular with groups
-      var numNodes = nodes.length;
-      nodes.forEach(function(n, i){
-        var angle = (2 * Math.PI * i / numNodes);
-        var r = 300;
-        n.x = cx + r * Math.cos(angle);
-        n.y = cy + r * Math.sin(angle);
-      });
-      // Pull connected nodes closer
-      for(var iter = 0; iter < 20; iter++) {
-        edges.forEach(function(e){
-          var a = nodes.find(function(n){ return n.id === e.from; });
-          var b = nodes.find(function(n){ return n.id === e.to; });
-          if(!a || !b) return;
-          var mx = (a.x + b.x)/2, my = (a.y + b.y)/2;
-          a.x = a.x * 0.85 + mx * 0.15;
-          a.y = a.y * 0.85 + my * 0.15;
-          b.x = b.x * 0.85 + mx * 0.15;
-          b.y = b.y * 0.85 + my * 0.15;
-        });
-      }
+    });
+    // Unassigned keywords → first hub or own group
+    var assignedKw=[];
+    hubs.forEach(function(h){ hubKw[h.id].forEach(function(k){ assignedKw.push(k.id); }); });
+    var unassigned=keywords.filter(function(k){ return assignedKw.indexOf(k.id)===-1; });
+    if(hubs.length&&unassigned.length){
+      unassigned.forEach(function(k){ hubKw[hubs[0].id].push(k); });
     }
+
+    // ── Compute cluster sizes ──
+    // Each cluster = hub + its keywords arranged in a circle around it
+    // Cluster bounding box estimate:
+    function _clusterBB(hubNode, kwList){
+      var n=kwList.length;
+      if(n===0) return { w: HUB_R*2+NODE_W, h: HUB_R*2+NODE_H };
+      // keywords arranged in circle of radius R
+      var R=Math.max(130, n*NODE_W/(2*Math.PI)*0.7);
+      return { w: R*2+NODE_W+20, h: R*2+NODE_H+20, R: R };
+    }
+
+    var clusterMeta=hubs.map(function(h){
+      var bb=_clusterBB(h, hubKw[h.id]);
+      return { hub:h, kws:hubKw[h.id], bb:bb };
+    });
+
+    // ── Pack clusters onto pages (no overlap, row-by-row) ──
+    // Root is always at center-top of page 1
+    var pages=[];
+    var currentPage={ nodes:[rootNode], edges:[], clusters:[] };
+    pages.push(currentPage);
+
+    // Place root at top center of first page
+    rootNode.x=PAGE_W/2; rootNode.y=MARGIN+ROOT_R+10;
+
+    // Pack clusters row by row
+    var curX=MARGIN, curY=rootNode.y+ROOT_R+80;
+    var rowH=0;
+
+    clusterMeta.forEach(function(cm){
+      var bw=cm.bb.w+MARGIN, bh=cm.bb.h+MARGIN;
+      // Does it fit on current row of current page?
+      if(curX+bw>PAGE_W-MARGIN){
+        // New row
+        curY+=rowH+MARGIN;
+        curX=MARGIN; rowH=0;
+      }
+      if(curY+bh>PAGE_H-MARGIN){
+        // New page
+        currentPage={ nodes:[], edges:[], clusters:[] };
+        pages.push(currentPage);
+        curX=MARGIN; curY=MARGIN; rowH=0;
+      }
+
+      // Place hub center
+      var hcx=curX+bw/2, hcy=curY+bh/2;
+      cm.hub.x=hcx; cm.hub.y=hcy;
+
+      // Place keywords in circle around hub
+      var R=cm.bb.R||130;
+      var kwList=cm.kws;
+      var n=kwList.length;
+      kwList.forEach(function(kw,i){
+        var angle=-Math.PI/2+(2*Math.PI*i/Math.max(n,1));
+        kw.x=hcx+R*Math.cos(angle);
+        kw.y=hcy+R*Math.sin(angle);
+      });
+
+      // Add to current page
+      currentPage.nodes.push(cm.hub);
+      cm.kws.forEach(function(k){ currentPage.nodes.push(k); });
+      // Add edges root→hub if on same page as root, else hub standalone
+      if(pages.indexOf(currentPage)===0){
+        currentPage.edges.push({from:rootNode.id,to:cm.hub.id,_rootLink:true});
+      }
+      // hub→keyword edges
+      cm.kws.forEach(function(k){
+        currentPage.edges.push({from:cm.hub.id,to:k.id});
+      });
+
+      // Cross-keyword edges from original AI edges
+      allEdges.forEach(function(e){
+        var inKws=cm.kws.find(function(k){ return k.id===e.from; });
+        var inKws2=cm.kws.find(function(k){ return k.id===e.to; });
+        if(inKws&&inKws2) currentPage.edges.push({from:e.from,to:e.to,_kwLink:true});
+      });
+
+      curX+=bw;
+      rowH=Math.max(rowH,bh);
+      currentPage.clusters=currentPage.clusters||[];
+      currentPage.clusters.push(cm);
+    });
+
+    _svn.pages=pages;
+    _svn.currentPage=0;
   }
 
-  /* ── SVG Render ── */
-  function _svnRender() {
-    var g = document.getElementById('svnMapGroup');
+  /* ═══════════════════════════════════════════════════════════
+     RENDER — SVG drawing for current page
+     ═══════════════════════════════════════════════════════════ */
+  function _svnRenderPage(pageIdx){
+    var g=document.getElementById('svnMapGroup');
     if(!g) return;
-    // Clear
     while(g.firstChild) g.removeChild(g.firstChild);
 
-    var nodes = _svn.nodes;
-    var edges = _svn.edges;
+    if(!_svn.pages.length||pageIdx>=_svn.pages.length) return;
+    var pg=_svn.pages[pageIdx];
+    var nodes=pg.nodes||[];
+    var edges=pg.edges||[];
 
-    // Draw edges first (below nodes)
-    edges.forEach(function(e) {
-      var a = nodes.find(function(n){ return n.id === e.from; });
-      var b = nodes.find(function(n){ return n.id === e.to; });
-      if(!a || !b) return;
-      var gc = GROUP_COLORS[Math.min((a.group||0), GROUP_COLORS.length-1)];
+    /* Draw edges first */
+    edges.forEach(function(e){
+      var a=nodes.find(function(n){ return n.id===e.from; });
+      var b=nodes.find(function(n){ return n.id===e.to; });
+      if(!a||!b||a.x===undefined||b.x===undefined) return;
 
-      var line = document.createElementNS('http://www.w3.org/2000/svg','line');
-      line.setAttribute('x1', a.x);
-      line.setAttribute('y1', a.y);
-      line.setAttribute('x2', b.x);
-      line.setAttribute('y2', b.y);
-      line.setAttribute('stroke', gc.stroke);
-      line.setAttribute('stroke-width', '1.8');
-      line.setAttribute('stroke-opacity', '0.55');
-      line.setAttribute('marker-end', 'url(#' + gc.arrow + ')');
-      line.setAttribute('stroke-dasharray', (a.isRoot || b.isRoot) ? '' : '5,3');
+      var aGc=GC[Math.min(a.groupId||0,GC.length-1)];
+
+      // Curved path for root→hub links
+      if(e._rootLink){
+        var path=document.createElementNS('http://www.w3.org/2000/svg','path');
+        var mx=(a.x+b.x)/2, my=(a.y+b.y)/2-40;
+        path.setAttribute('d','M'+a.x+','+a.y+' Q'+mx+','+my+' '+b.x+','+b.y);
+        path.setAttribute('fill','none');
+        path.setAttribute('stroke','#2e7d32');
+        path.setAttribute('stroke-width','2');
+        path.setAttribute('stroke-opacity','0.5');
+        path.setAttribute('marker-end','url(#svnArrow)');
+        g.appendChild(path);
+        return;
+      }
+
+      // Straight lines for hub→kw
+      var line=document.createElementNS('http://www.w3.org/2000/svg','line');
+      line.setAttribute('x1',a.x); line.setAttribute('y1',a.y);
+      line.setAttribute('x2',b.x); line.setAttribute('y2',b.y);
+      var strokeColor=e._kwLink?'#aaa':aGc.stroke;
+      var dashArray=e._kwLink?'4,4':'';
+      line.setAttribute('stroke',strokeColor);
+      line.setAttribute('stroke-width',e._kwLink?'1.2':'1.8');
+      line.setAttribute('stroke-opacity',e._kwLink?'0.4':'0.6');
+      if(dashArray) line.setAttribute('stroke-dasharray',dashArray);
+      line.setAttribute('marker-end','url(#'+aGc.arrow+')');
       g.appendChild(line);
     });
 
-    // Draw nodes
-    nodes.forEach(function(node) {
-      var gc = GROUP_COLORS[Math.min((node.group||0), GROUP_COLORS.length-1)];
-      var x = node.x || 400;
-      var y = node.y || 300;
-
-      // Measure label
-      var words = (node.label || '').split(' ');
-      var maxLineLen = Math.max.apply(null, words.map(function(w){ return w.length; }));
-      var lineCount  = Math.ceil((node.label||'').length / 12);
-      var rw = Math.max(55, Math.min(120, maxLineLen * 7 + 20));
-      var rh = Math.max(22, lineCount * 15 + 14);
-
-      var nodeG = document.createElementNS('http://www.w3.org/2000/svg','g');
+    /* Draw nodes */
+    nodes.forEach(function(node){
+      if(node.x===undefined) return;
+      var gc=GC[Math.min(node.groupId||0,GC.length-1)];
+      var x=node.x, y=node.y;
+      var nodeG=document.createElementNS('http://www.w3.org/2000/svg','g');
       nodeG.setAttribute('class','svn-node');
-      nodeG.setAttribute('data-id', node.id);
-      nodeG.style.cursor = 'pointer';
+      nodeG.setAttribute('data-id',node.id);
+      nodeG.style.cursor='pointer';
 
-      if(node.isRoot) {
-        // Root: special circle with star glow
-        var circle = document.createElementNS('http://www.w3.org/2000/svg','ellipse');
-        circle.setAttribute('cx', x); circle.setAttribute('cy', y);
-        circle.setAttribute('rx', rw * 0.65); circle.setAttribute('ry', rh * 0.85);
-        circle.setAttribute('fill', '#1b5e20');
-        circle.setAttribute('stroke', '#a5d6a7');
-        circle.setAttribute('stroke-width', '2.5');
-        circle.setAttribute('filter', 'url(#svnShadow)');
-        nodeG.appendChild(circle);
+      if(node.isRoot){
+        /* Root: big filled circle with outer dashed ring */
+        var ring=document.createElementNS('http://www.w3.org/2000/svg','circle');
+        ring.setAttribute('cx',x); ring.setAttribute('cy',y); ring.setAttribute('r',ROOT_R+8);
+        ring.setAttribute('fill','none'); ring.setAttribute('stroke','#81c784');
+        ring.setAttribute('stroke-width','1.5'); ring.setAttribute('stroke-dasharray','5,4');
+        ring.setAttribute('stroke-opacity','0.55');
+        nodeG.appendChild(ring);
+        var circ=document.createElementNS('http://www.w3.org/2000/svg','circle');
+        circ.setAttribute('cx',x); circ.setAttribute('cy',y); circ.setAttribute('r',ROOT_R);
+        circ.setAttribute('fill','#1b5e20'); circ.setAttribute('stroke','#a5d6a7'); circ.setAttribute('stroke-width','2.5');
+        circ.setAttribute('filter','url(#svnShadow)');
+        nodeG.appendChild(circ);
+        _addSvgText(nodeG, node.label||'', x, y, '#fff', 11, 800, ROOT_R*1.6);
 
-        // Decorative outer ring
-        var ring = document.createElementNS('http://www.w3.org/2000/svg','ellipse');
-        ring.setAttribute('cx', x); ring.setAttribute('cy', y);
-        ring.setAttribute('rx', rw * 0.65 + 5); ring.setAttribute('ry', rh * 0.85 + 5);
-        ring.setAttribute('fill', 'none');
-        ring.setAttribute('stroke', '#81c784');
-        ring.setAttribute('stroke-width', '1');
-        ring.setAttribute('stroke-dasharray', '4,3');
-        ring.setAttribute('stroke-opacity', '0.6');
-        nodeG.insertBefore(ring, circle);
-
-        var txt = document.createElementNS('http://www.w3.org/2000/svg','text');
-        txt.setAttribute('x', x); txt.setAttribute('y', y);
-        txt.setAttribute('text-anchor','middle'); txt.setAttribute('dominant-baseline','middle');
-        txt.setAttribute('fill','#fff'); txt.setAttribute('font-size','11');
-        txt.setAttribute('font-weight','800');
-        txt.setAttribute('font-family','Noto Sans Devanagari, Baloo 2, sans-serif');
-        txt.textContent = node.label || '';
-        nodeG.appendChild(txt);
+      } else if(node.isHub){
+        /* Hub: rounded pill with bold color */
+        var words=_wrapWords(node.label||'',12);
+        var rw=Math.max(70, _maxLen(words)*7+20), rh=Math.max(28,words.length*16+14);
+        var rect=document.createElementNS('http://www.w3.org/2000/svg','rect');
+        rect.setAttribute('x',x-rw/2); rect.setAttribute('y',y-rh/2);
+        rect.setAttribute('width',rw); rect.setAttribute('height',rh);
+        rect.setAttribute('rx',rh/2); rect.setAttribute('ry',rh/2);
+        rect.setAttribute('fill',gc.hub); rect.setAttribute('stroke',gc.stroke);
+        rect.setAttribute('stroke-width','2.2'); rect.setAttribute('filter','url(#svnShadow)');
+        nodeG.appendChild(rect);
+        // Icon dot
+        var dot=document.createElementNS('http://www.w3.org/2000/svg','circle');
+        dot.setAttribute('cx',x-rw/2+10); dot.setAttribute('cy',y); dot.setAttribute('r',4);
+        dot.setAttribute('fill','rgba(255,255,255,0.6)');
+        nodeG.appendChild(dot);
+        _addSvgText(nodeG, node.label||'', x, y, gc.hubTxt, 10.5, 800, rw-12);
 
       } else {
-        // Regular node: rounded rect
-        var rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
-        rect.setAttribute('x', x - rw/2); rect.setAttribute('y', y - rh/2);
-        rect.setAttribute('width', rw); rect.setAttribute('height', rh);
-        rect.setAttribute('rx', 10); rect.setAttribute('ry', 10);
-        rect.setAttribute('fill', gc.fill);
-        rect.setAttribute('stroke', gc.stroke);
-        rect.setAttribute('stroke-width', '1.8');
-        rect.setAttribute('filter', 'url(#svnShadow)');
-        nodeG.appendChild(rect);
-
-        // Label — wrap if needed
-        var label = node.label || '';
-        var lines = _svnWrapText(label, 14);
-        lines.forEach(function(line, li) {
-          var t = document.createElementNS('http://www.w3.org/2000/svg','text');
-          var lineY = y - (lines.length-1)*7 + li*14;
-          t.setAttribute('x', x); t.setAttribute('y', lineY);
-          t.setAttribute('text-anchor','middle'); t.setAttribute('dominant-baseline','middle');
-          t.setAttribute('fill', gc.text); t.setAttribute('font-size','10');
-          t.setAttribute('font-weight','700');
-          t.setAttribute('font-family','Noto Sans Devanagari, Baloo 2, sans-serif');
-          t.textContent = line;
-          nodeG.appendChild(t);
-        });
+        /* Keyword node: soft rounded rect */
+        var words2=_wrapWords(node.label||'',13);
+        var rw2=Math.max(55, _maxLen(words2)*6.8+18), rh2=Math.max(24,words2.length*14+12);
+        var rect2=document.createElementNS('http://www.w3.org/2000/svg','rect');
+        rect2.setAttribute('x',x-rw2/2); rect2.setAttribute('y',y-rh2/2);
+        rect2.setAttribute('width',rw2); rect2.setAttribute('height',rh2);
+        rect2.setAttribute('rx',9); rect2.setAttribute('ry',9);
+        rect2.setAttribute('fill',gc.fill); rect2.setAttribute('stroke',gc.stroke);
+        rect2.setAttribute('stroke-width','1.6'); rect2.setAttribute('filter','url(#svnShadow)');
+        nodeG.appendChild(rect2);
+        _addSvgTextMulti(nodeG, words2, x, y, gc.text, 10, 700);
       }
 
-      // Tap/click to edit
-      nodeG.addEventListener('click', function(e) {
-        e.stopPropagation();
-        svnNodeEdit(node.id, x, y);
-      });
-      nodeG.addEventListener('touchend', function(e) {
-        e.preventDefault(); e.stopPropagation();
-        svnNodeEdit(node.id, x, y);
-      });
-
+      /* Tap to edit */
+      nodeG.addEventListener('click', function(e){ e.stopPropagation(); _svnNodeEditShow(node.id,x,y,pageIdx); });
+      nodeG.addEventListener('touchend', function(e){ e.preventDefault(); e.stopPropagation(); _svnNodeEditShow(node.id,x,y,pageIdx); });
       g.appendChild(nodeG);
     });
 
-    // Apply current transform
     _svnApplyTransform();
   }
 
-  function _svnWrapText(text, maxChars) {
+  /* ── SVG text helpers ── */
+  function _addSvgText(g, text, x, y, fill, size, weight, maxW){
+    var words=_wrapWords(text, Math.max(8, Math.floor(maxW/((size||10)*0.6))));
+    _addSvgTextMulti(g, words, x, y, fill, size, weight);
+  }
+  function _addSvgTextMulti(g, words, x, y, fill, size, weight){
+    var n=words.length;
+    words.forEach(function(w,i){
+      var lineY=y-(n-1)*(size*0.7)/2+i*(size*0.7+2.5);
+      var t=document.createElementNS('http://www.w3.org/2000/svg','text');
+      t.setAttribute('x',x); t.setAttribute('y',lineY);
+      t.setAttribute('text-anchor','middle'); t.setAttribute('dominant-baseline','middle');
+      t.setAttribute('fill',fill); t.setAttribute('font-size',size||10);
+      t.setAttribute('font-weight',weight||700);
+      t.setAttribute('font-family','Noto Sans Devanagari, Baloo 2, sans-serif');
+      t.textContent=w;
+      g.appendChild(t);
+    });
+  }
+  function _wrapWords(text, maxCh){
     if(!text) return [''];
-    if(text.length <= maxChars) return [text];
-    var words = text.split(' ');
-    var lines = [], cur = '';
-    words.forEach(function(w){
-      if((cur + ' ' + w).trim().length > maxChars) {
-        if(cur) lines.push(cur.trim());
-        cur = w;
-      } else {
-        cur = (cur + ' ' + w).trim();
-      }
+    if(text.length<=maxCh) return [text];
+    var parts=text.split(' '), lines=[], cur='';
+    parts.forEach(function(w){
+      if((cur+' '+w).trim().length>maxCh){ if(cur) lines.push(cur.trim()); cur=w; }
+      else { cur=(cur+' '+w).trim(); }
     });
     if(cur) lines.push(cur.trim());
-    return lines.length ? lines : [text.slice(0, maxChars)];
+    return lines.length?lines:[text.slice(0,maxCh)];
   }
+  function _maxLen(arr){ return Math.max.apply(null,arr.map(function(s){ return s.length; }))||1; }
 
-  /* ── Pan & Zoom ── */
-  function _svnApplyTransform() {
-    var g = document.getElementById('svnMapGroup');
+  /* ── Transform ── */
+  function _svnApplyTransform(){
+    var g=document.getElementById('svnMapGroup');
     if(!g) return;
-    g.setAttribute('transform',
-      'translate(' + _svn.panX + ',' + _svn.panY + ') scale(' + _svn.scale + ')');
+    g.setAttribute('transform','translate('+_svn.panX+','+_svn.panY+') scale('+_svn.scale+')');
   }
 
-  window.svnZoom = function(factor) {
-    _svn.scale = Math.max(0.2, Math.min(3, _svn.scale * factor));
-    _svnApplyTransform();
-  };
-  window.svnZoomReset = function() {
-    _svn.scale = 1; _svn.panX = 0; _svn.panY = 0;
-    _svnApplyTransform();
-  };
+  window.svnZoom=function(f){ _svn.scale=Math.max(0.15,Math.min(4,_svn.scale*f)); _svnApplyTransform(); };
+  window.svnZoomReset=function(){ _svn.scale=1; _svn.panX=0; _svn.panY=0; _svnApplyTransform(); };
 
-  function _svnFitView() {
-    if(!_svn.nodes.length) return;
-    var wrap = document.getElementById('svnCanvasWrap');
+  function _svnFitView(){
+    if(!_svn.pages.length) return;
+    var wrap=document.getElementById('svnCanvasWrap');
     if(!wrap) return;
-    var W = wrap.clientWidth || 300;
-    var H = wrap.clientHeight || 400;
-
-    var xs = _svn.nodes.map(function(n){ return n.x||0; });
-    var ys = _svn.nodes.map(function(n){ return n.y||0; });
-    if(!xs.length) return;
-    var minX = Math.min.apply(null,xs), maxX = Math.max.apply(null,xs);
-    var minY = Math.min.apply(null,ys), maxY = Math.max.apply(null,ys);
-    var dw = maxX - minX + 200, dh = maxY - minY + 200;
-    var sc = Math.min(W/dw, H/dh, 1.2);
-    sc = Math.max(0.2, sc);
-    _svn.scale = sc;
-    _svn.panX = (W - (minX + maxX) * sc) / 2;
-    _svn.panY = (H - (minY + maxY) * sc) / 2;
+    var W=wrap.clientWidth||320, H=wrap.clientHeight||500;
+    var pg=_svn.pages[_svn.currentPage]||{nodes:[]};
+    var nodes=pg.nodes.filter(function(n){ return n.x!==undefined; });
+    if(!nodes.length){ _svn.scale=1; _svn.panX=0; _svn.panY=0; _svnApplyTransform(); return; }
+    var xs=nodes.map(function(n){ return n.x; });
+    var ys=nodes.map(function(n){ return n.y; });
+    var minX=Math.min.apply(null,xs)-80, maxX=Math.max.apply(null,xs)+80;
+    var minY=Math.min.apply(null,ys)-60, maxY=Math.max.apply(null,ys)+60;
+    var dw=maxX-minX, dh=maxY-minY;
+    if(dw<1||dh<1){ _svn.scale=1; _svn.panX=20; _svn.panY=20; _svnApplyTransform(); return; }
+    var sc=Math.min(W/dw, H/dh, 1.5);
+    sc=Math.max(0.15,sc);
+    _svn.scale=sc;
+    _svn.panX=(W-(minX+maxX)*sc)/2;
+    _svn.panY=(H-(minY+maxY)*sc)/2;
     _svnApplyTransform();
+  }
+
+  /* ── Page navigation ── */
+  window.svnPagePrev=function(){
+    if(_svn.currentPage>0){ _svn.currentPage--; _svnRenderPage(_svn.currentPage); _svnFitView(); _svnUpdatePageNav(); }
+  };
+  window.svnPageNext=function(){
+    if(_svn.currentPage<_svn.pages.length-1){ _svn.currentPage++; _svnRenderPage(_svn.currentPage); _svnFitView(); _svnUpdatePageNav(); }
+  };
+  function _svnUpdatePageNav(){
+    var total=_svn.pages.length;
+    var cur=_svn.currentPage+1;
+    var lbl=document.getElementById('svnPageLabel');
+    if(lbl) lbl.textContent='Page '+cur+'/'+total;
+    var prev=document.getElementById('svnPagePrev');
+    var next=document.getElementById('svnPageNext');
+    if(prev) prev.disabled=(_svn.currentPage===0);
+    if(next) next.disabled=(_svn.currentPage>=total-1);
+    var navRow=document.getElementById('svnPageNav');
+    if(navRow) navRow.style.display=total>1?'flex':'none';
   }
 
   /* ── Pan gesture ── */
-  function _svnInitPan() {
-    var wrap = document.getElementById('svnCanvasWrap');
+  function _svnInitPan(){
+    var wrap=document.getElementById('svnCanvasWrap');
     if(!wrap) return;
-    var dragging = false, startX, startY, startPanX, startPanY;
-
-    function onStart(e) {
-      // Don't pan if tapping on a node
-      if(e.target && e.target.closest && e.target.closest('.svn-node')) return;
-      dragging = true;
-      var pt = e.touches ? e.touches[0] : e;
-      startX = pt.clientX; startY = pt.clientY;
-      startPanX = _svn.panX; startPanY = _svn.panY;
+    var dragging=false, startX,startY,startPX,startPY;
+    function onStart(e){
+      if(e.target&&e.target.closest&&e.target.closest('.svn-node')) return;
+      dragging=true;
+      var pt=e.touches?e.touches[0]:e;
+      startX=pt.clientX; startY=pt.clientY;
+      startPX=_svn.panX; startPY=_svn.panY;
     }
-    function onMove(e) {
-      if(!dragging) return;
-      e.preventDefault();
-      var pt = e.touches ? e.touches[0] : e;
-      _svn.panX = startPanX + (pt.clientX - startX);
-      _svn.panY = startPanY + (pt.clientY - startY);
+    function onMove(e){
+      if(!dragging) return; e.preventDefault();
+      var pt=e.touches?e.touches[0]:e;
+      _svn.panX=startPX+(pt.clientX-startX);
+      _svn.panY=startPY+(pt.clientY-startY);
       _svnApplyTransform();
     }
-    function onEnd() { dragging = false; }
-
-    wrap.addEventListener('mousedown', onStart);
-    wrap.addEventListener('mousemove', onMove);
-    wrap.addEventListener('mouseup', onEnd);
-    wrap.addEventListener('touchstart', onStart, { passive: true });
-    wrap.addEventListener('touchmove', onMove, { passive: false });
-    wrap.addEventListener('touchend', onEnd);
+    function onEnd(){ dragging=false; }
+    wrap.addEventListener('mousedown',onStart);
+    wrap.addEventListener('mousemove',onMove);
+    wrap.addEventListener('mouseup',onEnd);
+    wrap.addEventListener('touchstart',onStart,{passive:true});
+    wrap.addEventListener('touchmove',onMove,{passive:false});
+    wrap.addEventListener('touchend',onEnd);
 
     // Pinch zoom
-    var lastDist = 0;
-    wrap.addEventListener('touchstart', function(e){
-      if(e.touches.length === 2) {
-        var dx = e.touches[0].clientX - e.touches[1].clientX;
-        var dy = e.touches[0].clientY - e.touches[1].clientY;
-        lastDist = Math.sqrt(dx*dx+dy*dy);
-      }
-    }, { passive: true });
-    wrap.addEventListener('touchmove', function(e){
-      if(e.touches.length === 2) {
-        var dx = e.touches[0].clientX - e.touches[1].clientX;
-        var dy = e.touches[0].clientY - e.touches[1].clientY;
-        var dist = Math.sqrt(dx*dx+dy*dy);
-        if(lastDist) { svnZoom(dist/lastDist); }
-        lastDist = dist;
-      }
-    }, { passive: false });
-
-    // Mouse wheel zoom
-    wrap.addEventListener('wheel', function(e){
-      e.preventDefault();
-      svnZoom(e.deltaY < 0 ? 1.1 : 0.9);
-    }, { passive: false });
-
-    // Click on empty area closes tooltip
-    wrap.addEventListener('click', function(e){
-      if(!e.target.closest('.svn-node')) svnNodeEditClose();
-    });
+    var ld=0;
+    wrap.addEventListener('touchstart',function(e){
+      if(e.touches.length===2){ var dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY; ld=Math.sqrt(dx*dx+dy*dy); }
+    },{passive:true});
+    wrap.addEventListener('touchmove',function(e){
+      if(e.touches.length===2){ var dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY; var d=Math.sqrt(dx*dx+dy*dy); if(ld) svnZoom(d/ld); ld=d; }
+    },{passive:false});
+    wrap.addEventListener('wheel',function(e){ e.preventDefault(); svnZoom(e.deltaY<0?1.1:0.9); },{passive:false});
+    wrap.addEventListener('click',function(e){ if(!e.target.closest('.svn-node')) _svnNodeEditClose(); });
   }
 
   /* ── Node editing ── */
-  window.svnNodeEdit = function(nodeId, svgX, svgY) {
-    _svn.editingNodeId = nodeId;
-    var node = _svn.nodes.find(function(n){ return n.id === nodeId; });
+  function _svnNodeEditShow(nodeId, svgX, svgY, pageIdx){
+    _svn.editingNodeId=nodeId; _svn._editPageIdx=pageIdx;
+    var pg=_svn.pages[pageIdx];
+    var node=pg?pg.nodes.find(function(n){ return n.id===nodeId; }):null;
     if(!node) return;
-
-    var tooltip = document.getElementById('svnNodeEditTooltip');
-    var input   = document.getElementById('svnNodeEditInput');
-    if(!tooltip || !input) return;
-
-    // Convert SVG coords to panel coords
-    var wrap = document.getElementById('svnCanvasWrap');
-    if(!wrap) return;
-    var wr = wrap.getBoundingClientRect();
-    var px = (svgX * _svn.scale) + _svn.panX;
-    var py = (svgY * _svn.scale) + _svn.panY;
-
-    // Keep tooltip within panel
-    var tw = 220, th = 90;
-    var tx = Math.max(5, Math.min(wr.width - tw - 5, px - tw/2));
-    var ty = Math.max(5, Math.min(wr.height - th - 5, py + 20));
-
-    tooltip.style.left = tx + 'px';
-    tooltip.style.top  = ty + 'px';
+    var tooltip=document.getElementById('svnNodeEditTooltip');
+    var input=document.getElementById('svnNodeEditInput');
+    if(!tooltip||!input) return;
+    var wrap=document.getElementById('svnCanvasWrap');
+    var wr=wrap?wrap.getBoundingClientRect():{width:300,height:500,left:0,top:0};
+    var px=svgX*_svn.scale+_svn.panX, py=svgY*_svn.scale+_svn.panY;
+    var tw=220,th=90;
+    tooltip.style.left=Math.max(5,Math.min(wr.width-tw-5,px-tw/2))+'px';
+    tooltip.style.top=Math.max(5,Math.min(wr.height-th-5,py+22))+'px';
     tooltip.classList.add('show');
-    input.value = node.label || '';
-    setTimeout(function(){ input.focus(); input.select(); }, 50);
+    input.value=node.label||'';
+    setTimeout(function(){ input.focus(); input.select(); },50);
+  }
+  window.svnNodeEditSave=function(){
+    var input=document.getElementById('svnNodeEditInput');
+    if(!input||!_svn.editingNodeId) return;
+    var pg=_svn.pages[_svn._editPageIdx||_svn.currentPage];
+    var node=pg?pg.nodes.find(function(n){ return n.id===_svn.editingNodeId; }):null;
+    if(node){ _svnPushHistory(); node.label=input.value.trim()||node.label; _svnRenderPage(_svn.currentPage); _svnSaveToFirestore(); }
+    _svnNodeEditClose();
   };
-
-  window.svnNodeEditSave = function() {
-    var input = document.getElementById('svnNodeEditInput');
-    if(!input || !_svn.editingNodeId) return;
-    var node = _svn.nodes.find(function(n){ return n.id === _svn.editingNodeId; });
-    if(node) {
-      _svnPushHistory();
-      node.label = input.value.trim() || node.label;
-      _svnRender();
-    }
-    svnNodeEditClose();
-  };
-
-  window.svnNodeEditDelete = function() {
+  window.svnNodeEditDelete=function(){
     if(!_svn.editingNodeId) return;
+    var pg=_svn.pages[_svn._editPageIdx||_svn.currentPage];
+    if(!pg) return;
     _svnPushHistory();
-    var id = _svn.editingNodeId;
-    _svn.nodes = _svn.nodes.filter(function(n){ return n.id !== id; });
-    _svn.edges = _svn.edges.filter(function(e){ return e.from !== id && e.to !== id; });
-    _svnRender();
-    svnNodeEditClose();
-    _svnStatus('ready', '🗑 Node delete ho gaya');
+    var id=_svn.editingNodeId;
+    pg.nodes=pg.nodes.filter(function(n){ return n.id!==id; });
+    pg.edges=pg.edges.filter(function(e){ return e.from!==id&&e.to!==id; });
+    _svnRenderPage(_svn.currentPage);
+    _svnNodeEditClose();
+    _svnSaveToFirestore();
   };
-
-  window.svnNodeEditClose = function() {
-    _svn.editingNodeId = null;
-    var t = document.getElementById('svnNodeEditTooltip');
+  function _svnNodeEditClose(){
+    _svn.editingNodeId=null;
+    var t=document.getElementById('svnNodeEditTooltip');
     if(t) t.classList.remove('show');
-  };
-
-  /* Keyboard enter/esc in node edit */
-  document.addEventListener('DOMContentLoaded', function(){
-    var inp = document.getElementById('svnNodeEditInput');
-    if(inp) {
-      inp.addEventListener('keydown', function(e){
-        if(e.key === 'Enter') { e.preventDefault(); svnNodeEditSave(); }
-        if(e.key === 'Escape') svnNodeEditClose();
-      });
-    }
-  });
+  }
+  window.svnNodeEditClose=_svnNodeEditClose;
 
   /* ── Undo/Redo ── */
-  function _svnPushHistory() {
-    _svn.history.push(JSON.stringify({ nodes: _svn.nodes, edges: _svn.edges }));
-    if(_svn.history.length > 30) _svn.history.shift();
-    _svn.redoStack = [];
+  function _svnPushHistory(){
+    _svn.history.push(JSON.stringify(_svn.pages));
+    if(_svn.history.length>25) _svn.history.shift();
+    _svn.redoStack=[];
   }
-  window.svnUndo = function() {
-    if(!_svn.history.length) { showToast && showToast('Koi undo nahi hai!', 'info'); return; }
-    _svn.redoStack.push(JSON.stringify({ nodes: _svn.nodes, edges: _svn.edges }));
-    var prev = JSON.parse(_svn.history.pop());
-    _svn.nodes = prev.nodes; _svn.edges = prev.edges;
-    _svnRender();
-    _svnStatus('ready', '↩ Undo ho gaya');
+  window.svnUndo=function(){
+    if(!_svn.history.length){ showToast&&showToast('Koi undo nahi!','info'); return; }
+    _svn.redoStack.push(JSON.stringify(_svn.pages));
+    _svn.pages=JSON.parse(_svn.history.pop());
+    _svnRenderPage(_svn.currentPage); _svnUpdatePageNav();
+    _svnStatus('ready','↩ Undo ho gaya');
   };
-  window.svnRedo = function() {
-    if(!_svn.redoStack.length) { showToast && showToast('Koi redo nahi hai!', 'info'); return; }
-    _svn.history.push(JSON.stringify({ nodes: _svn.nodes, edges: _svn.edges }));
-    var next = JSON.parse(_svn.redoStack.pop());
-    _svn.nodes = next.nodes; _svn.edges = next.edges;
-    _svnRender();
-    _svnStatus('ready', '↪ Redo ho gaya');
+  window.svnRedo=function(){
+    if(!_svn.redoStack.length){ showToast&&showToast('Koi redo nahi!','info'); return; }
+    _svn.history.push(JSON.stringify(_svn.pages));
+    _svn.pages=JSON.parse(_svn.redoStack.pop());
+    _svnRenderPage(_svn.currentPage); _svnUpdatePageNav();
+    _svnStatus('ready','↪ Redo ho gaya');
   };
 
   /* ── Clear ── */
-  window.svnClearAll = function() {
-    if(!_svn.nodes.length) return;
-    if(!confirm('Saara visual map saaf kar doon? (Undo se wapas aa sakta hai)')) return;
+  window.svnClearAll=function(){
+    if(!_svn.pages.length) return;
+    if(!confirm('Saara visual map saaf karein? (Undo se wapas aayega)')) return;
     _svnPushHistory();
-    _svn.nodes = []; _svn.edges = [];
-    _svn.lastHighlightHash = '';
-    _svnRender();
-    var emptyEl = document.getElementById('svnEmptyState');
-    if(emptyEl) emptyEl.style.display = 'flex';
-    _svnStatus('', 'Highlights select karke Generate dabao');
+    _svn.pages=[]; _svn.currentPage=0; _svn.lastHighlightHash='';
+    var g=document.getElementById('svnMapGroup'); if(g) while(g.firstChild) g.removeChild(g.firstChild);
+    var emptyEl=document.getElementById('svnEmptyState'); if(emptyEl) emptyEl.style.display='flex';
+    _svnUpdatePageNav();
+    _svnStatus('','Highlights select karke Generate dabao');
+    _svnSaveToFirestore();
   };
 
-  /* ── Download PNG ── */
-  window.svnDownload = function() {
-    if(!_svn.nodes.length) { showToast && showToast('Pehle kuch generate karo!', 'info'); return; }
-    var svg = document.getElementById('svnSvgRoot');
+  /* ── Download SVG ── */
+  window.svnDownload=function(){
+    if(!_svn.pages.length){ showToast&&showToast('Pehle generate karo!','info'); return; }
+    var svg=document.getElementById('svnSvgRoot');
     if(!svg) return;
-    var serializer = new XMLSerializer();
-    var svgStr = serializer.serializeToString(svg);
-    var blob = new Blob([svgStr], { type: 'image/svg+xml' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url; a.download = 'smart_visual_notes.svg'; a.click();
+    var s=new XMLSerializer();
+    var blob=new Blob([s.serializeToString(svg)],{type:'image/svg+xml'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a'); a.href=url; a.download='smart_visual_notes.svg'; a.click();
     URL.revokeObjectURL(url);
-    showToast && showToast('📥 SVG download ho raha hai!', 'success');
+    showToast&&showToast('📥 SVG download ho raha hai!','success');
   };
 
-  /* ── Status bar helper ── */
-  function _svnStatus(type, text) {
-    var dot  = document.getElementById('svnStatusDot');
-    var span = document.getElementById('svnStatusText');
-    if(dot) { dot.className = type ? type : ''; }
-    if(span) span.textContent = text || '';
+  /* ── Status ── */
+  function _svnStatus(type,text){
+    var dot=document.getElementById('svnStatusDot');
+    var span=document.getElementById('svnStatusText');
+    if(dot) dot.className=type?type:'';
+    if(span) span.textContent=text||'';
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     FIRESTORE SYNC — Cross-device auto update
+     ═══════════════════════════════════════════════════════════ */
+  function _svnSaveToFirestore(){
+    if(!_svn.firestoreKey) return;
+    try{
+      var db=firebase.firestore();
+      var uid=firebase.auth().currentUser&&firebase.auth().currentUser.uid;
+      if(!uid) return;
+      var doc={
+        pages: JSON.parse(JSON.stringify(_svn.pages)),
+        lastHash: _svn.lastHighlightHash,
+        topicName: _svn.topicName,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        uid: uid
+      };
+      db.collection('svn_maps').doc(uid+'_'+_svn.firestoreKey).set(doc,{merge:true})
+        .then(function(){ _svnStatus('ready','✅ Saved & synced ☁'); })
+        .catch(function(e){ console.warn('SVN Firestore save err:',e); });
+    } catch(e){ /* Firebase not available */ }
+  }
+
+  function _svnStartSync(){
+    _svnStopSync();
+    if(!_svn.firestoreKey) return;
+    try{
+      var db=firebase.firestore();
+      var uid=firebase.auth().currentUser&&firebase.auth().currentUser.uid;
+      if(!uid) return;
+      var docRef=db.collection('svn_maps').doc(uid+'_'+_svn.firestoreKey);
+      _svn.syncUnsubscribe=docRef.onSnapshot(function(snap){
+        if(!snap.exists) return;
+        var data=snap.data();
+        if(!data||!data.pages) return;
+        // Avoid overwriting own save (check if UID matches and updatedAt recent)
+        var isOwn=(data.uid===uid);
+        // Always load fresh data from other devices
+        _svn.pages=data.pages||[];
+        _svn.lastHighlightHash=data.lastHash||'';
+        _svn.topicName=data.topicName||_svn.topicName;
+        if(_svn.pages.length){
+          _svn.currentPage=Math.min(_svn.currentPage,_svn.pages.length-1);
+          if(_svn.open){
+            _svnRenderPage(_svn.currentPage);
+            _svnFitView();
+          }
+          _svnUpdatePageNav();
+          var emptyEl=document.getElementById('svnEmptyState');
+          if(emptyEl) emptyEl.style.display='none';
+          if(!isOwn) showToast&&showToast('🔄 Visual Notes dusri device se sync ho gayi!','info');
+        }
+      },function(err){ console.warn('SVN sync err:',err); });
+    } catch(e){ /* Firebase not available */ }
+  }
+
+  function _svnStopSync(){
+    if(_svn.syncUnsubscribe){
+      try{ _svn.syncUnsubscribe(); } catch(e){}
+      _svn.syncUnsubscribe=null;
+    }
   }
 
   /* ── AI Chat ── */
-  window.svnOpenAiChat = function() {
-    var panel = document.getElementById('svnAiPanel');
-    if(panel) panel.classList.add('show');
+  window.svnOpenAiChat=function(){
+    var p=document.getElementById('svnAiPanel'); if(p) p.classList.add('show');
   };
-  window.svnCloseAiChat = function() {
-    var panel = document.getElementById('svnAiPanel');
-    if(panel) panel.classList.remove('show');
+  window.svnCloseAiChat=function(){
+    var p=document.getElementById('svnAiPanel'); if(p) p.classList.remove('show');
   };
-  window.svnAiSend = function() {
-    var input = document.getElementById('svnAiInput');
-    var msgs  = document.getElementById('svnAiMsgs');
-    var btn   = document.getElementById('svnAiSendBtn');
-    if(!input || !msgs) return;
-    var q = input.value.trim();
-    if(!q) return;
-
-    // User message
-    var um = document.createElement('div');
-    um.className = 'ai-msg user';
-    um.textContent = q;
-    msgs.appendChild(um);
-    input.value = ''; input.style.height = 'auto';
-    msgs.scrollTop = msgs.scrollHeight;
-
-    // Loading
-    var lm = document.createElement('div');
-    lm.className = 'ai-msg bot';
-    lm.innerHTML = '<em style="opacity:0.6">Soch raha hun... 🤔</em>';
-    msgs.appendChild(lm);
-    if(btn) btn.disabled = true;
-
-    // Context: all keywords in the visual map
-    var mapContext = _svn.nodes.map(function(n){ return n.label; }).join(', ');
-
-    var apiKey = '';
-    try {
-      var st = JSON.parse(localStorage.getItem('epp5') || '{}');
-      apiKey = (st && st.groqKey) ? st.groqKey : '';
-      if(!apiKey) apiKey = (st && st.apiKey) ? st.apiKey : '';
-    } catch(e) {}
-    if(!apiKey) {
-      var ki = document.querySelector('.api-pill input');
-      if(ki) apiKey = ki.value.trim();
-    }
-
-    if(!apiKey) {
-      lm.innerHTML = '❌ API Key nahi mili!';
-      if(btn) btn.disabled = false;
-      return;
-    }
-
-    fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-      body: JSON.stringify({
-        model: 'llama-3.1-8b-instant',
-        max_tokens: 600,
-        messages: [
-          { role: 'system', content: 'Tu ek UPSC exam expert hai. Is visual map ke keywords hain: ' + mapContext + '. Chhote aur clear jawab de Hindi/Hinglish mein.' },
-          { role: 'user', content: q }
+  window.svnAiSend=function(){
+    var input=document.getElementById('svnAiInput');
+    var msgs=document.getElementById('svnAiMsgs');
+    var btn=document.getElementById('svnAiSendBtn');
+    if(!input||!msgs) return;
+    var q=input.value.trim(); if(!q) return;
+    var um=document.createElement('div'); um.className='ai-msg user'; um.textContent=q;
+    msgs.appendChild(um); input.value=''; input.style.height='auto'; msgs.scrollTop=msgs.scrollHeight;
+    var lm=document.createElement('div'); lm.className='ai-msg bot';
+    lm.innerHTML='<em style="opacity:0.6">Soch raha hun... 🤔</em>';
+    msgs.appendChild(lm); if(btn) btn.disabled=true;
+    var ctx=_svn.pages.map(function(pg,pi){
+      return 'Page '+(pi+1)+': '+pg.nodes.map(function(n){ return n.label; }).join(', ');
+    }).join(' | ');
+    var apiKey=_getKey();
+    if(!apiKey){ lm.textContent='❌ API Key nahi mili!'; if(btn) btn.disabled=false; return; }
+    fetch('https://api.groq.com/openai/v1/chat/completions',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
+      body:JSON.stringify({
+        model:'llama-3.1-8b-instant',max_tokens:600,
+        messages:[
+          {role:'system',content:'Tu UPSC expert hai. Visual map context: '+ctx+'. Chhote Hindi/Hinglish jawab do.'},
+          {role:'user',content:q}
         ]
       })
     }).then(function(r){ return r.json(); })
-    .then(function(data) {
-      if(btn) btn.disabled = false;
-      var ans = data && data.choices && data.choices[0] && data.choices[0].message
-               ? data.choices[0].message.content : '❌ Jawab nahi aaya.';
-      lm.textContent = ans;
-      msgs.scrollTop = msgs.scrollHeight;
-    })
-    .catch(function(err) {
-      if(btn) btn.disabled = false;
-      lm.textContent = '❌ Error: ' + (err.message || 'Network error');
-    });
+    .then(function(data){
+      if(btn) btn.disabled=false;
+      lm.textContent=(data&&data.choices&&data.choices[0]&&data.choices[0].message?data.choices[0].message.content:'❌ Jawab nahi aaya.');
+      msgs.scrollTop=msgs.scrollHeight;
+    }).catch(function(err){ if(btn) btn.disabled=false; lm.textContent='❌ '+(err.message||'Error'); });
   };
 
-  /* ── Init on DOMContentLoaded ── */
-  function _svnInit() {
-    _svnWatchEditor();
+  /* ── Init ── */
+  function _svnInit(){
+    _watchEditor();
     _svnInitPan();
+    _svnUpdatePageNav();
 
-    // Also wire up: when notes editor opens, update header title
-    document.addEventListener('click', function(e){
-      // If user clicks neHlCanvasBtn, also show SVN tab
-      if(e.target && e.target.id === 'neHlCanvasBtn') {
-        var tab = document.getElementById('svnPullTab');
-        if(tab) tab.classList.add('svn-visible');
-      }
-    }, true);
+    // Enter/Esc in node edit input
+    var inp=document.getElementById('svnNodeEditInput');
+    if(inp){
+      inp.addEventListener('keydown',function(e){
+        if(e.key==='Enter'){ e.preventDefault(); svnNodeEditSave(); }
+        if(e.key==='Escape') _svnNodeEditClose();
+      });
+    }
   }
 
-  if(document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _svnInit);
-  } else {
-    _svnInit();
-  }
+  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',_svnInit); }
+  else { _svnInit(); }
 
 })();
+
 
 // ══════════════════════════════════════════════════════════════════
 // FEATURE C: HIGHLIGHT BATCH MEMORY — Reset when notes editor closes
