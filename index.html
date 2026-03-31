@@ -19149,99 +19149,131 @@ function _neQmAiSetProgress(pct, msg) {
   if(txt)  txt.textContent = msg || '';
 }
 
-// ── Place nodes in a smart radial/tree layout ──
+// ══════════════════════════════════════════════════════════
+// ── Smart Layout: Topic center-top, groups below, children
+//    directly under parent. Short arrows. No overlap.
+// ══════════════════════════════════════════════════════════
 function _neQmSmartLayout(nodes, edges, canvasW, canvasH) {
   if(!nodes.length) return;
-  var W = canvasW || 360, H = canvasH || 480;
-  var cx = W * 0.5, cy = H * 0.38;
 
-  // Find root nodes (no incoming edge)
-  var hasIncoming = {};
-  edges.forEach(function(e){ hasIncoming[e.to] = true; });
-  var roots = nodes.filter(function(n){ return !hasIncoming[n.id]; });
-  if(!roots.length) roots = [nodes[0]];
+  var W  = canvasW || 360;
+  var H  = canvasH || 480;
+  var cx = W * 0.5;
 
-  // BFS to assign positions
-  var positioned = {};
-  var queue = [];
-  var levelSpacingY = Math.min(H * 0.22, 100);
-  var nodeSpacingX  = Math.min(W * 0.28, 120);
-
-  // If single root — radial layout
-  if(roots.length === 1) {
-    var root = roots[0];
-    root.x = cx; root.y = cy * 0.55 + 30;
-    positioned[root.id] = true;
-
-    // children of root
-    var children = edges.filter(function(e){ return e.from===root.id; })
-                        .map(function(e){ return nodes.find(function(n){ return n.id===e.to; }); })
-                        .filter(Boolean);
-
-    var totalChildren = children.length;
-    children.forEach(function(child, i) {
-      if(positioned[child.id]) return;
-      var angle = ((2*Math.PI) / Math.max(totalChildren,1)) * i - Math.PI/2;
-      var r = Math.min(W,H) * 0.32;
-      child.x = cx + r * Math.cos(angle);
-      child.y = root.y + r * Math.sin(angle);
-      positioned[child.id] = true;
-      queue.push({node:child, depth:1});
-    });
-
-    // grandchildren — spread around their parent
-    queue.forEach(function(item) {
-      var parent = item.node;
-      var grandchildren = edges.filter(function(e){ return e.from===parent.id; })
-                               .map(function(e){ return nodes.find(function(n){ return n.id===e.to; }); })
-                               .filter(function(n){ return n && !positioned[n.id]; });
-      grandchildren.forEach(function(gc, i) {
-        var parentAngle = Math.atan2(parent.y - root.y, parent.x - root.x);
-        var spread = (Math.PI * 0.55) / Math.max(grandchildren.length, 1);
-        var ang = parentAngle + spread*(i - (grandchildren.length-1)/2);
-        var r2 = Math.min(W,H) * 0.18;
-        gc.x = parent.x + r2*Math.cos(ang);
-        gc.y = parent.y + r2*Math.sin(ang);
-        positioned[gc.id] = true;
-      });
-    });
-  } else {
-    // Multiple roots — spread horizontally
-    roots.forEach(function(r, ri) {
-      r.x = W * (0.18 + (ri/(Math.max(roots.length-1,1)))*0.64);
-      r.y = H * 0.18;
-      positioned[r.id] = true;
-      var children2 = edges.filter(function(e){ return e.from===r.id; })
-                           .map(function(e){ return nodes.find(function(n){ return n.id===e.to; }); })
-                           .filter(function(n){ return n && !positioned[n.id]; });
-      children2.forEach(function(c, ci) {
-        c.x = r.x + nodeSpacingX*(ci - (children2.length-1)/2);
-        c.y = r.y + levelSpacingY;
-        positioned[c.id] = true;
-        var gc2 = edges.filter(function(e){ return e.from===c.id; })
-                       .map(function(e){ return nodes.find(function(n){ return n.id===e.to; }); })
-                       .filter(function(n){ return n && !positioned[n.id]; });
-        gc2.forEach(function(g, gi) {
-          g.x = c.x + (nodeSpacingX*0.7)*(gi-(gc2.length-1)/2);
-          g.y = c.y + levelSpacingY;
-          positioned[g.id] = true;
-        });
-      });
-    });
+  // ── helpers ──
+  function nw(n){ return n.w || 130; }
+  function nh(n){ return n.h || 44;  }
+  function getChildren(parentId) {
+    return edges
+      .filter(function(e){ return e.from === parentId; })
+      .map(function(e){ return nodes.find(function(n){ return n.id === e.to; }); })
+      .filter(Boolean);
   }
 
-  // Any remaining unpositioned nodes — scatter at bottom
-  var unplaced = nodes.filter(function(n){ return !positioned[n.id]; });
-  unplaced.forEach(function(n, i) {
-    n.x = W*0.15 + (W*0.7/(Math.max(unplaced.length,1)))*i;
-    n.y = H*0.82;
+  // ── identify root (no incoming edge, or level==='root') ──
+  var hasIncoming = {};
+  edges.forEach(function(e){ hasIncoming[e.to] = true; });
+  var root = nodes.find(function(n){ return n.level === 'root'; })
+          || nodes.find(function(n){ return !hasIncoming[n.id]; })
+          || nodes[0];
+
+  var positioned = {};
+
+  // ── ROOT: horizontally centered, near top ──
+  var ROOT_Y = Math.max(nh(root)/2 + 10, H * 0.09);
+  root.x = cx;
+  root.y = ROOT_Y;
+  positioned[root.id] = true;
+
+  // ── PARENT GROUPS (direct children of root) ──
+  var parentNodes = getChildren(root.id);
+  var numParents  = parentNodes.length;
+
+  // Vertical gap between root bottom and parent center
+  var ROOT_TO_PAR_GAP = 52;
+  var PAR_Y = ROOT_Y + nh(root)/2 + ROOT_TO_PAR_GAP;
+
+  // Evenly spread parents across canvas width
+  var PAR_MARGIN = Math.max(nw(parentNodes[0]||{})/2 + 12, 55);
+  var usableW    = W - PAR_MARGIN * 2;
+
+  parentNodes.forEach(function(p, pi) {
+    if(positioned[p.id]) return;
+    p.x = numParents === 1
+          ? cx
+          : PAR_MARGIN + (usableW / Math.max(numParents - 1, 1)) * pi;
+    p.y = PAR_Y;
+    positioned[p.id] = true;
   });
 
-  // Clamp all to canvas bounds with margin
+  // ── CHILDREN (grandchildren of root, direct children of parent) ──
+  // Each parent's children stack vertically below, horizontally centred on parent
+  var CHILD_GAP_Y  = 48;   // vertical gap between child centers
+  var CHILD_GAP_X  = 8;    // horizontal padding for multi-column children
+
+  parentNodes.forEach(function(p) {
+    var children = getChildren(p.id).filter(function(c){ return !positioned[c.id]; });
+    var numC     = children.length;
+    if(!numC) return;
+
+    // For 1-2 children: single column under parent
+    // For 3-4 children: 2 columns; 5+: 2 columns (wrap)
+    var cols = numC <= 2 ? 1 : 2;
+    var colW = nw(children[0]||{}) + CHILD_GAP_X;
+
+    children.forEach(function(c, ci) {
+      var col = ci % cols;
+      var row = Math.floor(ci / cols);
+      // X: centre the column block on parent
+      var blockW = cols === 1 ? 0 : colW;
+      c.x = p.x + (col - (cols-1)/2) * blockW;
+      c.y = p.y + nh(p)/2 + CHILD_GAP_Y + row * (nh(c) + 10);
+      positioned[c.id] = true;
+
+      // ── GRANDCHILDREN (if any) ──
+      var grandChildren = getChildren(c.id).filter(function(g){ return !positioned[g.id]; });
+      grandChildren.forEach(function(g, gi) {
+        g.x = c.x + (gi - (grandChildren.length-1)/2) * (nw(g) + 6);
+        g.y = c.y + nh(c)/2 + 44;
+        positioned[g.id] = true;
+      });
+    });
+  });
+
+  // ── Unpositioned nodes ─ scatter below everything ──
+  var bottomY = 0;
+  nodes.forEach(function(n){ if(n.y) bottomY = Math.max(bottomY, n.y + nh(n)/2); });
+  bottomY += 44;
+  var unplaced = nodes.filter(function(n){ return !positioned[n.id]; });
+  unplaced.forEach(function(n, i) {
+    n.x = W * 0.15 + (W * 0.7 / Math.max(unplaced.length, 1)) * i;
+    n.y = bottomY;
+  });
+
+  // ── Resolve overlaps: nudge siblings apart ──
+  var ITER = 4;
+  for(var iter = 0; iter < ITER; iter++) {
+    for(var a = 0; a < nodes.length; a++) {
+      for(var b = a+1; b < nodes.length; b++) {
+        var na = nodes[a], nb = nodes[b];
+        var minDX = (nw(na) + nw(nb)) / 2 + 8;
+        var minDY = (nh(na) + nh(nb)) / 2 + 6;
+        var dx = nb.x - na.x, dy = nb.y - na.y;
+        if(Math.abs(dx) < minDX && Math.abs(dy) < minDY) {
+          // Push apart horizontally (prefer horizontal nudge)
+          var pushX = (minDX - Math.abs(dx)) / 2 + 1;
+          if(dx >= 0) { nb.x += pushX; na.x -= pushX; }
+          else        { nb.x -= pushX; na.x += pushX; }
+        }
+      }
+    }
+  }
+
+  // ── Clamp all nodes inside canvas ──
   nodes.forEach(function(n) {
-    var hw = (n.w||120)/2 + 16, hh = (n.h||40)/2 + 12;
-    n.x = Math.max(hw, Math.min(W-hw, n.x));
-    n.y = Math.max(hh, Math.min(H-hh, n.y));
+    var hw = nw(n)/2 + 10, hh = nh(n)/2 + 8;
+    n.x = Math.max(hw, Math.min(W - hw, n.x));
+    n.y = Math.max(hh, Math.min(H - hh, n.y));
   });
 }
 
@@ -19288,73 +19320,87 @@ async function neQmRunAiAdvanced() {
 
   // Collect notes data
   var noteData = _neQmGetRawNotes();
-  var rawText     = noteData.rawText;
-  var highlights  = noteData.highlights;
-  var topicName   = noteData.topicName || userCmd || 'Topic';
+  var rawText    = noteData.rawText;
+  var highlights = noteData.highlights;
+  var topicName  = noteData.topicName || userCmd || 'Topic';
 
   if(!rawText && !highlights.length && !userCmd) {
     showToast('⚠️ Notes ya Command kuchh to dein!', 'error');
     return;
   }
 
-  // Disable generate button
   if(genBtn) { genBtn.disabled = true; genBtn.textContent = '⏳ Generate ho raha hai...'; }
   _neQmAiSetProgress(10, '📖 Notes analyze ho rahi hain...');
 
-  // Build highlights section
-  var hlSection = '';
-  if(highlights.length) {
-    hlSection = '\n\nUSER KE HIGHLIGHTED POINTS (' + highlights.length + ' total):\n'
-      + highlights.map(function(h,i){ return (i+1) + '. ' + h; }).join('\n');
-  }
+  var hlSection = highlights.length
+    ? '\n\nUSER KE HIGHLIGHTED POINTS (' + highlights.length + ' total — inhe ZAROOR cover karo):\n'
+      + highlights.map(function(h,i){ return (i+1) + '. ' + h; }).join('\n')
+    : '';
 
-  // Map type instruction
   var typeInstr = {
-    auto:      'Sabse suitable structure choose karo (hierarchy, timeline, ya concept web — jo notes ke hisaab se best lage).',
-    hierarchy: 'Hierarchical tree structure banao: ek central parent node, phir child nodes, phir grandchild nodes.',
-    timeline:  'Timeline structure: events ko chronological order mein nodes mein rakho, ek ke baad ek connect karo.',
-    concept:   'Concept web: har concept ek node, unke beech meaningful relationships ke edges.',
-    compare:   'Comparison: do ya teen parallel branches banao, dono ke corresponding points ek level par.'
+    auto:      'Notes ke content ke hisaab se best structure choose karo.',
+    hierarchy: 'Hierarchical tree: topic center mein, phir groups, phir facts.',
+    timeline:  'Timeline: events chronological order mein, left se right ya top se bottom.',
+    concept:   'Concept web: concepts ko nodes mein, relationships ko edges mein.',
+    compare:   'Comparison: do ya teen parallel columns, corresponding points same level par.'
   };
 
   _neQmAiSetProgress(25, '🧠 AI ko deep analysis ke liye bhej raha hoon...');
 
-  // ── MASTER PROMPT ──
-  var systemPrompt = 'Tu ek expert Hindi educational mind map generator hai. Tera kaam hai student ke notes aur highlights ko deeply analyze karke ek MEANINGFUL, CONNECTED mind map banana — jo student ke liye revision mein actually useful ho.\n\nTu SIRF valid JSON return karega, koi aur text nahi.';
+  var systemPrompt = [
+    'Tu expert Hindi educational mind map generator hai.',
+    'Tu SIRF valid JSON return karega — koi markdown nahi, koi preamble nahi, koi explanation nahi.',
+    'Output BILKUL is format mein hoga:',
+    '{"mapTitle":"...","slides":[{"nodes":[...],"edges":[...]}]}'
+  ].join('\n');
 
-  var userPrompt = 'TOPIC: ' + topicName + '\n'
-    + (userCmd ? 'USER COMMAND: ' + userCmd + '\n' : '')
-    + '\n=== STUDENT KE RAW NOTES ===\n'
-    + (rawText ? rawText.substring(0, 4500) : '(Notes nahi hain — topic ke baare mein general map banao)')
-    + hlSection
-    + '\n\n=== TUMHARA KAAM ===\n'
-    + '1. Pehle raw notes ko POORA padho — samjho ki har sentence ka kya context hai, kis dynasty/event/concept se juda hai.\n'
-    + '2. Highlighted points dhundho. Har highlighted point ke liye note karo: yeh kis PURI line ka hissa hai? Us line ka poora meaning kya hai? Highlight thoda sa ho to bhi, poori line ka arth raw notes se samjho.\n'
-    + '3. Ab decide karo: kaunsi information ek hi node mein aa sakti hai? Aur kaunsi ke liye parent-child structure chahiye?\n'
-    + '4. GROUPING RULE: Facts ko uski ASLI connection ke hisaab se group karo — jaise ek raja ke saare facts ek parent node ke neeche, ek event ke saare facts ek parent ke neeche, ek theory ke facts ek parent ke neeche. Geography/economic/religious ko alag-alag sirf tab karo jab notes mein clearly alag topics hon.\n'
-    + '5. EK NODE MEIN COMPLETE INFORMATION: Ek fact ko do nodes mein mat baanto. Agar highlight ka ek hissa kisi node mein aur doosra hissa kisi aur mein jaata hai to — dono ko merge karo ya ek parent ke neeche rakho.\n'
-    + '6. MAX NODES: Ek map mein 2-3 main parent nodes, har parent ke neeche max 6-7 child nodes. Total max ~20 nodes.\n'
-    + '7. NUMBER FORMAT: Numbers aur dates English mein (1857, 273 BCE), baaki text Hindi mein.\n'
-    + '8. ' + (typeInstr[mapType] || typeInstr.auto) + '\n'
-    + '\nJSON FORMAT (SIRF YEH RETURN KARO, koi markdown nahi, koi explanation nahi):\n'
-    + '{\n'
-    + '  "mapTitle": "Map ka naam",\n'
-    + '  "nodes": [\n'
-    + '    {"id":"n1","text":"Main Topic\\nShort info","x":180,"y":120,"w":150,"h":50,"shape":"bubble","fill":"#fff3e0","stroke":"#e65100","textColor":"#333","level":"root"},\n'
-    + '    {"id":"n2","text":"Parent Group 1\\nContext line","x":80,"y":220,"w":140,"h":46,"shape":"bubble","fill":"#e8f5e9","stroke":"#2e7d32","textColor":"#1b5e20","level":"parent"},\n'
-    + '    {"id":"n3","text":"Child Fact\\n1857 — Complete fact","x":40,"y":310,"w":130,"h":44,"shape":"box","fill":"#fff","stroke":"#2e7d32","textColor":"#333","level":"child"}\n'
-    + '  ],\n'
-    + '  "edges": [\n'
-    + '    {"from":"n1","to":"n2","color":"#e65100","type":"arrow"},\n'
-    + '    {"from":"n2","to":"n3","color":"#2e7d32","type":"arrow"}\n'
-    + '  ]\n'
-    + '}\n'
-    + '\nNODE STYLING GUIDE:\n'
-    + '- root node: fill "#fff3e0", stroke "#e65100" (orange — main topic)\n'
-    + '- parent nodes: fill "#e8f5e9"/"#e3f2fd"/"#fce4ec", stroke "#2e7d32"/"#1565c0"/"#880e4f" (alag colors for alag parents)\n'
-    + '- child nodes: fill "#fff", stroke same as parent\n'
-    + '- Highlighted facts: fill "#fffde7", stroke "#f9a825" (golden — highlighted)\n'
-    + 'x,y range: 40-340 (canvas 360x480 ke liye). Spread karo well.';
+  var userPrompt = [
+    'TOPIC: ' + topicName,
+    userCmd ? 'USER COMMAND: ' + userCmd : '',
+    '',
+    '=== STUDENT KE RAW NOTES ===',
+    rawText ? rawText.substring(0, 4500) : '(Notes nahi hain — topic ke baare mein general map banao)',
+    hlSection,
+    '',
+    '=== STRICT RULES ===',
+    '1. TOPIC CENTER: Pehla node HAMESHA topic ka naam hoga — yahi root/center node hai. Iske neeche hi saari information aayegi.',
+    '2. SECTIONS MAT BANAO: "Geography", "Economy", "Religion", "Administration" jaisi invented headings BILKUL mat banao. Sirf jo connection notes mein clearly hai wahi use karo — jaise ek raja ke facts ek parent ke neeche, ek event ke facts ek parent ke neeche.',
+    '3. EK SLIDE MEIN MAX 8 NODES: Total nodes zyada ho sakti hain — lekin har slide mein max 8 nodes rakho (topic center + uske direct children). Agar aur facts hain to wo agle slide mein jaayenge.',
+    '4. SLIDES ARRAY: Map ek ya zyada slides mein split hoti hai. Har slide ka ek "nodes" array aur ek "edges" array hota hai. Topic center node har slide mein repeat hogi (same id use karo).',
+    '5. EK FACT EK NODE: Kisi fact ko do nodes mein mat baanto. Agar kisi fact mein zyada content hai to us fact ka ek parent node banao aur uske child nodes banao (sub-nodes mein breakdown karo).',
+    '6. COMPLETE INFORMATION: Highlighted text ki poori line ka matlab notes se samjho, sirf highlighted word nahi — poori line ka summary ek node mein daal do.',
+    '7. NUMBER FORMAT: Dates aur numbers English mein (1857, 273 BCE, 50,000), baaki text Hindi mein.',
+    '8. CONNECTIONS: Nodes ke beech connection meaningful hona chahiye — jo notes mein actual relation ho. Long arrows se bachne ke liye parent ke directly neeche hi child rakho.',
+    '9. MAP TYPE: ' + (typeInstr[mapType] || typeInstr.auto),
+    '',
+    '=== JSON FORMAT (SIRF YEH RETURN KARO) ===',
+    '{',
+    '  "mapTitle": "' + topicName + '",',
+    '  "slides": [',
+    '    {',
+    '      "nodes": [',
+    '        {"id":"root","text":"' + topicName.replace(/"/g,"'") + '","shape":"bubble","fill":"#fff3e0","stroke":"#e65100","textColor":"#b71c1c","level":"root","w":155,"h":52},',
+    '        {"id":"p1","text":"Group 1 Name\\nContext","shape":"bubble","fill":"#e8f5e9","stroke":"#2e7d32","textColor":"#1b5e20","level":"parent","w":140,"h":46},',
+    '        {"id":"c1","text":"Child Fact\\n273 BCE — detail","shape":"box","fill":"#fff","stroke":"#2e7d32","textColor":"#333","level":"child","w":125,"h":42}',
+    '      ],',
+    '      "edges": [',
+    '        {"from":"root","to":"p1","color":"#e65100","type":"arrow"},',
+    '        {"from":"p1","to":"c1","color":"#2e7d32","type":"arrow"}',
+    '      ]',
+    '    }',
+    '  ]',
+    '}',
+    '',
+    'STYLING RULES:',
+    '- root: fill "#fff3e0" stroke "#e65100" textColor "#b71c1c"',
+    '- parent 1: fill "#e8f5e9" stroke "#2e7d32" textColor "#1b5e20"',
+    '- parent 2: fill "#e3f2fd" stroke "#1565c0" textColor "#0d47a1"',
+    '- parent 3: fill "#fce4ec" stroke "#880e4f" textColor "#880e4f"',
+    '- child nodes: fill "#fff" stroke same as parent',
+    '- highlighted facts: fill "#fffde7" stroke "#f9a825" textColor "#5d4037"',
+    '- w/h can vary: root ~155x52, parent ~135-145x44-48, child ~120-130x40-44',
+    'x,y values: 40-340 range (layout will be recalculated, just approximate positions).'
+  ].filter(Boolean).join('\n');
 
   try {
     _neQmAiSetProgress(40, '🤖 AI notes digest kar raha hai...');
@@ -19364,44 +19410,50 @@ async function neQmRunAiAdvanced() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 3500,
+        max_tokens: 4000,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }]
       })
     });
 
-    _neQmAiSetProgress(70, '📐 Map structure ban raha hai...');
+    _neQmAiSetProgress(65, '📐 Map structure ban raha hai...');
 
     var respData = await resp.json();
     if(respData.error) throw new Error(respData.error.message || 'API error');
 
     var rawResp = (respData.content||[]).map(function(c){ return c.text||''; }).join('');
-
-    // Extract JSON robustly
-    var jsonStr = null;
     var jsonMatch = rawResp.match(/\{[\s\S]*\}/);
-    if(jsonMatch) jsonStr = jsonMatch[0];
-    if(!jsonStr) throw new Error('AI se valid JSON nahi mila');
+    if(!jsonMatch) throw new Error('AI se valid JSON nahi mila');
 
-    var parsed = JSON.parse(jsonStr);
-    if(!parsed.nodes || !parsed.nodes.length) throw new Error('Nodes nahi mile response mein');
+    var parsed = JSON.parse(jsonMatch[0]);
 
-    _neQmAiSetProgress(85, '🗺️ Canvas par place kar raha hoon...');
+    // Support both old format {nodes,edges} and new {slides:[{nodes,edges}]}
+    var slides = [];
+    if(parsed.slides && parsed.slides.length) {
+      slides = parsed.slides;
+    } else if(parsed.nodes && parsed.nodes.length) {
+      slides = [{ nodes: parsed.nodes, edges: parsed.edges||[] }];
+    } else {
+      throw new Error('Nodes nahi mile response mein');
+    }
 
-    // Save history before modifying
-    _neQmSaveHistory();
-    if(!doMerge) { _neQm.nodes = []; _neQm.edges = []; }
+    _neQmAiSetProgress(82, '🗺️ Canvas par place kar raha hoon...');
 
-    // Map old IDs to new unique IDs
-    var idMap = {};
     var W = _neQm.canvas ? _neQm.canvas.width  : 360;
     var H = _neQm.canvas ? _neQm.canvas.height : 480;
 
-    // Add nodes (positions will be recalculated by smart layout)
-    parsed.nodes.forEach(function(n) {
+    _neQmSaveHistory();
+    if(!doMerge) { _neQm.nodes = []; _neQm.edges = []; }
+
+    // ── Process first slide only for the QMap overlay ──
+    // (QMap is a single-canvas overlay — we show slide 1, rest go to Study Canvas if needed)
+    var firstSlide = slides[0] || { nodes:[], edges:[] };
+    var idMap = {};
+
+    firstSlide.nodes.forEach(function(n) {
       var newId = 'n' + Date.now() + Math.floor(Math.random()*99999);
       idMap[n.id] = newId;
-      var node = {
+      _neQm.nodes.push({
         id:        newId,
         text:      n.text || '',
         x:         (n.x || 180) * (W / 360),
@@ -19413,12 +19465,10 @@ async function neQmRunAiAdvanced() {
         stroke:    n.stroke || '#e65100',
         textColor: n.textColor || '#333',
         level:     n.level || 'child'
-      };
-      _neQm.nodes.push(node);
+      });
     });
 
-    // Add edges with remapped IDs
-    (parsed.edges || []).forEach(function(e) {
+    (firstSlide.edges || []).forEach(function(e) {
       _neQm.edges.push({
         from:  idMap[e.from] || e.from,
         to:    idMap[e.to]   || e.to,
@@ -19427,33 +19477,52 @@ async function neQmRunAiAdvanced() {
       });
     });
 
-    // Apply smart layout to all new nodes
+    // Apply structured layout (topic center at top, children radiating)
     _neQmSmartLayout(_neQm.nodes, _neQm.edges, W, H);
-
-    _neQmAiSetProgress(100, '✅ Map ready!');
+    _neQmAiSetProgress(95, '✅ Map ready!');
     _neQmRedraw();
 
-    // Close dialog
+    // ── If multiple slides → push extra slides to Study Canvas ──
+    if(slides.length > 1) {
+      _neQmAiPushExtraSlidesToCanvas(slides.slice(1), parsed.mapTitle || topicName);
+    }
+
     setTimeout(function(){
       neQmCloseAiDialog();
-      // Show save banner
       _neQmAiShowSaveBanner(parsed.mapTitle || topicName);
-      showToast('✅ Smart Map ban gaya! ' + _neQm.nodes.length + ' nodes.', 'success');
-    }, 400);
+      var extra = slides.length > 1 ? ' (+' + (slides.length-1) + ' slides Study Canvas mein)' : '';
+      showToast('✅ Smart Map ban gaya! ' + _neQm.nodes.length + ' nodes.' + extra, 'success');
+    }, 350);
 
   } catch(err) {
     _neQmAiSetProgress(0, '');
-    var prog = document.getElementById('neQmAiProgress');
-    if(prog) prog.style.display = 'none';
+    var prog2 = document.getElementById('neQmAiProgress');
+    if(prog2) prog2.style.display = 'none';
     showToast('❌ Map error: ' + (err.message||err), 'error');
     console.error('neQmRunAiAdvanced error:', err);
   } finally {
     if(genBtn) { genBtn.disabled = false; genBtn.textContent = '✦ Smart Map Generate Karo'; }
     setTimeout(function(){
-      var prog = document.getElementById('neQmAiProgress');
-      if(prog) prog.style.display = 'none';
-    }, 2000);
+      var prog3 = document.getElementById('neQmAiProgress');
+      if(prog3) prog3.style.display = 'none';
+    }, 2200);
   }
+}
+
+// ── Push extra AI map slides to Study Canvas (slide 2, 3...) ──
+function _neQmAiPushExtraSlidesToCanvas(extraSlides, mapTitle) {
+  if(!extraSlides || !extraSlides.length) return;
+  // Only if canvas is initialized
+  if(!_sc || !_sc.slides) return;
+  extraSlides.forEach(function(slide, si) {
+    if(!slide.nodes || !slide.nodes.length) return;
+    var slideTitle = '🗺️ ' + (mapTitle||'AI Map') + ' · Part ' + (si+2);
+    var ns = _scNewSlide(slideTitle);
+    ns.qmNodes = JSON.parse(JSON.stringify(slide.nodes));
+    ns.qmEdges = JSON.parse(JSON.stringify(slide.edges||[]));
+    _sc.slides.push(ns);
+  });
+  _scRenderSlideNav && _scRenderSlideNav();
 }
 
 // ── Legacy compatibility (called from old places) ──
@@ -27840,76 +27909,129 @@ window.neSendAllHighlightsToCanvas = function() {
 
 // ══ END SEND ALL HIGHLIGHTS → CANVAS ══
 
-// ── Helper: actually send items array to canvas slides ──
+// ══════════════════════════════════════════════════════════════════
+// ── Helper: send highlight items to canvas as topic-heading slides ──
+// ── Topic name = heading (center), 8 items max per slide          ──
+// ── Already-sent items skip hote hain, naye extra heading slide   ──
+// ══════════════════════════════════════════════════════════════════
 window._neDoSendItemsToCanvas = function(items, _batchKey) {
   if(!items || !items.length) {
     showToast && showToast('⚠️ Highlights mein koi text nahi mila!', 'error');
     return;
   }
 
-  // ── Layout ──
   scSnapshot();
 
-  var wrap = document.getElementById('scCanvasWrap');
-  var wW   = wrap ? (wrap.offsetWidth  || 340) : 340;
-  var wH   = wrap ? (wrap.offsetHeight || 480) : 480;
-
-  var PAD         = 14;
-  var GAP_X       = 12;
-  var GAP_Y       = 10;
-  var COLS        = (wW >= 300) ? 2 : 1;
-  var BOX_W       = COLS === 2
-                    ? Math.floor((wW - PAD*2 - GAP_X) / 2)
-                    : (wW - PAD*2);
-  var FONT_SZ     = 13;
-  var LINE_H      = FONT_SZ * 1.65;
-  var BOX_PAD_V   = 10;
-  var CHARS_PER   = Math.max(15, Math.floor((BOX_W - 20) / (FONT_SZ * 0.57)));
+  // ── Canvas layout constants ──
+  var wrap  = document.getElementById('scCanvasWrap');
+  var wW    = wrap ? (wrap.offsetWidth  || 340) : 340;
+  var wH    = wrap ? (wrap.offsetHeight || 480) : 480;
+  var PAD   = 12;
+  var GAP_X = 10;
+  var GAP_Y = 9;
+  var COLS  = wW >= 300 ? 2 : 1;
+  var BOX_W = COLS === 2
+              ? Math.floor((wW - PAD*2 - GAP_X) / 2)
+              : (wW - PAD*2);
+  var FONT_SZ   = 12;
+  var LINE_H    = FONT_SZ * 1.55;
+  var BOX_PAD_V = 8;
+  var CHARS_PER = Math.max(14, Math.floor((BOX_W - 18) / (FONT_SZ * 0.56)));
+  var HDR_H     = 28; // heading block height
+  var MAX_ITEMS_PER_SLIDE = 8;
 
   function estH(txt) {
-    var lines = Math.ceil(txt.length / CHARS_PER) + (txt.match(/\n/g)||[]).length;
-    return Math.max(1, lines) * LINE_H + BOX_PAD_V * 2 + 8;
+    var lines = Math.ceil((txt||'').length / CHARS_PER) + ((txt||'').match(/\n/g)||[]).length;
+    return Math.max(1, lines) * LINE_H + BOX_PAD_V * 2 + 6;
   }
 
-  // ── HIGHLIGHTS: NAYI DEDICATED SLIDES — Batch naming (Sent1, Sent2...) ──
-  scSnapshot();
+  // ── Get topic name for heading ──
+  var topicName = '';
+  try {
+    var _eCtx3 = (typeof _editorState !== 'undefined') ? _editorState : null;
+    var _t3 = _eCtx3 ? getTop(_eCtx3.sid, _eCtx3.secid, _eCtx3.tid) : null;
+    if(_t3) topicName = _t3.name || '';
+  } catch(e) {}
+  if(!topicName) topicName = 'Notes';
 
-  var _existingBatches = _sc.slides.filter(function(sl){ return sl.title && sl.title.indexOf('📌 Highlights') !== -1; });
-  var _maxBatch = 0;
-  _existingBatches.forEach(function(sl){
-    var m = sl.title.match(/Sent(\d+)/);
-    if(m) { var n = parseInt(m[1]); if(n > _maxBatch) _maxBatch = n; }
+  // ── Find existing heading slides for this topic ──
+  // Heading slide title format: "📌 <topicName> · Batch N"
+  var batchPrefix = '📌 ' + topicName + ' · Batch ';
+  var existingBatchNums = [];
+  _sc.slides.forEach(function(sl){
+    if(sl.title && sl.title.indexOf(batchPrefix) === 0) {
+      var num = parseInt(sl.title.replace(batchPrefix,'')) || 0;
+      if(num) existingBatchNums.push(num);
+    }
   });
-  var _thisBatch = _maxBatch + 1;
-  var _hlNum = 0;
-  function _makeHlSlide() {
-    _hlNum++;
-    var batchLabel = '📌 Highlights Sent' + _thisBatch + (_hlNum > 1 ? ' (' + _hlNum + ')' : '');
-    var ns = _scNewSlide(batchLabel);
+  var nextBatchNum = existingBatchNums.length
+    ? Math.max.apply(null, existingBatchNums) + 1
+    : 1;
+
+  // ── Heading block factory ──
+  function _makeHeadingBlock(batchNum) {
+    var label = topicName + (batchNum > 1 ? '  —  Set ' + batchNum : '');
+    return {
+      id:        'scb_hdg_' + Date.now() + '_' + batchNum,
+      x:         PAD,
+      y:         PAD,
+      w:         wW - PAD*2,
+      html:      '<b>' + label.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</b>',
+      fontSize:  14,
+      color:     '#1565c0',
+      bold:      true,
+      italic:    false,
+      underline: false,
+      angle:     0,
+      _isHeading: true
+    };
+  }
+
+  // ── Slide factory with heading ──
+  var _slidesMade = 0;
+  function _makeHlSlide(batchNum) {
+    _slidesMade++;
+    var slideTitle = batchPrefix + batchNum + (_slidesMade > 1 ? ' ('+_slidesMade+')' : '');
+    var ns = _scNewSlide(slideTitle);
+    // Add heading block
+    ns.textBlocks.push(_makeHeadingBlock(batchNum));
     _sc.slides.push(ns);
     return _sc.slides.length - 1;
   }
 
-  var slideIdx = _makeHlSlide();
+  // ── Start first slide ──
+  var currentBatchNum = nextBatchNum;
+  var slideIdx = _makeHlSlide(currentBatchNum);
   _sc.curSlide = slideIdx;
-  scRenderAll && scRenderAll(); _scSyncTextBlocksDOM && _scSyncTextBlocksDOM(); _scRenderSlideNav && _scRenderSlideNav();
+  scRenderAll && scRenderAll();
+  _scSyncTextBlocksDOM && _scSyncTextBlocksDOM();
+  _scRenderSlideNav && _scRenderSlideNav();
 
-  var colY   = [PAD, PAD];
-  var placed = 0;
+  var startY     = PAD + HDR_H + GAP_Y; // below heading
+  var colY       = [startY, startY];
+  var placed     = 0;
+  var itemsOnSlide = 0;
 
   items.forEach(function(item, i) {
     var bH = estH(item.text);
+
+    // Check: if 8 items placed on this slide OR no room → new slide
     var c  = COLS === 1 ? 0 : (colY[0] <= colY[1] ? 0 : 1);
     var y  = colY[c];
+    var noRoom = (y + bH > wH - PAD);
+    var tooMany = (itemsOnSlide >= MAX_ITEMS_PER_SLIDE);
 
-    if(y + bH > wH - PAD) {
+    if(noRoom || tooMany) {
       _scSyncCurrentSlideFromDOM && _scSyncCurrentSlideFromDOM();
-      slideIdx = _makeHlSlide();
+      // New slide — same batch number, just overflow page
+      slideIdx = _makeHlSlide(currentBatchNum);
       _sc.curSlide = slideIdx;
-      colY = [PAD, PAD];
-      c = 0;
-      y = PAD;
-      scRenderAll && scRenderAll(); _scSyncTextBlocksDOM && _scSyncTextBlocksDOM(); _scRenderSlideNav && _scRenderSlideNav();
+      colY = [startY, startY];
+      c = 0; y = startY;
+      itemsOnSlide = 0;
+      scRenderAll && scRenderAll();
+      _scSyncTextBlocksDOM && _scSyncTextBlocksDOM();
+      _scRenderSlideNav && _scRenderSlideNav();
     }
 
     var x   = PAD + c * (BOX_W + GAP_X);
@@ -27948,13 +28070,17 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
 
     colY[c] = y + bH + GAP_Y;
     placed++;
+    itemsOnSlide++;
   });
 
+  _scSyncCurrentSlideFromDOM && _scSyncCurrentSlideFromDOM();
   _scRenderSlideNav && _scRenderSlideNav();
 
-  var _hlTotal = _hlNum;
-  var msg = '✅ Batch Sent' + _thisBatch + ': ' + placed + ' nayi highlight' + (placed>1?'s':'') + ' → ' + _hlTotal + ' nayi slide' + (_hlTotal>1?'n':'') + ' mein!';
-  showToast && showToast(msg, 'success');
+  var totalSlides = _slidesMade;
+  showToast && showToast(
+    '✅ ' + placed + ' highlight' + (placed>1?'s':'') + ' → "' + topicName + '" ke ' + totalSlides + ' slide' + (totalSlides>1?'s':'')+' mein add ho gaye!',
+    'success'
+  );
 };
 
 window._scSmartSendToCanvas = function(text) {
