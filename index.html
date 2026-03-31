@@ -3620,11 +3620,71 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     </svg>
   </button>
   <div class="neqm-sep"></div>
-  <button class="neqm-btn" onclick="neQmRunAiPrompt()" title="AI se map banao" style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;border-color:transparent;font-size:0.75rem;">✦</button>
+  <button class="neqm-btn" onclick="neQmOpenAiDialog()" title="AI se Smart Map banao (Notes + Highlights analyze karega)" style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;border-color:transparent;font-size:0.75rem;padding:0 10px;min-width:44px;">✦ AI</button>
   <button class="neqm-btn" onclick="neQmToggle()" title="Band karo" style="color:#c62828;font-weight:900;font-size:0.8rem;">✕</button>
 </div>
 <!-- Hidden AI input for JS compatibility -->
-<input id="neQmAiInput" type="text" style="position:fixed;left:-9999px;opacity:0;pointer-events:none;" onkeydown="if(event.key==='Enter') neQmRunAiPrompt()">
+<input id="neQmAiInput" type="text" style="position:fixed;left:-9999px;opacity:0;pointer-events:none;" onkeydown="if(event.key==='Enter') neQmOpenAiDialog()">
+
+<!-- ═══ AI SMART MAP DIALOG ═══ -->
+<div id="neQmAiDialog" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(10,12,20,0.82);align-items:center;justify-content:center;backdrop-filter:blur(4px);">
+  <div style="background:var(--surface);border-radius:18px;padding:22px 20px 18px;max-width:400px;width:calc(100%-32px);box-shadow:0 8px 40px rgba(74,20,140,0.35);border:1.5px solid rgba(74,20,140,0.25);position:relative;">
+    <!-- Header -->
+    <div style="display:flex;align-items:center;gap:9px;margin-bottom:14px;">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#4a148c,#7b1fa2);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;">✦</div>
+      <div>
+        <div style="font-weight:800;font-size:0.92rem;color:var(--text);">AI Smart Map</div>
+        <div style="font-size:0.68rem;color:var(--text2);margin-top:1px;">Notes + Highlights ka deep analysis karke map banega</div>
+      </div>
+      <button onclick="neQmCloseAiDialog()" style="margin-left:auto;background:none;border:none;font-size:1.2rem;color:var(--text2);cursor:pointer;padding:4px;border-radius:8px;">✕</button>
+    </div>
+
+    <!-- Info strip -->
+    <div id="neQmAiInfoStrip" style="background:linear-gradient(135deg,rgba(74,20,140,0.08),rgba(123,31,162,0.06));border:1px solid rgba(74,20,140,0.15);border-radius:10px;padding:9px 11px;margin-bottom:13px;font-size:0.7rem;color:var(--text2);line-height:1.5;">
+      <span id="neQmAiStripText">📋 Notes load ho raha hai...</span>
+    </div>
+
+    <!-- User command -->
+    <div style="margin-bottom:12px;">
+      <label style="font-size:0.72rem;font-weight:700;color:var(--text2);display:block;margin-bottom:5px;">आप AI को क्या command देना चाहते हैं?</label>
+      <textarea id="neQmAiCmd" rows="3" placeholder="जैसे: मौर्य साम्राज्य का map बनाओ, या: economy aur rulers ko connect karo, ya blank chhodo automatic ke liye..." style="width:100%;box-sizing:border-box;border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;font-size:0.78rem;font-family:inherit;color:var(--text);background:var(--surface2);resize:vertical;outline:none;line-height:1.5;" onkeydown="if(event.ctrlKey&&event.key==='Enter'){event.preventDefault();neQmRunAiAdvanced();}"></textarea>
+      <div style="font-size:0.62rem;color:var(--text2);margin-top:3px;">Ctrl+Enter se bhi generate kar sakte ho</div>
+    </div>
+
+    <!-- Map type -->
+    <div style="margin-bottom:13px;">
+      <label style="font-size:0.72rem;font-weight:700;color:var(--text2);display:block;margin-bottom:6px;">Map Type:</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="neqm-ai-type active" data-type="auto" onclick="neQmAiSelectType(this)" style="font-size:0.68rem;padding:5px 10px;border-radius:8px;border:1.5px solid rgba(74,20,140,0.3);background:rgba(74,20,140,0.12);color:#7b1fa2;cursor:pointer;font-weight:700;">🤖 Auto</button>
+        <button class="neqm-ai-type" data-type="hierarchy" onclick="neQmAiSelectType(this)" style="font-size:0.68rem;padding:5px 10px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;font-weight:600;">🌿 Hierarchy</button>
+        <button class="neqm-ai-type" data-type="timeline" onclick="neQmAiSelectType(this)" style="font-size:0.68rem;padding:5px 10px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;font-weight:600;">📅 Timeline</button>
+        <button class="neqm-ai-type" data-type="concept" onclick="neQmAiSelectType(this)" style="font-size:0.68rem;padding:5px 10px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;font-weight:600;">🧠 Concept</button>
+        <button class="neqm-ai-type" data-type="compare" onclick="neQmAiSelectType(this)" style="font-size:0.68rem;padding:5px 10px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;font-weight:600;">⚖️ Compare</button>
+      </div>
+    </div>
+
+    <!-- Merge/Replace -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;" id="neQmAiMergeRow">
+      <label style="font-size:0.72rem;color:var(--text2);display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input type="checkbox" id="neQmAiMerge" style="width:14px;height:14px;cursor:pointer;">
+        Existing nodes ke saath merge karo
+      </label>
+    </div>
+
+    <!-- Generate button -->
+    <button id="neQmAiGenBtn" onclick="neQmRunAiAdvanced()" style="width:100%;padding:13px;border-radius:12px;background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;border:none;font-weight:800;font-size:0.9rem;cursor:pointer;font-family:inherit;letter-spacing:0.3px;">
+      ✦ Smart Map Generate Karo
+    </button>
+
+    <!-- Progress -->
+    <div id="neQmAiProgress" style="display:none;margin-top:12px;">
+      <div style="font-size:0.72rem;color:var(--text2);margin-bottom:6px;text-align:center;" id="neQmAiProgressText">🔍 Notes analyze ho raha hai...</div>
+      <div style="background:var(--surface2);border-radius:10px;height:6px;overflow:hidden;">
+        <div id="neQmAiProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#4a148c,#e65100);border-radius:10px;transition:width 0.4s ease;"></div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- QM NODE INPUT POPUP -->
 <div id="neQmNodeInput">
@@ -16273,43 +16333,61 @@ function setQmAiType(type, btn) {
 }
 
 async function runQmAiDraw() {
-  var topic = (document.getElementById('qmAiTopic')||{}).value||'';
+  var topic   = (document.getElementById('qmAiTopic')||{}).value||'';
   if(!topic.trim()){ showToast('Topic likhein!','error'); return; }
-  var depth = (document.getElementById('qmAiDepth')||{}).value||'medium';
-
+  var depth   = (document.getElementById('qmAiDepth')||{}).value||'medium';
   var loading = document.getElementById('qmAiLoading');
   var fill    = document.getElementById('qmAiLoadingFill');
   var btn     = document.getElementById('qmAiBtn');
   if(loading) loading.style.display='flex';
   if(btn) btn.disabled=true;
 
-  // Animate progress bar
   var prog=0;
   var progInt = setInterval(function(){
-    prog = Math.min(prog+8,88);
+    prog = Math.min(prog+6,85);
     if(fill) fill.style.width=prog+'%';
-  }, 200);
+  }, 250);
 
-  var typePrompts = {
-    tree:      'hierarchical tree structure',
-    mindmap:   'mind map with central topic and branches',
-    flowchart: 'step-by-step flowchart/process',
-    timeline:  'timeline with events in order',
-    comparison:'comparison/pros-cons structure',
-    cycle:     'cycle/loop process'
+  // Collect notes from current topic (same as neQm version)
+  var noteData = (typeof _neQmGetRawNotes === 'function') ? _neQmGetRawNotes() : { rawText:'', highlights:[], topicName: topic };
+  var rawText    = noteData.rawText || '';
+  var highlights = noteData.highlights || [];
+
+  var typeInstrQm = {
+    tree:       'Hierarchical tree: 1 root → parent nodes → child nodes.',
+    mindmap:    'Mind map: central topic → thematic branches → sub-facts.',
+    flowchart:  'Step-by-step flow: events/steps ek ke baad ek connected.',
+    timeline:   'Timeline: chronological order mein nodes.',
+    comparison: 'Comparison: parallel columns, corresponding points same level par.',
+    cycle:      'Cycle: circular chain of events/steps.'
   };
   var depthInst = {
-    simple:   '3-5 nodes only, very concise',
-    medium:   '6-10 nodes, moderate detail',
-    detailed: '10-15 nodes, comprehensive'
+    simple:   'Max 6 nodes total (1 root + 5 children).',
+    medium:   'Max 14 nodes (2-3 parents, 4-5 children each).',
+    detailed: 'Max 22 nodes (3-4 parents, 5-6 children each, kuch grandchildren).'
   };
 
-  var prompt = 'Create a ' + (typePrompts[_qmAiType]||'mind map') + ' for: "' + topic + '".\n'
-    + 'Detail level: ' + (depthInst[depth]||'medium') + '.\n'
-    + 'Return ONLY valid JSON like this (no explanation, no markdown):\n'
-    + '{"nodes":[{"id":"n1","text":"Main Topic","x":200,"y":200,"w":140,"h":44,"shape":"bubble","fill":"#fff3e0","stroke":"#e65100","textColor":"#333"}],'
-    + '"edges":[{"from":"n1","to":"n2","color":"#999","type":"arrow"}]}\n'
-    + 'Use varied x,y coords to spread nodes nicely. Hindi text is OK if topic is in Hindi.';
+  var hlSection = highlights.length
+    ? '\n\nHIGHLIGHTED POINTS:\n' + highlights.slice(0,20).map(function(h,i){ return (i+1)+'. '+h; }).join('\n')
+    : '';
+
+  var systemPrompt = 'Tu expert Hindi educational mind map generator hai. SIRF valid JSON return kar, koi aur text nahi.';
+
+  var userPrompt = 'TOPIC: ' + topic + '\n'
+    + (rawText ? '\n=== STUDENT KE NOTES ===\n' + rawText.substring(0,3500) : '')
+    + hlSection
+    + '\n\n=== KAAM ===\n'
+    + '1. Notes ko poora padho, har fact ka context samjho.\n'
+    + '2. Highlighted points ki puri line ka matlab notes se samjho.\n'
+    + '3. Facts ko ASLI connection ke hisaab se group karo (dynasty/event/concept — geography/economy sirf tab alag karo jab alag topic ho).\n'
+    + '4. Ek fact ko do nodes mein mat baanto — ek node mein complete information do.\n'
+    + '5. Map type: ' + (typeInstrQm[_qmAiType]||typeInstrQm.mindmap) + '\n'
+    + '6. Size: ' + (depthInst[depth]||depthInst.medium) + '\n'
+    + '7. Numbers/dates: English mein, baaki text Hindi mein.\n'
+    + '\nJSON FORMAT (SIRF YEH, koi markdown nahi):\n'
+    + '{"mapTitle":"naam","nodes":[{"id":"n1","text":"Root\\nInfo","x":180,"y":100,"w":145,"h":48,"shape":"bubble","fill":"#fff3e0","stroke":"#e65100","textColor":"#333","level":"root"}],"edges":[{"from":"n1","to":"n2","color":"#e65100","type":"arrow"}]}\n'
+    + 'STYLING: root=orange(#fff3e0/#e65100), parents=green/blue/purple alternating, children=white with parent color stroke, highlighted facts=golden(#fffde7/#f9a825).\n'
+    + 'x range: 40-360, y range: 40-460.';
 
   try {
     var response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -16317,42 +16395,47 @@ async function runQmAiDraw() {
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        messages:[{role:'user', content: prompt}]
+        max_tokens: 3000,
+        system: systemPrompt,
+        messages:[{role:'user', content: userPrompt}]
       })
     });
     var data = await response.json();
+    if(data.error) throw new Error(data.error.message||'API error');
     var text = (data.content||[]).map(function(c){return c.text||'';}).join('');
-    // Extract JSON
     var jsonMatch = text.match(/\{[\s\S]*\}/);
     if(!jsonMatch) throw new Error('No JSON found');
     var parsed = JSON.parse(jsonMatch[0]);
     if(parsed.nodes && parsed.nodes.length){
       qmSaveHistory();
-      // Merge into existing or replace
       var merge = _qm.nodes.length && confirm('Existing nodes ke saath merge karo? (Cancel = Replace karo)');
       if(!merge){ _qm.nodes=[]; _qm.edges=[]; }
       var idMap = {};
+      var CW = _qm.canvas ? _qm.canvas.width  : 400;
+      var CH = _qm.canvas ? _qm.canvas.height : 480;
       parsed.nodes.forEach(function(n){
-        var newId = 'n'+Date.now()+Math.floor(Math.random()*9999);
+        var newId = 'n'+Date.now()+Math.floor(Math.random()*99999);
         idMap[n.id] = newId;
-        n.id = newId;
-        // Scale coords to canvas
-        if(_qm.canvas){
-          n.x = n.x * (_qm.canvas.width/400);
-          n.y = n.y * (_qm.canvas.height/400);
-        }
-        _qm.nodes.push(n);
+        _qm.nodes.push({
+          id: newId, text: n.text||'', shape: n.shape||'bubble',
+          fill: n.fill||'#fff3e0', stroke: n.stroke||'#e65100', textColor: n.textColor||'#333',
+          w: n.w||135, h: n.h||46, level: n.level||'child',
+          x: (n.x||180)*(CW/400), y: (n.y||180)*(CH/480)
+        });
       });
       (parsed.edges||[]).forEach(function(e){
-        e.from = idMap[e.from]||e.from;
-        e.to   = idMap[e.to]  ||e.to;
-        _qm.edges.push(e);
+        _qm.edges.push({ from:idMap[e.from]||e.from, to:idMap[e.to]||e.to, color:e.color||'#999', type:e.type||'arrow' });
       });
+      // Apply smart layout
+      if(typeof _neQmSmartLayout === 'function') _neQmSmartLayout(_qm.nodes, _qm.edges, CW, CH);
       qmRedraw();
-      // Switch back to nodes tab
       switchQmTab('nodes', null);
-      showToast('✅ AI Map ready! Nodes tab pe edit karo', 'success');
+      // Save banner
+      var mapTitle = parsed.mapTitle || topic;
+      if(typeof _neQmAiShowSaveBanner === 'function') {
+        _neQmAiShowSaveBanner(mapTitle);
+      }
+      showToast('✅ Smart Map ready! '+_qm.nodes.length+' nodes.', 'success');
     } else {
       throw new Error('No nodes in response');
     }
@@ -16365,7 +16448,7 @@ async function runQmAiDraw() {
       if(loading) loading.style.display='none';
       if(fill) fill.style.width='0%';
       if(btn) btn.disabled=false;
-    }, 500);
+    }, 600);
   }
 }
 
@@ -18942,73 +19025,439 @@ function neQmSaveAndClose() {
   showToast('✅ Map library mein save ho gaya!', 'success');
 }
 
-// ── AI Map wrapper — prompt dialog se topic lena ──
-async function neQmRunAiPrompt() {
-  var inp = document.getElementById('neQmAiInput');
-  var topic = (inp && inp.value) ? inp.value.trim() : '';
-  if(!topic) {
-    topic = (window.prompt('AI Map ke liye topic likhein:') || '').trim();
-    if(inp) inp.value = topic;
-  }
-  if(!topic) { showToast('Topic likhein!', 'error'); return; }
-  // temporarily set input value and call original
-  if(inp) inp.value = topic;
-  await neQmRunAi();
+// ════════════════════════════════════════════════════════════
+// ══ ADVANCED AI SMART MAP — Notes + Highlights Deep Analysis ══
+// ════════════════════════════════════════════════════════════
+
+// Selected map type for AI dialog
+var _neQmAiSelectedType = 'auto';
+
+function neQmAiSelectType(btn) {
+  document.querySelectorAll('.neqm-ai-type').forEach(function(b){
+    b.style.background = 'transparent';
+    b.style.borderColor = 'var(--border)';
+    b.style.color = 'var(--text2)';
+    b.style.fontWeight = '600';
+  });
+  btn.style.background = 'rgba(74,20,140,0.12)';
+  btn.style.borderColor = 'rgba(74,20,140,0.3)';
+  btn.style.color = '#7b1fa2';
+  btn.style.fontWeight = '700';
+  _neQmAiSelectedType = btn.getAttribute('data-type') || 'auto';
 }
 
-// ── AI Map generation ──
-async function neQmRunAi() {
-  var topic = (document.getElementById('neQmAiInput') || {}).value || '';
-  if(!topic.trim()) { showToast('Topic likhein!', 'error'); return; }
+// ── Collect raw notes text from current topic ──
+function _neQmGetRawNotes() {
+  var t = null;
+  try {
+    t = getTop(_editorState.sid, _editorState.secid, _editorState.tid);
+  } catch(e) {}
+  if(!t) return { rawText: '', highlights: [], topicName: '' };
 
-  var btn = document.querySelector('#neQmToolbar button[onclick="neQmRunAiPrompt()"]');
-  if(btn) { btn.disabled = true; btn.textContent = '…'; }
+  // All raw notes content
+  var rawParts = [];
+  if(t.notes && t.notes.length) {
+    t.notes.forEach(function(n, i) {
+      var content = (n.content || n.text || '').trim();
+      if(content) rawParts.push('--- Note ' + (i+1) + ' ---\n' + content);
+    });
+  }
+  // Final notes / smart notes
+  if(t.finalNotes) {
+    var clean = t.finalNotes.replace(/%%NEW%%([\s\S]*?)%%DATE%%.*?%%ENDNEW%%/g,'$1')
+                            .replace(/%%HIGHLIGHT%%([\s\S]*?)%%ENDHIGHLIGHT%%/g,'$1')
+                            .replace(/%%[^%]*%%/g,'').trim();
+    if(clean) rawParts.push('--- Final Notes ---\n' + clean);
+  }
+  if(t.smartNotesAI) rawParts.push('--- Smart Notes ---\n' + t.smartNotesAI.substring(0,2000));
+  if(t.masterNotes)  rawParts.push('--- Master Notes ---\n' + t.masterNotes.substring(0,1500));
 
-  var prompt = 'Create a mind map for: "' + topic + '".\n'
-    + 'Return ONLY JSON (no markdown):\n'
-    + '{"nodes":[{"id":"n1","text":"Topic","x":180,"y":180,"w":130,"h":44,"shape":"bubble","fill":"#fff3e0","stroke":"#e65100","textColor":"#333"}],'
-    + '"edges":[{"from":"n1","to":"n2","color":"#999","type":"arrow"}]}\n'
-    + 'Spread nodes nicely. Max 8 nodes. Hindi OK if topic is Hindi.';
+  // Highlights stored in topic
+  var savedHighlights = [];
+  if(t.highlights && t.highlights.length) {
+    t.highlights.forEach(function(h){ if(h.text) savedHighlights.push(h.text.trim()); });
+  }
+
+  // Also collect live DOM highlights from notes editor
+  var liveHighlights = [];
+  var area = document.getElementById('noteEditableArea');
+  if(area) {
+    var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue');
+    marks.forEach(function(m){ var txt = (m.textContent||'').trim(); if(txt) liveHighlights.push(txt); });
+  }
+
+  // Merge and deduplicate highlights
+  var allHighlights = [];
+  var seen = {};
+  savedHighlights.concat(liveHighlights).forEach(function(h){
+    var key = h.toLowerCase().substring(0,50);
+    if(!seen[key] && h.length > 2) { seen[key]=true; allHighlights.push(h); }
+  });
+
+  return {
+    rawText:    rawParts.join('\n\n'),
+    highlights: allHighlights,
+    topicName:  t.name || ''
+  };
+}
+
+// ── Open AI Dialog ──
+function neQmOpenAiDialog() {
+  var dlg = document.getElementById('neQmAiDialog');
+  if(!dlg) return;
+
+  // Populate info strip
+  var data = _neQmGetRawNotes();
+  var stripEl = document.getElementById('neQmAiStripText');
+  if(stripEl) {
+    var notesCount = (data.rawText.match(/--- .* ---/g)||[]).length;
+    var hlCount = data.highlights.length;
+    var topicLabel = data.topicName ? '"' + data.topicName + '"' : 'Current Topic';
+    var info = '📖 Topic: ' + topicLabel;
+    if(notesCount)  info += ' | 📝 ' + notesCount + ' notes sections';
+    if(hlCount)     info += ' | 🔆 ' + hlCount + ' highlights';
+    if(!notesCount && !hlCount) info += ' — ⚠️ Abhi koi notes/highlights nahi hain. Topic likhein aur AI general map banega.';
+    stripEl.textContent = info;
+  }
+
+  // Pre-fill command box with topic hint
+  var cmdEl = document.getElementById('neQmAiCmd');
+  if(cmdEl && !cmdEl.value && data.topicName) {
+    cmdEl.placeholder = '"' + data.topicName + '" ka smart map banao, ya apni custom command likhein...';
+  }
+
+  dlg.style.display = 'flex';
+  setTimeout(function(){ if(cmdEl) cmdEl.focus(); }, 100);
+}
+
+function neQmCloseAiDialog() {
+  var dlg = document.getElementById('neQmAiDialog');
+  if(dlg) dlg.style.display = 'none';
+}
+
+// Backward compat: old button calls this
+async function neQmRunAiPrompt() { neQmOpenAiDialog(); }
+async function neQmRunAi()       { neQmOpenAiDialog(); }
+
+// ── Progress helper ──
+function _neQmAiSetProgress(pct, msg) {
+  var bar  = document.getElementById('neQmAiProgressBar');
+  var txt  = document.getElementById('neQmAiProgressText');
+  var wrap = document.getElementById('neQmAiProgress');
+  if(wrap) wrap.style.display = 'block';
+  if(bar)  bar.style.width = pct + '%';
+  if(txt)  txt.textContent = msg || '';
+}
+
+// ── Place nodes in a smart radial/tree layout ──
+function _neQmSmartLayout(nodes, edges, canvasW, canvasH) {
+  if(!nodes.length) return;
+  var W = canvasW || 360, H = canvasH || 480;
+  var cx = W * 0.5, cy = H * 0.38;
+
+  // Find root nodes (no incoming edge)
+  var hasIncoming = {};
+  edges.forEach(function(e){ hasIncoming[e.to] = true; });
+  var roots = nodes.filter(function(n){ return !hasIncoming[n.id]; });
+  if(!roots.length) roots = [nodes[0]];
+
+  // BFS to assign positions
+  var positioned = {};
+  var queue = [];
+  var levelSpacingY = Math.min(H * 0.22, 100);
+  var nodeSpacingX  = Math.min(W * 0.28, 120);
+
+  // If single root — radial layout
+  if(roots.length === 1) {
+    var root = roots[0];
+    root.x = cx; root.y = cy * 0.55 + 30;
+    positioned[root.id] = true;
+
+    // children of root
+    var children = edges.filter(function(e){ return e.from===root.id; })
+                        .map(function(e){ return nodes.find(function(n){ return n.id===e.to; }); })
+                        .filter(Boolean);
+
+    var totalChildren = children.length;
+    children.forEach(function(child, i) {
+      if(positioned[child.id]) return;
+      var angle = ((2*Math.PI) / Math.max(totalChildren,1)) * i - Math.PI/2;
+      var r = Math.min(W,H) * 0.32;
+      child.x = cx + r * Math.cos(angle);
+      child.y = root.y + r * Math.sin(angle);
+      positioned[child.id] = true;
+      queue.push({node:child, depth:1});
+    });
+
+    // grandchildren — spread around their parent
+    queue.forEach(function(item) {
+      var parent = item.node;
+      var grandchildren = edges.filter(function(e){ return e.from===parent.id; })
+                               .map(function(e){ return nodes.find(function(n){ return n.id===e.to; }); })
+                               .filter(function(n){ return n && !positioned[n.id]; });
+      grandchildren.forEach(function(gc, i) {
+        var parentAngle = Math.atan2(parent.y - root.y, parent.x - root.x);
+        var spread = (Math.PI * 0.55) / Math.max(grandchildren.length, 1);
+        var ang = parentAngle + spread*(i - (grandchildren.length-1)/2);
+        var r2 = Math.min(W,H) * 0.18;
+        gc.x = parent.x + r2*Math.cos(ang);
+        gc.y = parent.y + r2*Math.sin(ang);
+        positioned[gc.id] = true;
+      });
+    });
+  } else {
+    // Multiple roots — spread horizontally
+    roots.forEach(function(r, ri) {
+      r.x = W * (0.18 + (ri/(Math.max(roots.length-1,1)))*0.64);
+      r.y = H * 0.18;
+      positioned[r.id] = true;
+      var children2 = edges.filter(function(e){ return e.from===r.id; })
+                           .map(function(e){ return nodes.find(function(n){ return n.id===e.to; }); })
+                           .filter(function(n){ return n && !positioned[n.id]; });
+      children2.forEach(function(c, ci) {
+        c.x = r.x + nodeSpacingX*(ci - (children2.length-1)/2);
+        c.y = r.y + levelSpacingY;
+        positioned[c.id] = true;
+        var gc2 = edges.filter(function(e){ return e.from===c.id; })
+                       .map(function(e){ return nodes.find(function(n){ return n.id===e.to; }); })
+                       .filter(function(n){ return n && !positioned[n.id]; });
+        gc2.forEach(function(g, gi) {
+          g.x = c.x + (nodeSpacingX*0.7)*(gi-(gc2.length-1)/2);
+          g.y = c.y + levelSpacingY;
+          positioned[g.id] = true;
+        });
+      });
+    });
+  }
+
+  // Any remaining unpositioned nodes — scatter at bottom
+  var unplaced = nodes.filter(function(n){ return !positioned[n.id]; });
+  unplaced.forEach(function(n, i) {
+    n.x = W*0.15 + (W*0.7/(Math.max(unplaced.length,1)))*i;
+    n.y = H*0.82;
+  });
+
+  // Clamp all to canvas bounds with margin
+  nodes.forEach(function(n) {
+    var hw = (n.w||120)/2 + 16, hh = (n.h||40)/2 + 12;
+    n.x = Math.max(hw, Math.min(W-hw, n.x));
+    n.y = Math.max(hh, Math.min(H-hh, n.y));
+  });
+}
+
+// ── Save map with custom name dialog ──
+function _neQmAiSaveWithName(defaultName) {
+  var name = (window.prompt('Map ka naam dein (Library mein save hoga):', defaultName || 'AI Smart Map') || '').trim();
+  if(!name) return;
+  if(!S.quickMaps) S.quickMaps = [];
+  S.quickMaps.push({
+    id:      'qm_' + Date.now(),
+    name:    name,
+    noteKey: (_editorState.tid||'') + '_aimap',
+    nodes:   JSON.parse(JSON.stringify(_neQm.nodes)),
+    edges:   JSON.parse(JSON.stringify(_neQm.edges)),
+    date:    new Date().toLocaleDateString('hi-IN')
+  });
+  save();
+  showToast('✅ "' + name + '" Library mein save ho gaya!', 'success');
+}
+
+// ── Show post-generation save banner ──
+function _neQmAiShowSaveBanner(topicName) {
+  var old = document.getElementById('neQmAiSaveBanner');
+  if(old) old.remove();
+
+  var banner = document.createElement('div');
+  banner.id = 'neQmAiSaveBanner';
+  banner.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:99998;background:linear-gradient(135deg,#1b5e20,#2e7d32);color:#fff;border-radius:14px;padding:11px 18px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 20px rgba(0,0,0,0.3);font-size:0.8rem;font-weight:700;max-width:320px;width:calc(100%-32px);';
+  banner.innerHTML = '<span style="font-size:1.1rem;">✅</span>'
+    + '<span style="flex:1;">Smart Map ready! Library mein save karein?</span>'
+    + '<button onclick="_neQmAiSaveWithName(\'' + (topicName||'AI Map').replace(/'/g,"\\'") + '\')" style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.35);border-radius:8px;color:#fff;padding:5px 12px;font-size:0.75rem;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;">💾 Save</button>'
+    + '<button onclick="this.parentNode.remove()" style="background:none;border:none;color:rgba(255,255,255,0.7);font-size:1rem;cursor:pointer;padding:2px 4px;">✕</button>';
+  document.body.appendChild(banner);
+  setTimeout(function(){ if(banner.parentNode) banner.remove(); }, 18000);
+}
+
+// ════ MAIN ADVANCED GENERATE FUNCTION ════
+async function neQmRunAiAdvanced() {
+  var cmdEl  = document.getElementById('neQmAiCmd');
+  var genBtn = document.getElementById('neQmAiGenBtn');
+  var userCmd = (cmdEl && cmdEl.value) ? cmdEl.value.trim() : '';
+  var mapType = _neQmAiSelectedType || 'auto';
+  var doMerge = document.getElementById('neQmAiMerge') && document.getElementById('neQmAiMerge').checked;
+
+  // Collect notes data
+  var noteData = _neQmGetRawNotes();
+  var rawText     = noteData.rawText;
+  var highlights  = noteData.highlights;
+  var topicName   = noteData.topicName || userCmd || 'Topic';
+
+  if(!rawText && !highlights.length && !userCmd) {
+    showToast('⚠️ Notes ya Command kuchh to dein!', 'error');
+    return;
+  }
+
+  // Disable generate button
+  if(genBtn) { genBtn.disabled = true; genBtn.textContent = '⏳ Generate ho raha hai...'; }
+  _neQmAiSetProgress(10, '📖 Notes analyze ho rahi hain...');
+
+  // Build highlights section
+  var hlSection = '';
+  if(highlights.length) {
+    hlSection = '\n\nUSER KE HIGHLIGHTED POINTS (' + highlights.length + ' total):\n'
+      + highlights.map(function(h,i){ return (i+1) + '. ' + h; }).join('\n');
+  }
+
+  // Map type instruction
+  var typeInstr = {
+    auto:      'Sabse suitable structure choose karo (hierarchy, timeline, ya concept web — jo notes ke hisaab se best lage).',
+    hierarchy: 'Hierarchical tree structure banao: ek central parent node, phir child nodes, phir grandchild nodes.',
+    timeline:  'Timeline structure: events ko chronological order mein nodes mein rakho, ek ke baad ek connect karo.',
+    concept:   'Concept web: har concept ek node, unke beech meaningful relationships ke edges.',
+    compare:   'Comparison: do ya teen parallel branches banao, dono ke corresponding points ek level par.'
+  };
+
+  _neQmAiSetProgress(25, '🧠 AI ko deep analysis ke liye bhej raha hoon...');
+
+  // ── MASTER PROMPT ──
+  var systemPrompt = 'Tu ek expert Hindi educational mind map generator hai. Tera kaam hai student ke notes aur highlights ko deeply analyze karke ek MEANINGFUL, CONNECTED mind map banana — jo student ke liye revision mein actually useful ho.\n\nTu SIRF valid JSON return karega, koi aur text nahi.';
+
+  var userPrompt = 'TOPIC: ' + topicName + '\n'
+    + (userCmd ? 'USER COMMAND: ' + userCmd + '\n' : '')
+    + '\n=== STUDENT KE RAW NOTES ===\n'
+    + (rawText ? rawText.substring(0, 4500) : '(Notes nahi hain — topic ke baare mein general map banao)')
+    + hlSection
+    + '\n\n=== TUMHARA KAAM ===\n'
+    + '1. Pehle raw notes ko POORA padho — samjho ki har sentence ka kya context hai, kis dynasty/event/concept se juda hai.\n'
+    + '2. Highlighted points dhundho. Har highlighted point ke liye note karo: yeh kis PURI line ka hissa hai? Us line ka poora meaning kya hai? Highlight thoda sa ho to bhi, poori line ka arth raw notes se samjho.\n'
+    + '3. Ab decide karo: kaunsi information ek hi node mein aa sakti hai? Aur kaunsi ke liye parent-child structure chahiye?\n'
+    + '4. GROUPING RULE: Facts ko uski ASLI connection ke hisaab se group karo — jaise ek raja ke saare facts ek parent node ke neeche, ek event ke saare facts ek parent ke neeche, ek theory ke facts ek parent ke neeche. Geography/economic/religious ko alag-alag sirf tab karo jab notes mein clearly alag topics hon.\n'
+    + '5. EK NODE MEIN COMPLETE INFORMATION: Ek fact ko do nodes mein mat baanto. Agar highlight ka ek hissa kisi node mein aur doosra hissa kisi aur mein jaata hai to — dono ko merge karo ya ek parent ke neeche rakho.\n'
+    + '6. MAX NODES: Ek map mein 2-3 main parent nodes, har parent ke neeche max 6-7 child nodes. Total max ~20 nodes.\n'
+    + '7. NUMBER FORMAT: Numbers aur dates English mein (1857, 273 BCE), baaki text Hindi mein.\n'
+    + '8. ' + (typeInstr[mapType] || typeInstr.auto) + '\n'
+    + '\nJSON FORMAT (SIRF YEH RETURN KARO, koi markdown nahi, koi explanation nahi):\n'
+    + '{\n'
+    + '  "mapTitle": "Map ka naam",\n'
+    + '  "nodes": [\n'
+    + '    {"id":"n1","text":"Main Topic\\nShort info","x":180,"y":120,"w":150,"h":50,"shape":"bubble","fill":"#fff3e0","stroke":"#e65100","textColor":"#333","level":"root"},\n'
+    + '    {"id":"n2","text":"Parent Group 1\\nContext line","x":80,"y":220,"w":140,"h":46,"shape":"bubble","fill":"#e8f5e9","stroke":"#2e7d32","textColor":"#1b5e20","level":"parent"},\n'
+    + '    {"id":"n3","text":"Child Fact\\n1857 — Complete fact","x":40,"y":310,"w":130,"h":44,"shape":"box","fill":"#fff","stroke":"#2e7d32","textColor":"#333","level":"child"}\n'
+    + '  ],\n'
+    + '  "edges": [\n'
+    + '    {"from":"n1","to":"n2","color":"#e65100","type":"arrow"},\n'
+    + '    {"from":"n2","to":"n3","color":"#2e7d32","type":"arrow"}\n'
+    + '  ]\n'
+    + '}\n'
+    + '\nNODE STYLING GUIDE:\n'
+    + '- root node: fill "#fff3e0", stroke "#e65100" (orange — main topic)\n'
+    + '- parent nodes: fill "#e8f5e9"/"#e3f2fd"/"#fce4ec", stroke "#2e7d32"/"#1565c0"/"#880e4f" (alag colors for alag parents)\n'
+    + '- child nodes: fill "#fff", stroke same as parent\n'
+    + '- Highlighted facts: fill "#fffde7", stroke "#f9a825" (golden — highlighted)\n'
+    + 'x,y range: 40-340 (canvas 360x480 ke liye). Spread karo well.';
 
   try {
+    _neQmAiSetProgress(40, '🤖 AI notes digest kar raha hai...');
+
     var resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 800, messages: [{ role:'user', content: prompt }] })
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 3500,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }]
+      })
     });
-    var data = await resp.json();
-    var text = (data.content||[]).map(function(c){ return c.text||''; }).join('');
-    var m = text.match(/\{[\s\S]*\}/);
-    if(!m) throw new Error('No JSON');
-    var parsed = JSON.parse(m[0]);
-    if(parsed.nodes && parsed.nodes.length) {
-      _neQmSaveHistory();
-      var merge = _neQm.nodes.length && confirm('Existing nodes ke saath merge karo?');
-      if(!merge) { _neQm.nodes = []; _neQm.edges = []; }
-      var idMap = {};
-      var W = _neQm.canvas ? _neQm.canvas.width/400  : 1;
-      var H = _neQm.canvas ? _neQm.canvas.height/400 : 1;
-      parsed.nodes.forEach(function(n) {
-        var newId = 'n' + Date.now() + Math.floor(Math.random()*9999);
-        idMap[n.id] = newId; n.id = newId;
-        n.x *= W; n.y *= H;
-        _neQm.nodes.push(n);
+
+    _neQmAiSetProgress(70, '📐 Map structure ban raha hai...');
+
+    var respData = await resp.json();
+    if(respData.error) throw new Error(respData.error.message || 'API error');
+
+    var rawResp = (respData.content||[]).map(function(c){ return c.text||''; }).join('');
+
+    // Extract JSON robustly
+    var jsonStr = null;
+    var jsonMatch = rawResp.match(/\{[\s\S]*\}/);
+    if(jsonMatch) jsonStr = jsonMatch[0];
+    if(!jsonStr) throw new Error('AI se valid JSON nahi mila');
+
+    var parsed = JSON.parse(jsonStr);
+    if(!parsed.nodes || !parsed.nodes.length) throw new Error('Nodes nahi mile response mein');
+
+    _neQmAiSetProgress(85, '🗺️ Canvas par place kar raha hoon...');
+
+    // Save history before modifying
+    _neQmSaveHistory();
+    if(!doMerge) { _neQm.nodes = []; _neQm.edges = []; }
+
+    // Map old IDs to new unique IDs
+    var idMap = {};
+    var W = _neQm.canvas ? _neQm.canvas.width  : 360;
+    var H = _neQm.canvas ? _neQm.canvas.height : 480;
+
+    // Add nodes (positions will be recalculated by smart layout)
+    parsed.nodes.forEach(function(n) {
+      var newId = 'n' + Date.now() + Math.floor(Math.random()*99999);
+      idMap[n.id] = newId;
+      var node = {
+        id:        newId,
+        text:      n.text || '',
+        x:         (n.x || 180) * (W / 360),
+        y:         (n.y || 180) * (H / 480),
+        w:         n.w || 130,
+        h:         n.h || 44,
+        shape:     n.shape || 'bubble',
+        fill:      n.fill || '#fff3e0',
+        stroke:    n.stroke || '#e65100',
+        textColor: n.textColor || '#333',
+        level:     n.level || 'child'
+      };
+      _neQm.nodes.push(node);
+    });
+
+    // Add edges with remapped IDs
+    (parsed.edges || []).forEach(function(e) {
+      _neQm.edges.push({
+        from:  idMap[e.from] || e.from,
+        to:    idMap[e.to]   || e.to,
+        color: e.color || '#999',
+        type:  e.type  || 'arrow'
       });
-      (parsed.edges||[]).forEach(function(e) {
-        e.from = idMap[e.from]||e.from; e.to = idMap[e.to]||e.to;
-        _neQm.edges.push(e);
-      });
-      _neQmRedraw();
-      showToast('✅ AI Map ready!', 'success');
-      var inp = document.getElementById('neQmAiInput');
-      if(inp) inp.value = '';
-    }
+    });
+
+    // Apply smart layout to all new nodes
+    _neQmSmartLayout(_neQm.nodes, _neQm.edges, W, H);
+
+    _neQmAiSetProgress(100, '✅ Map ready!');
+    _neQmRedraw();
+
+    // Close dialog
+    setTimeout(function(){
+      neQmCloseAiDialog();
+      // Show save banner
+      _neQmAiShowSaveBanner(parsed.mapTitle || topicName);
+      showToast('✅ Smart Map ban gaya! ' + _neQm.nodes.length + ' nodes.', 'success');
+    }, 400);
+
   } catch(err) {
-    showToast('AI map error: ' + err.message, 'error');
+    _neQmAiSetProgress(0, '');
+    var prog = document.getElementById('neQmAiProgress');
+    if(prog) prog.style.display = 'none';
+    showToast('❌ Map error: ' + (err.message||err), 'error');
+    console.error('neQmRunAiAdvanced error:', err);
   } finally {
-    if(btn) { btn.disabled = false; btn.textContent = '✦'; }
+    if(genBtn) { genBtn.disabled = false; genBtn.textContent = '✦ Smart Map Generate Karo'; }
+    setTimeout(function(){
+      var prog = document.getElementById('neQmAiProgress');
+      if(prog) prog.style.display = 'none';
+    }, 2000);
   }
 }
+
+// ── Legacy compatibility (called from old places) ──
+async function neQmRunAi() { neQmOpenAiDialog(); }
 
 // ── Redraw ──
 function _neQmRedraw() {
