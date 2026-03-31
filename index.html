@@ -33831,11 +33831,17 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     }
     if(_svn.generating) return;
 
+    var apiKey=_getKey();
+    if(!apiKey){
+      _svnStatus('error','❌ Groq API Key set nahi hai!');
+      showToast&&showToast('❌ API Key set karo!','error');
+      return;
+    }
+
     var newHash=_hash(items);
-    var isNew=(newHash!==_svn.lastHighlightHash);
-    if(!isNew&&_svn.pages.length){
+    if(newHash===_svn.lastHighlightHash&&_svn.pages.length){
       _svnStatus('ready','✅ Nayi highlights nahi hain.');
-      showToast&&showToast('ℹ️ Nayi highlights nahi hain — pehle naya text highlight karo!','info');
+      showToast&&showToast('ℹ️ Nayi highlights nahi hain!','info');
       return;
     }
 
@@ -33858,231 +33864,142 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     var genBtn=document.getElementById('svnGenerateBtn');
     if(emptyEl) emptyEl.style.display='none';
     if(loadEl) loadEl.classList.add('show');
-    if(genBtn){ genBtn.disabled=true; genBtn.textContent='⏳ Analyzing...'; }
-
-    // Topic name from editor title
-    var topicEl=document.getElementById('notesEditorTitle');
-    var topicName=(topicEl?topicEl.textContent:'').replace(/[📄📌]/g,'').trim()||'Topic';
-
-    // All raw notes text for context
-    var rawArea=document.getElementById('noteEditableArea');
-    var rawText=rawArea?(rawArea.innerText||rawArea.textContent||'').substring(0,3000):'';
+    if(genBtn){ genBtn.disabled=true; genBtn.textContent='⏳ Generating...'; }
+    if(loadTxt) loadTxt.innerHTML='🧠 AI har highlight analyze kar raha hai...<br>Smart keywords nikal raha hai 🔍';
+    _svnStatus('thinking','Professor-level analysis chal raha hai...');
 
     var isIncremental=(_svn.pages.length>0&&newItems.length>0&&newItems.length<items.length);
 
-    // ═══════════════════════════════════════════════════════
-    // PHASE 1 — Anthropic Claude (web_search) se deep analysis
-    // Har highlighted fact ke liye correct keywords + subtopic
-    // ═══════════════════════════════════════════════════════
-    if(loadTxt) loadTxt.innerHTML='🔍 Web se facts verify ho rahe hain...<br>Har highlight ke liye best keywords dhundh rahe hain 🧠';
-    _svnStatus('thinking','Phase 1: Web analysis chal raha hai...');
+    // Topic name + raw notes context
+    var topicEl=document.getElementById('notesEditorTitle');
+    var topicName=(topicEl?topicEl.textContent:'').replace(/[📄📌]/g,'').trim()||'Topic';
+    var rawArea=document.getElementById('noteEditableArea');
+    var rawContext=rawArea?(rawArea.innerText||rawArea.textContent||'').substring(0,2500):'';
 
-    var hlNumbered=itemsToProcess.map(function(it,i){
-      return 'F'+(i+1)+': '+it.text;
+    // Build numbered highlight list — EVERY highlight must appear
+    var hlLines=itemsToProcess.map(function(it,i){
+      return 'H'+(i+1)+' ['+it.color+']: '+it.text;
     }).join('\n');
 
-    var phase1Prompt=
-      'You are a professor-level academic expert. I am studying "'+topicName+'".\n\n'+
-      'Below are '+itemsToProcess.length+' highlighted facts from my raw study notes on this topic.\n'+
-      'Use your web search tool to verify each fact and find exactly what each fact is about.\n\n'+
-      'RAW NOTES CONTEXT (first 3000 chars):\n'+rawText+'\n\n'+
-      'HIGHLIGHTED FACTS (every single one must be covered — do NOT skip any):\n'+hlNumbered+'\n\n'+
-      'YOUR TASK:\n'+
-      '1. Search the web to understand what each highlighted fact actually means/covers.\n'+
-      '2. For EACH fact Fx, produce 2-4 ultra-precise keywords that:\n'+
-      '   - Are the SHORTEST possible while still fully representing the fact\n'+
-      '   - Include key names, dates, numbers, technical terms from that fact\n'+
-      '   - Would let a student instantly recall the full fact just by reading the keywords\n'+
-      '   - Are verified as correct via web search (standard textbooks, NCERT, Wikipedia)\n'+
-      '3. Assign EACH fact to exactly one subtopic (infer from the topic — e.g. for History: Rulers/Economy/Culture/Admin/Military; for Geography: Physical/Climate/Resources/Human; for Science: Concepts/Laws/Applications/Scientists; choose whichever best fits "'+topicName+'").\n'+
-      '4. After analyzing all facts, decide the best 3-6 subtopic names for THIS specific topic.\n'+
-      '5. CRITICAL: Every single fact must appear. Zero facts skipped.\n\n'+
-      'Return ONLY this JSON (no markdown, no explanation):\n'+
-      '{"topic":"'+topicName+'","subtopics":["Sub1","Sub2","Sub3"],"facts":[{"id":"F1","keywords":["kw1","kw2"],"subtopic":"Sub1"},{"id":"F2","keywords":["kw1","kw2"],"subtopic":"Sub2"}]}';
+    var totalHL=itemsToProcess.length;
 
-    fetch('https://api.anthropic.com/v1/messages',{
+    var systemPrompt=
+      'You are a world-class professor and mind-map expert.\n'+
+      'Your job: analyze highlighted study facts and extract the BEST SHORT KEYWORDS for a visual mind map.\n'+
+      'RULES FOR KEYWORDS:\n'+
+      '- 2 to 4 keywords per highlight. Never more, never less.\n'+
+      '- Include: key names, dates, numbers, technical terms — the core identity of the fact.\n'+
+      '- Keywords must be SHORT (1-3 words each) but COMPLETE — a student must recall the full fact from them.\n'+
+      '- Never skip any highlight. Every H1...H'+totalHL+' must appear in output.\n'+
+      '- Subtopics: detect from the topic domain. History→Rulers/Economy/Culture/Admin/Military. Geography→Physical/Climate/Resources/Population. Science→Laws/Concepts/Scientists/Applications. Math→Formulas/Theorems/Properties. Use 3-6 subtopics max.\n'+
+      'OUTPUT: ONLY valid JSON. No markdown. No explanation.\n'+
+      'FORMAT: {"topic":"<name>","subtopics":[{"id":"h1","label":"SubName","groupId":1,"isHub":true}],"nodes":[{"id":"root","label":"<topic>","groupId":0,"isRoot":true},{"id":"n1","label":"kw1 · kw2","groupId":1,"hlRef":"H1"}],"edges":[{"from":"root","to":"h1"},{"from":"h1","to":"n1"}]}\n'+
+      'CRITICAL: Every highlight H1 to H'+totalHL+' must map to exactly one node with matching hlRef.';
+
+    var userPrompt=
+      'TOPIC: '+topicName+'\n\n'+
+      'RAW NOTES CONTEXT:\n'+rawContext+'\n\n'+
+      '=== HIGHLIGHTS TO ANALYZE (ALL '+totalHL+' must be in output) ===\n'+
+      hlLines+'\n\n'+
+      'Now produce the complete mind map JSON. Include root node, all subtopic hub nodes, and one keyword node per highlight (H1 through H'+totalHL+'). Zero highlights skipped.';
+
+    fetch('https://api.groq.com/openai/v1/chat/completions',{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
       body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:4000,
-        tools:[{type:'web_search_20250305',name:'web_search'}],
-        messages:[{role:'user',content:phase1Prompt}]
+        model:'llama-3.3-70b-versatile',
+        temperature:0.1,
+        max_tokens:6000,
+        messages:[
+          {role:'system', content:systemPrompt},
+          {role:'user',   content:userPrompt}
+        ]
       })
     })
     .then(function(r){ return r.json(); })
-    .then(function(p1data){
-      // Extract text blocks (tool_use blocks se sirf text lena hai)
-      var p1raw=(p1data.content||[]).filter(function(b){ return b.type==='text'; }).map(function(b){ return b.text||''; }).join('');
-      var p1parsed=null;
+    .then(function(data){
+      _svn.generating=false;
+      if(genBtn){ genBtn.disabled=false; genBtn.textContent='✨ Generate'; }
+      if(loadEl) loadEl.classList.remove('show');
+
+      var raw=data&&data.choices&&data.choices[0]&&data.choices[0].message
+             ?data.choices[0].message.content:'';
+
+      var parsed=null;
       try{
-        var p1clean=p1raw.replace(/```json/g,'').replace(/```/g,'').trim();
-        var p1m=p1clean.match(/\{[\s\S]*\}/);
-        if(p1m) p1parsed=JSON.parse(p1m[0]);
+        var clean=raw.replace(/```json/g,'').replace(/```/g,'').trim();
+        var m=clean.match(/\{[\s\S]*\}/);
+        if(m) parsed=JSON.parse(m[0]);
       }catch(e){}
 
-      // Fallback: agar Phase 1 fail ho to items se manually map banao
-      if(!p1parsed||!p1parsed.facts||!p1parsed.facts.length){
-        p1parsed={
-          topic:topicName,
-          subtopics:['Key Facts','Details','Concepts'],
-          facts:itemsToProcess.map(function(it,i){
+      // ── Safety net: agar koi highlight node missing ho ──
+      if(parsed&&(parsed.nodes||parsed.subtopics)){
+        var allN=(parsed.subtopics||[]).concat(parsed.nodes||[]);
+        var coveredRefs=allN.map(function(n){ return n.hlRef||''; });
+        var hubIds=(parsed.subtopics||[]).map(function(h){ return h.id; });
+        var fallbackHub=hubIds.length?hubIds[0]:'h1';
+        var fallbackGrp=(parsed.subtopics&&parsed.subtopics[0])?parsed.subtopics[0].groupId:1;
+
+        itemsToProcess.forEach(function(it,i){
+          var ref='H'+(i+1);
+          if(coveredRefs.indexOf(ref)===-1){
+            // Extract best words as fallback keywords
             var words=it.text.trim().split(/\s+/).filter(function(w){ return w.length>2; });
-            // Pick most meaningful words (numbers, capitalized, long words first)
             words.sort(function(a,b){
-              var aScore=(/\d/.test(a)?3:0)+(/^[A-Z\u0900-\u097F]/.test(a)?2:0)+(a.length>5?1:0);
-              var bScore=(/\d/.test(b)?3:0)+(/^[A-Z\u0900-\u097F]/.test(b)?2:0)+(b.length>5?1:0);
-              return bScore-aScore;
+              var sc=function(w){ return (/\d/.test(w)?3:0)+(/^[A-Z\u0900-\u097F]/.test(w)?2:0)+(w.length>5?1:0); };
+              return sc(b)-sc(a);
             });
-            return {id:'F'+(i+1), keywords:words.slice(0,3), subtopic:p1parsed.subtopics[i%3]};
-          })
-        };
+            var kw=words.slice(0,3).join(' · ')||it.text.substring(0,25);
+            var nid='fn'+(i+1);
+            (parsed.nodes=parsed.nodes||[]).push({id:nid,label:kw,groupId:fallbackGrp,hlRef:ref});
+            (parsed.edges=parsed.edges||[]).push({from:fallbackHub,to:nid});
+          }
+        });
       }
 
-      // Ensure every item has an entry (safety net)
-      itemsToProcess.forEach(function(it,i){
-        var fid='F'+(i+1);
-        var found=p1parsed.facts.find(function(f){ return f.id===fid; });
-        if(!found){
-          var fallbackWords=it.text.trim().split(/\s+/).filter(function(w){ return w.length>2; }).slice(0,3);
-          p1parsed.facts.push({id:fid, keywords:fallbackWords.length?fallbackWords:[it.text.substring(0,20)], subtopic:(p1parsed.subtopics&&p1parsed.subtopics[0])||'Facts'});
-        }
-      });
-
-      // ═══════════════════════════════════════════════════════
-      // PHASE 2 — Verified keywords se mind map JSON banao
-      // ═══════════════════════════════════════════════════════
-      if(loadTxt) loadTxt.innerHTML='🗺️ Mind map assemble ho raha hai...<br>Keywords place kiye ja rahe hain ✨';
-      _svnStatus('thinking','Phase 2: Map bana raha hai...');
-
-      // Build structured input for phase 2
-      var verifiedData=JSON.stringify(p1parsed,null,0);
-
-      var phase2Prompt=
-        'You are a mind map layout expert. Build a visual mind map from verified keyword data.\n\n'+
-        'VERIFIED DATA (from web-checked analysis):\n'+verifiedData+'\n\n'+
-        'RULES (strict):\n'+
-        '1. ONE root node: topic name (groupId:0, isRoot:true)\n'+
-        '2. One hub node per subtopic (groupId 1,2,3... isHub:true) — connect root→each hub\n'+
-        '3. For EACH fact entry in "facts": create ONE keyword node containing ONLY its keywords joined with " · " separator. ZERO facts skipped.\n'+
-        '4. Each keyword node gets groupId of its subtopic hub. Connect hub→keyword node.\n'+
-        '5. If two keyword nodes share a key term, add a cross-edge between them.\n'+
-        '6. Keep labels SHORT: hub labels max 2 words, keyword nodes max 4 words.\n'+
-        '7. Return ONLY valid JSON:\n'+
-        '{"subtopics":[{"id":"hub1","label":"Rulers","groupId":1,"isHub":true}],"nodes":[{"id":"root","label":"'+topicName+'","groupId":0,"isRoot":true},{"id":"n1","label":"kw · kw2","groupId":1}],"edges":[{"from":"root","to":"hub1"},{"from":"hub1","to":"n1"}]}';
-
-      var apiKey=_getKey();
-      if(!apiKey){
-        // Still render with Phase 1 data directly if no Groq key
-        _svnBuildFromPhase1(p1parsed, isIncremental, emptyEl, loadEl, genBtn);
+      if(!parsed||(!parsed.nodes&&!parsed.subtopics)){
+        _svnStatus('error','❌ AI response parse nahi hua. Retry karo.');
+        showToast&&showToast('❌ Retry karo!','error');
+        if(!_svn.pages.length&&emptyEl) emptyEl.style.display='flex';
         return;
       }
 
-      fetch('https://api.groq.com/openai/v1/chat/completions',{
-        method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
-        body:JSON.stringify({
-          model:'llama-3.3-70b-versatile',
-          temperature:0.15,
-          max_tokens:4000,
-          messages:[
-            {role:'system',content:'You are a mind map JSON generator. Return ONLY valid JSON. No markdown. No extra text.'},
-            {role:'user',content:phase2Prompt}
-          ]
-        })
-      })
-      .then(function(r){ return r.json(); })
-      .then(function(p2data){
-        var raw2=p2data&&p2data.choices&&p2data.choices[0]&&p2data.choices[0].message
-               ?p2data.choices[0].message.content:'';
-        var parsed2=null;
-        try{
-          var c2=raw2.replace(/```json/g,'').replace(/```/g,'').trim();
-          var m2=c2.match(/\{[\s\S]*\}/);
-          if(m2) parsed2=JSON.parse(m2[0]);
-        }catch(e){}
+      _svnPushHistory();
+      var allNodes=(parsed.subtopics||[]).concat(parsed.nodes||[]);
+      var allEdges=parsed.edges||[];
 
-        if(!parsed2||(!parsed2.nodes&&!parsed2.subtopics)){
-          // Fallback to Phase 1 direct build
-          _svnBuildFromPhase1(p1parsed, isIncremental, emptyEl, loadEl, genBtn);
-          return;
-        }
-        _svnFinalize(parsed2, isIncremental, emptyEl, loadEl, genBtn);
-      })
-      .catch(function(){
-        _svnBuildFromPhase1(p1parsed, isIncremental, emptyEl, loadEl, genBtn);
-      });
+      if(isIncremental){
+        var existIds=[];
+        _svn.pages.forEach(function(pg){ pg.nodes.forEach(function(n){ existIds.push(n.id); }); });
+        allNodes=allNodes.filter(function(n){ return existIds.indexOf(n.id)===-1; });
+        var lastPg=_svn.pages[_svn.pages.length-1];
+        allNodes.forEach(function(n){ lastPg.nodes.push(n); });
+        allEdges.forEach(function(e){ lastPg.edges.push(e); });
+      } else {
+        _svn.pages=[{nodes:allNodes, edges:allEdges}];
+        _svn.currentPage=0;
+      }
+
+      _svnPaginateAndLayout();
+      _svnRenderPage(_svn.currentPage);
+      _svnFitView();
+      if(emptyEl) emptyEl.style.display='none';
+
+      var totalNodes=0; _svn.pages.forEach(function(pg){ totalNodes+=pg.nodes.length; });
+      _svnStatus('ready','✅ '+totalNodes+' keywords · '+_svn.pages.length+' page'+((_svn.pages.length>1)?'s':'')+' · '+totalHL+' highlights covered');
+      showToast&&showToast('🧠 Smart map ready! '+totalHL+' highlights → '+totalNodes+' keywords!','success');
+
+      _svnUpdatePageNav();
+      _svnSaveToFirestore();
     })
     .catch(function(err){
       _svn.generating=false;
       if(genBtn){ genBtn.disabled=false; genBtn.textContent='✨ Generate'; }
       if(loadEl) loadEl.classList.remove('show');
       if(!_svn.pages.length&&emptyEl) emptyEl.style.display='flex';
-      _svnStatus('error','❌ Error: '+(err.message||'Network error'));
+      _svnStatus('error','❌ '+(err.message||'Network error'));
       showToast&&showToast('❌ '+(err.message||'Network error'),'error');
     });
-  };
-
-  // ── Directly build map from Phase 1 verified data (no Groq needed) ──
-  function _svnBuildFromPhase1(p1, isIncremental, emptyEl, loadEl, genBtn){
-    var colorMap=['#e65100','#1565c0','#2e7d32','#6a1b9a','#00695c','#c62828','#0277bd'];
-    var allNodes=[], allEdges=[];
-    var topicLabel=(p1.topic||'Topic').substring(0,30);
-
-    allNodes.push({id:'root',label:topicLabel,groupId:0,isRoot:true});
-
-    var subs=p1.subtopics||['Facts'];
-    subs.forEach(function(s,si){
-      allNodes.push({id:'hub'+(si+1),label:s.substring(0,20),groupId:si+1,isHub:true});
-      allEdges.push({from:'root',to:'hub'+(si+1)});
-    });
-
-    (p1.facts||[]).forEach(function(f,fi){
-      var subIdx=subs.indexOf(f.subtopic);
-      if(subIdx<0) subIdx=fi%subs.length;
-      var kwLabel=(f.keywords||[f.id]).join(' · ').substring(0,50);
-      var nid='kn'+(fi+1);
-      allNodes.push({id:nid,label:kwLabel,groupId:subIdx+1});
-      allEdges.push({from:'hub'+(subIdx+1),to:nid});
-    });
-
-    _svnFinalize({subtopics:[], nodes:allNodes, edges:allEdges}, isIncremental, emptyEl, loadEl, genBtn);
-  }
-
-  // ── Final step: put map data into _svn and render ──
-  function _svnFinalize(parsed, isIncremental, emptyEl, loadEl, genBtn){
-    _svn.generating=false;
-    if(genBtn){ genBtn.disabled=false; genBtn.textContent='✨ Generate'; }
-    if(loadEl) loadEl.classList.remove('show');
-
-    _svnPushHistory();
-
-    var allNodes=(parsed.subtopics||[]).concat(parsed.nodes||[]);
-    var allEdges=parsed.edges||[];
-
-    if(isIncremental){
-      var existIds=[];
-      _svn.pages.forEach(function(pg){ pg.nodes.forEach(function(n){ existIds.push(n.id); }); });
-      allNodes=allNodes.filter(function(n){ return existIds.indexOf(n.id)===-1; });
-      var lastPg=_svn.pages[_svn.pages.length-1];
-      allNodes.forEach(function(n){ lastPg.nodes.push(n); });
-      allEdges.forEach(function(e){ lastPg.edges.push(e); });
-    } else {
-      _svn.pages=[{nodes:allNodes, edges:allEdges}];
-      _svn.currentPage=0;
-    }
-
-    _svnPaginateAndLayout();
-    _svnRenderPage(_svn.currentPage);
-    _svnFitView();
-    if(emptyEl) emptyEl.style.display='none';
-
-    var totalNodes=0; _svn.pages.forEach(function(pg){ totalNodes+=pg.nodes.length; });
-    _svnStatus('ready','✅ '+totalNodes+' keywords, '+_svn.pages.length+' page'+((_svn.pages.length>1)?'s':'')+' — web-verified!');
-    showToast&&showToast('🧠 Web-verified map ready! '+totalNodes+' keywords in '+_svn.pages.length+' page(s)','success');
-
-    _svnUpdatePageNav();
-    _svnSaveToFirestore();
   };
 
   /* ═══════════════════════════════════════════════════════════
