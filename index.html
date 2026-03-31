@@ -33212,7 +33212,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
   </div>
 
   <!-- Main canvas area -->
-  <div id="mmCanvas" style="flex:1;overflow:auto;position:relative;display:flex;align-items:center;justify-content:center;padding:16px 8px;">
+  <div id="mmCanvas" style="flex:1;overflow:auto;position:relative;display:flex;align-items:flex-start;justify-content:center;padding:20px 12px;-webkit-overflow-scrolling:touch;background:var(--bg,#eaf4fb);">
     <!-- Mind map SVG + nodes rendered here -->
   </div>
 
@@ -33293,11 +33293,12 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
   border:2px solid #f9a825;
   border-radius:14px;
   padding:9px 11px;
-  min-width:90px;max-width:140px;
+  min-width:90px;max-width:148px;width:148px;
   box-shadow:0 2px 10px rgba(249,168,37,0.18);
   position:relative;
   cursor:pointer;
   transition:box-shadow 0.18s, transform 0.15s;
+  word-break:break-word;
 }
 .mm-node-card:active { transform:scale(0.97); }
 .mm-node-card.center-node {
@@ -33526,7 +33527,7 @@ function mmRender() {
 
   // Use a relative container
   var container = document.createElement('div');
-  container.style.cssText = 'position:relative;width:100%;min-height:' + Math.max(420, H - 20) + 'px;';
+  container.style.cssText = 'position:relative;min-width:100%;min-height:420px;flex-shrink:0;';
   canvas.appendChild(container);
 
   // SVG for lines
@@ -33564,6 +33565,45 @@ function mmRender() {
     return;
   }
 
+  // ── NODE CARD SIZE constants (used for layout math before DOM render) ──
+  var NODE_W = 148;  // px — card max-width
+  var NODE_H = 90;   // px — approximate card height (question only, no answer)
+  var CENTER_R = 55; // px — center pill half-width approx
+
+  // ── Compute R so nodes don't overlap each other ──
+  // Minimum arc gap between adjacent node centers = NODE_W + 16px padding
+  // Arc between adjacent nodes (angle step = 2π/n) at radius R = 2R*sin(π/n)
+  // We need: 2R*sin(π/n) >= NODE_W + 16
+  var minArcGap = NODE_W + 20;
+  var R_from_gap = n > 1 ? (minArcGap / (2 * Math.sin(Math.PI / n))) : 160;
+  // Also ensure R >= CENTER_R + NODE_W/2 + 30 (no center overlap)
+  var R_from_center = CENTER_R + NODE_W / 2 + 40;
+  var R = Math.max(R_from_gap, R_from_center);
+  // Cap minimum
+  if(R < 150) R = 150;
+
+  // ── Total canvas size needed ──
+  var totalW = Math.max(cW, (R + NODE_W / 2 + 24) * 2);
+  var totalH = Math.max(420, (R + NODE_H + 24) * 2);
+
+  // Refit container size
+  container.style.minHeight = totalH + 'px';
+  container.style.width = totalW + 'px';
+  container.style.minWidth = '100%';
+
+  // Update SVG size
+  svg.setAttribute('width', totalW);
+  svg.setAttribute('height', totalH);
+  svg.style.width = totalW + 'px';
+  svg.style.height = totalH + 'px';
+
+  var cx = totalW / 2;
+  var cy = totalH / 2;
+
+  // Reposition center node
+  centerDiv.style.left = cx + 'px';
+  centerDiv.style.top  = cy + 'px';
+
   nodes.forEach(function(node, ni) {
     var angle = (2 * Math.PI * ni / n) - Math.PI / 2;
     var nx = cx + R * Math.cos(angle);
@@ -33575,8 +33615,8 @@ function mmRender() {
     line.setAttribute('x2', nx); line.setAttribute('y2', ny);
     line.setAttribute('stroke', '#f9a825');
     line.setAttribute('stroke-width', '2');
-    line.setAttribute('stroke-dasharray', node.visible ? 'none' : '5,4');
-    line.setAttribute('opacity', '0.7');
+    line.setAttribute('stroke-dasharray', node.visible ? '0' : '6,4');
+    line.setAttribute('opacity', '0.8');
     line.id = 'mmLine_' + cur + '_' + ni;
     svg.appendChild(line);
 
@@ -33584,11 +33624,11 @@ function mmRender() {
     var card = document.createElement('div');
     card.className = 'mm-node-card';
     card.id = 'mmNode_' + cur + '_' + ni;
-    card.style.cssText = 'position:absolute;z-index:3;transform:translate(-50%,-50%);';
+    card.style.cssText = 'position:absolute;z-index:3;transform:translate(-50%,-50%);width:' + NODE_W + 'px;box-sizing:border-box;';
     card.style.left = nx + 'px';
     card.style.top  = ny + 'px';
 
-    var shortQ = node.q.length > 55 ? node.q.slice(0,55) + '…' : node.q;
+    var shortQ = node.q.length > 60 ? node.q.slice(0,60) + '…' : node.q;
 
     card.innerHTML =
       '<div class="mm-node-q">' + _escHtml(shortQ) + '</div>' +
@@ -33601,18 +33641,15 @@ function mmRender() {
       '</div>';
     container.appendChild(card);
 
-    // Draw parent nodes for this node
+    // Draw parent nodes for this node (placed outward beyond the main node)
     var pNodes = (slide.parentNodes || []).filter(function(p) { return p.parentOf === ni; });
     pNodes.forEach(function(pNode, pi) {
       var pIdx = (slide.parentNodes || []).indexOf(pNode);
-      var pAngle = angle + (pi - (pNodes.length - 1) / 2) * 0.45;
-      var pR = R * 0.5;
-      var px2 = nx + pR * Math.cos(pAngle);
-      var py2 = ny + pR * Math.sin(pAngle);
-
-      // Keep within bounds
-      px2 = Math.max(70, Math.min(cW - 70, px2));
-      py2 = Math.max(40, Math.min(cH - 40, py2));
+      // Place parent node further outward in same direction as main node
+      var spreadAngle = angle + (pi - (pNodes.length - 1) / 2) * 0.52;
+      var pR = R + NODE_W * 0.85;
+      var px2 = cx + pR * Math.cos(spreadAngle);
+      var py2 = cy + pR * Math.sin(spreadAngle);
 
       // Line node→parent
       var pLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -33620,18 +33657,18 @@ function mmRender() {
       pLine.setAttribute('x2', px2); pLine.setAttribute('y2', py2);
       pLine.setAttribute('stroke', '#7c4dff');
       pLine.setAttribute('stroke-width', '1.5');
-      pLine.setAttribute('stroke-dasharray', '4,3');
+      pLine.setAttribute('stroke-dasharray', '5,3');
       pLine.setAttribute('opacity', '0.65');
       svg.appendChild(pLine);
 
       // Parent node card
       var pCard = document.createElement('div');
       pCard.className = 'mm-node-card parent-node';
-      pCard.style.cssText = 'position:absolute;z-index:3;transform:translate(-50%,-50%);';
+      pCard.style.cssText = 'position:absolute;z-index:3;transform:translate(-50%,-50%);width:130px;box-sizing:border-box;';
       pCard.style.left = px2 + 'px';
       pCard.style.top  = py2 + 'px';
 
-      var shortPQ = pNode.q.length > 45 ? pNode.q.slice(0,45) + '…' : pNode.q;
+      var shortPQ = pNode.q.length > 50 ? pNode.q.slice(0,50) + '…' : pNode.q;
       pCard.innerHTML =
         '<div class="mm-node-q" style="color:#5c6bc0;">' + _escHtml(shortPQ) + '</div>' +
         '<div class="mm-node-a' + (pNode.visible ? ' visible' : '') + '">' + _escHtml(pNode.a) + '</div>' +
