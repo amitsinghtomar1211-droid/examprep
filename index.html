@@ -31036,72 +31036,69 @@ function _snmBuildPrompt(data, topicName) {
   var highlights = data.highlights;
   var fullContext = data.fullContext;
 
-  // Number each highlight for reference
   var hlLines = highlights.map(function(hl, i) {
-    return 'H'+(i+1)+': [Highlighted text] "'+hl.text+'" | [Context line] "'+hl.context+'"';
+    return 'H'+(i+1)+': "'+hl.text+'" → context: "'+hl.context+'"';
   }).join('\n');
 
-  return `You are an expert knowledge mapper. Your task is to convert highlighted study notes into a SPIDER/RADIAL node map.
+  return `You are a study note mapper. Convert highlighted facts into spider/radial map nodes.
 
-TOPIC: "${topicName}"
+TOPIC NAME (use EXACTLY this, no changes): "${topicName}"
 
-FULL NOTES CONTEXT (for deeper understanding):
+NOTES CONTEXT:
 ---
 ${fullContext.substring(0,2000)}
 ---
 
-USER'S HIGHLIGHTED FACTS (H1 to H${highlights.length}):
-${hlLines || 'No highlights found — analyze full notes and pick 6-10 key facts.'}
+HIGHLIGHTED FACTS TO MAP (${highlights.length} total):
+${hlLines || 'No highlights — pick 5-8 key facts from notes.'}
 
-═══ YOUR TASK ═══
-For EACH highlighted fact (H1, H2, ... H${highlights.length}):
-1. Read the highlighted text AND its surrounding context line
-2. Understand WHAT specific fact the user highlighted (the exact important thing they want to remember)
-3. Create a node with SHORT but MEANINGFUL text (5-12 words minimum so meaning is clear)
-4. If one highlight contains MULTIPLE distinct sub-facts, create 1 parent node + 2-4 child nodes in hierarchical order
-5. Child nodes connect ONLY to their parent node (not to the center topic)
-6. Parent nodes connect to the center topic node
+════ STRICT RULES ════
 
-LAYOUT RULES (CRITICAL):
-- Slide has max 8 PARENT nodes connected to center
-- If more than 8 parent nodes needed → create multiple slides
-- Center node = topic name only
-- Each slide: center + up to 8 parents around it (radial/spider style)
-- Parent nodes can have child nodes (sub-facts), children connect to parent NOT center
-- Node text: enough words to be meaningful (NOT just 2-3 words), NOT so long it becomes a sentence
+RULE 1 — CENTER NODE:
+centerLabel in your JSON MUST be EXACTLY "${topicName}" — same spelling, same words.
+NEVER create your own thematic headings like "प्रशासन", "संस्कृति", "Army", "Economy" etc.
+The center is ALWAYS the topic name. Period.
 
-OUTPUT FORMAT — return ONLY this JSON:
+RULE 2 — MAX 8 PARENT NODES PER SLIDE:
+Each slide's "nodes" array can have MAXIMUM 8 items.
+If you have 9+ parent nodes total, split into multiple slides.
+Every slide must have the same centerLabel = "${topicName}".
+
+RULE 3 — NODE TEXT LENGTH:
+Each node text must be 6-15 words — meaningful enough to understand WITHOUT reading the original notes.
+Too short (1-3 words) = useless. Too long (20+ words) = becomes a paragraph. Aim for 6-15 words.
+
+RULE 4 — CHILDREN:
+Only create children if ONE highlight contains clearly distinct sub-facts (e.g., a list).
+Children connect to their parent only, never to center.
+Max 3 children per parent.
+
+RULE 5 — ONE NODE PER HIGHLIGHT:
+Map each H1...H${highlights.length} to exactly one parent node (with optional children).
+Do not merge two highlights into one node.
+Do not split one highlight into two parent nodes.
+
+OUTPUT — return ONLY this JSON, no markdown, no explanation:
 {
   "slides": [
     {
       "centerLabel": "${topicName}",
       "nodes": [
-        {
-          "id": "p1",
-          "text": "meaningful fact text here (5-12 words)",
-          "hlRef": "H1",
-          "children": [
-            {"id": "c1_1", "text": "sub-fact detail here"},
-            {"id": "c1_2", "text": "another sub-fact"}
-          ]
-        },
-        {
-          "id": "p2",
-          "text": "another fact",
-          "hlRef": "H2",
-          "children": []
-        }
+        {"id":"p1","text":"6 to 15 word meaningful fact here","hlRef":"H1","children":[]},
+        {"id":"p2","text":"another fact in 6-15 words","hlRef":"H2","children":[
+          {"id":"c2_1","text":"sub-fact one"},
+          {"id":"c2_2","text":"sub-fact two"}
+        ]}
+      ]
+    },
+    {
+      "centerLabel": "${topicName}",
+      "nodes": [
+        {"id":"p9","text":"ninth fact if needed","hlRef":"H9","children":[]}
       ]
     }
   ]
-}
-
-RULES:
-- hlRef MUST match one of H1-H${highlights.length}
-- children array can be empty [] if no sub-facts needed
-- Max 8 nodes[] (parent nodes) per slide
-- If total parents > 8, split into slide 2, slide 3 etc — each with same centerLabel
-- NO markdown, NO explanation — ONLY valid JSON`;
+}`;
 }
 
 /* ── Open Panel ── */
@@ -31222,14 +31219,34 @@ async function _snmGenerate(tid, sid, secid, topicName) {
     var parsed = JSON.parse(m[0]);
     if(!parsed.slides || !parsed.slides.length) throw new Error('Slides array empty hai');
 
-    // Convert slides → _snm.maps format (for backward compat with Insert/Save buttons)
-    _snm.maps = parsed.slides.map(function(slide, si) {
+    // ── JS-level hard enforcement ──
+    // 1. Flatten all parent nodes from all slides into one array
+    var allParents = [];
+    parsed.slides.forEach(function(slide) {
+      (slide.nodes || []).forEach(function(n) {
+        allParents.push(n);
+      });
+    });
+
+    // 2. Force centerLabel = topicName, chunk into max-8 groups
+    var MAX_PER_SLIDE = 8;
+    var enforced = [];
+    for(var i=0; i<allParents.length; i+=MAX_PER_SLIDE) {
+      enforced.push({
+        centerLabel: topicName,          // ALWAYS topic name, never AI's thematic heading
+        nodes: allParents.slice(i, i+MAX_PER_SLIDE)
+      });
+    }
+    if(!enforced.length) throw new Error('Koi nodes nahi bane');
+
+    // Convert to _snm.maps format
+    _snm.maps = enforced.map(function(slide, si) {
       return {
-        id:       'slide_'+(si+1),
-        slideIdx: si,
-        centerLabel: slide.centerLabel || topicName,
-        rawNodes: slide.nodes || [],
-        selected: false
+        id:          'slide_'+(si+1),
+        slideIdx:    si,
+        centerLabel: slide.centerLabel,
+        rawNodes:    slide.nodes,
+        selected:    false
       };
     });
 
@@ -31265,18 +31282,21 @@ async function _snmGenerateIncremental(tid, sid, secid, topicName, newHls, fullC
     var parsed = JSON.parse(m[0]);
     if(!parsed.slides || !parsed.slides.length) throw new Error('Slides empty');
 
-    // Try merging into last slide if space available, else add new slide
-    parsed.slides.forEach(function(slide) {
-      var newNodes = slide.nodes || [];
+    // Flatten all new parent nodes, enforce max 8 per slide + force centerLabel
+    var MAX_PER_SLIDE = 8;
+    var newParents = [];
+    parsed.slides.forEach(function(slide){ (slide.nodes||[]).forEach(function(n){ newParents.push(n); }); });
+
+    newParents.forEach(function(p) {
       var lastSlide = _snm.maps.length > 0 ? _snm.maps[_snm.maps.length-1] : null;
-      if(lastSlide && (lastSlide.rawNodes||[]).length + newNodes.length <= 8) {
-        lastSlide.rawNodes = (lastSlide.rawNodes||[]).concat(newNodes);
+      if(lastSlide && (lastSlide.rawNodes||[]).length < MAX_PER_SLIDE) {
+        lastSlide.rawNodes.push(p);
       } else {
         _snm.maps.push({
-          id: 'slide_inc_'+Date.now(),
+          id: 'slide_inc_'+Date.now()+'_'+Math.random().toString(36).slice(2,5),
           slideIdx: _snm.maps.length,
-          centerLabel: slide.centerLabel || topicName,
-          rawNodes: newNodes,
+          centerLabel: topicName,
+          rawNodes: [p],
           selected: false
         });
       }
@@ -31357,139 +31377,175 @@ function _snmRender() {
 function _snmBuildSpiderSVG(slideData, mi) {
   var parents = slideData.rawNodes || [];
   var centerLabel = slideData.centerLabel || 'Topic';
+  var n = parents.length;
 
-  // ── Layout constants ──
-  var W = 680, H = 520;
+  // ── Dynamic sizing based on node count and children ──
+  var hasChildren = parents.some(function(p){ return p.children && p.children.length > 0; });
+  var BASE_W = 700, BASE_H = 560;
+  // Bigger canvas if many nodes or children
+  var W = n > 6 ? BASE_W + 60 : BASE_W;
+  var H = hasChildren ? BASE_H + 100 : BASE_H;
   var cx = W/2, cy = H/2;
-  var PARENT_R   = 190;  // Radius for parent nodes from center
-  var CHILD_R    = 80;   // Radius for child nodes from parent
 
-  // ── Assign positions ──
-  // Parents: evenly on circle around center
+  // Node dimensions
+  var CW = 120, CH = 44;  // center node
+  var PW = 138, PH = 56;  // parent node (taller for multi-line text)
+  var KW = 118, KH = 44;  // child node
+
+  // Radii
+  var PARENT_R = n <= 4 ? 185 : (n <= 6 ? 200 : 215);
+  var CHILD_R  = 95;
+
+  // ── Compute parent positions ──
   parents.forEach(function(p, i) {
-    var angle = (2*Math.PI * i / parents.length) - Math.PI/2;
+    var angle = (2 * Math.PI * i / n) - Math.PI / 2;
+    p._angle = angle;
     p._px = cx + PARENT_R * Math.cos(angle);
     p._py = cy + PARENT_R * Math.sin(angle);
-    // Children: small cluster around parent, away from center
-    (p.children||[]).forEach(function(c, ci) {
-      var childCount = (p.children||[]).length;
-      // Spread children on arc on the OUTER side of parent (away from center)
-      var parentAngle = angle; // direction from center to parent
-      var spread = Math.PI * 0.5; // 90 degree spread for children
-      var childAngle = parentAngle - spread/2 + (spread * ci / Math.max(childCount-1, 1));
-      if(childCount === 1) childAngle = parentAngle; // single child goes straight out
-      c._px = p._px + CHILD_R * Math.cos(childAngle);
-      c._py = p._py + CHILD_R * Math.sin(childAngle);
+
+    // Child positions: fan outward from parent, away from center
+    var kids = p.children || [];
+    kids.forEach(function(c, ci) {
+      var kidCount = kids.length;
+      var outerAngle = angle; // direction away from center
+      var spread = kidCount === 1 ? 0 : (Math.PI * 0.55);
+      var kidAngle = outerAngle - spread/2 + (spread * ci / Math.max(kidCount - 1, 1));
+      // Push children further out so they don't overlap parent
+      c._px = p._px + CHILD_R * Math.cos(kidAngle);
+      c._py = p._py + CHILD_R * Math.sin(kidAngle);
     });
   });
 
-  // ── SVG element ──
+  // ── SVG ──
   var NS = 'http://www.w3.org/2000/svg';
   var svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('width', W);
   svg.setAttribute('height', H);
   svg.setAttribute('viewBox', '0 0 '+W+' '+H);
-  svg.style.cssText = 'display:block;width:100%;max-width:'+W+'px;overflow:visible;';
+  svg.style.cssText = 'display:block;width:100%;max-width:'+W+'px;';
 
-  // Arrow marker
+  // ── Defs: arrow markers ──
   var defs = document.createElementNS(NS, 'defs');
-  var marker = document.createElementNS(NS, 'marker');
-  marker.setAttribute('id', 'snmArrow_'+mi);
-  marker.setAttribute('markerWidth','8'); marker.setAttribute('markerHeight','8');
-  marker.setAttribute('refX','7'); marker.setAttribute('refY','3');
-  marker.setAttribute('orient','auto');
-  var ap = document.createElementNS(NS, 'path');
-  ap.setAttribute('d','M0,0 L0,6 L8,3 z');
-  ap.setAttribute('fill','#1565c099');
-  marker.appendChild(ap); defs.appendChild(marker);
-
-  var markerChild = document.createElementNS(NS, 'marker');
-  markerChild.setAttribute('id', 'snmArrowC_'+mi);
-  markerChild.setAttribute('markerWidth','7'); markerChild.setAttribute('markerHeight','7');
-  markerChild.setAttribute('refX','6'); markerChild.setAttribute('refY','3');
-  markerChild.setAttribute('orient','auto');
-  var apc = document.createElementNS(NS, 'path');
-  apc.setAttribute('d','M0,0 L0,6 L7,3 z');
-  apc.setAttribute('fill','#e6510099');
-  markerChild.appendChild(apc); defs.appendChild(markerChild);
+  function makeMarker(id, color) {
+    var mk = document.createElementNS(NS, 'marker');
+    mk.setAttribute('id', id);
+    mk.setAttribute('markerWidth','8'); mk.setAttribute('markerHeight','6');
+    mk.setAttribute('refX','7'); mk.setAttribute('refY','3');
+    mk.setAttribute('orient','auto');
+    var ap = document.createElementNS(NS, 'path');
+    ap.setAttribute('d','M0,0 L0,6 L8,3 z');
+    ap.setAttribute('fill', color);
+    mk.appendChild(ap); return mk;
+  }
+  defs.appendChild(makeMarker('snmArrP_'+mi, '#1565c0bb'));
+  defs.appendChild(makeMarker('snmArrC_'+mi, '#e65100bb'));
   svg.appendChild(defs);
 
-  // ── Draw edges: center → parents ──
+  // ── Helper: point on rect border toward target ──
+  function borderPoint(rx, ry, rw, rh, tx, ty) {
+    var dx = tx - rx, dy = ty - ry;
+    var absDx = Math.abs(dx), absDy = Math.abs(dy);
+    var hw = rw/2, hh = rh/2;
+    if(absDx < 0.001 && absDy < 0.001) return {x: rx, y: ry};
+    var scaleX = hw / Math.max(absDx, 0.001);
+    var scaleY = hh / Math.max(absDy, 0.001);
+    var scale  = Math.min(scaleX, scaleY);
+    return { x: rx + dx * scale, y: ry + dy * scale };
+  }
+
+  // ── Draw lines: center → parent border ──
   parents.forEach(function(p) {
+    var from = borderPoint(cx, cy, CW, CH, p._px, p._py);
+    var to   = borderPoint(p._px, p._py, PW, PH, cx, cy);
     var line = document.createElementNS(NS, 'line');
-    line.setAttribute('x1', cx); line.setAttribute('y1', cy);
-    line.setAttribute('x2', p._px); line.setAttribute('y2', p._py);
-    line.setAttribute('stroke', '#1565c055');
+    line.setAttribute('x1', from.x); line.setAttribute('y1', from.y);
+    line.setAttribute('x2', to.x);   line.setAttribute('y2', to.y);
+    line.setAttribute('stroke', '#1565c066');
     line.setAttribute('stroke-width', '1.8');
-    line.setAttribute('marker-end', 'url(#snmArrow_'+mi+')');
+    line.setAttribute('marker-end', 'url(#snmArrP_'+mi+')');
     svg.appendChild(line);
 
-    // ── Draw edges: parent → children ──
+    // ── Draw lines: parent → child border ──
     (p.children||[]).forEach(function(c) {
-      var cline = document.createElementNS(NS, 'line');
-      cline.setAttribute('x1', p._px); cline.setAttribute('y1', p._py);
-      cline.setAttribute('x2', c._px); cline.setAttribute('y2', c._py);
-      cline.setAttribute('stroke', '#e6510055');
-      cline.setAttribute('stroke-width', '1.4');
-      cline.setAttribute('stroke-dasharray', '4,3');
-      cline.setAttribute('marker-end', 'url(#snmArrowC_'+mi+')');
-      svg.appendChild(cline);
+      var pBorder = borderPoint(p._px, p._py, PW, PH, c._px, c._py);
+      var cBorder = borderPoint(c._px, c._py, KW, KH, p._px, p._py);
+      var cl = document.createElementNS(NS, 'line');
+      cl.setAttribute('x1', pBorder.x); cl.setAttribute('y1', pBorder.y);
+      cl.setAttribute('x2', cBorder.x); cl.setAttribute('y2', cBorder.y);
+      cl.setAttribute('stroke', '#e6510066');
+      cl.setAttribute('stroke-width', '1.4');
+      cl.setAttribute('stroke-dasharray', '5,3');
+      cl.setAttribute('marker-end', 'url(#snmArrC_'+mi+')');
+      svg.appendChild(cl);
     });
   });
 
-  // ── Helper: draw a foreignObject node ──
-  function drawNode(x, y, text, isCenter, isChild) {
-    var nw = isCenter ? 110 : (isChild ? 110 : 130);
-    var nh = isCenter ? 48  : (isChild ? 42  : 52);
+  // ── Helper: draw foreignObject node ──
+  function drawNode(x, y, text, type) {
+    var nw = type==='center' ? CW : (type==='child' ? KW : PW);
+    var nh = type==='center' ? CH : (type==='child' ? KH : PH);
     var fo = document.createElementNS(NS, 'foreignObject');
     fo.setAttribute('x', x - nw/2);
     fo.setAttribute('y', y - nh/2);
     fo.setAttribute('width', nw);
-    fo.setAttribute('height', nh);
+    fo.setAttribute('height', nh + 16); // overflow room for text wrap
     fo.setAttribute('overflow', 'visible');
 
     var div = document.createElement('div');
-    div.style.cssText = [
+    var styles = [
       'width:'+nw+'px',
       'min-height:'+nh+'px',
-      'border-radius:'+(isCenter?'50%':'10px'),
-      'padding:'+(isCenter?'6px 8px':'5px 7px'),
-      'font-size:'+(isCenter?'11px':(isChild?'9.5px':'10px')),
-      'font-weight:'+(isCenter?'900':'700'),
-      'font-family:inherit',
-      'text-align:center',
-      'display:flex',
-      'align-items:center',
-      'justify-content:center',
-      'line-height:1.25',
-      'word-break:break-word',
       'box-sizing:border-box',
-      'cursor:default',
-      isCenter
-        ? 'background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border:2.5px solid #0d47a1;box-shadow:0 3px 14px rgba(21,101,192,0.35);'
-        : isChild
-          ? 'background:#fff8f5;color:#b33000;border:1.5px solid #e6510055;box-shadow:0 1px 6px rgba(230,81,0,0.1);'
-          : 'background:#fff;color:#0d1b2a;border:2px solid #1565c033;box-shadow:0 2px 10px rgba(21,101,192,0.13);'
-    ].join(';');
+      'display:flex','align-items:center','justify-content:center',
+      'text-align:center',
+      'line-height:1.3',
+      'word-break:break-word',
+      'hyphens:auto',
+      'font-family:inherit',
+      'font-weight:'+(type==='center'?'900':'700'),
+      'font-size:'+(type==='center'?'11px':(type==='child'?'9px':'10px')),
+      'padding:'+(type==='center'?'6px 10px':(type==='child'?'4px 6px':'6px 8px'))
+    ];
+    if(type==='center') {
+      styles.push('border-radius:28px');
+      styles.push('background:linear-gradient(135deg,#1565c0,#1976d2)');
+      styles.push('color:#fff');
+      styles.push('border:2.5px solid #0d47a1');
+      styles.push('box-shadow:0 3px 16px rgba(21,101,192,0.4)');
+    } else if(type==='child') {
+      styles.push('border-radius:8px');
+      styles.push('background:#fff8f5');
+      styles.push('color:#b33000');
+      styles.push('border:1.5px solid #e6510044');
+      styles.push('box-shadow:0 1px 5px rgba(230,81,0,0.1)');
+    } else {
+      styles.push('border-radius:12px');
+      styles.push('background:#ffffff');
+      styles.push('color:#0d1b2a');
+      styles.push('border:2px solid #1565c044');
+      styles.push('box-shadow:0 2px 10px rgba(21,101,192,0.13)');
+    }
+    div.style.cssText = styles.join(';');
     div.textContent = text;
     fo.appendChild(div);
     svg.appendChild(fo);
   }
 
-  // ── Draw parent nodes + children ──
+  // Draw children first (behind parents)
   parents.forEach(function(p) {
     (p.children||[]).forEach(function(c) {
-      drawNode(c._px, c._py, c.text, false, true);
+      drawNode(c._px, c._py, c.text, 'child');
     });
-    drawNode(p._px, p._py, p.text, false, false);
   });
+  // Draw parents
+  parents.forEach(function(p) {
+    drawNode(p._px, p._py, p.text, 'parent');
+  });
+  // Draw center last (on top)
+  drawNode(cx, cy, centerLabel, 'center');
 
-  // ── Draw center node last (on top) ──
-  drawNode(cx, cy, centerLabel, true, false);
-
-  // Wrap in scrollable container
   var wrap = document.createElement('div');
-  wrap.style.cssText = 'overflow-x:auto;overflow-y:hidden;padding:8px 4px;-webkit-overflow-scrolling:touch;';
+  wrap.style.cssText = 'overflow:auto;padding:8px 4px;-webkit-overflow-scrolling:touch;';
   wrap.appendChild(svg);
   return wrap;
 }
