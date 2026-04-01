@@ -33348,6 +33348,7 @@ function mmAttachListener(tid){
 
 // ── Open panel ──
 window.mmOpenPanel = function(){
+  // Step 1: _sc se topic info lo
   var tid=null,sid=null,secid=null,topicName='';
   try{
     var sc = window._sc;
@@ -33357,11 +33358,13 @@ window.mmOpenPanel = function(){
       topicName=t?t.name:('Topic '+tid);
     }
   }catch(e){ console.warn('mmOpenPanel _sc err',e); }
+
   _mm.tid=tid; _mm.sid=sid; _mm.secid=secid;
   _mm.topicName=topicName||'Mind Map';
   _mm.curSlide=0; _mm.zoom=1; _mm.panX=0; _mm.panY=0; _mm.fitOnLoad=true;
   _mm.selectedNodeKey=null;
 
+  // Step 2: localStorage se load karo (instant)
   var saved=mmLoad(tid);
   if(saved&&saved.slides&&saved.slides.length){
     _mm.slides=saved.slides;
@@ -33369,22 +33372,32 @@ window.mmOpenPanel = function(){
   } else {
     mmBuildFromFlashcards();
   }
-  // Also try to load from Firestore (merge latest)
-  if(window._db&&window._currentUser&&tid!=null){
-    window._db.collection('users').doc(window._currentUser.uid).collection('mindmaps').doc(String(tid)).get()
-      .then(function(doc){
-        if(doc.exists){
-          var d=doc.data();
-          _mm.slides=d.slides||_mm.slides;
-          _mm.topicName=d.topicName||_mm.topicName;
-          mmSave(); mmRender();
-        }
-      }).catch(function(){});
-  }
-  mmAttachListener(tid);
+
+  // Step 3: Panel TURANT open karo - Firestore ka wait NAHI
   var panel=document.getElementById('mmPanel');
   if(panel) panel.style.display='flex';
   mmRender();
+
+  // Step 4: Firestore background mein silently sync karo
+  try{
+    if(window._db&&window._currentUser&&tid!=null){
+      window._db.collection('users').doc(window._currentUser.uid)
+        .collection('mindmaps').doc(String(tid)).get()
+        .then(function(doc){
+          try{
+            if(doc&&doc.exists){
+              var d=doc.data();
+              if(d&&d.slides&&d.slides.length){
+                _mm.slides=d.slides;
+                _mm.topicName=d.topicName||_mm.topicName;
+                mmSave(); mmRender();
+              }
+            }
+          }catch(e2){}
+        }).catch(function(e){ console.warn('MM FS load skip:',e.message); });
+    }
+    mmAttachListener(tid);
+  }catch(e){ console.warn('MM FS init skip:',e.message); }
 };
 
 // ── Close ──
