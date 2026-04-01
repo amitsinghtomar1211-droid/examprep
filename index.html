@@ -33359,6 +33359,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       </div>
     </div>
     <div style="display:flex;gap:7px;align-items:center;">
+      <button onclick="rvToggleTools()" class="rv-tools-toggle" id="rvToolsToggleBtn" title="Tools dikhao/chupao"><span id="rvToolsToggleIcon">▲</span> Tools</button>
       <button onclick="rvShowAll()" id="rvShowAllBtn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;" title="Sab dikhao">Show All</button>
       <button onclick="rvHideAll()" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;" title="Sab chupao - Self Test">Hide All</button>
       <button onclick="rvExportPDF()" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;">PDF</button>
@@ -33480,6 +33481,8 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
 .rv-box-eye{width:24px;height:24px;border-radius:50%;border:1.5px solid rgba(156,39,176,0.4);background:rgba(156,39,176,0.08);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:0.7rem;transition:all 0.15s;}
 .rv-box-eye:hover{background:rgba(156,39,176,0.2);}
 .rv-box-eye.is-hidden{background:#9c27b0;color:#fff;border-color:#9c27b0;}
+.rv-box-delete{width:24px;height:24px;border-radius:50%;border:1.5px solid rgba(198,40,40,0.4);background:rgba(198,40,40,0.08);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:0.75rem;transition:all 0.15s;color:#c62828;}
+.rv-box-delete:hover{background:rgba(198,40,40,0.25);border-color:#c62828;}
 .rv-box.yellow{border-color:#f9a825;box-shadow:0 2px 10px rgba(249,168,37,0.2);}
 .rv-box.pink{border-color:#e91e63;box-shadow:0 2px 10px rgba(233,30,99,0.2);}
 .rv-box.green{border-color:#4caf50;box-shadow:0 2px 10px rgba(76,175,80,0.2);}
@@ -33505,6 +33508,13 @@ body.night-mode .rv-box.center-node{color:#fff;}
 
 .rv-color-btn.selected{border-color:#333 !important;transform:scale(1.15);}
 
+/* Tools area toggle */
+.rv-tools-toggle{background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);border-radius:6px;padding:3px 8px;cursor:pointer;color:#fff;font-size:0.68rem;font-weight:700;font-family:inherit;display:flex;align-items:center;gap:4px;}
+.rv-tools-toggle:hover{background:rgba(255,255,255,0.3);}
+.rv-tools-collapsed #rvPageNav,
+.rv-tools-collapsed #rvStatsBar,
+.rv-tools-collapsed #rvZoomBar{display:none !important;}
+.rv-tools-collapsed #rvCanvas{flex:1;}
 
 </style>
 
@@ -34926,19 +34936,35 @@ function rvRender(){
     container.appendChild(emptyMsg);
   }
   
-  // Radius increases based on number of boxes
-  var baseR = Math.min(cw, ch) * 0.32;
-  var rings = Math.ceil(n / 8);
+  // Grid-based layout to prevent overlap - boxes arranged in rows/columns
+  var boxW = 170; // box width including margin
+  var boxH = 100; // box height including margin
+  var cols = Math.max(3, Math.ceil(Math.sqrt(n + 1))); // +1 for center node
+  var startX = cx - ((cols - 1) * boxW) / 2;
+  var startY = cy - 80; // Start a bit above center
+  
+  // Calculate positions for all boxes in a grid pattern (skip center cell for center node)
+  var positions = [];
+  var centerCol = Math.floor(cols / 2);
+  var row = 0, col = 0;
+  for(var i = 0; i < n; i++){
+    // Skip the center position (where topic node is)
+    if(row === 0 && col === centerCol){
+      col++;
+      if(col >= cols){ col = 0; row++; }
+    }
+    positions.push({
+      x: startX + col * boxW,
+      y: startY + row * boxH + (row > 0 ? 60 : 0)
+    });
+    col++;
+    if(col >= cols){ col = 0; row++; }
+  }
   
   boxes.forEach(function(box, bi){
-    var ring = Math.floor(bi / 8);
-    var posInRing = bi % 8;
-    var nodesInThisRing = Math.min(8, n - ring * 8);
-    var R = baseR + ring * 90;
-    var angle = (2 * Math.PI * posInRing / nodesInThisRing) - Math.PI / 2;
-    
-    var bx = cx + R * Math.cos(angle);
-    var by = cy + R * Math.sin(angle);
+    var pos = positions[bi] || { x: startX + (bi % cols) * boxW, y: startY + Math.floor(bi / cols) * boxH + 120 };
+    var bx = pos.x;
+    var by = pos.y;
     
     // Draw line to center
     var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -34967,10 +34993,11 @@ function rvRender(){
       '<div class="rv-box-text">' + rvEsc(displayText) + '</div>' +
       '<div class="rv-box-actions">' +
         '<button class="rv-box-eye ' + (box.visible === false ? 'is-hidden' : '') + '" onclick="event.stopPropagation();rvToggleBoxVisibility(\'' + box.id + '\')" title="' + (box.visible === false ? 'Show' : 'Hide') + '">' + (box.visible === false ? 'O' : '-') + '</button>' +
+        '<button class="rv-box-delete" onclick="event.stopPropagation();rvDeleteBoxDirect(\'' + box.id + '\')" title="Delete box">×</button>' +
       '</div>';
     
     boxEl.onclick = function(e){
-      if(e.target.closest('.rv-box-eye')) return;
+      if(e.target.closest('.rv-box-eye') || e.target.closest('.rv-box-delete')) return;
       rvExpandBox(box.id);
     };
     
@@ -35242,6 +35269,34 @@ window.rvDeleteBox = function(){
   rvRender();
   rvSave();
   if(typeof showToast === 'function') showToast('Box deleted', 'success');
+};
+
+// Direct delete from box button (without opening modal)
+window.rvDeleteBoxDirect = function(boxId){
+  if(!confirm('Is box ko delete karna hai?')) return;
+  
+  var page = _rv.pages[_rv.curPage];
+  page.boxes = page.boxes.filter(function(b){ return b.id !== boxId; });
+  
+  rvPushHistory();
+  rvRender();
+  rvSave();
+  if(typeof showToast === 'function') showToast('Box deleted', 'success');
+};
+
+// Toggle tools area visibility
+window.rvToggleTools = function(){
+  var panel = document.getElementById('rvPanel');
+  var toggleIcon = document.getElementById('rvToolsToggleIcon');
+  if(!panel) return;
+  
+  if(panel.classList.contains('rv-tools-collapsed')){
+    panel.classList.remove('rv-tools-collapsed');
+    if(toggleIcon) toggleIcon.textContent = '▲';
+  } else {
+    panel.classList.add('rv-tools-collapsed');
+    if(toggleIcon) toggleIcon.textContent = '▼';
+  }
 };
 
 window.rvCloseEditModal = function(){
@@ -35716,11 +35771,14 @@ window.rvSyncAllHighlights = function(){
   var saved = rvLoad(tid);
   var pages = saved.pages || [{ boxes: [] }];
   
-  // Collect existing highlight IDs to avoid duplicates
+  // Collect existing highlight IDs AND text content to avoid duplicates
   var existingIds = {};
+  var existingTexts = {};
   pages.forEach(function(p){
     (p.boxes || []).forEach(function(b){
       if(b.sourceHighlightId) existingIds[b.sourceHighlightId] = true;
+      // Also track original text to prevent duplicates when hlId is missing
+      if(b.originalText) existingTexts[b.originalText.trim().toLowerCase()] = true;
     });
   });
   
@@ -35730,8 +35788,9 @@ window.rvSyncAllHighlights = function(){
     var text = mark.textContent.trim();
     var hlId = mark.getAttribute('data-hlid') || ('sync_' + Date.now() + '_' + Math.random().toString(36).substr(2,4));
     
-    // Skip if already exists
+    // Skip if already exists (by ID or by exact text match)
     if(existingIds[hlId]) return;
+    if(existingTexts[text.toLowerCase()]) return;
     
     // Get color
     var color = 'yellow';
