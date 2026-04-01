@@ -33198,6 +33198,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     </div>
     <div style="display:flex;gap:7px;align-items:center;">
       <button id="mmBulkToggleBtn" onclick="mmBulkToggleExplanations()" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;">👁 Sab</button>
+      <button onclick="mmResetRevisions()" style="background:rgba(255,193,7,0.25);border:1px solid rgba(255,193,7,0.5);border-radius:8px;padding:5px 10px;color:#fff9c4;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;" title="Saare revision marks reset karo">🔄 Reset</button>
       <button onclick="mmExportPDF()" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;">⬇ PDF</button>
       <button onclick="mmClosePanel()" style="background:rgba(198,40,40,0.35);border:none;border-radius:8px;padding:5px 11px;color:#fff;cursor:pointer;font-size:0.88rem;font-weight:800;font-family:inherit;">✕</button>
     </div>
@@ -33205,6 +33206,18 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
 
   <!-- Slide nav strip -->
   <div id="mmSlideNav" style="display:flex;align-items:center;gap:6px;padding:7px 12px;background:rgba(0,0,0,0.05);border-bottom:1.5px solid var(--border,#ccc);overflow-x:auto;flex-shrink:0;scrollbar-width:none;-webkit-overflow-scrolling:touch;"></div>
+
+  <!-- Revision Filter Bar -->
+  <div id="mmRevisionFilterBar" style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:linear-gradient(90deg,rgba(0,105,92,0.08),rgba(21,101,192,0.08));border-bottom:1.5px solid var(--border,#ccc);flex-shrink:0;flex-wrap:wrap;">
+    <span style="font-size:0.72rem;font-weight:800;color:var(--text,#222);">📊 Revision Filter:</span>
+    <div class="mm-filter-bar">
+      <button class="mm-filter-btn all active" onclick="mmSetFilter('all')" id="mmFilterAll">🎯 Sab</button>
+      <button class="mm-filter-btn red" onclick="mmSetFilter('red')" id="mmFilterRed">🔴 Nahi Aata</button>
+      <button class="mm-filter-btn yellow" onclick="mmSetFilter('yellow')" id="mmFilterYellow">🟡 Unsure</button>
+      <button class="mm-filter-btn green" onclick="mmSetFilter('green')" id="mmFilterGreen">🟢 Yaad Hai</button>
+    </div>
+    <div id="mmStatsDisplay" style="margin-left:auto;display:flex;gap:10px;font-size:0.68rem;color:var(--text2,#666);"></div>
+  </div>
 
   <!-- Zoom bar -->
   <div id="mmZoomBar" style="display:flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(0,0,0,0.04);border-bottom:1px solid var(--border,#ddd);flex-shrink:0;">
@@ -33296,11 +33309,161 @@ body.night-mode .mm-node-card{background:var(--surface,#1c2128);border-color:#f9
 body.night-mode .mm-node-q{color:var(--text2,#8b949e);}
 body.night-mode .mm-node-card.center-node{color:#fff;}
 body.night-mode .mm-node-a{background:rgba(249,168,37,0.06);color:var(--text2,#8b949e);}
+
+/* ══════════════════════════════════════════════════════════════════ */
+/* REVISION TRACKING SYSTEM - Status dots on nodes */
+/* ══════════════════════════════════════════════════════════════════ */
+.mm-revision-strip{display:flex;gap:4px;justify-content:center;margin-top:5px;padding-top:5px;border-top:1px dashed rgba(0,0,0,0.1);}
+.mm-rev-btn{width:22px;height:22px;border-radius:50%;border:2px solid transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:0.7rem;transition:all 0.18s;opacity:0.6;-webkit-tap-highlight-color:transparent;}
+.mm-rev-btn:hover{opacity:1;transform:scale(1.15);}
+.mm-rev-btn.red{background:rgba(198,40,40,0.15);border-color:rgba(198,40,40,0.4);color:#c62828;}
+.mm-rev-btn.green{background:rgba(46,125,50,0.15);border-color:rgba(46,125,50,0.4);color:#2e7d32;}
+.mm-rev-btn.yellow{background:rgba(249,168,37,0.2);border-color:rgba(249,168,37,0.5);color:#f57f17;}
+.mm-rev-btn.active{opacity:1;transform:scale(1.1);box-shadow:0 2px 8px rgba(0,0,0,0.2);}
+.mm-rev-btn.red.active{background:#c62828;color:#fff;border-color:#c62828;}
+.mm-rev-btn.green.active{background:#2e7d32;color:#fff;border-color:#2e7d32;}
+.mm-rev-btn.yellow.active{background:#f9a825;color:#fff;border-color:#f9a825;}
+
+/* Status indicator dot on node card */
+.mm-status-dot{position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.25);z-index:5;}
+.mm-status-dot.red{background:#c62828;}
+.mm-status-dot.green{background:#2e7d32;}
+.mm-status-dot.yellow{background:#f9a825;}
+.mm-status-dot.none{display:none;}
+
+/* Response count badge on revision button */
+.mm-rev-count{position:absolute;top:-5px;right:-5px;min-width:14px;height:14px;border-radius:7px;background:#333;color:#fff;font-size:0.5rem;font-weight:800;display:flex;align-items:center;justify-content:center;padding:0 3px;}
+.mm-rev-btn{position:relative;}
+
+/* Filter bar in header */
+.mm-filter-bar{display:flex;gap:6px;align-items:center;margin-left:10px;}
+.mm-filter-btn{padding:5px 10px;border-radius:20px;border:2px solid transparent;cursor:pointer;font-size:0.68rem;font-weight:800;font-family:inherit;display:flex;align-items:center;gap:4px;transition:all 0.18s;-webkit-tap-highlight-color:transparent;}
+.mm-filter-btn.all{background:rgba(255,255,255,0.18);border-color:rgba(255,255,255,0.35);color:#fff;}
+.mm-filter-btn.red{background:rgba(198,40,40,0.25);border-color:rgba(198,40,40,0.5);color:#ffcdd2;}
+.mm-filter-btn.green{background:rgba(46,125,50,0.25);border-color:rgba(46,125,50,0.5);color:#c8e6c9;}
+.mm-filter-btn.yellow{background:rgba(249,168,37,0.25);border-color:rgba(249,168,37,0.5);color:#fff9c4;}
+.mm-filter-btn.active{transform:scale(1.05);}
+.mm-filter-btn.all.active{background:rgba(255,255,255,0.35);border-color:#fff;}
+.mm-filter-btn.red.active{background:#c62828;color:#fff;}
+.mm-filter-btn.green.active{background:#2e7d32;color:#fff;}
+.mm-filter-btn.yellow.active{background:#f9a825;color:#333;}
+
+/* Hidden nodes when filtering */
+.mm-node-card.mm-hidden{opacity:0.15;pointer-events:none;transform:translate(-50%,-50%) scale(0.85);}
+.mm-node-card.mm-hidden .mm-revision-strip{display:none;}
+
+/* Stats bar */
+.mm-stats-bar{display:flex;gap:12px;align-items:center;padding:5px 12px;background:rgba(0,0,0,0.04);border-bottom:1px solid var(--border,#ddd);flex-shrink:0;font-size:0.7rem;color:var(--text2,#666);flex-wrap:wrap;}
+.mm-stat-item{display:flex;align-items:center;gap:4px;}
+.mm-stat-dot{width:10px;height:10px;border-radius:50%;}
+.mm-stat-dot.red{background:#c62828;}
+.mm-stat-dot.green{background:#2e7d32;}
+.mm-stat-dot.yellow{background:#f9a825;}
+.mm-stat-dot.grey{background:#9e9e9e;}
 </style>
 
 <script>
 (function(){
 'use strict';
+
+// ══════════════════════════════════════════════════════════════════
+// REVISION TRACKING STORAGE
+// ══════════════════════════════════════════════════════════════════
+function mmRevKey(tid){ return 'mmRevision_'+(tid!=null?tid:'default'); }
+function mmRevLoad(tid){
+  try{
+    var d=JSON.parse(localStorage.getItem(mmRevKey(tid))||'null');
+    if(d&&d.responses) return d;
+  }catch(e){}
+  return { responses:{} }; // responses = { nodeId: { red:0, green:0, yellow:0 } }
+}
+function mmRevSave(){
+  try{ localStorage.setItem(mmRevKey(_mm.tid),JSON.stringify(_mmRev)); }catch(e){}
+}
+
+// Revision state
+var _mmRev = { responses:{} };
+var _mmFilter = 'all'; // 'all', 'red', 'green', 'yellow'
+
+// Get node status based on response counts (highest count wins)
+function mmGetNodeStatus(nodeId){
+  var r = _mmRev.responses[nodeId];
+  if(!r || (r.red===0 && r.green===0 && r.yellow===0)) return 'none';
+  if(r.red >= r.green && r.red >= r.yellow) return 'red';
+  if(r.green >= r.red && r.green >= r.yellow) return 'green';
+  return 'yellow';
+}
+
+// Record a revision response for a node
+window.mmRecordRevision = function(nodeId, status){
+  if(!_mmRev.responses[nodeId]){
+    _mmRev.responses[nodeId] = { red:0, green:0, yellow:0 };
+  }
+  _mmRev.responses[nodeId][status]++;
+  mmRevSave();
+  mmRender();
+  if(typeof showToast==='function'){
+    var msgs = {
+      red: '🔴 Yaad nahi — Practice karo!',
+      green: '🟢 Yaad hai — Great!',
+      yellow: '🟡 Partially yaad — Revise karo!'
+    };
+    showToast(msgs[status],'success');
+  }
+};
+
+// Set filter
+window.mmSetFilter = function(filter){
+  _mmFilter = filter;
+  // Update button states
+  ['all','red','green','yellow'].forEach(function(f){
+    var btn = document.getElementById('mmFilter'+f.charAt(0).toUpperCase()+f.slice(1));
+    if(btn){
+      btn.classList.toggle('active', f===filter);
+    }
+  });
+  mmRender();
+};
+
+// Get stats for current slide
+function mmGetStats(){
+  var slide = _mm.slides[_mm.curSlide];
+  if(!slide) return {total:0,red:0,green:0,yellow:0,unreviewed:0};
+  var nodes = slide.nodes || [];
+  var stats = {total:nodes.length, red:0, green:0, yellow:0, unreviewed:0};
+  nodes.forEach(function(node){
+    var status = mmGetNodeStatus(node.id);
+    if(status==='none') stats.unreviewed++;
+    else stats[status]++;
+  });
+  return stats;
+}
+
+// Update stats display
+function mmUpdateStatsDisplay(){
+  var el = document.getElementById('mmStatsDisplay');
+  if(!el) return;
+  var stats = mmGetStats();
+  el.innerHTML =
+    '<span style="display:flex;align-items:center;gap:3px;"><span class="mm-stat-dot grey"></span>'+stats.unreviewed+' Naya</span>' +
+    '<span style="display:flex;align-items:center;gap:3px;"><span class="mm-stat-dot red"></span>'+stats.red+'</span>' +
+    '<span style="display:flex;align-items:center;gap:3px;"><span class="mm-stat-dot yellow"></span>'+stats.yellow+'</span>' +
+    '<span style="display:flex;align-items:center;gap:3px;"><span class="mm-stat-dot green"></span>'+stats.green+'</span>';
+}
+
+// Reset all revision responses
+window.mmResetRevisions = function(){
+  if(!confirm('⚠️ Saare revision marks reset karna chahte ho? Saare counts 0 ho jayenge.')) return;
+  _mmRev = { responses:{} };
+  mmRevSave();
+  _mmFilter = 'all';
+  ['all','red','green','yellow'].forEach(function(f){
+    var btn = document.getElementById('mmFilter'+f.charAt(0).toUpperCase()+f.slice(1));
+    if(btn) btn.classList.toggle('active', f==='all');
+  });
+  mmRender();
+  if(typeof showToast==='function') showToast('🔄 Revision marks reset ho gaye!','success');
+};
 
 // ── Storage ──
 function mmKey(tid){ return 'mmData_'+(tid!=null?tid:'default'); }
@@ -33318,6 +33481,16 @@ window.mmOpenPanel = function(){
   var saved=mmLoad(tid);
   if(saved&&saved.slides&&saved.slides.length){ _mm.slides=saved.slides;_mm.topicName=saved.topicName||_mm.topicName; }
   else { mmBuildFromFlashcards(); }
+  
+  // Load revision data
+  _mmRev = mmRevLoad(tid);
+  _mmFilter = 'all';
+  // Reset filter buttons
+  ['all','red','green','yellow'].forEach(function(f){
+    var btn = document.getElementById('mmFilter'+f.charAt(0).toUpperCase()+f.slice(1));
+    if(btn) btn.classList.toggle('active', f==='all');
+  });
+  
   var panel=document.getElementById('mmPanel'); if(panel) panel.style.display='flex';
   document.getElementById('mmTopicLabel').textContent='🧠 '+_mm.topicName;
   mmRender();
@@ -33417,24 +33590,54 @@ function mmRender(){
     var angle=(2*Math.PI*ni/n)-Math.PI/2;
     var nx=cx+R*Math.cos(angle), ny=cy+R*Math.sin(angle);
 
+    // Get node revision status for filtering
+    var nodeStatus = mmGetNodeStatus(node.id);
+    var isHidden = _mmFilter !== 'all' && nodeStatus !== _mmFilter && nodeStatus !== 'none';
+    // If filter is not 'all', also hide nodes with 'none' status unless filter is 'all'
+    if(_mmFilter !== 'all' && nodeStatus === 'none') isHidden = true;
+
     // Line
     var line=document.createElementNS('http://www.w3.org/2000/svg','line');
     line.setAttribute('x1',cx);line.setAttribute('y1',cy);line.setAttribute('x2',nx);line.setAttribute('y2',ny);
     line.setAttribute('stroke','#f9a825');line.setAttribute('stroke-width','2');
-    line.setAttribute('stroke-dasharray',node.visible?'0':'6,4');line.setAttribute('opacity','0.8');
+    line.setAttribute('stroke-dasharray',node.visible?'0':'6,4');
+    line.setAttribute('opacity', isHidden ? '0.15' : '0.8');
     svg.appendChild(line);
 
+    // Get revision counts for this node
+    var revData = _mmRev.responses[node.id] || { red:0, green:0, yellow:0 };
+
     // Card
-    var card=document.createElement('div'); card.className='mm-node-card'; card.style.left=nx+'px'; card.style.top=ny+'px'; card.style.zIndex='3';
+    var card=document.createElement('div'); 
+    card.className='mm-node-card' + (isHidden ? ' mm-hidden' : ''); 
+    card.style.left=nx+'px'; card.style.top=ny+'px'; card.style.zIndex='3';
     var shortQ=node.q.length>60?node.q.slice(0,60)+'…':node.q;
-    card.innerHTML='<div class="mm-node-q">'+mmEsc(shortQ)+'</div>'+
+    
+    // Build revision strip HTML with count badges
+    var revStrip = '<div class="mm-revision-strip">' +
+      '<button class="mm-rev-btn red'+(nodeStatus==='red'?' active':'')+'" onclick="event.stopPropagation();mmRecordRevision(\''+node.id+'\',\'red\')" title="Nahi Aata / Yaad Nahi">' +
+        '🔴' + (revData.red > 0 ? '<span class="mm-rev-count">'+revData.red+'</span>' : '') +
+      '</button>' +
+      '<button class="mm-rev-btn yellow'+(nodeStatus==='yellow'?' active':'')+'" onclick="event.stopPropagation();mmRecordRevision(\''+node.id+'\',\'yellow\')" title="Partially Yaad / Unsure">' +
+        '🟡' + (revData.yellow > 0 ? '<span class="mm-rev-count">'+revData.yellow+'</span>' : '') +
+      '</button>' +
+      '<button class="mm-rev-btn green'+(nodeStatus==='green'?' active':'')+'" onclick="event.stopPropagation();mmRecordRevision(\''+node.id+'\',\'green\')" title="Yaad Hai / Know It">' +
+        '🟢' + (revData.green > 0 ? '<span class="mm-rev-count">'+revData.green+'</span>' : '') +
+      '</button>' +
+    '</div>';
+    
+    // Status dot indicator
+    var statusDot = '<div class="mm-status-dot '+nodeStatus+'"></div>';
+    
+    card.innerHTML= statusDot +
+      '<div class="mm-node-q">'+mmEsc(shortQ)+'</div>'+
       '<div class="mm-node-a'+(node.visible?' visible':'')+'">'+mmEsc(node.a)+'</div>'+
       '<div class="mm-node-actions">'+
         '<button class="mm-node-btn hide-btn" onclick="mmToggleNode('+cur+','+ni+',false)">'+(node.visible?'🙈 Hide':'👁 Show')+'</button>'+
         '<button class="mm-node-btn edit-btn" onclick="mmEditNode('+cur+','+ni+',false)">✏️</button>'+
         '<button class="mm-node-btn del-btn" onclick="mmDeleteNode('+cur+','+ni+',false)">🗑</button>'+
         '<button class="mm-node-btn parent-btn" onclick="mmOpenParentModal('+cur+','+ni+')">🔗</button>'+
-      '</div>';
+      '</div>' + revStrip;
     container.appendChild(card);
 
     // Parent nodes
@@ -33445,23 +33648,54 @@ function mmRender(){
       var pR=R+NODE_W*0.9;
       var px2=cx+pR*Math.cos(pAngle), py2=cy+pR*Math.sin(pAngle);
 
+      // Get parent node revision status
+      var pNodeStatus = mmGetNodeStatus(pNode.id);
+      var pIsHidden = _mmFilter !== 'all' && pNodeStatus !== _mmFilter && pNodeStatus !== 'none';
+      if(_mmFilter !== 'all' && pNodeStatus === 'none') pIsHidden = true;
+      // Also hide parent if main node is hidden
+      if(isHidden) pIsHidden = true;
+
+      var pRevData = _mmRev.responses[pNode.id] || { red:0, green:0, yellow:0 };
+
       var pl=document.createElementNS('http://www.w3.org/2000/svg','line');
       pl.setAttribute('x1',nx);pl.setAttribute('y1',ny);pl.setAttribute('x2',px2);pl.setAttribute('y2',py2);
-      pl.setAttribute('stroke','#7c4dff');pl.setAttribute('stroke-width','1.5');pl.setAttribute('stroke-dasharray','5,3');pl.setAttribute('opacity','0.65');
+      pl.setAttribute('stroke','#7c4dff');pl.setAttribute('stroke-width','1.5');pl.setAttribute('stroke-dasharray','5,3');
+      pl.setAttribute('opacity', pIsHidden ? '0.1' : '0.65');
       svg.appendChild(pl);
 
-      var pc=document.createElement('div'); pc.className='mm-node-card parent-node'; pc.style.left=px2+'px'; pc.style.top=py2+'px'; pc.style.zIndex='3';
+      // Build parent revision strip
+      var pRevStrip = '<div class="mm-revision-strip">' +
+        '<button class="mm-rev-btn red'+(pNodeStatus==='red'?' active':'')+'" onclick="event.stopPropagation();mmRecordRevision(\''+pNode.id+'\',\'red\')" title="Nahi Aata">' +
+          '🔴' + (pRevData.red > 0 ? '<span class="mm-rev-count">'+pRevData.red+'</span>' : '') +
+        '</button>' +
+        '<button class="mm-rev-btn yellow'+(pNodeStatus==='yellow'?' active':'')+'" onclick="event.stopPropagation();mmRecordRevision(\''+pNode.id+'\',\'yellow\')" title="Unsure">' +
+          '🟡' + (pRevData.yellow > 0 ? '<span class="mm-rev-count">'+pRevData.yellow+'</span>' : '') +
+        '</button>' +
+        '<button class="mm-rev-btn green'+(pNodeStatus==='green'?' active':'')+'" onclick="event.stopPropagation();mmRecordRevision(\''+pNode.id+'\',\'green\')" title="Yaad Hai">' +
+          '🟢' + (pRevData.green > 0 ? '<span class="mm-rev-count">'+pRevData.green+'</span>' : '') +
+        '</button>' +
+      '</div>';
+      
+      var pStatusDot = '<div class="mm-status-dot '+pNodeStatus+'"></div>';
+
+      var pc=document.createElement('div'); 
+      pc.className='mm-node-card parent-node' + (pIsHidden ? ' mm-hidden' : ''); 
+      pc.style.left=px2+'px'; pc.style.top=py2+'px'; pc.style.zIndex='3';
       var shortPQ=pNode.q.length>50?pNode.q.slice(0,50)+'…':pNode.q;
-      pc.innerHTML='<div class="mm-node-q" style="color:#5c6bc0;">'+mmEsc(shortPQ)+'</div>'+
+      pc.innerHTML= pStatusDot +
+        '<div class="mm-node-q" style="color:#5c6bc0;">'+mmEsc(shortPQ)+'</div>'+
         '<div class="mm-node-a'+(pNode.visible?' visible':'')+'">'+mmEsc(pNode.a)+'</div>'+
         '<div class="mm-node-actions">'+
           '<button class="mm-node-btn hide-btn" onclick="mmToggleNode('+cur+','+pIdx+',true)">'+(pNode.visible?'🙈 Hide':'👁 Show')+'</button>'+
           '<button class="mm-node-btn edit-btn" onclick="mmEditNode('+cur+','+pIdx+',true)">✏️</button>'+
           '<button class="mm-node-btn del-btn" onclick="mmDeleteNode('+cur+','+pIdx+',true)">🗑</button>'+
-        '</div>';
+        '</div>' + pRevStrip;
       container.appendChild(pc);
     });
   });
+
+  // Update stats display
+  mmUpdateStatsDisplay();
 
   // Apply transform after DOM paint
   setTimeout(function(){
