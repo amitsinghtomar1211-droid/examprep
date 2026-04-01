@@ -5281,7 +5281,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <!-- AI Chat Button — Canvas page par AI se baat karo -->
     <button class="sc-fstrip-btn" id="scAiChatBtn" onclick="scOpenCanvasAiChat()" title="AI Chat — Canvas slides se flashcards banao" style="background:linear-gradient(135deg,rgba(21,101,192,0.18),rgba(106,27,154,0.18));border-color:rgba(106,27,154,0.4);color:#6a1b9a;font-size:0.82rem;">🤖</button>
     <!-- Mind Map Button -->
-    <button class="sc-fstrip-btn" id="scMindMapBtn" onclick="if(typeof window.mmOpenPanel==='function'){window.mmOpenPanel();}else{console.error('mmOpenPanel not found');alert('Mind Map load nahi hua, page refresh karo!');}" title="Mind Map — Flashcards se Mind Map banao" style="background:linear-gradient(135deg,rgba(0,105,92,0.22),rgba(46,125,50,0.22));border-color:rgba(0,150,136,0.45);color:#00695c;font-size:0.82rem;">🧠</button>
+    <button class="sc-fstrip-btn" id="scMindMapBtn" onclick="if(typeof window.mmOpenPanel==='function'){window.mmOpenPanel();}else{alert('Mind Map load nahi hua, page refresh karo!');}" title="Mind Map — Flashcards se Mind Map banao" style="background:linear-gradient(135deg,rgba(0,105,92,0.22),rgba(46,125,50,0.22));border-color:rgba(0,150,136,0.45);color:#00695c;font-size:0.82rem;">🧠</button>
     <!-- Undo -->
     <button class="sc-fstrip-btn" id="scFloatUndoBtn" onclick="scUndo&&scUndo()" title="Undo (Ctrl+Z)" style="font-size:0.82rem;opacity:0.5;">↩</button>
     <!-- Redo -->
@@ -33351,12 +33351,12 @@ window.mmOpenPanel = function(){
   var tid=null,sid=null,secid=null,topicName='';
   try{
     var sc = window._sc;
-    if(typeof sc!=='undefined'&&sc!=null&&sc.tid!=null){
+    if(sc!=null&&sc.tid!=null){
       tid=sc.tid; sid=sc.sid; secid=sc.secid;
       var t=(typeof getTop==='function')?getTop(sid,secid,tid):null;
       topicName=t?t.name:('Topic '+tid);
     }
-  }catch(e){ console.warn('mmOpenPanel _sc access err',e); }
+  }catch(e){ console.warn('mmOpenPanel _sc err',e); }
   _mm.tid=tid; _mm.sid=sid; _mm.secid=secid;
   _mm.topicName=topicName||'Mind Map';
   _mm.curSlide=0; _mm.zoom=1; _mm.panX=0; _mm.panY=0; _mm.fitOnLoad=true;
@@ -33402,7 +33402,7 @@ function mmBuildFromFlashcards(){
     var fcData=JSON.parse(localStorage.getItem('scFC_'+(tid!=null?tid:'default'))||'{}');
     cards=fcData.cards||[];
   }catch(e){}
-  if(!cards.length&&typeof window._scFC!=='undefined'&&typeof window._sc!=='undefined'&&window._sc.tid==tid)
+  if(!cards.length&&typeof window._scFC!=='undefined'&&window._sc!=null&&window._sc.tid==tid)
     cards=window._scFC.cards||[];
   if(!cards.length){ _mm.slides=[{nodes:[],parentNodes:[]}]; return; }
   _mm.slides=[];
@@ -33936,7 +33936,7 @@ var _orig=window.scAiMakeFlashcards;
 if(typeof _orig==='function'){
   window.scAiMakeFlashcards=function(){
     _orig.apply(this,arguments);
-    try{var tid=(typeof window._sc!=='undefined')?window._sc.tid:null;
+    try{var tid=(window._sc!=null)?window._sc.tid:null;
         if(tid!=null){localStorage.removeItem(mmKey(tid));
           if(window._db&&window._currentUser)
             window._db.collection('users').doc(window._currentUser.uid).collection('mindmaps').doc(String(tid)).delete().catch(function(){});
@@ -33947,9 +33947,19 @@ if(typeof _orig==='function'){
 
 })();
 } catch(e) {
-  console.error('Mind Map init FAILED:', e);
+  console.error('Mind Map IIFE crash:', e);
+}
+
+// ── GUARANTEED FALLBACK: Agar IIFE mein kuch bhi galat hua toh bhi mmOpenPanel kaam kare ──
+if(typeof window.mmOpenPanel !== 'function') {
+  console.error('mmOpenPanel assign nahi hua - emergency fallback active');
   window.mmOpenPanel = function(){
-    alert('Mind Map mein error aaya: ' + e.message + '\nPage refresh karo!');
+    var panel = document.getElementById('mmPanel');
+    if(panel) {
+      panel.style.display = 'flex';
+    } else {
+      alert('Mind Map panel nahi mila. Page hard-refresh karo (Ctrl+Shift+R)');
+    }
   };
 }
 // ══ END MIND MAP ══
