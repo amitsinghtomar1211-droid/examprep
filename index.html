@@ -33190,6 +33190,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
   <!-- Header -->
   <div id="mmHeader" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:linear-gradient(135deg,#00695c,#1565c0);color:#fff;flex-shrink:0;box-shadow:0 2px 12px rgba(0,0,0,0.18);">
     <div style="display:flex;align-items:center;gap:10px;">
+      <button onclick="mmClosePanel()" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.82rem;font-weight:800;font-family:inherit;display:flex;align-items:center;gap:4px;" title="Wapas jao">◀ Back</button>
       <span style="font-size:1.1rem;">🧠</span>
       <div>
         <div style="font-weight:800;font-size:0.92rem;" id="mmTopicLabel">Mind Map</div>
@@ -33209,9 +33210,10 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
 
   <!-- Revision Filter Bar -->
   <div id="mmRevisionFilterBar" style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:linear-gradient(90deg,rgba(0,105,92,0.08),rgba(21,101,192,0.08));border-bottom:1.5px solid var(--border,#ccc);flex-shrink:0;flex-wrap:wrap;">
-    <span style="font-size:0.72rem;font-weight:800;color:var(--text,#222);">📊 Revision Filter:</span>
+    <span style="font-size:0.72rem;font-weight:800;color:var(--text,#222);">📊 Filter:</span>
     <div class="mm-filter-bar">
       <button class="mm-filter-btn all active" onclick="mmSetFilter('all')" id="mmFilterAll">🎯 Sab</button>
+      <button class="mm-filter-btn starred" onclick="mmSetFilter('starred')" id="mmFilterStarred">⭐ Important</button>
       <button class="mm-filter-btn red" onclick="mmSetFilter('red')" id="mmFilterRed">🔴 Nahi Aata</button>
       <button class="mm-filter-btn yellow" onclick="mmSetFilter('yellow')" id="mmFilterYellow">🟡 Unsure</button>
       <button class="mm-filter-btn green" onclick="mmSetFilter('green')" id="mmFilterGreen">🟢 Yaad Hai</button>
@@ -33356,14 +33358,24 @@ body.night-mode .mm-node-a{background:rgba(249,168,37,0.06);color:var(--text2,#8
 .mm-filter-bar{display:flex;gap:6px;align-items:center;margin-left:10px;}
 .mm-filter-btn{padding:5px 10px;border-radius:20px;border:2px solid transparent;cursor:pointer;font-size:0.68rem;font-weight:800;font-family:inherit;display:flex;align-items:center;gap:4px;transition:all 0.18s;-webkit-tap-highlight-color:transparent;}
 .mm-filter-btn.all{background:rgba(255,255,255,0.18);border-color:rgba(255,255,255,0.35);color:#fff;}
+.mm-filter-btn.starred{background:rgba(255,193,7,0.25);border-color:rgba(255,193,7,0.5);color:#fff8e1;}
 .mm-filter-btn.red{background:rgba(198,40,40,0.25);border-color:rgba(198,40,40,0.5);color:#ffcdd2;}
 .mm-filter-btn.green{background:rgba(46,125,50,0.25);border-color:rgba(46,125,50,0.5);color:#c8e6c9;}
 .mm-filter-btn.yellow{background:rgba(249,168,37,0.25);border-color:rgba(249,168,37,0.5);color:#fff9c4;}
 .mm-filter-btn.active{transform:scale(1.05);}
 .mm-filter-btn.all.active{background:rgba(255,255,255,0.35);border-color:#fff;}
+.mm-filter-btn.starred.active{background:#ffc107;color:#333;border-color:#ffc107;}
 .mm-filter-btn.red.active{background:#c62828;color:#fff;}
 .mm-filter-btn.green.active{background:#2e7d32;color:#fff;}
 .mm-filter-btn.yellow.active{background:#f9a825;color:#333;}
+
+/* Star marking system */
+.mm-star-btn{position:absolute;top:-6px;left:-6px;width:24px;height:24px;border-radius:50%;border:2px solid rgba(255,193,7,0.5);background:rgba(255,255,255,0.95);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:0.7rem;z-index:10;transition:all 0.18s;-webkit-tap-highlight-color:transparent;box-shadow:0 2px 6px rgba(0,0,0,0.15);}
+.mm-star-btn:hover{transform:scale(1.15);border-color:#ffc107;}
+.mm-star-btn.starred{background:linear-gradient(135deg,#ffc107,#ff9800);border-color:#ff9800;box-shadow:0 2px 10px rgba(255,193,7,0.5);}
+.mm-star-btn.starred-2{background:linear-gradient(135deg,#ff9800,#ff5722);border-color:#ff5722;box-shadow:0 2px 12px rgba(255,87,34,0.5);}
+.mm-star-btn.starred-3{background:linear-gradient(135deg,#ff5722,#d32f2f);border-color:#d32f2f;box-shadow:0 2px 14px rgba(211,47,47,0.5);}
+body.night-mode .mm-star-btn{background:rgba(30,30,30,0.95);}
 
 /* Hidden nodes when filtering */
 .mm-node-card.mm-hidden{opacity:0.15;pointer-events:none;transform:translate(-50%,-50%) scale(0.85);}
@@ -33432,17 +33444,21 @@ function mmRevKey(tid){ return 'mmRevision_'+(tid!=null?tid:'default'); }
 function mmRevLoad(tid){
   try{
     var d=JSON.parse(localStorage.getItem(mmRevKey(tid))||'null');
-    if(d&&d.responses) return d;
+    if(d&&d.responses) {
+      // Ensure starred object exists
+      if(!d.starred) d.starred = {};
+      return d;
+    }
   }catch(e){}
-  return { responses:{} }; // responses = { nodeId: { red:0, green:0, yellow:0 } }
+  return { responses:{}, starred:{} }; // responses = { nodeId: { red:0, green:0, yellow:0 } }, starred = { nodeId: 1/2/3 }
 }
 function mmRevSave(){
   try{ localStorage.setItem(mmRevKey(_mm.tid),JSON.stringify(_mmRev)); }catch(e){}
 }
 
 // Revision state
-var _mmRev = { responses:{} };
-var _mmFilter = 'all'; // 'all', 'red', 'green', 'yellow'
+var _mmRev = { responses:{}, starred:{} };
+var _mmFilter = 'all'; // 'all', 'starred', 'red', 'green', 'yellow'
 
 // Get node status based on response counts (highest count wins)
 function mmGetNodeStatus(nodeId){
@@ -33452,6 +33468,28 @@ function mmGetNodeStatus(nodeId){
   if(r.green >= r.red && r.green >= r.yellow) return 'green';
   return 'yellow';
 }
+
+// Get star level for a node (0 = not starred, 1/2/3 = star level)
+function mmGetStarLevel(nodeId){
+  return _mmRev.starred[nodeId] || 0;
+}
+
+// Toggle star on a node (cycles through: 0 -> 1 -> 2 -> 3 -> 0)
+window.mmToggleStar = function(nodeId){
+  var currentLevel = _mmRev.starred[nodeId] || 0;
+  var newLevel = (currentLevel + 1) % 4; // 0 -> 1 -> 2 -> 3 -> 0
+  if(newLevel === 0){
+    delete _mmRev.starred[nodeId];
+  } else {
+    _mmRev.starred[nodeId] = newLevel;
+  }
+  mmRevSave();
+  mmRender();
+  if(typeof showToast==='function'){
+    var msgs = ['⭐ Star hataya', '⭐ Important marked!', '⭐⭐ Very Important!', '⭐⭐⭐ Most Important!'];
+    showToast(msgs[newLevel],'success');
+  }
+};
 
 // ══════════════════════════════════════════════════════════════════
 // UNDO/REDO HISTORY SYSTEM
@@ -33590,6 +33628,7 @@ window.mmSaveToCloud = async function(){
         slides: _mm.slides,
         topicName: _mm.topicName,
         responses: _mmRev.responses,
+        starred: _mmRev.starred || {},
         updatedAt: Date.now(),
         writeId: wid
       }, {merge: true});
@@ -33647,6 +33686,9 @@ async function mmLoadFromCloud(){
       if(data.responses){
         _mmRev.responses = data.responses;
       }
+      if(data.starred){
+        _mmRev.starred = data.starred;
+      }
       // Store writeId to suppress echo
       if(data.writeId && typeof _myTopicWriteIds !== 'undefined'){
         _myTopicWriteIds['mm_'+tid] = data.writeId;
@@ -33691,6 +33733,9 @@ function mmAttachRealtimeListener(){
       if(data.responses){
         _mmRev.responses = data.responses;
       }
+      if(data.starred){
+        _mmRev.starred = data.starred;
+      }
       
       // Save writeId to prevent re-trigger
       if(typeof _myTopicWriteIds !== 'undefined') _myTopicWriteIds['mm_'+tid] = incomingWid;
@@ -33731,7 +33776,7 @@ window.mmRecordRevision = function(nodeId, status){
 window.mmSetFilter = function(filter){
   _mmFilter = filter;
   // Update button states
-  ['all','red','green','yellow'].forEach(function(f){
+  ['all','starred','red','green','yellow'].forEach(function(f){
     var btn = document.getElementById('mmFilter'+f.charAt(0).toUpperCase()+f.slice(1));
     if(btn){
       btn.classList.toggle('active', f===filter);
@@ -33743,13 +33788,15 @@ window.mmSetFilter = function(filter){
 // Get stats for current slide
 function mmGetStats(){
   var slide = _mm.slides[_mm.curSlide];
-  if(!slide) return {total:0,red:0,green:0,yellow:0,unreviewed:0};
+  if(!slide) return {total:0,red:0,green:0,yellow:0,unreviewed:0,starred:0};
   var nodes = slide.nodes || [];
-  var stats = {total:nodes.length, red:0, green:0, yellow:0, unreviewed:0};
+  var stats = {total:nodes.length, red:0, green:0, yellow:0, unreviewed:0, starred:0};
   nodes.forEach(function(node){
     var status = mmGetNodeStatus(node.id);
+    var starLevel = mmGetStarLevel(node.id);
     if(status==='none') stats.unreviewed++;
     else stats[status]++;
+    if(starLevel > 0) stats.starred++;
   });
   return stats;
 }
@@ -33760,6 +33807,7 @@ function mmUpdateStatsDisplay(){
   if(!el) return;
   var stats = mmGetStats();
   el.innerHTML =
+    '<span style="display:flex;align-items:center;gap:3px;"><span style="font-size:0.7rem;">⭐</span>'+stats.starred+'</span>' +
     '<span style="display:flex;align-items:center;gap:3px;"><span class="mm-stat-dot grey"></span>'+stats.unreviewed+' Naya</span>' +
     '<span style="display:flex;align-items:center;gap:3px;"><span class="mm-stat-dot red"></span>'+stats.red+'</span>' +
     '<span style="display:flex;align-items:center;gap:3px;"><span class="mm-stat-dot yellow"></span>'+stats.yellow+'</span>' +
@@ -33769,10 +33817,10 @@ function mmUpdateStatsDisplay(){
 // Reset all revision responses
 window.mmResetRevisions = function(){
   if(!confirm('⚠️ Saare revision marks reset karna chahte ho? Saare counts 0 ho jayenge.')) return;
-  _mmRev = { responses:{} };
+  _mmRev = { responses:{}, starred:{} };
   mmRevSave();
   _mmFilter = 'all';
-  ['all','red','green','yellow'].forEach(function(f){
+  ['all','starred','red','green','yellow'].forEach(function(f){
     var btn = document.getElementById('mmFilter'+f.charAt(0).toUpperCase()+f.slice(1));
     if(btn) btn.classList.toggle('active', f==='all');
   });
@@ -33820,7 +33868,7 @@ window.mmOpenPanel = async function(){
   }
   _mmFilter = 'all';
   // Reset filter buttons
-  ['all','red','green','yellow'].forEach(function(f){
+  ['all','starred','red','green','yellow'].forEach(function(f){
     var btn = document.getElementById('mmFilter'+f.charAt(0).toUpperCase()+f.slice(1));
     if(btn) btn.classList.toggle('active', f==='all');
   });
@@ -33940,9 +33988,18 @@ function mmRender(){
 
     // Get node revision status for filtering
     var nodeStatus = mmGetNodeStatus(node.id);
-    var isHidden = _mmFilter !== 'all' && nodeStatus !== _mmFilter && nodeStatus !== 'none';
-    // If filter is not 'all', also hide nodes with 'none' status unless filter is 'all'
-    if(_mmFilter !== 'all' && nodeStatus === 'none') isHidden = true;
+    var starLevel = mmGetStarLevel(node.id);
+    var isHidden = false;
+    
+    // Handle different filter modes
+    if(_mmFilter === 'starred'){
+      // Show only starred nodes
+      isHidden = starLevel === 0;
+    } else if(_mmFilter !== 'all'){
+      // Show only nodes with matching status
+      isHidden = nodeStatus !== _mmFilter && nodeStatus !== 'none';
+      if(nodeStatus === 'none') isHidden = true;
+    }
 
     // Line
     var line=document.createElementNS('http://www.w3.org/2000/svg','line');
@@ -33977,7 +34034,12 @@ function mmRender(){
     // Status dot indicator
     var statusDot = '<div class="mm-status-dot '+nodeStatus+'"></div>';
     
-    card.innerHTML= statusDot +
+    // Star button
+    var starClass = starLevel > 0 ? (starLevel === 1 ? 'starred' : (starLevel === 2 ? 'starred-2' : 'starred-3')) : '';
+    var starIcon = starLevel === 0 ? '☆' : (starLevel === 1 ? '⭐' : (starLevel === 2 ? '⭐⭐' : '⭐⭐⭐'));
+    var starBtn = '<button class="mm-star-btn '+starClass+'" onclick="event.stopPropagation();mmToggleStar(\''+node.id+'\')" title="Important mark karo ('+starLevel+'/3)">'+(starLevel === 0 ? '☆' : starLevel)+'</button>';
+    
+    card.innerHTML= starBtn + statusDot +
       '<div class="mm-node-q">'+mmEsc(shortQ)+'</div>'+
       '<div class="mm-node-a'+(node.visible?' visible':'')+'">'+mmEsc(node.a)+'</div>'+
       '<div class="mm-node-actions">'+
@@ -33998,8 +34060,16 @@ function mmRender(){
 
       // Get parent node revision status
       var pNodeStatus = mmGetNodeStatus(pNode.id);
-      var pIsHidden = _mmFilter !== 'all' && pNodeStatus !== _mmFilter && pNodeStatus !== 'none';
-      if(_mmFilter !== 'all' && pNodeStatus === 'none') pIsHidden = true;
+      var pStarLevel = mmGetStarLevel(pNode.id);
+      var pIsHidden = false;
+      
+      // Handle different filter modes for parent nodes
+      if(_mmFilter === 'starred'){
+        pIsHidden = pStarLevel === 0;
+      } else if(_mmFilter !== 'all'){
+        pIsHidden = pNodeStatus !== _mmFilter && pNodeStatus !== 'none';
+        if(pNodeStatus === 'none') pIsHidden = true;
+      }
       // Also hide parent if main node is hidden
       if(isHidden) pIsHidden = true;
 
@@ -34025,12 +34095,16 @@ function mmRender(){
       '</div>';
       
       var pStatusDot = '<div class="mm-status-dot '+pNodeStatus+'"></div>';
+      
+      // Star button for parent node
+      var pStarClass = pStarLevel > 0 ? (pStarLevel === 1 ? 'starred' : (pStarLevel === 2 ? 'starred-2' : 'starred-3')) : '';
+      var pStarBtn = '<button class="mm-star-btn '+pStarClass+'" onclick="event.stopPropagation();mmToggleStar(\''+pNode.id+'\')" title="Important mark karo ('+pStarLevel+'/3)">'+(pStarLevel === 0 ? '☆' : pStarLevel)+'</button>';
 
       var pc=document.createElement('div'); 
       pc.className='mm-node-card parent-node' + (pIsHidden ? ' mm-hidden' : ''); 
       pc.style.left=px2+'px'; pc.style.top=py2+'px'; pc.style.zIndex='3';
       var shortPQ=pNode.q.length>50?pNode.q.slice(0,50)+'…':pNode.q;
-      pc.innerHTML= pStatusDot +
+      pc.innerHTML= pStarBtn + pStatusDot +
         '<div class="mm-node-q" style="color:#5c6bc0;">'+mmEsc(shortPQ)+'</div>'+
         '<div class="mm-node-a'+(pNode.visible?' visible':'')+'">'+mmEsc(pNode.a)+'</div>'+
         '<div class="mm-node-actions">'+
@@ -34143,27 +34217,172 @@ window.mmNextSlide=function(){ if(_mm.curSlide<_mm.slides.length-1){_mm.curSlide
 window.mmAddSlide=function(){ mmPushUndo('add_slide'); _mm.slides.push({nodes:[],parentNodes:[]});_mm.curSlide=_mm.slides.length-1;mmSave();mmRender(); if(typeof showToast==='function') showToast('✅ Naya slide!','success'); };
 window.mmDeleteSlide=function(idx){ if(_mm.slides.length<=1){if(typeof showToast==='function')showToast('⚠️ Kam se kam 1 slide!','error');return;} if(!confirm('Slide delete karna hai?'))return; mmPushUndo('delete_slide'); _mm.slides.splice(idx,1); if(_mm.curSlide>=_mm.slides.length)_mm.curSlide=_mm.slides.length-1; mmSave();mmRender(); };
 
-// ── PDF Export ──
+// ── PDF Export (Advanced) ──
+// Helper to render a single node for PDF
+function mmRenderNodeForPDF(node, showStatus){
+  var status = mmGetNodeStatus(node.id);
+  var starLevel = mmGetStarLevel(node.id);
+  var statusColor = status === 'red' ? '#c62828' : (status === 'green' ? '#2e7d32' : (status === 'yellow' ? '#f9a825' : '#9e9e9e'));
+  var statusIcon = status === 'red' ? '🔴' : (status === 'green' ? '🟢' : (status === 'yellow' ? '🟡' : '⚪'));
+  var starIcons = starLevel > 0 ? '⭐'.repeat(starLevel) : '';
+  
+  return '<div style="border:2px solid #f9a825;border-radius:10px;padding:8px 10px;min-width:75pt;max-width:125pt;background:#fff;position:relative;break-inside:avoid;">' +
+    (showStatus ? '<div style="position:absolute;top:-6px;right:-6px;background:'+statusColor+';color:#fff;border-radius:50%;width:16px;height:16px;font-size:8pt;display:flex;align-items:center;justify-content:center;">'+statusIcon+'</div>' : '') +
+    (starLevel > 0 ? '<div style="position:absolute;top:-6px;left:-6px;font-size:8pt;">'+starIcons+'</div>' : '') +
+    '<div style="font-size:8pt;font-weight:700;color:#37526d;margin-bottom:3px;line-height:1.35;">'+mmEsc(node.q)+'</div>' +
+    '<div style="font-size:7pt;color:#555;border-top:1px solid #f9a825;padding-top:3px;line-height:1.4;">'+mmEsc(node.a)+'</div>' +
+  '</div>';
+}
+
+// Helper to create a page with nodes (max 8 per page)
+function mmCreatePDFPage(topicName, sectionTitle, nodes, slideLabel, bgColor){
+  var page = document.createElement('div');
+  page.style.cssText = 'width:190mm;min-height:270mm;padding:10mm;box-sizing:border-box;page-break-after:always;background:'+(bgColor||'#fffde7')+';';
+  page.innerHTML = 
+    '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:2.5px solid #00695c;padding-bottom:5px;margin-bottom:10px;">' +
+      '<span style="font-size:12pt;font-weight:800;color:#00695c;">🧠 '+mmEsc(topicName)+' — Mind Map</span>' +
+      '<span style="font-size:8pt;color:#666;">'+mmEsc(slideLabel)+'</span>' +
+    '</div>' +
+    '<div style="text-align:center;margin-bottom:12px;">' +
+      '<span style="background:linear-gradient(135deg,#f9a825,#ff8f00);color:#fff;font-weight:800;font-size:10pt;border-radius:30px;padding:5px 18px;">'+mmEsc(sectionTitle)+'</span>' +
+    '</div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;align-content:flex-start;">' +
+      nodes.map(function(nd){ return mmRenderNodeForPDF(nd, true); }).join('') +
+    '</div>';
+  return page;
+}
+
 window.mmExportPDF=function(){
-  if(typeof showToast==='function') showToast('⏳ PDF ban raha hai...','success');
-  var topicName=_mm.topicName||'Mind Map';
-  var pw=document.createElement('div');
-  pw.id='_mmPrintWrap';
-  pw.style.cssText='position:fixed;left:-99999px;top:0;font-family:"Noto Sans Devanagari","Baloo 2",sans-serif;background:#fff;z-index:-999;width:210mm;';
-  _mm.slides.forEach(function(slide,si){
-    var page=document.createElement('div');
-    page.style.cssText='width:190mm;min-height:130mm;padding:10mm;box-sizing:border-box;page-break-after:always;background:#fffde7;';
-    page.innerHTML='<div style="display:flex;justify-content:space-between;border-bottom:2.5px solid #00695c;padding-bottom:5px;margin-bottom:10px;"><span style="font-size:12pt;font-weight:800;color:#00695c;">🧠 '+mmEsc(topicName)+' — Mind Map</span><span style="font-size:8pt;color:#666;">Slide '+(si+1)+' / '+_mm.slides.length+'</span></div>'+
-      '<div style="text-align:center;margin-bottom:10px;"><span style="background:linear-gradient(135deg,#f9a825,#ff8f00);color:#fff;font-weight:800;font-size:10pt;border-radius:30px;padding:5px 18px;">'+mmEsc(topicName)+'</span></div>'+
-      '<div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;">'+(slide.nodes||[]).map(function(nd){ return '<div style="border:2px solid #f9a825;border-radius:10px;padding:7px 10px;min-width:80pt;max-width:130pt;background:#fff;"><div style="font-size:8pt;font-weight:700;color:#37526d;margin-bottom:3px;">'+mmEsc(nd.q)+'</div><div style="font-size:7pt;color:#555;border-top:1px solid #f9a825;padding-top:3px;">'+mmEsc(nd.a)+'</div></div>'; }).join('')+'</div>';
+  if(typeof showToast==='function') showToast('⏳ Advanced PDF ban raha hai...','success');
+  var topicName = _mm.topicName || 'Mind Map';
+  var pw = document.createElement('div');
+  pw.id = '_mmPrintWrap';
+  pw.style.cssText = 'position:fixed;left:-99999px;top:0;font-family:"Noto Sans Devanagari","Baloo 2",sans-serif;background:#fff;z-index:-999;width:210mm;';
+  
+  var pageNum = 0;
+  
+  // ═══════════════════════════════════════════════════════════════════
+  // SECTION 1: All Slides with All Nodes (Original Mind Map View)
+  // ═══════════════════════════════════════════════════════════════════
+  _mm.slides.forEach(function(slide, si){
+    pageNum++;
+    var allNodes = (slide.nodes || []).concat(slide.parentNodes || []);
+    var page = mmCreatePDFPage(topicName, topicName + ' - All Nodes', allNodes, 'Slide '+(si+1)+' / '+_mm.slides.length+' | Page '+pageNum, '#fffde7');
     pw.appendChild(page);
   });
+  
+  // ═══════════════════════════════════════════════════════════════════
+  // SECTION 2: Starred/Important Nodes (max 8 per page)
+  // ═══════════════════════════════════════════════════════════════════
+  var starredNodes = [];
+  _mm.slides.forEach(function(slide){
+    (slide.nodes || []).forEach(function(node){
+      if(mmGetStarLevel(node.id) > 0){
+        starredNodes.push({node: node, stars: mmGetStarLevel(node.id)});
+      }
+    });
+    (slide.parentNodes || []).forEach(function(node){
+      if(mmGetStarLevel(node.id) > 0){
+        starredNodes.push({node: node, stars: mmGetStarLevel(node.id)});
+      }
+    });
+  });
+  // Sort by star level (highest first)
+  starredNodes.sort(function(a,b){ return b.stars - a.stars; });
+  
+  if(starredNodes.length > 0){
+    for(var i = 0; i < starredNodes.length; i += 8){
+      pageNum++;
+      var chunk = starredNodes.slice(i, i+8).map(function(s){ return s.node; });
+      var pageLabel = '⭐ Important Nodes | Page '+pageNum + (starredNodes.length > 8 ? ' ('+(Math.floor(i/8)+1)+'/'+Math.ceil(starredNodes.length/8)+')' : '');
+      var page = mmCreatePDFPage(topicName, '⭐ Important/Starred Nodes', chunk, pageLabel, '#fff8e1');
+      pw.appendChild(page);
+    }
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════
+  // SECTION 3: Red Status Nodes - Nahi Aata (max 8 per page)
+  // ═══════════════════════════════════════════════════════════════════
+  var redNodes = [];
+  _mm.slides.forEach(function(slide){
+    (slide.nodes || []).forEach(function(node){
+      if(mmGetNodeStatus(node.id) === 'red') redNodes.push(node);
+    });
+    (slide.parentNodes || []).forEach(function(node){
+      if(mmGetNodeStatus(node.id) === 'red') redNodes.push(node);
+    });
+  });
+  
+  if(redNodes.length > 0){
+    for(var i = 0; i < redNodes.length; i += 8){
+      pageNum++;
+      var chunk = redNodes.slice(i, i+8);
+      var pageLabel = '🔴 Nahi Aata | Page '+pageNum + (redNodes.length > 8 ? ' ('+(Math.floor(i/8)+1)+'/'+Math.ceil(redNodes.length/8)+')' : '');
+      var page = mmCreatePDFPage(topicName, '🔴 Nahi Aata / Practice Karo', chunk, pageLabel, '#ffebee');
+      pw.appendChild(page);
+    }
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════
+  // SECTION 4: Yellow Status Nodes - Unsure (max 8 per page)
+  // ═══════════════════════════════════════════════════════════════════
+  var yellowNodes = [];
+  _mm.slides.forEach(function(slide){
+    (slide.nodes || []).forEach(function(node){
+      if(mmGetNodeStatus(node.id) === 'yellow') yellowNodes.push(node);
+    });
+    (slide.parentNodes || []).forEach(function(node){
+      if(mmGetNodeStatus(node.id) === 'yellow') yellowNodes.push(node);
+    });
+  });
+  
+  if(yellowNodes.length > 0){
+    for(var i = 0; i < yellowNodes.length; i += 8){
+      pageNum++;
+      var chunk = yellowNodes.slice(i, i+8);
+      var pageLabel = '🟡 Unsure | Page '+pageNum + (yellowNodes.length > 8 ? ' ('+(Math.floor(i/8)+1)+'/'+Math.ceil(yellowNodes.length/8)+')' : '');
+      var page = mmCreatePDFPage(topicName, '🟡 Partially Yaad / Revise Karo', chunk, pageLabel, '#fff9c4');
+      pw.appendChild(page);
+    }
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════
+  // SECTION 5: Green Status Nodes - Yaad Hai (max 8 per page)
+  // ═══════════════════════════════════════════════════════════════════
+  var greenNodes = [];
+  _mm.slides.forEach(function(slide){
+    (slide.nodes || []).forEach(function(node){
+      if(mmGetNodeStatus(node.id) === 'green') greenNodes.push(node);
+    });
+    (slide.parentNodes || []).forEach(function(node){
+      if(mmGetNodeStatus(node.id) === 'green') greenNodes.push(node);
+    });
+  });
+  
+  if(greenNodes.length > 0){
+    for(var i = 0; i < greenNodes.length; i += 8){
+      pageNum++;
+      var chunk = greenNodes.slice(i, i+8);
+      var pageLabel = '🟢 Yaad Hai | Page '+pageNum + (greenNodes.length > 8 ? ' ('+(Math.floor(i/8)+1)+'/'+Math.ceil(greenNodes.length/8)+')' : '');
+      var page = mmCreatePDFPage(topicName, '🟢 Yaad Hai / Great!', chunk, pageLabel, '#e8f5e9');
+      pw.appendChild(page);
+    }
+  }
+  
   document.body.appendChild(pw);
-  var st=document.createElement('style'); st.id='_mmPS';
-  st.textContent='@media print{body>*:not(#_mmPrintWrap){display:none!important;}@page{size:A4;margin:8mm;}}';
+  var st = document.createElement('style'); 
+  st.id = '_mmPS';
+  st.textContent = '@media print{body>*:not(#_mmPrintWrap){display:none!important;}@page{size:A4;margin:8mm;}}';
   document.head.appendChild(st);
+  
+  if(typeof showToast==='function') showToast('📄 '+pageNum+' pages ready! Printing...','success');
   window.print();
-  setTimeout(function(){ try{document.body.removeChild(pw);}catch(e){} var s=document.getElementById('_mmPS');if(s)document.head.removeChild(s); },2000);
+  
+  setTimeout(function(){ 
+    try{ document.body.removeChild(pw); }catch(e){} 
+    var s = document.getElementById('_mmPS'); 
+    if(s) document.head.removeChild(s); 
+  }, 2000);
 };
 
 // ── Zoom / Pan ──
