@@ -1284,7 +1284,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   z-index: 10;
 }
 
-/* ─������������� Footer bar ── */
+/* ─�������������� Footer bar ── */
 #scFooter {
   display: flex;
   align-items: center;
@@ -6861,7 +6861,7 @@ function renderLibraryTree(){
                     <div class="topic-meta-el">${t.notes.length} notes${pct!==null?' · '+pct+'% accuracy':''}</div>
                   </div>
                   <div style="display:flex;gap:4px;">
-                    <button class="btn btn-outline btn-xs" onclick="viewTopic(${subj.id},${sec.id},${t.id})">👁️</button>
+                    <button class="btn btn-outline btn-xs" onclick="viewTopic(${subj.id},${sec.id},${t.id})">���️</button>
                     <button class="btn btn-outline btn-xs" onclick="openSaveFactModal(${t.id}, '')" title="Save fact">📌</button>
                     <button class="btn btn-danger btn-xs" onclick="delTop(${subj.id},${sec.id},${t.id},event)">🗑️</button>
                   </div>
@@ -8959,7 +8959,7 @@ function renderVaultCard(q, i, quizId){
     </div>
     <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;align-items:center;">
       <button class="ans-hide-toggle ${_hideAnswers?'hiding':''}" onclick="toggleVaultCardAnswer('vq-ans-${quizId}-${i}',this)" style="font-size:0.68rem;padding:2px 8px;">
-        ${_hideAnswers?'👁️ Dikhao':'🙈 Chhupao'}
+        ${_hideAnswers?'👁�� Dikhao':'🙈 Chhupao'}
       </button>
       <button class="save-status-btn ${isSaved?'saved':'unsaved'}" onclick="toggleVaultSave('${quizId}',${i},'${qKey}',this)">${isSaved?'📌 Saved ✓':'📌 Save'}</button>
       <button class="wrong-status-btn ${isWronged?'wronged':'not-wronged'}" onclick="toggleVaultWrong('${quizId}',${i},'${qKey}',this)">${isWronged?'✓ Wronged':'❌ Mark'}</button>
@@ -20535,7 +20535,7 @@ function _applyTopicUpdate(tid, newTopicData){
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════
+// ═══════════��══════════════════════════════════════════════════════════
 // ⚡ APPLY META UPDATE — stats, quiz, exams — bina full reload ke
 // ════════════════════���═════════════════════════════════════════════════
 function _applyMetaUpdate(meta){
@@ -23465,7 +23465,7 @@ function _csRedrawFresh(ctx, obj) {
 // finger→1: seamlessly switches to drag
 // OK button appears when fingers lift → click OK to commit
 // Draw mode features auto-disabled during this session
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════��═══════════════════
 var _freshDrag = {
   active: false,
   pts: {},
@@ -26207,7 +26207,7 @@ function _scQmShowFullEdit(node) {
   tcRow.appendChild(tcPicker);
   modal.appendChild(tcRow);
 
-  // ── Node Size ──
+  // ���─ Node Size ──
   modal.appendChild(mkLabel('📏 Node Size'));
   var szRow = document.createElement('div');
   szRow.style.cssText = 'display:flex;gap:8px;margin-bottom:2px;';
@@ -26747,8 +26747,27 @@ function neUpdateHlCanvasBtn() {
  * Color ke hisaab se bhi group kar sakte hain (optional).
  */
 // ══ HIGHLIGHT BATCH MEMORY — sent highlights yaad rakhta hai, repeat nahi karta ══
-// Key: noteFile id/hash, Value: array of already-sent text strings
-window._neHlSentBatches = window._neHlSentBatches || {};
+// ══════════════════════════════════════════════════════════════════
+// HELPER: Detect 3+ word duplicates between two texts
+// ══════════════════════════════════════════════════════════════════
+window._neHas3WordDuplicate = function(text1, text2) {
+  if(!text1 || !text2) return false;
+  var words1 = text1.toLowerCase().split(/\s+/).filter(function(w){ return w.length > 0; });
+  var words2 = text2.toLowerCase().split(/\s+/).filter(function(w){ return w.length > 0; });
+  
+  if(words1.length < 3 || words2.length < 3) return false;
+  
+  // Check if any 3 consecutive words from text1 appear consecutively in text2
+  for(var i = 0; i <= words1.length - 3; i++){
+    var phrase = words1[i] + ' ' + words1[i+1] + ' ' + words1[i+2];
+    if(text2.toLowerCase().indexOf(phrase) !== -1) return true;
+  }
+  return false;
+};
+
+// ══════════════════════════════════════════════════════════════════
+// TRACKING: Store sent highlight IDs per note to prevent re-sending
+// ══════════════════════════════════════════════════════════════════
 
 window.neSendAllHighlightsToCanvas = function() {
   var area = document.getElementById('noteEditableArea');
@@ -26781,24 +26800,40 @@ window.neSendAllHighlightsToCanvas = function() {
                   '_' + ((_eCtx2 && _eCtx2.sid != null) ? _eCtx2.sid : '0');
 
   if(!window._neHlSentBatches[_batchKey]) {
-    window._neHlSentBatches[_batchKey] = [];
+    window._neHlSentBatches[_batchKey] = { ids: [], texts: [] };
   }
-  var _alreadySent = window._neHlSentBatches[_batchKey];
+  var _batch = window._neHlSentBatches[_batchKey];
 
-  // ── Collect all marks with color tagging ──
+  // ── Collect all marks with color tagging - track by hlId ──
   var allItemsByColor = { yellow: [], pink: [], green: [], blue: [] };
+  
   marks.forEach(function(mark) {
+    var hlId = mark.getAttribute('data-hlid');
     var txt = mark.textContent.trim();
-    if(!txt) return;
+    if(!txt || !hlId) return;
+    
+    // Skip if this highlight ID was already sent
+    if(_batch.ids.indexOf(hlId) !== -1) return;
+    
+    // Skip if this text is a duplicate (3+ word match) of already sent text
+    var isDuplicate = false;
+    for(var j = 0; j < _batch.texts.length; j++){
+      if(window._neHas3WordDuplicate(txt, _batch.texts[j])){
+        isDuplicate = true;
+        if(typeof showToast === 'function') showToast('⚠️ Duplicate highlight skip ho gya', 'warning');
+        break;
+      }
+    }
+    if(isDuplicate) return;
+    
     var colorKey = 'yellow';
     if(mark.classList.contains('user-hl-pink'))  colorKey = 'pink';
     else if(mark.classList.contains('user-hl-green')) colorKey = 'green';
     else if(mark.classList.contains('user-hl-blue'))  colorKey = 'blue';
-    // Only collect new (not already sent)
-    if(_alreadySent.indexOf(txt) === -1) {
-      var textColor = colorKey === 'pink' ? '#880e4f' : colorKey === 'green' ? '#1b5e20' : colorKey === 'blue' ? '#0d47a1' : '#5d4037';
-      allItemsByColor[colorKey].push({ text: txt, color: textColor, colorKey: colorKey });
-    }
+    
+    var textColor = colorKey === 'pink' ? '#880e4f' : colorKey === 'green' ? '#1b5e20' : colorKey === 'blue' ? '#0d47a1' : '#5d4037';
+    var item = { text: txt, color: textColor, colorKey: colorKey, hlId: hlId };
+    allItemsByColor[colorKey].push(item);
   });
 
   // Total new items across all colors
@@ -26830,7 +26865,10 @@ window.neSendAllHighlightsToCanvas = function() {
       return;
     }
     // Register as sent
-    items.forEach(function(item) { _alreadySent.push(item.text); });
+    items.forEach(function(item) { 
+      _batch.ids.push(item.hlId);
+      _batch.texts.push(item.text);
+    });
     _neDoSendItemsToCanvas(items, _batchKey);
   }
 
@@ -33793,7 +33831,7 @@ body.night-mode .mm-star-btn{background:rgba(30,30,30,0.95);}
 
 /* ══════════════════════════════════════════════════════════════════ */
 /* READING MODE - Hide tools for fullscreen reading */
-/* ══════════════════════════════════════════════════════════════════ */
+/* ════════════════════════════════════════════════��═════════════════ */
 .mm-reading-mode #mmHeader,
 .mm-reading-mode #mmSlideNav,
 .mm-reading-mode #mmRevisionFilterBar,
@@ -36340,20 +36378,31 @@ window.rvSyncAllHighlights = function(){
   pages.forEach(function(p){
     (p.boxes || []).forEach(function(b){
       if(b.sourceHighlightId) existingIds[b.sourceHighlightId] = true;
-      // Also track original text to prevent duplicates when hlId is missing
       if(b.originalText) existingTexts[b.originalText.trim().toLowerCase()] = true;
     });
   });
   
   var addedCount = 0;
+  var duplicateCount = 0;
   
   marks.forEach(function(mark){
     var text = mark.textContent.trim();
     var hlId = mark.getAttribute('data-hlid') || ('sync_' + Date.now() + '_' + Math.random().toString(36).substr(2,4));
     
-    // Skip if already exists (by ID or by exact text match)
+    // Skip if already exists (by ID)
     if(existingIds[hlId]) return;
-    if(existingTexts[text.toLowerCase()]) return;
+    
+    // Skip if 3+ word duplicate of existing text
+    var isDuplicate = false;
+    Object.keys(existingTexts).forEach(function(existingText){
+      if(window._neHas3WordDuplicate(text, existingText)){
+        isDuplicate = true;
+      }
+    });
+    if(isDuplicate){
+      duplicateCount++;
+      return;
+    }
     
     // Get color
     var color = 'yellow';
@@ -36386,7 +36435,9 @@ window.rvSyncAllHighlights = function(){
   });
   
   if(addedCount === 0){
-    if(typeof showToast === 'function') showToast('Saare highlights pehle se sync hai', 'success');
+    var msg = 'Saare highlights pehle se sync hai';
+    if(duplicateCount > 0) msg += ' (' + duplicateCount + ' duplicates skip)';
+    if(typeof showToast === 'function') showToast(msg, 'info');
     return;
   }
   
@@ -36400,7 +36451,9 @@ window.rvSyncAllHighlights = function(){
     }));
   }catch(e){}
   
-  if(typeof showToast === 'function') showToast(addedCount + ' highlights Revision me add ho gaye!', 'success');
+  var msg = '✅ ' + addedCount + ' NEW highlights Revision me add ho gaye!';
+  if(duplicateCount > 0) msg += ' (' + duplicateCount + ' duplicates skip)';
+  if(typeof showToast === 'function') showToast(msg, 'success');
 };
 
 // Touch gestures for zoom/pan
