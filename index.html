@@ -4822,6 +4822,16 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
           <span id="neSyncBothDot" style="display:none;position:absolute;bottom:-3px;right:-3px;width:10px;height:10px;border-radius:50%;background:#ff9800;border:1.5px solid #fff;font-size:0.6rem;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;">2</span>
         </button>
 
+        <!-- Revision Page Open Button -->
+        <button id="neOpenRevisionBtn" onclick="neOpenRevisionPage()" title="Revision Page kholo (Unique Page)"
+          style="width:32px;height:32px;border-radius:7px;border:1.5px solid rgba(123,31,162,0.4);
+          background:rgba(123,31,162,0.1);cursor:pointer;display:flex;align-items:center;
+          justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;position:relative;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7b1fa2" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+          </svg>
+        </button>
+
         <!-- Spacer -->
         <div style="flex:1;"></div>
 
@@ -26748,11 +26758,25 @@ window._neHas3WordDuplicate = function(text1, text2) {
 };
 
 // ══════════════════════════════════════════════════════════════════
-// TRACKING: Store sent highlight IDs per note to prevent re-sending
+// TRACKING: Store sent highlight IDs per note — PERSISTENT via localStorage
 // ══════════════════════════════════════════════════════════════════
-if(!window._neHlSentBatches) {
-  window._neHlSentBatches = {};
-}
+(function(){
+  if(!window._neHlSentBatches) {
+    try {
+      var saved = localStorage.getItem('_neHlSentBatches');
+      window._neHlSentBatches = saved ? JSON.parse(saved) : {};
+    } catch(e) {
+      window._neHlSentBatches = {};
+    }
+  }
+})();
+
+// Save _neHlSentBatches to localStorage after every update
+window._neHlSentBatchesSave = function() {
+  try {
+    localStorage.setItem('_neHlSentBatches', JSON.stringify(window._neHlSentBatches));
+  } catch(e) {}
+};
 
 // ══════════════════════════════════════════════════════════════════
 // UNIFIED SYNC: Send highlights to BOTH Canvas AND Unique Page
@@ -26915,6 +26939,8 @@ window.neSendAllHighlightsToCanvas = function() {
       _batch.ids.push(item.hlId);
       _batch.texts.push(item.text);
     });
+    // Persist to localStorage so duplicates are blocked even after page reload
+    window._neHlSentBatchesSave && window._neHlSentBatchesSave();
     _neDoSendItemsToCanvas(items, _batchKey);
   }
 
@@ -36667,6 +36693,47 @@ window.rvRegenNewHighlights = function(){
   }
   // Use sync function which already filters duplicates
   window.rvSyncAllHighlights();
+};
+
+// ══════════════════════════════════════════════════════════════════
+// NOTES EDITOR → REVISION PAGE direct open button handler
+// ══════════════════════════════════════════════════════════════════
+window.neOpenRevisionPage = function(){
+  // Try _editorState first, then _sc context
+  var tid = null, topicName = 'Topic';
+  try {
+    if(typeof _editorState !== 'undefined' && _editorState && _editorState.tid != null){
+      tid = _editorState.tid;
+    } else if(typeof _sc !== 'undefined' && _sc.tid != null){
+      tid = _sc.tid;
+    }
+    if(tid !== null && typeof _lib !== 'undefined' && _lib.topics){
+      var t = _lib.topics.find(function(x){ return x.id === tid; });
+      if(t) topicName = t.name || 'Topic';
+    }
+  } catch(e){}
+
+  if(tid === null){
+    if(typeof showToast === 'function') showToast('Pehle koi topic/note kholo', 'error');
+    return;
+  }
+
+  // Open revision panel for this topic
+  if(typeof rvOpenFromNotes === 'function'){
+    rvOpenFromNotes();
+  } else {
+    // Fallback: manually init and open
+    _rv.tid = tid;
+    _rv.topicName = topicName;
+    var saved = (typeof rvLoad === 'function') ? rvLoad(tid) : null;
+    _rv.pages = (saved && saved.pages) ? saved.pages : [{ boxes: [] }];
+    _rv.zoom = 1; _rv.panX = 0; _rv.panY = 0; _rv.curPage = 0; _rv.fitOnLoad = true;
+    var panel = document.getElementById('rvPanel');
+    if(panel){ panel.style.display = 'flex'; }
+    if(typeof rvRenderPage === 'function') rvRenderPage();
+    if(typeof rvUpdatePageNav === 'function') rvUpdatePageNav();
+    document.getElementById('rvTopicLabel') && (document.getElementById('rvTopicLabel').textContent = '📋 ' + topicName);
+  }
 };
 
 // Touch gestures for zoom/pan
