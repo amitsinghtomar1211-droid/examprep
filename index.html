@@ -5313,6 +5313,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <button class="sc-fstrip-btn" id="scAiChatBtn" onclick="scOpenCanvasAiChat()" title="AI Chat — Canvas slides se flashcards banao" style="background:linear-gradient(135deg,rgba(21,101,192,0.18),rgba(106,27,154,0.18));border-color:rgba(106,27,154,0.4);color:#6a1b9a;font-size:0.82rem;">🤖</button>
     <!-- Mind Map Button -->
     <button class="sc-fstrip-btn" id="scMindMapBtn" onclick="mmOpenPanel()" title="Mind Map — Flashcards se Mind Map banao" style="background:linear-gradient(135deg,rgba(0,105,92,0.22),rgba(46,125,50,0.22));border-color:rgba(0,150,136,0.45);color:#00695c;font-size:0.82rem;">🧠</button>
+    <!-- Regenerate Highlights to Canvas -->
+    <button class="sc-fstrip-btn" id="scRegenHlBtn" onclick="scRegenNewHighlights()" title="New Highlights → Canvas (sirf nayi wali)" style="background:linear-gradient(135deg,rgba(230,81,0,0.18),rgba(255,152,0,0.18));border-color:rgba(255,152,0,0.5);color:#e65100;font-size:0.75rem;position:relative;">🔄<span id="scRegenHlDot" style="display:none;position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;background:#e65100;"></span></button>
     <!-- Undo -->
     <button class="sc-fstrip-btn" id="scFloatUndoBtn" onclick="scUndo&&scUndo()" title="Undo (Ctrl+Z)" style="font-size:0.82rem;opacity:0.5;">↩</button>
     <!-- Redo -->
@@ -33550,6 +33552,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       <button onclick="rvToggleTools()" class="rv-tools-toggle" id="rvToolsToggleBtn" title="Tools dikhao/chupao" style="flex-shrink:0;"><span id="rvToolsToggleIcon">▲</span> Tools</button>
       <button onclick="rvToggleDragMode()" class="rv-move-btn" id="rvMoveBtn" title="Boxes ko drag karke move karo" style="flex-shrink:0;">Move</button>
       <button onclick="rvToggleMergeMode()" class="rv-merge-btn" id="rvMergeBtn" title="Do ya adhik boxes ko merge karo" style="flex-shrink:0;">Merge</button>
+      <button onclick="rvRegenNewHighlights()" style="background:rgba(255,152,0,0.3);border:1px solid rgba(255,200,0,0.5);border-radius:8px;padding:5px 9px;color:#fff;cursor:pointer;font-size:0.68rem;font-weight:800;font-family:inherit;flex-shrink:0;" title="New Highlights → Revision (sirf nayi wali AI core points ke saath)">🔄 Regen</button>
       <button onclick="rvResetPositions()" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 8px;color:#fff;cursor:pointer;font-size:0.68rem;font-weight:800;font-family:inherit;flex-shrink:0;" title="Sab boxes ko default position par reset karo">Reset</button>
       <button onclick="rvShowAll()" id="rvShowAllBtn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;flex-shrink:0;" title="Sab dikhao">Show All</button>
       <button onclick="rvHideAll()" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;flex-shrink:0;" title="Sab chupao - Self Test">Hide All</button>
@@ -34343,8 +34346,26 @@ window.mmOpenPanel = async function(){
   var cloudLoaded = await mmLoadFromCloud();
   if(!cloudLoaded){
     var saved=mmLoad(tid);
-    if(saved&&saved.slides&&saved.slides.length){ _mm.slides=saved.slides;_mm.topicName=saved.topicName||_mm.topicName; }
+    if(saved&&saved.slides&&saved.slides.length){ 
+      _mm.slides=saved.slides;
+      _mm.topicName=saved.topicName||_mm.topicName;
+      // ── INCREMENTAL CHECK: Naye flashcards check karo ──
+      var newCount = mmIncrementalUpdate();
+      if(newCount > 0){
+        setTimeout(function(){
+          if(typeof showToast==='function') showToast('🆕 ' + newCount + ' nayi flashcards mindmap mein add ho gayi!', 'success');
+        }, 600);
+      }
+    }
     else { mmBuildFromFlashcards(); }
+  } else {
+    // Cloud se load hua — phir bhi incremental check karo
+    var newCountCloud = mmIncrementalUpdate();
+    if(newCountCloud > 0){
+      setTimeout(function(){
+        if(typeof showToast==='function') showToast('🆕 ' + newCountCloud + ' nayi flashcards mindmap mein add ho gayi!', 'success');
+      }, 600);
+    }
   }
   
   // Load revision data (from cloud or local)
@@ -34379,7 +34400,7 @@ window.mmClosePanel = function(){
   if(p) p.classList.remove('mm-reading-mode');
 };
 
-// ── Build from flashcards ──
+// ── Build from flashcards (fresh build — pehli baar) ──
 function mmBuildFromFlashcards(){
   var tid=_mm.tid; var cards=[];
   try{ var d=JSON.parse(localStorage.getItem('scFC_'+(tid!=null?tid:'default'))||'{}'); cards=d.cards||[]; }catch(e){}
@@ -34391,6 +34412,50 @@ function mmBuildFromFlashcards(){
     _mm.slides.push({ nodes:chunk.map(function(c){ return {id:c.id||('mm_'+Date.now()+'_'+Math.random().toString(36).slice(2)),q:c.q||c.front||'',a:c.a||c.back||'',visible:false}; }), parentNodes:[] });
   }
   mmSave();
+}
+
+// ── Incremental Update — sirf naye flashcards add karo existing slides mein ──
+function mmIncrementalUpdate(){
+  var tid=_mm.tid; var cards=[];
+  try{ var d=JSON.parse(localStorage.getItem('scFC_'+(tid!=null?tid:'default'))||'{}'); cards=d.cards||[]; }catch(e){}
+  if(!cards.length&&typeof _scFC!=='undefined'&&typeof _sc!=='undefined'&&_sc.tid==tid) cards=_scFC.cards||[];
+  if(!cards.length) return 0;
+
+  // Collect all existing node IDs and question texts in current mindmap
+  var existingIds={}, existingQs={};
+  _mm.slides.forEach(function(sl){
+    (sl.nodes||[]).forEach(function(n){
+      if(n.id) existingIds[n.id]=true;
+      if(n.q) existingQs[n.q.trim().toLowerCase()]=true;
+    });
+  });
+
+  // Find genuinely new cards
+  var newCards=cards.filter(function(c){
+    var cid=c.id||'';
+    var cq=(c.q||c.front||'').trim().toLowerCase();
+    return !existingIds[cid] && !existingQs[cq] && cq;
+  });
+
+  if(!newCards.length) return 0;
+
+  // Add new cards: fill last slide first, then create new slides as needed
+  newCards.forEach(function(c){
+    var lastSlide=_mm.slides[_mm.slides.length-1];
+    if(!lastSlide||(lastSlide.nodes||[]).length>=8){
+      _mm.slides.push({nodes:[],parentNodes:[]});
+      lastSlide=_mm.slides[_mm.slides.length-1];
+    }
+    lastSlide.nodes.push({
+      id: c.id||('mm_'+Date.now()+'_'+Math.random().toString(36).slice(2)),
+      q: c.q||c.front||'',
+      a: c.a||c.back||'',
+      visible: false
+    });
+  });
+
+  mmSave();
+  return newCards.length;
 }
 
 // ── Render ──
@@ -36481,25 +36546,127 @@ window.rvSyncAllHighlights = function(){
   });
   
   if(addedCount === 0){
-    var msg = 'Saare highlights pehle se sync hai';
-    if(duplicateCount > 0) msg += ' (' + duplicateCount + ' duplicates skip)';
-    if(typeof showToast === 'function') showToast(msg, 'info');
+    var msg2 = 'Saare highlights pehle se sync hai';
+    if(duplicateCount > 0) msg2 += ' (' + duplicateCount + ' duplicates skip)';
+    if(typeof showToast === 'function') showToast(msg2, 'info');
     return;
   }
-  
-  // Save
+
+  // Save first with raw text
   try{
-    localStorage.setItem(rvKey(tid), JSON.stringify({
-      pages: pages,
-      zoom: 1,
-      panX: 0,
-      panY: 0
-    }));
+    localStorage.setItem(rvKey(tid), JSON.stringify({ pages: pages, zoom: 1, panX: 0, panY: 0 }));
   }catch(e){}
-  
+
   var msg = '✅ ' + addedCount + ' NEW highlights Revision me add ho gaye!';
   if(duplicateCount > 0) msg += ' (' + duplicateCount + ' duplicates skip)';
   if(typeof showToast === 'function') showToast(msg, 'success');
+
+  // AI se core points generate karo (background me)
+  _rvAiGenerateCorePoints(tid, pages, addedCount);
+};
+
+// ── AI Core Points Generator for Revision Page boxes ──
+window._rvAiGenerateCorePoints = function(tid, pages, addedCount){
+  var apiKey = '';
+  try{ apiKey = (document.getElementById('apiKey')||{}).value || localStorage.getItem('groqApiKey') || ''; }catch(e){}
+  if(!apiKey) return; // No API key — raw text hi store rahega
+
+  // Collect boxes that need AI core points (corePoint === originalText means not yet AI-processed)
+  var boxesToProcess = [];
+  pages.forEach(function(p, pi){
+    (p.boxes||[]).forEach(function(b, bi){
+      if(b.originalText && b.corePoint === b.originalText && b.originalText.length > 10){
+        boxesToProcess.push({ pi: pi, bi: bi, text: b.originalText });
+      }
+    });
+  });
+  if(!boxesToProcess.length) return;
+
+  // Batch: send all texts at once for efficiency
+  var textsForAi = boxesToProcess.map(function(x, i){ return (i+1) + '. ' + x.text; }).join('\n');
+
+  var prompt = 'Niche diye gaye highlighted notes ko dekho. Har ek ke liye ek bahut short, exam-ready Hindi/Hinglish core point banao (max 10 words). Sirf JSON array return karo, koi explanation nahi.\nFormat: ["core point 1", "core point 2", ...]\n\nHighlights:\n' + textsForAi;
+
+  fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 600,
+      messages: [
+        { role: 'system', content: 'Tu UPSC/SSC exam ke liye Hindi notes ke core points banana wala expert AI hai. Sirf JSON array return kar, aur kuch nahi.' },
+        { role: 'user', content: prompt }
+      ]
+    })
+  }).then(function(r){ return r.json(); }).then(function(data){
+    var raw = (data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'';
+    // Parse JSON array
+    var corePoints = null;
+    try{
+      var match = raw.match(/\[[\s\S]*\]/);
+      if(match) corePoints = JSON.parse(match[0]);
+    }catch(e){}
+    if(!corePoints || !corePoints.length) return;
+
+    // Update boxes with AI core points
+    var saved2 = rvLoad(tid);
+    if(!saved2) return;
+    boxesToProcess.forEach(function(item, idx){
+      var cp = corePoints[idx];
+      if(cp && saved2.pages[item.pi] && saved2.pages[item.pi].boxes[item.bi]){
+        saved2.pages[item.pi].boxes[item.bi].corePoint = cp.trim();
+      }
+    });
+    try{
+      localStorage.setItem(rvKey(tid), JSON.stringify({ pages: saved2.pages, zoom: saved2.zoom||1, panX: saved2.panX||0, panY: saved2.panY||0 }));
+    }catch(e){}
+
+    // Agar revision panel abhi open hai to re-render
+    var panel = document.getElementById('rvPanel');
+    if(panel && panel.style.display !== 'none' && _rv && _rv.tid === tid){
+      _rv.pages = saved2.pages;
+      if(typeof rvRenderPage === 'function') rvRenderPage();
+    }
+    if(typeof showToast === 'function') showToast('🤖 AI ne core points generate kar diye!', 'success');
+  }).catch(function(){
+    // Silent fail — raw text already saved
+  });
+};
+
+// ══════════════════════════════════════════════════════════════════
+// CANVAS REGENERATE — Naye highlights check karo aur canvas par bhejo
+// ══════════════════════════════════════════════════════════════════
+window.scRegenNewHighlights = function(){
+  var area = document.getElementById('noteEditableArea');
+  if(!area){
+    if(typeof showToast==='function') showToast('Notes editor open nahi hai!', 'error');
+    return;
+  }
+  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue');
+  if(!marks || !marks.length){
+    if(typeof showToast==='function') showToast('Koi highlight nahi mila!', 'error');
+    return;
+  }
+  // Use existing canvas send logic (it already filters sent ones)
+  window.neSendAllHighlightsToCanvas();
+};
+
+// ══════════════════════════════════════════════════════════════════
+// REVISION REGENERATE — Naye highlights check karo aur revision par bhejo (AI core points ke saath)
+// ══════════════════════════════════════════════════════════════════
+window.rvRegenNewHighlights = function(){
+  var area = document.getElementById('noteEditableArea');
+  if(!area){
+    if(typeof showToast==='function') showToast('Notes editor open nahi hai! Pehle koi note kholo.', 'error');
+    return;
+  }
+  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue');
+  if(!marks || !marks.length){
+    if(typeof showToast==='function') showToast('Notes me koi highlight nahi hai abhi!', 'error');
+    return;
+  }
+  // Use sync function which already filters duplicates
+  window.rvSyncAllHighlights();
 };
 
 // Touch gestures for zoom/pan
