@@ -4204,7 +4204,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
           <div class="card-grid">
             <div class="field-group">
               <label class="field-label">📙 Topic:</label>
-              <select class="inp" id="quizTopic" onchange="updateQuizSourceVisibility()"><option value="all">Saare</option></select>
+              <select class="inp" id="quizTopic" onchange="updateQuizSourceVisibility();updateHlProgress()"><option value="all">Saare</option></select>
             </div>
             <div class="field-group">
               <label class="field-label">📂 Notes Source:</label>
@@ -4237,13 +4237,15 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
           </div>
           <div class="field-group">
             <label class="field-label">🎯 Quiz Type:</label>
-            <select class="inp" id="quizType">
-              <option value="new">Naya Content (jo cover nahi hua)</option>
-              <option value="weak">Weak Topics (galat jawab wale)</option>
-              <option value="mixed">Mixed</option>
-              <option value="all">Saare Topics</option>
+            <select class="inp" id="quizType" onchange="updateHlProgress()">
+              <option value="new">🆕 Naya Content (jo cover nahi hua)</option>
+              <option value="weak">❌ Weak/Wrong (galat jawab wale)</option>
+              <option value="mixed">🔀 Mixed (new + wrong dono)</option>
+              <option value="all">📚 Saare Topics</option>
             </select>
           </div>
+          <!-- Highlight Progress Box -->
+          <div id="hlProgressBox" style="display:none;background:linear-gradient(135deg,rgba(21,101,192,0.07),rgba(76,175,80,0.05));border:1.5px solid rgba(21,101,192,0.2);border-radius:12px;padding:11px 13px;margin-bottom:4px;"></div>
 
           <!-- AI Quiz Direction Chat -->
           <div style="background:linear-gradient(135deg,rgba(106,27,154,0.07),rgba(21,101,192,0.05));border:1.5px solid rgba(106,27,154,0.2);border-radius:12px;padding:12px;margin-bottom:12px;">
@@ -8124,7 +8126,6 @@ function updateQuizTopics(){
   if(sid!=='all'&&secid!=='all'){const sec=getSec(parseInt(sid),parseInt(secid));if(sec)sec.topics.forEach(t=>{sel.innerHTML+=`<option value="${t.id}">${t.name}</option>`;});}
 }
 function updateQuizSourceVisibility(){
-  // Canvas source only meaningful when a specific topic is selected
   var tid = document.getElementById('quizTopic').value;
   var srcSel = document.getElementById('quizNotesSource');
   if(!srcSel) return;
@@ -8136,7 +8137,172 @@ function updateQuizSourceVisibility(){
     srcSel.options[1].disabled = false;
     srcSel.options[1].text = '🎨 Canvas Notes (Slides ke notes)';
   }
+  updateHlProgress();
 }
+// ═══════════════════════════════════════════════════
+// HIGHLIGHT QUIZ PROGRESS SYSTEM
+// ═══════════════════════════════════════════════════
+
+// Topic ke saare highlights collect karo as [{id, text}]
+function hlGetTopicHighlights(tid) {
+  var result = [];
+  S.subjects.forEach(function(subj){
+    subj.sections.forEach(function(sec){
+      sec.topics.forEach(function(t){
+        if(String(t.id) !== String(tid)) return;
+        (t.highlights || []).forEach(function(h, i){
+          result.push({ id: 'hl_'+String(t.id)+'_'+i, text: h.text });
+        });
+      });
+    });
+  });
+  return result;
+}
+
+// Quiz complete hone par progress update karo
+function hlUpdateProgress(cq) {
+  if(!cq._hlKey || !cq._hasHls) return;
+  if(!S.hlQuizProgress) S.hlQuizProgress = {};
+  var prog = S.hlQuizProgress[cq._hlKey] || { coveredIds: [], wrongIds: [] };
+  var allHls = cq._allHls || [];
+  var uncoveredHls = cq._uncoveredHls || [];
+  var qtype = cq.qtype;
+
+  // Determine which highlights were covered this quiz
+  // We match by position — jo highlights is quiz mein use ki gayi thi
+  var usedHls = [];
+  if(qtype === 'new' || qtype === 'all') {
+    usedHls = uncoveredHls.slice(0, cq.questions.length);
+  } else if(qtype === 'weak') {
+    usedHls = (cq._wrongHls || []).slice(0, cq.questions.length);
+  } else if(qtype === 'mixed') {
+    var half = Math.ceil(cq.questions.length / 2);
+    usedHls = [
+      ...uncoveredHls.slice(0, half),
+      ...(cq._wrongHls || []).slice(0, cq.questions.length - half)
+    ];
+  }
+
+  // Covered IDs update
+  if(qtype === 'new' || qtype === 'all' || qtype === 'mixed') {
+    var covered = prog.coveredIds || [];
+    usedHls.forEach(function(h){
+      if(covered.indexOf(h.id) === -1) covered.push(h.id);
+    });
+    prog.coveredIds = covered;
+    // Agar all covered to reset (cycle restart)
+    if(allHls.length > 0 && covered.length >= allHls.length) {
+      showToast('🎉 Sab highlights cover ho gaye! Progress reset ho rahi hai naye cycle ke liye.', 'success');
+      prog.coveredIds = [];
+    }
+  }
+
+  // Wrong IDs update — quiz ke results se
+  var wrongIds = prog.wrongIds || [];
+  var correctIds = [];
+  cq.questions.forEach(function(q, qi) {
+    var hl = usedHls[qi];
+    if(!hl) return;
+    if(!q.isCorrect) {
+      // Wrong — add to wrongIds
+      if(wrongIds.indexOf(hl.id) === -1) wrongIds.push(hl.id);
+    } else {
+      // Correct — remove from wrongIds
+      wrongIds = wrongIds.filter(function(id){ return id !== hl.id; });
+    }
+  });
+  prog.wrongIds = wrongIds;
+
+  // Also update weak type progress
+  var weakKey = cq.tid + '_weak';
+  var weakProg = S.hlQuizProgress[weakKey] || { coveredIds: [], wrongIds: wrongIds };
+  weakProg.wrongIds = wrongIds;
+  S.hlQuizProgress[weakKey] = weakProg;
+
+  S.hlQuizProgress[cq._hlKey] = prog;
+}
+
+// Progress display update
+function updateHlProgress() {
+  var tid = document.getElementById('quizTopic') ? document.getElementById('quizTopic').value : 'all';
+  var qtype = document.getElementById('quizType') ? document.getElementById('quizType').value : 'new';
+  var box = document.getElementById('hlProgressBox');
+  if(!box) return;
+
+  if(!tid || tid === 'all') { box.style.display='none'; return; }
+
+  var allHls = hlGetTopicHighlights(tid);
+  if(allHls.length === 0) { box.style.display='none'; return; }
+
+  if(!S.hlQuizProgress) S.hlQuizProgress = {};
+  var newProg  = S.hlQuizProgress[tid+'_new']  || { coveredIds:[], wrongIds:[] };
+  var weakProg = S.hlQuizProgress[tid+'_weak'] || { coveredIds:[], wrongIds:[] };
+
+  var total    = allHls.length;
+  var covered  = (newProg.coveredIds||[]).length;
+  var wrongCnt = (weakProg.wrongIds||[]).length;
+  var remaining= total - covered;
+  var pct      = total > 0 ? Math.round((covered/total)*100) : 0;
+  var pColor   = pct>=80?'#4caf50':pct>=50?'#ff9800':'#1565c0';
+
+  // Max question count limit karo
+  var maxAllowed;
+  if(qtype==='weak')      maxAllowed = Math.max(1, wrongCnt);
+  else if(qtype==='new')  maxAllowed = Math.max(1, remaining > 0 ? remaining : total);
+  else if(qtype==='mixed')maxAllowed = Math.max(1, Math.max(remaining, wrongCnt));
+  else                    maxAllowed = Math.max(1, total);
+  maxAllowed = Math.min(maxAllowed, 50);
+
+  var slider = document.getElementById('questionCount');
+  var numInp = document.getElementById('qCountNum');
+  var disp   = document.getElementById('qCountDisplay');
+  if(slider){
+    slider.max = maxAllowed;
+    var cur = parseInt(slider.value)||10;
+    if(cur > maxAllowed){ cur = Math.min(10, maxAllowed); slider.value=cur; }
+    if(numInp){ numInp.max=maxAllowed; numInp.value=cur; }
+    if(disp) disp.textContent = cur;
+  }
+
+  var typeInfo = {
+    new:   { icon:'🆕', label:'Naya Content',  stat: remaining+' remaining / '+total+' total',  color:'#1565c0' },
+    weak:  { icon:'❌', label:'Weak/Wrong',    stat: wrongCnt+' wrong highlights',               color:'#c62828' },
+    mixed: { icon:'🔀', label:'Mixed',         stat: remaining+' new + '+wrongCnt+' wrong',       color:'#6a1b9a' },
+    all:   { icon:'📚', label:'Saare Topics',  stat: total+' total highlights',                  color:'#2e7d32' }
+  };
+  var ti = typeInfo[qtype] || typeInfo.all;
+
+  box.innerHTML =
+    '<div style="font-size:0.78rem;font-weight:800;color:'+ti.color+';margin-bottom:7px;">'+ti.icon+' '+ti.label+' — Highlight Progress</div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:7px;">'+
+      '<span style="font-size:0.72rem;background:rgba(21,101,192,0.1);color:#1565c0;padding:3px 9px;border-radius:20px;font-weight:700;">📌 Total: '+total+'</span>'+
+      '<span style="font-size:0.72rem;background:rgba(76,175,80,0.1);color:#2e7d32;padding:3px 9px;border-radius:20px;font-weight:700;">✅ Cover: '+covered+'</span>'+
+      '<span style="font-size:0.72rem;background:rgba(255,152,0,0.1);color:#e65100;padding:3px 9px;border-radius:20px;font-weight:700;">⏳ Baki: '+remaining+'</span>'+
+      (wrongCnt>0?'<span style="font-size:0.72rem;background:rgba(244,67,54,0.1);color:#c62828;padding:3px 9px;border-radius:20px;font-weight:700;">❌ Wrong: '+wrongCnt+'</span>':'')+
+    '</div>'+
+    '<div style="background:var(--surface2);border-radius:20px;height:8px;overflow:hidden;margin-bottom:5px;">'+
+      '<div style="height:100%;width:'+pct+'%;background:'+pColor+';border-radius:20px;transition:width 0.4s;"></div>'+
+    '</div>'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;font-size:0.7rem;color:var(--text2);">'+
+      '<span>'+pct+'% complete &nbsp;|&nbsp; Max questions: <b style="color:var(--accent);">'+maxAllowed+'</b></span>'+
+      '<button onclick="hlResetProgress()" style="font-size:0.68rem;background:none;border:none;color:var(--text2);cursor:pointer;text-decoration:underline;padding:0;">🔄 Reset</button>'+
+    '</div>';
+  box.style.display = 'block';
+}
+
+function hlResetProgress() {
+  var tid = document.getElementById('quizTopic').value;
+  var qtype = document.getElementById('quizType').value;
+  if(!tid||tid==='all') return;
+  if(!confirm('Is topic ka '+qtype+' progress reset karna hai?')) return;
+  if(!S.hlQuizProgress) S.hlQuizProgress = {};
+  delete S.hlQuizProgress[tid+'_'+qtype];
+  if(qtype==='new') delete S.hlQuizProgress[tid+'_weak']; // reset wrong bhi
+  save();
+  updateHlProgress();
+  showToast('Progress reset ho gaya! 🔄','success');
+}
+
 function updateQuizModeInfo(){
   const ae=S.exams.find(e=>e.id==S.activeExamId);
   document.getElementById('quizModeInfo').textContent=ae?`${ae.name} Mode -- Sirf selected topics se quiz`:'Free Mode -- Saare topics se quiz';
@@ -8147,55 +8313,57 @@ async function startQuiz(){
   const sid=document.getElementById('quizSubject').value;
   const secid=document.getElementById('quizSection').value;
   const tid=document.getElementById('quizTopic').value;
-  const count=parseInt(document.getElementById('questionCount').value)||10;
+  // FIX: slider ki actual value — parseInt with proper fallback
+  const _countEl=document.getElementById('questionCount');
+  const count=Math.max(1,parseInt(_countEl?_countEl.value:10)||10);
   const qtype=document.getElementById('quizType').value;
   const ae=S.exams.find(e=>e.id==S.activeExamId);
-  const notesSource = (document.getElementById('quizNotesSource') ? document.getElementById('quizNotesSource').value : 'raw') || 'raw';
+  const notesSource=(document.getElementById('quizNotesSource')?document.getElementById('quizNotesSource').value:'raw')||'raw';
+
+  // ── Highlight Progress Setup ──
+  if(!S.hlQuizProgress)S.hlQuizProgress={};
+  const _hlKey=(tid&&tid!=='all')?(tid+'_'+qtype):null;
+  const _hlProg=_hlKey?(S.hlQuizProgress[_hlKey]||{coveredIds:[],wrongIds:[]}):{coveredIds:[],wrongIds:[]};
+  const _allHls=(tid&&tid!=='all')?hlGetTopicHighlights(tid):[];
+  const _coveredIds=_hlProg.coveredIds||[];
+  const _wrongIds=_hlProg.wrongIds||[];
+  const _uncoveredHls=_allHls.filter(h=>_coveredIds.indexOf(h.id)===-1);
+  const _wrongHls=_allHls.filter(h=>_wrongIds.indexOf(h.id)!==-1);
+  const hasHls=_allHls.length>0&&tid!=='all';
 
   // ---- Collect content ----
   let content=''; let label='All';
 
-  // ── Canvas Notes source ──
-  if(notesSource === 'canvas' && tid !== 'all') {
-    var canvasTopic = null;
-    var canvasText = '';
-
-    // Directly topic object se studyCanvas.slides padhho
+  if(notesSource==='canvas'&&tid!=='all'){
+    var canvasTopic=null; var canvasText='';
     S.subjects.forEach(function(subj){
       subj.sections.forEach(function(sec){
         sec.topics.forEach(function(t){
-          if(t.id != tid) return;
-          canvasTopic = t;
-          label = t.name;
+          if(t.id!=tid)return;
+          canvasTopic=t; label=t.name;
         });
       });
     });
-
-    if(canvasTopic && canvasTopic.studyCanvas && canvasTopic.studyCanvas.slides && canvasTopic.studyCanvas.slides.length) {
-      var lines = [];
-      canvasTopic.studyCanvas.slides.forEach(function(slide, si){
-        var slideTitle = slide.title || ('Slide ' + (si+1));
-        lines.push('=== ' + slideTitle + ' ===');
-        (slide.textBlocks || []).forEach(function(blk){
-          var txt = blk.html
-            ? blk.html.replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ').trim()
-            : (blk.text || '').trim();
-          if(txt) lines.push(txt);
+    if(canvasTopic&&canvasTopic.studyCanvas&&canvasTopic.studyCanvas.slides&&canvasTopic.studyCanvas.slides.length){
+      var lines=[];
+      canvasTopic.studyCanvas.slides.forEach(function(slide,si){
+        var slideTitle=slide.title||('Slide '+(si+1));
+        lines.push('=== '+slideTitle+' ===');
+        (slide.textBlocks||[]).forEach(function(blk){
+          var txt=blk.html
+            ?blk.html.replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ').trim()
+            :(blk.text||'').trim();
+          if(txt)lines.push(txt);
         });
       });
-      canvasText = lines.filter(function(l){ return l.trim(); }).join('\n');
+      canvasText=lines.filter(function(l){return l.trim();}).join('\n');
     }
-
-    if(!canvasText || canvasText.trim().length < 30) {
-      showToast('⚠️ Is topic ke Canvas mein koi notes nahi hain! Pehle Canvas par notes likhkar Save karo.', 'error');
+    if(!canvasText||canvasText.trim().length<30){
+      showToast('⚠️ Canvas mein notes nahi hain! Pehle Canvas par notes likhkar Save karo.','error');
       return;
     }
-
-    content = canvasText;
-    label = label + ' (Canvas)';
-
+    content=canvasText; label=label+' (Canvas)';
   } else {
-    // ── Raw Notes source (default) ──
     S.subjects.forEach(subj=>{
       if(sid!=='all'&&subj.id!=sid)return;
       subj.sections.forEach(sec=>{
@@ -8203,9 +8371,39 @@ async function startQuiz(){
         sec.topics.forEach(t=>{
           if(tid!=='all'&&t.id!=tid)return;
           if(ae&&!ae.selectedTopicIds.includes(t.id)&&tid==='all')return;
+          // Highlights-based content (focused)
+          const topicHls=hlGetTopicHighlights(String(t.id));
+          if(topicHls.length>0&&tid!=='all'){
+            let hlsToUse=[];
+            const tKey=String(t.id);
+            if(qtype==='new'){
+              const cov=(S.hlQuizProgress[tKey+'_new']||{coveredIds:[]}).coveredIds||[];
+              hlsToUse=topicHls.filter(h=>cov.indexOf(h.id)===-1);
+            } else if(qtype==='weak'){
+              const wIds=(S.hlQuizProgress[tKey+'_weak']||{wrongIds:[]}).wrongIds||[];
+              hlsToUse=topicHls.filter(h=>wIds.indexOf(h.id)!==-1);
+              if(!hlsToUse.length)hlsToUse=topicHls;
+            } else if(qtype==='mixed'){
+              const covM=(S.hlQuizProgress[tKey+'_new']||{coveredIds:[]}).coveredIds||[];
+              const wIdsM=(S.hlQuizProgress[tKey+'_weak']||{wrongIds:[]}).wrongIds||[];
+              const uncov=topicHls.filter(h=>covM.indexOf(h.id)===-1);
+              const wrng=topicHls.filter(h=>wIdsM.indexOf(h.id)!==-1);
+              hlsToUse=[...uncov.slice(0,Math.ceil(count/2)),...wrng.slice(0,Math.floor(count/2))];
+              if(!hlsToUse.length)hlsToUse=topicHls;
+            } else {
+              hlsToUse=topicHls;
+            }
+            if(hlsToUse.length>0){
+              content+=`### ${subj.name} > ${sec.name} > ${t.name} — HIGHLIGHTED FACTS:\n`;
+              hlsToUse.forEach((h,i)=>{content+=`${i+1}. ${h.text}\n`;});
+              content+='\n---\n\n';
+              return;
+            }
+          }
+          // Fallback: raw notes
           const src=t.finalNotes
-            ? t.finalNotes.replace(/%%NEW%%|%%HIGHLIGHT%%|%%DATE%%.*?%%ENDNEW%%|%%ENDHIGHLIGHT%%/g,'')
-            : t.notes.map(n=>n.content).join('\n\n');
+            ?t.finalNotes.replace(/%%NEW%%|%%HIGHLIGHT%%|%%DATE%%.*?%%ENDNEW%%|%%ENDHIGHLIGHT%%/g,'')
+            :t.notes.map(n=>n.content).join('\n\n');
           if(src)content+=`### ${subj.name} > ${sec.name} > ${t.name}\n${src}\n\n---\n\n`;
         });
       });
@@ -8213,116 +8411,75 @@ async function startQuiz(){
   }
 
   if(!content){showToast('Selected area mein notes nahi hain!','error');return;}
-  const _quizModel = S.model || 'meta-llama/llama-4-scout-17b-16e-instruct';
-  const _contentLimit = _quizModel.includes('8b') ? 4000 : 14000;
-  if(content.length > _contentLimit) content = content.substring(0, _contentLimit);
+  const _quizModel=S.model||'meta-llama/llama-4-scout-17b-16e-instruct';
+  const _contentLimit=_quizModel.includes('8b')?4000:14000;
+  if(content.length>_contentLimit)content=content.substring(0,_contentLimit);
 
-  // Canvas path mein label already set hai — raw path ke liye hi override karo
-  if(notesSource !== 'canvas') {
+  if(notesSource!=='canvas'){
     label=tid!=='all'
-      ? document.getElementById('quizTopic').options[document.getElementById('quizTopic').selectedIndex].text
-      : sid!=='all'
-        ? document.getElementById('quizSubject').options[document.getElementById('quizSubject').selectedIndex].text
-        : ae?ae.name:'Saare Topics';
+      ?document.getElementById('quizTopic').options[document.getElementById('quizTopic').selectedIndex].text
+      :sid!=='all'
+        ?document.getElementById('quizSubject').options[document.getElementById('quizSubject').selectedIndex].text
+        :ae?ae.name:'Saare Topics';
   }
 
-  // ---- Filter history to same topic ----
-  const topicHistory = S.quizHistory.filter(h=>{
-    if(tid!=='all') return h.tid==tid;
-    if(secid!=='all') return h.secid==secid;
-    if(sid!=='all') return h.sid==sid;
+  // History-based context
+  const topicHistory=S.quizHistory.filter(h=>{
+    if(tid!=='all')return h.tid==tid;
+    if(secid!=='all')return h.secid==secid;
+    if(sid!=='all')return h.sid==sid;
     return true;
   });
+  const coveredQs=topicHistory.flatMap(h=>h.questions.map(q=>q.question)).slice(0,20);
+  const wrongQs=topicHistory.flatMap(h=>h.questions.filter(q=>!q.isCorrect)).slice(0,15);
+  const wrongDetail=wrongQs.map(q=>`Q: ${q.question}\nSahi jawab: ${q.options?.[q.correct]||''}\nExplanation: ${q.explanation||''}`).join('\n\n');
 
-  // ---- Already covered questions (same topic only) ----
-  const coveredQs = topicHistory
-    .flatMap(h=>h.questions.map(q=>q.question))
-    .slice(0, 30); // last 30 questions of this topic
-
-  // ---- Wrong questions (same topic only) ----
-  const wrongQs = topicHistory
-    .flatMap(h=>h.questions.filter(q=>!q.isCorrect))
-    .slice(0, 20);
-
-  // ---- Wrong answers with full detail for weak mode ----
-  const wrongDetail = wrongQs.map(q=>
-    `Q: ${q.question}\nSahi jawab: ${q.options?.[q.correct]||''}\nExplanation: ${q.explanation||''}`
-  ).join('\n\n');
-
-  // ---- Build smart prompt based on quiz type ----
-  const examCtx = ae
-    ? `\nEXAM: ${ae.name}\nSYLLABUS: ${(ae.syllabus||'').substring(0,1000)}\nPYQ PATTERN: ${(ae.pyq||'').substring(0,600)}`
-    : '';
-
-  let taskInstruction = '';
-  let coverageInstruction = '';
-  let focusInstruction = '';
-
-  if(qtype==='weak'){
-    if(!wrongQs.length){
-      showToast('Is topic mein koi galat jawab nahi! Pehle quiz do.','error');
-      return;
+  // Highlight context for prompt
+  let hlPromptCtx='';
+  if(hasHls){
+    if(qtype==='new'){
+      const remaining=_uncoveredHls.length;
+      hlPromptCtx=`\n\n📌 HIGHLIGHT PROGRESS: ${_coveredIds.length}/${_allHls.length} cover ho chuke.\nSIRF IN ${Math.min(count,remaining)} UNCOVERED HIGHLIGHTS SE QUESTIONS BANAO:\n${_uncoveredHls.slice(0,count).map((h,i)=>`${i+1}. ${h.text}`).join('\n')}\nHar highlight se ek question — yahi ${count} highlights cover karne hain.`;
+    } else if(qtype==='weak'){
+      hlPromptCtx=`\n\n📌 WEAK HIGHLIGHTS (${_wrongHls.length}): In par student galat tha:\n${_wrongHls.slice(0,count).map((h,i)=>`${i+1}. ${h.text}`).join('\n')}`;
+    } else if(qtype==='mixed'){
+      hlPromptCtx=`\n\n📌 MIXED: ${Math.ceil(count/2)} uncovered highlights + ${Math.floor(count/2)} weak highlights se questions banao.`;
     }
-    taskInstruction = `TASK: SIRF IN GALAT QUESTIONS KE TOPICS SE ${count} NAYE MCQ BANAO:
-Ye questions is student ne galat kiye hain:
-${wrongDetail}
-
-IMPORTANT: Same questions mat dena! Un topics ke NAYE angles se questions banao.
-Jaise: agar "Sindhu Ghati ki Lipi" galat hua to us se related aur naye facts puchho.`;
-
-    focusInstruction = `\nFOCUS: Student ke weak areas cover karo strictly.`;
-
-  } else if(qtype==='new'){
-    taskInstruction = `TASK: ${count} BILKUL NAYE MCQ BANAO jo pehle ki quizzes mein nahi aaye.`;
-
-    if(coveredQs.length > 0){
-      coverageInstruction = `\n⚠️ YEH TOPICS/QUESTIONS PEHLE AA CHUKE HAIN -- INSE BILKUL ALAG CONTENT SE PUCHHO:
-${coveredQs.map((q,i)=>`${i+1}. ${q}`).join('\n')}
-
-RULE: Upar likhe questions se milte-julte ya same topic angle se mat puchho.
-NAYE facts, naye events, naye dates, naye personalities cover karo notes se.`;
-    } else {
-      coverageInstruction = `\nPehli quiz hai -- notes ke sabse important facts se shuru karo.`;
-    }
-
-  } else if(qtype==='mixed'){
-    taskInstruction = `TASK: ${count} MCQ banao -- 50% naye content se, 50% jo pehle galat hue unke topics se.`;
-
-    if(coveredQs.length > 0){
-      coverageInstruction = `\nPEHLE AA CHUKE QUESTIONS (inse alag rakho):
-${coveredQs.slice(0,15).map((q,i)=>`${i+1}. ${q}`).join('\n')}`;
-    }
-    if(wrongQs.length > 0){
-      focusInstruction = `\nIN TOPICS PE FOCUS KARO (student yahan weak hai):
-${wrongQs.slice(0,8).map(q=>`- ${q.question} → Sahi: ${q.options?.[q.correct]||''}`).join('\n')}`;
-    }
-
-  } else { // 'all'
-    taskInstruction = `TASK: ${count} MCQ banao -- notes ke HAR SECTION se variety mein questions lao.`;
-    coverageInstruction = coveredQs.length > 0
-      ? `\nPehli priority: naye facts jo pehle nahi aaye. Covered:\n${coveredQs.slice(0,10).map((q,i)=>`${i+1}. ${q}`).join('\n')}`
-      : '\nNotes ke sabse important facts cover karo.';
   }
 
-  // Reported questions -- avoid these patterns
-  const reportedCtx=S.reportedQuestions&&S.reportedQuestions.length>0
-    ?`\n\n⚠️ IN QUESTIONS KO MAT BANANA (Student ne report kiye hain):\n${S.reportedQuestions.slice(0,10).map(r=>`- "${r.question}" (Reason: ${r.reasonLabel})`).join('\n')}`
-    :'';
+  let taskInstruction='',coverageInstruction='',focusInstruction='';
+  if(qtype==='weak'){
+    if(!hasHls&&!wrongQs.length){showToast('Koi galat jawab nahi! Pehle quiz do.','error');return;}
+    if(hasHls&&!_wrongHls.length){showToast('⚠️ Abhi tak koi weak highlight nahi! Pehle kuch quizzes karo.','error');return;}
+    taskInstruction=`TASK: WEAK AREAS SE ${count} NAYE MCQ BANAO.\n${hasHls?'Weak highlights upar diye hain.':('Galat questions:\n'+wrongDetail)}\nSame questions mat dena — naye angles se.`;
+    focusInstruction='\nFOCUS: Student ke weak points strictly cover karo.';
+  } else if(qtype==='new'){
+    taskInstruction=`TASK: ${count} BILKUL NAYE MCQ BANAO jo abhi tak cover nahi hue.`;
+    if(hasHls){coverageInstruction=hlPromptCtx;}
+    else if(coveredQs.length>0){coverageInstruction=`\n⚠️ YEH PEHLE AA CHUKE HAIN — INSE ALAG CONTENT SE PUCHHO:\n${coveredQs.map((q,i)=>`${i+1}. ${q}`).join('\n')}`;}
+    else{coverageInstruction='\nPehli quiz — sabse important facts se shuru karo.';}
+  } else if(qtype==='mixed'){
+    taskInstruction=`TASK: ${count} MCQ — 50% naye content se, 50% weak topics se.`;
+    if(hasHls){coverageInstruction=hlPromptCtx;}
+    else{
+      if(coveredQs.length>0)coverageInstruction=`\nPehle aaye (inse alag):\n${coveredQs.slice(0,10).map((q,i)=>`${i+1}. ${q}`).join('\n')}`;
+      if(wrongQs.length>0)focusInstruction=`\nWeak:\n${wrongQs.slice(0,6).map(q=>`- ${q.question} → ${q.options?.[q.correct]||''}`).join('\n')}`;
+    }
+  } else {
+    taskInstruction=`TASK: ${count} MCQ — notes ke HAR section se variety mein.`;
+    coverageInstruction=coveredQs.length>0?`\nPehle aaye (inse alag):\n${coveredQs.slice(0,8).map((q,i)=>`${i+1}. ${q}`).join('\n')}`:'';
+  }
 
-  // Quiz Director direction inject karo
-  const directionCtx = window._quizDirection
-    ? `
+  const examCtx=ae?`\nEXAM: ${ae.name}\nSYLLABUS: ${(ae.syllabus||'').substring(0,600)}\nPYQ: ${(ae.pyq||'').substring(0,300)}`:'';
+  const reportedCtx=S.reportedQuestions&&S.reportedQuestions.length>0?`\n\n⚠️ YEH MAT BANANA:\n${S.reportedQuestions.slice(0,8).map(r=>`- "${r.question}" (${r.reasonLabel})`).join('\n')}`:'';
+  const directionCtx=window._quizDirection?`\n\n🎯 DIRECTION:\n${window._quizDirection}`:'';
 
-🎯 USER KI KHAAS DIRECTION (YAHI FOLLOW KARO STRICTLY):
-${window._quizDirection}
-Is direction ke hisaab se questions ka type, difficulty aur style decide karo.`
-    : '';
-
-  const prompt = `Tu ek EXPERT MCQ question maker aur examiner hai. Tujhe SMART, EDUCATIONAL questions banana hai.
+  const prompt=`Tu EXPERT MCQ question maker hai. EDUCATIONAL questions banana hai.
 ${examCtx}
 
-NOTES (INHI SE QUESTIONS BANANA HAI -- web se bhi verified facts add kar skte hai):
+CONTENT (INHI SE QUESTIONS BANANA HAI):
 ${content}
+${hasHls&&(qtype==='new'||qtype==='weak'||qtype==='mixed')?hlPromptCtx:''}
 ${reportedCtx}
 ${directionCtx}
 
@@ -8331,18 +8488,17 @@ ${coverageInstruction}
 ${focusInstruction}
 
 STRICT RULES:
-1. Notes ke content se questions banao -- important extra facts web knowledge se bhi add kar sakte ho explanation mein
-2. Har question ALAG fact ya concept pe hona chahiye
-3. Ek hi fact ko baar baar mat puchho
-4. 4 options -- 1 sahi, 3 galat but BELIEVABLE aur EDUCATIONAL (har galat option se bhi kuch sikhne mile -- jaise related galat facts jo confuse karte hain)
-5. OPTIONS SHUFFLE KARO -- correct answer kabhi bhi A, B, C ya D ho sakta hai -- A pe hi correct mat rakho
-6. Explanation mein: (a) kyun sahi hai clearly, (b) galat options kyun galat hain, (c) 1-2 important related facts jo yaad rakhne chahiye
+1. Sirf diye content se questions banao
+2. Har question ALAG fact/concept pe
+3. 4 options: 1 sahi, 3 believable galat
+4. Options shuffle karo — correct A/B/C/D kuch bhi ho
+5. Explanation: kyun sahi, kyun galat, related facts
+6. EXACTLY ${count} questions — zyada ya kam NAHI
 7. Hindi mein likho
 8. JSON ke alawa KUCH MAT LIKHO
-9. Har question unique angle se puchho -- ek hi fact ke alag pehlu cover karo
 
-RESPONSE FORMAT -- SIRF YEH JSON:
-{"questions":[{"question":"...","options":["...","...","...","..."],"correct":0,"explanation":"...","topic":"${label}","hint":"ek line ka short hint jo answer reveal na kare"}]}`;
+RESPONSE FORMAT:
+{"questions":[{"question":"...","options":["...","...","...","..."],"correct":0,"explanation":"...","topic":"${label}","hint":"short hint"}]}`;
 
   document.getElementById('quizSetup').style.display='none';
   document.getElementById('quizLoading').classList.add('show');
@@ -8350,25 +8506,22 @@ RESPONSE FORMAT -- SIRF YEH JSON:
   document.getElementById('quizResults').style.display='none';
 
   try{
-    const text=await callGroq(prompt,4500);
+    const text=await callGroq(prompt,5000);
     const clean=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
     const parsed=JSON.parse(clean);
     if(!parsed.questions?.length)throw new Error('Questions nahi mile');
 
     const quizId='q_'+Date.now();
-    const quizName=label+' · '+new Date().toLocaleDateString('hi-IN');
-
-    // Add questions to vault
-    addToVault(parsed.questions, quizId, quizName, label, sid, secid, tid);
+    const quizName=label+' \u00b7 '+new Date().toLocaleDateString('hi-IN');
+    addToVault(parsed.questions,quizId,quizName,label,sid,secid,tid);
 
     window._cq={
       questions:parsed.questions,
       current:0,score:0,label,
-      examId:S.activeExamId,
-      examName:ae?.name||'Free Mode',
-      qid:quizId,
-      quizName,
-      sid,secid,tid,qtype
+      examId:S.activeExamId,examName:ae?.name||'Free Mode',
+      qid:quizId,quizName,sid,secid,tid,qtype,
+      _hlKey,_hlProg:JSON.parse(JSON.stringify(_hlProg)),
+      _allHls,_uncoveredHls,_wrongHls,_hasHls:hasHls
     };
     document.getElementById('quizLoading').classList.remove('show');
     document.getElementById('quizActive').style.display='block';
@@ -8379,7 +8532,6 @@ RESPONSE FORMAT -- SIRF YEH JSON:
     showToast('Error: '+e.message,'error');
   }
 }
-
 function showQ(idx){
   const cq=window._cq; const q=cq.questions[idx]; const tot=cq.questions.length;
   document.getElementById('quizProgressText').textContent=`Q ${idx+1}/${tot}`;
@@ -8556,6 +8708,8 @@ function showResults(){
   if(S.pausedQuiz&&S.pausedQuiz.cq&&S.pausedQuiz.cq.qid===cq.qid){S.pausedQuiz=null;}
   // Sync vault answers with results
   syncVaultWithResults(cq);
+  // ── Update Highlight Quiz Progress ──
+  hlUpdateProgress(cq);
   save(); updateHistBadge();
   const wrong=cq.questions.filter(q=>!q.isCorrect);
   const right=cq.questions.filter(q=>q.isCorrect);
@@ -9376,7 +9530,7 @@ function hardReload() {
   }
 }
 
-function resetAll(){if(!confirm('SAARA DATA DELETE HOGA! Pakka?'))return;const k=S.apiKey;S={apiKey:k,subjects:[],exams:[],activeExamId:'',quizHistory:[],stats:{total:0,correct:0,wrong:0,topicStats:{}},ui:{sid:null,secid:null,tid:null},_editExamId:null,pausedQuiz:null,questionVault:[],savedQuestions:[],wrongedQuestions:[]};save();init();showToast('Reset ho gaya','success');}
+function resetAll(){if(!confirm('SAARA DATA DELETE HOGA! Pakka?'))return;const k=S.apiKey;S={apiKey:k,subjects:[],exams:[],activeExamId:'',quizHistory:[],hlQuizProgress:{},stats:{total:0,correct:0,wrong:0,topicStats:{}},ui:{sid:null,secid:null,tid:null},_editExamId:null,pausedQuiz:null,questionVault:[],savedQuestions:[],wrongedQuestions:[]};save();init();showToast('Reset ho gaya','success');}
 
 // ==================== QUIZ ACTION FUNCTIONS ====================
 
@@ -12278,9 +12432,12 @@ let _quizDirection = ''; // Global quiz direction from AI chat
 let _qdChatHistory = []; // Quiz Director chat history
 
 function setQCount(n){
-  document.getElementById('questionCount').value=n;
-  document.getElementById('qCountNum').value=n;
-  document.getElementById('qCountDisplay').textContent=n;
+  var slider = document.getElementById('questionCount');
+  var maxAllowed = parseInt(slider ? slider.max : 50) || 50;
+  var safeN = Math.min(n, maxAllowed);
+  document.getElementById('questionCount').value=safeN;
+  document.getElementById('qCountNum').value=safeN;
+  document.getElementById('qCountDisplay').textContent=safeN;
 }
 
 function setQuizDirection(text){
