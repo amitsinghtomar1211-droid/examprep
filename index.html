@@ -8426,6 +8426,11 @@ function qfUpdateProgress(cq, usedFacts) {
   var _total = cq._qfTotalFacts || prog.totalKnown || 0;
   prog.totalKnown   = _total;
   prog.lastUpdated  = new Date().toLocaleDateString('hi-IN');
+  // Rotation index update karo — 'all' type ke liye next quiz mein agle facts se start ho
+  if (cq.qtype === 'all' && _total > 0) {
+    var usedCount = (cq._qfAvailFacts||[]).slice(0, cq.questions.length).length;
+    prog.rotationIdx = ((prog.rotationIdx||0) + usedCount) % _total;
+  }
 
   // Cycle complete check — allFacts se match karke dekhte hain
   var _allFactNorms = (cq._qfAllFacts || []).map(qfNorm);
@@ -8451,20 +8456,22 @@ function qfShowPreQuizPopup(params) {
 
   // Filter facts based on type
   var availableFacts = [];
+  var covNormsBase = covered.map(qfNorm);
   if (params.qtype === 'weak') {
     availableFacts = wrongF.length > 0 ? wrongF : allFacts;
   } else if (params.qtype === 'new') {
-    var covNorms = covered.map(qfNorm);
-    availableFacts = allFacts.filter(f => !covNorms.includes(qfNorm(f)));
-    if (availableFacts.length === 0) availableFacts = allFacts; // cycle restart
+    availableFacts = allFacts.filter(function(f){ return !covNormsBase.includes(qfNorm(f)); });
+    if (availableFacts.length === 0) { availableFacts = allFacts; } // cycle restart
   } else if (params.qtype === 'mixed') {
-    var covNormsM = covered.map(qfNorm);
-    var uncov = allFacts.filter(f => !covNormsM.includes(qfNorm(f)));
-    var wrng  = wrongF;
-    availableFacts = [...new Set([...uncov, ...wrng])];
+    var uncovM = allFacts.filter(function(f){ return !covNormsBase.includes(qfNorm(f)); });
+    availableFacts = uncovM.concat(wrongF.filter(function(w){
+      return !uncovM.some(function(u){ return qfNorm(u)===qfNorm(w); });
+    }));
     if (availableFacts.length === 0) availableFacts = allFacts;
   } else {
-    availableFacts = allFacts;
+    // 'all' type: rotation index se start karo taaki har baar alag facts aa yen
+    var rotIdx = prog.rotationIdx || 0;
+    availableFacts = allFacts.slice(rotIdx).concat(allFacts.slice(0, rotIdx));
   }
 
   var totalFacts   = allFacts.length;
@@ -8764,17 +8771,28 @@ async function startQuizActual(){
   const wrongQs=topicHistory.flatMap(h=>h.questions.filter(q=>!q.isCorrect)).slice(0,15);
   const wrongDetail=wrongQs.map(q=>`Q: ${q.question}\nSahi jawab: ${q.options?.[q.correct]||''}\nExplanation: ${q.explanation||''}`).join('\n\n');
 
-  // ── Fact Coverage Prompt Context ──
+  // ── Fact Coverage Prompt Context — STRICT fact assignment ──
   let factCoverCtx='';
+  // Popup se jo availableFacts aaye, unka pehla slice hi USE karna hai
+  const _factsForThisQuiz = _qfAvailFacts.slice(0, count);
   if(_qfAllFacts.length>0){
-    if(qtype==='new'&&_qfCovered.length>0){
-      factCoverCtx=`\n\n📊 FACT COVERAGE SYSTEM:\nTotal facts available: ${_qfAllFacts.length}\nPehle se covered (IN SE ALAG QUESTIONS BANAO): ${_qfCovered.length} facts\n${_qfCovered.slice(0,30).map((f,i)=>`${i+1}. ${f}`).join('\n')}\n\nSIRF UNCOVERED FACTS SE QUESTIONS BANAO. Covered facts repeat mat karo.`;
+    if(qtype==='new'){
+      if(_qfCovered.length>0){
+        factCoverCtx=`\n\n🚫 COVERED FACTS — IN SE BILKUL QUESTION MAT BANAO (${_qfCovered.length} facts already covered):\n${_qfCovered.slice(0,40).map((f,i)=>`SKIP-${i+1}. ${f}`).join('\n')}\n\n✅ SIRF IN ${_factsForThisQuiz.length} FACTS SE QUESTIONS BANAO (ek fact = ek question, exactly):\n${_factsForThisQuiz.map((f,i)=>`FACT-${i+1}. ${f}`).join('\n')}\n\nHar FACT- number ke liye EXACTLY ek question — total ${count} questions.`;
+      } else {
+        factCoverCtx=`\n\n✅ IN ${_factsForThisQuiz.length} FACTS SE QUESTIONS BANAO (ek fact = ek question):\n${_factsForThisQuiz.map((f,i)=>`FACT-${i+1}. ${f}`).join('\n')}`;
+      }
     } else if(qtype==='weak'&&_qfWrong.length>0){
-      factCoverCtx=`\n\n📊 WEAK FACTS (In par student galat tha — inhi se questions banao):\n${_qfWrong.slice(0,count).map((f,i)=>`${i+1}. ${f}`).join('\n')}`;
+      factCoverCtx=`\n\n❌ WEAK FACTS — INHI SE QUESTIONS BANAO (student galat tha inpe):\n${_factsForThisQuiz.map((f,i)=>`WEAK-${i+1}. ${f}`).join('\n')}\n\nHar WEAK- fact se ek naya angle wala question — same question mat dena.`;
     } else if(qtype==='mixed'){
-      const covNormsM=_qfCovered.map(qfNorm);
-      const uncovFacts=_qfAllFacts.filter(f=>!covNormsM.includes(qfNorm(f)));
-      factCoverCtx=`\n\n📊 FACT COVERAGE:\nUncovered facts (inse ${Math.ceil(count/2)} questions banao):\n${uncovFacts.slice(0,Math.ceil(count/2)).map((f,i)=>`${i+1}. ${f}`).join('\n')}\n\nWeak facts (inse ${Math.floor(count/2)} questions banao):\n${_qfWrong.slice(0,Math.floor(count/2)).map((f,i)=>`${i+1}. ${f}`).join('\n')}`;
+      const _halfNew=Math.ceil(count/2);
+      const _halfWeak=Math.floor(count/2);
+      const covNormsM2=_qfCovered.map(qfNorm);
+      const uncovFacts2=_qfAllFacts.filter(f=>!covNormsM2.includes(qfNorm(f))).slice(0,_halfNew);
+      const weakFacts2=_qfWrong.slice(0,_halfWeak);
+      factCoverCtx=`\n\n✅ MIXED QUIZ FACTS:\nNaye facts (inse ${uncovFacts2.length} questions banao):\n${uncovFacts2.map((f,i)=>`NEW-${i+1}. ${f}`).join('\n')}\n\nWeak facts (inse ${weakFacts2.length} questions banao):\n${weakFacts2.map((f,i)=>`WEAK-${i+1}. ${f}`).join('\n')}`;
+    } else if(qtype==='all'){
+      factCoverCtx=`\n\n✅ IN ${_factsForThisQuiz.length} FACTS SE QUESTIONS BANAO (rotation order — ek fact = ek question):\n${_factsForThisQuiz.map((f,i)=>`FACT-${i+1}. ${f}`).join('\n')}\n\nYeh facts pehle ki quizzes se alag hain. Har FACT- se strictly ek question.`;
     }
   }
 
@@ -8798,7 +8816,7 @@ async function startQuizActual(){
     taskInstruction=`TASK: WEAK AREAS SE ${count} NAYE MCQ BANAO.\n${hasHls?'Weak highlights upar diye hain.':(_qfWrong.length>0?'Weak facts upar diye hain.':('Galat questions:\n'+wrongDetail))}\nSame questions mat dena — naye angles se.`;
     focusInstruction='\nFOCUS: Student ke weak points strictly cover karo.';
   } else if(qtype==='new'){
-    taskInstruction=`TASK: ${count} BILKUL NAYE MCQ BANAO jo abhi tak cover nahi hue.`;
+    taskInstruction=`TASK: EXACTLY ${count} MCQ BANAO — SIRF naye uncovered facts se. Ek fact = ek question, strictly.`;
     if(hasHls){coverageInstruction=hlPromptCtx;}
     else if(factCoverCtx){coverageInstruction=factCoverCtx;}
     else if(coveredQs.length>0){coverageInstruction=`\n⚠️ YEH PEHLE AA CHUKE HAIN — INSE ALAG CONTENT SE PUCHHO:\n${coveredQs.map((q,i)=>`${i+1}. ${q}`).join('\n')}`;}
@@ -8836,16 +8854,17 @@ ${focusInstruction}
 
 STRICT RULES:
 1. Sirf diye content se questions banao
-2. Har question ALAG fact/concept pe
+2. Har question BILKUL ALAG fact/concept pe — ek fact se sirf ek question
 3. 4 options: 1 sahi, 3 believable galat
 4. Options shuffle karo — correct A/B/C/D kuch bhi ho
 5. Explanation: kyun sahi, kyun galat, related facts
 6. EXACTLY ${count} questions — zyada ya kam NAHI
 7. Hindi mein likho
 8. JSON ke alawa KUCH MAT LIKHO
+9. Agar FACT- numbered list di gayi hai to SIRF unhi se questions banao — covered/SKIP facts se BILKUL nahi
 
 RESPONSE FORMAT:
-{"questions":[{"question":"...","options":["...","...","...","..."],"correct":0,"explanation":"...","topic":"${label}","hint":"short hint","sourceFact":"fact jisse yeh question bana — exact line from content"}]}`;
+{"questions":[{"question":"...","options":["...","...","...","..."],"correct":0,"explanation":"...","topic":"${label}","hint":"short hint","sourceFact":"FACT-N ya WEAK-N ya NEW-N — jo number diya tha wahi likho"}]}`;
 
   document.getElementById('quizSetup').style.display='none';
   document.getElementById('quizLoading').classList.add('show');
@@ -9061,16 +9080,29 @@ function showResults(){
   hlUpdateProgress(cq);
   // ── Update Fact Coverage Progress ──
   if(cq._qfKey){
-    // Strategy: available facts se sequential slice use karo (most reliable)
-    // AI ke sourceFact strings exact match nahi karte, isliye availFacts ka slice better hai
-    var _usedSourceFacts=[];
     var _availF=cq._qfAvailFacts||[];
-    var _allF=cq._qfAllFacts||[];
-    if(_availF.length>0){
-      // Kitne questions the utne facts mark karo as covered (sequential)
-      _usedSourceFacts=_availF.slice(0,cq.questions.length);
-    } else if(_allF.length>0){
-      _usedSourceFacts=_allF.slice(0,cq.questions.length);
+    var _usedSourceFacts=[];
+    // AI ne sourceFact mein "FACT-N", "WEAK-N", "NEW-N" format diya hai
+    // Us index se actual fact identify karo
+    cq.questions.forEach(function(q,qi){
+      var sf=q.sourceFact||'';
+      var match=sf.match(/(?:FACT|WEAK|NEW|SKIP)-(\d+)/i);
+      if(match){
+        var idx=parseInt(match[1])-1; // 1-based to 0-based
+        if(idx>=0&&idx<_availF.length) _usedSourceFacts.push(_availF[idx]);
+      }
+    });
+    // Fallback: agar AI ne sourceFact nahi diya properly
+    if(_usedSourceFacts.length<cq.questions.length){
+      var needed=cq.questions.length-_usedSourceFacts.length;
+      var alreadyUsedNorms=_usedSourceFacts.map(qfNorm);
+      _availF.forEach(function(f){
+        if(_usedSourceFacts.length>=cq.questions.length) return;
+        if(!alreadyUsedNorms.includes(qfNorm(f))){
+          _usedSourceFacts.push(f);
+          alreadyUsedNorms.push(qfNorm(f));
+        }
+      });
     }
     if(_usedSourceFacts.length>0) qfUpdateProgress(cq,_usedSourceFacts);
   }
@@ -20469,6 +20501,25 @@ async function saveTopicToFirebase(tid, subjId, secId){
 // ══════════════════════════════════════════
 // ⚡ META SAVE — stats, quiz, exams, etc.
 // ════════════��════════════════════��════════
+// Firestore ke liye undefined values clean karo — undefined Firestore crash karta hai
+function _fsClean(obj) {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) {
+    return obj.map(function(item) { return _fsClean(item); }).filter(function(item) { return item !== undefined; });
+  }
+  if (typeof obj === 'object' && !(obj instanceof Date)) {
+    var cleaned = {};
+    Object.keys(obj).forEach(function(k) {
+      var v = obj[k];
+      if (v !== undefined) {
+        cleaned[k] = _fsClean(v);
+      }
+    });
+    return cleaned;
+  }
+  return obj;
+}
+
 async function saveMetaToFirebase(){
   if(!_db || !_currentUser) return;
   try{
@@ -20480,14 +20531,14 @@ async function saveMetaToFirebase(){
     await _db.collection('users').doc(uid).set({
       activeExamId:      S.activeExamId||'',
       model:             S.model||'meta-llama/llama-4-scout-17b-16e-instruct',
-      stats:             S.stats,
-      quizHistory:       (S.quizHistory||[]).slice(0,60),
-      questionVault:     (S.questionVault||[]).slice(0,50),
+      stats:             _fsClean(S.stats),
+      quizHistory:       _fsClean((S.quizHistory||[]).slice(0,60)),
+      questionVault:     _fsClean((S.questionVault||[]).slice(0,50)),
       savedQuestions:    S.savedQuestions||[],
       wrongedQuestions:  S.wrongedQuestions||[],
-      reportedQuestions: S.reportedQuestions||[],
-      pausedQuiz:        S.pausedQuiz||null,
-      exams:             S.exams||[],
+      reportedQuestions: _fsClean(S.reportedQuestions||[]),
+      pausedQuiz:        _fsClean(S.pausedQuiz||null),
+      exams:             _fsClean(S.exams||[]),
       subjectIds:        (S.subjects||[]).map(function(s){ return s.id; }),
       topicFormat:       'v2',
       lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
@@ -20517,14 +20568,14 @@ async function saveToFirebase(){
       data: {
         activeExamId:      S.activeExamId||'',
         model:             S.model||'meta-llama/llama-4-scout-17b-16e-instruct',
-        stats:             S.stats,
-        quizHistory:       (S.quizHistory||[]).slice(0,60),
-        questionVault:     (S.questionVault||[]).slice(0,50),
+        stats:             _fsClean(S.stats),
+        quizHistory:       _fsClean((S.quizHistory||[]).slice(0,60)),
+        questionVault:     _fsClean((S.questionVault||[]).slice(0,50)),
         savedQuestions:    S.savedQuestions||[],
         wrongedQuestions:  S.wrongedQuestions||[],
-        reportedQuestions: S.reportedQuestions||[],
-        pausedQuiz:        S.pausedQuiz||null,
-        exams:             S.exams||[],
+        reportedQuestions: _fsClean(S.reportedQuestions||[]),
+        pausedQuiz:        _fsClean(S.pausedQuiz||null),
+        exams:             _fsClean(S.exams||[]),
         subjectIds:        (S.subjects||[]).map(function(s){ return s.id; }),
         topicFormat:       'v2',
         lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
