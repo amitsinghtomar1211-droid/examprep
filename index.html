@@ -2,7 +2,7 @@
 <html lang="hi">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <style>/* Pull-to-refresh Chrome Android */
 :root{overscroll-behavior:none;}
 </style>
@@ -356,7 +356,7 @@ body{
 .api-dot.ok{background:var(--green);}
 
 /* PAGE AREA */
-.page-area{padding:16px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:none;overscroll-behavior-y:none;}
+.page-area{padding:16px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:none;overscroll-behavior-y:none;touch-action:pan-y;}
 .page{display:none;}
 .page.active{display:block;animation:fadeIn 0.25s ease;}
 @keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
@@ -5932,64 +5932,28 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 <script>
 
 // ==================== PULL-TO-REFRESH DISABLE ====================
-// CSS overscroll-behavior handles most browsers
-// JS fallback for older Android/Chrome versions
+// PTR (Pull-to-Refresh) block — sirf tab rokna hai jab page-area top par ho
+// Single finger scroll hamesha allow hai
 
 (function() {
-  var _ptrStartY = 0;
-  var _ptrActive = false;
-
-  document.addEventListener('touchstart', function(e) {
-    if(e.touches.length === 1) {
-      _ptrStartY = e.touches[0].clientY;
-      _ptrActive = true;
-    }
-  }, { passive: true });
-
   document.addEventListener('touchmove', function(e) {
-    if(!_ptrActive || e.touches.length !== 1) return;
+    // Do ya zyada fingers = pinch gesture, allow karo (zoom viewport se already band hai)
+    if(e.touches.length !== 1) return;
 
-    var curY = e.touches[0].clientY;
-    var dy   = curY - _ptrStartY;
-
-    // Sirf downward swipe check karo (dy > 0 = finger upar se neeche ja rahi)
-    if(dy <= 0) return;
-
-    // Find the actual scrollable element under the touch
+    // Touch kahan hua — koi bhi scrollable ancestor dhundo
     var el = e.target;
-    var scrollable = null;
-    while(el && el !== document.body) {
-      var style = window.getComputedStyle(el);
-      var overflowY = style.overflowY;
-      if(overflowY === 'auto' || overflowY === 'scroll') {
-        scrollable = el;
-        break;
+    while(el && el !== document.documentElement) {
+      var oy = window.getComputedStyle(el).overflowY;
+      if(oy === 'auto' || oy === 'scroll') {
+        // Scrollable element mila — scroll hone do, PTR mat rokna
+        return;
       }
       el = el.parentElement;
     }
 
-    // Agar scrollable container mila aur usme scroll karne ki jagah hai -- allow karo
-    if(scrollable) {
-      var canScrollDown = scrollable.scrollTop > 0;
-      var hasMoreContent = scrollable.scrollHeight > scrollable.clientHeight;
-      // Top par bhi allow karo agar content hai (normal scroll) -- sirf body-level PTR block karo
-      if(hasMoreContent || canScrollDown) return;
-    }
-
-    // Koi scrollable nahi mila ya content fit ho jata hai -- PTR block karo
-    if(e.cancelable) {
-      e.preventDefault();
-    }
+    // Koi scrollable ancestor nahi mila — PTR block karo
+    if(e.cancelable) e.preventDefault();
   }, { passive: false });
-
-  document.addEventListener('touchend', function() {
-    _ptrActive = false;
-  }, { passive: true });
-
-  // Chrome DevTools Protocol -- PTR disable
-  if('chrome' in window && window.chrome.app) {
-    try { window.chrome.app.installState(); } catch(e) {}
-  }
 })();
 
 // ==================== STATE ====================
