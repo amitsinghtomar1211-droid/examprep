@@ -8333,7 +8333,7 @@ function qfMakeKey(sid, secid, tid, notesSource, qtype) {
 // Get or init progress for a key
 function qfGetProg(key) {
   if (!S.quizFactProgress) S.quizFactProgress = {};
-  return S.quizFactProgress[key] || { coveredFacts: [], wrongFacts: [], totalKnown: 0 };
+  return S.quizFactProgress[key] || { coveredFacts: [], wrongFacts: [], totalKnown: 0, seenFactNorms: [] };
 }
 
 // Save progress
@@ -8445,135 +8445,233 @@ function qfUpdateProgress(cq, usedFacts) {
 }
 
 // Pre-quiz popup dikhao — stats + question count selector
-function qfShowPreQuizPopup(params) {
-  // params: { sid, secid, tid, notesSource, qtype, onConfirm }
-  var content = qfExtractContent(params.sid, params.secid, params.tid, params.notesSource);
-  var allFacts = qfExtractFacts(content);
-  var key = qfMakeKey(params.sid, params.secid, params.tid, params.notesSource, params.qtype);
-  var prog = qfGetProg(key);
-  var covered = prog.coveredFacts || [];
-  var wrongF  = prog.wrongFacts || [];
+  function qfShowPreQuizPopup(params) {
+    // params: { sid, secid, tid, notesSource, qtype, onConfirm }
+    var content = qfExtractContent(params.sid, params.secid, params.tid, params.notesSource);
+    var allFacts = qfExtractFacts(content);
+    var key = qfMakeKey(params.sid, params.secid, params.tid, params.notesSource, params.qtype);
+    var prog = qfGetProg(key);
+    var covered = prog.coveredFacts || [];
+    var wrongF  = prog.wrongFacts || [];
+    var seenFactNorms = prog.seenFactNorms || [];
 
-  // Filter facts based on type
-  var availableFacts = [];
-  var covNormsBase = covered.map(qfNorm);
-  if (params.qtype === 'weak') {
-    availableFacts = wrongF.length > 0 ? wrongF : allFacts;
-  } else if (params.qtype === 'new') {
-    availableFacts = allFacts.filter(function(f){ return !covNormsBase.includes(qfNorm(f)); });
-    if (availableFacts.length === 0) { availableFacts = allFacts; } // cycle restart
-  } else if (params.qtype === 'mixed') {
-    var uncovM = allFacts.filter(function(f){ return !covNormsBase.includes(qfNorm(f)); });
-    availableFacts = uncovM.concat(wrongF.filter(function(w){
-      return !uncovM.some(function(u){ return qfNorm(u)===qfNorm(w); });
-    }));
-    if (availableFacts.length === 0) availableFacts = allFacts;
-  } else {
-    // 'all' type: rotation index se start karo taaki har baar alag facts aa yen
-    var rotIdx = prog.rotationIdx || 0;
-    availableFacts = allFacts.slice(rotIdx).concat(allFacts.slice(0, rotIdx));
+    // ── NEW CONTENT DETECTION ──
+    // Detect facts that were never seen before (truly new content added since last quiz)
+    var allFactNorms = allFacts.map(qfNorm);
+    var newlyAddedFacts = allFacts.filter(function(f) {
+      return seenFactNorms.length > 0 && !seenFactNorms.includes(qfNorm(f));
+    });
+    // Previously known facts (were seen before but not yet covered)
+    var covNormsBase = covered.map(qfNorm);
+    var oldUncoveredFacts = allFacts.filter(function(f) {
+      var n = qfNorm(f);
+      return seenFactNorms.includes(n) && !covNormsBase.includes(n);
+    });
+    var hasNewContent = newlyAddedFacts.length > 0 && seenFactNorms.length > 0;
+
+    // Update seenFactNorms to include all current facts (for future detection)
+    var updatedSeenNorms = allFactNorms.slice();
+    prog.seenFactNorms = updatedSeenNorms;
+    qfSaveProg(key, prog);
+
+    // Filter facts based on type
+    var availableFacts = [];
+    if (params.qtype === 'weak') {
+      availableFacts = wrongF.length > 0 ? wrongF : allFacts;
+    } else if (params.qtype === 'new') {
+      availableFacts = allFacts.filter(function(f){ return !covNormsBase.includes(qfNorm(f)); });
+      if (availableFacts.length === 0) { availableFacts = allFacts; } // cycle restart
+    } else if (params.qtype === 'mixed') {
+      var uncovM = allFacts.filter(function(f){ return !covNormsBase.includes(qfNorm(f)); });
+      availableFacts = uncovM.concat(wrongF.filter(function(w){
+        return !uncovM.some(function(u){ return qfNorm(u)===qfNorm(w); });
+      }));
+      if (availableFacts.length === 0) availableFacts = allFacts;
+    } else {
+      // 'all' type: rotation index se start karo taaki har baar alag facts aa yen
+      var rotIdx = prog.rotationIdx || 0;
+      availableFacts = allFacts.slice(rotIdx).concat(allFacts.slice(0, rotIdx));
+    }
+
+    var totalFacts   = allFacts.length;
+    // covCount = kitne allFacts actually covered hain (normalize karke match)
+    var covCount = covered.filter(function(c){ return allFactNorms.includes(qfNorm(c)); }).length;
+    covCount = Math.min(covCount, totalFacts);
+    var wrongCount   = wrongF.length;
+    // remaining = actually uncovered facts
+    var remaining    = availableFacts.length;
+    // maxQ = available facts ki sankhya (no artificial 50 cap in display, just slider max)
+    var maxQ         = Math.max(1, availableFacts.length);
+    var defaultQ     = Math.min(10, maxQ);
+    var pct          = totalFacts > 0 ? Math.round((covCount / totalFacts) * 100) : 0;
+
+    var typeLabels = {
+      new:   { icon:'🆕', label:'Naya Content',  color:'#1565c0' },
+      weak:  { icon:'❌', label:'Weak/Wrong',    color:'#c62828' },
+      mixed: { icon:'🔀', label:'Mixed',         color:'#6a1b9a' },
+      all:   { icon:'📚', label:'Saare Facts',   color:'#2e7d32' }
+    };
+    var tl = typeLabels[params.qtype] || typeLabels.all;
+    var pColor = pct >= 80 ? '#4caf50' : pct >= 50 ? '#ff9800' : '#1565c0';
+
+    // Popup HTML banao
+    var overlay = document.createElement('div');
+    overlay.id = 'qfPrePopup';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
+
+    var noFactsWarning = totalFacts === 0
+      ? '<div style="background:rgba(198,40,40,0.1);border:1px solid rgba(198,40,40,0.3);border-radius:10px;padding:10px 12px;font-size:0.77rem;color:#c62828;font-weight:700;margin-bottom:10px;">⚠️ Notes mein koi facts nahi mile! Pehle notes/canvas mein content likho.</div>' : '';
+
+    var weakWarning = params.qtype === 'weak' && wrongCount === 0
+      ? '<div style="background:rgba(255,152,0,0.1);border:1px solid rgba(255,152,0,0.3);border-radius:10px;padding:10px 12px;font-size:0.77rem;color:#e65100;font-weight:700;margin-bottom:10px;">⚠️ Abhi koi wrong facts nahi hain! Pehle kuch quizzes do jo galat ho. Saare facts se quiz hogi.</div>' : '';
+
+    var allCoveredMsg = params.qtype === 'new' && covCount >= totalFacts && totalFacts > 0 && !hasNewContent
+      ? '<div style="background:rgba(76,175,80,0.1);border:1px solid rgba(76,175,80,0.3);border-radius:10px;padding:10px 12px;font-size:0.77rem;color:#2e7d32;font-weight:700;margin-bottom:10px;">🎉 Saare facts cover ho chuke hain! Ab cycle restart hogi — phir se saare facts se quiz hogi.</div>' : '';
+
+    // ── NEW CONTENT BANNER — smart choice when new facts detected ──
+    var newContentBanner = '';
+    if (hasNewContent && params.qtype !== 'weak') {
+      var newMaxQ = Math.max(1, newlyAddedFacts.length);
+      var oldMaxQ = Math.max(1, oldUncoveredFacts.length);
+      var newDefQ = Math.min(10, newMaxQ);
+      var allUncovMax = Math.max(1, availableFacts.length);
+      newContentBanner = '<div style="background:linear-gradient(135deg,rgba(21,101,192,0.08),rgba(76,175,80,0.06));border:2px solid rgba(21,101,192,0.35);border-radius:12px;padding:13px;margin-bottom:13px;">' +
+        '<div style="font-size:0.85rem;font-weight:900;color:#1565c0;margin-bottom:8px;">🆕 Naya Content Detect Hua!</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px;">' +
+          '<div style="flex:1;min-width:80px;background:rgba(21,101,192,0.1);border-radius:10px;padding:8px 10px;text-align:center;">' +
+            '<div style="font-size:1.1rem;font-weight:900;color:#1565c0;">' + newlyAddedFacts.length + '</div>' +
+            '<div style="font-size:0.63rem;color:#666;font-weight:600;">Naye Facts</div>' +
+          '</div>' +
+          (oldUncoveredFacts.length > 0 ? '<div style="flex:1;min-width:80px;background:rgba(255,152,0,0.1);border-radius:10px;padding:8px 10px;text-align:center;">' +
+            '<div style="font-size:1.1rem;font-weight:900;color:#e65100;">' + oldUncoveredFacts.length + '</div>' +
+            '<div style="font-size:0.63rem;color:#666;font-weight:600;">Pehle ke Baki</div>' +
+          '</div>' : '') +
+          '<div style="flex:1;min-width:80px;background:rgba(76,175,80,0.1);border-radius:10px;padding:8px 10px;text-align:center;">' +
+            '<div style="font-size:1.1rem;font-weight:900;color:#2e7d32;">' + covCount + '</div>' +
+            '<div style="font-size:0.63rem;color:#666;font-weight:600;">Cover Ho Gaye</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="font-size:0.77rem;color:#444;margin-bottom:10px;line-height:1.5;">Aapne naya content add kiya hai. Kya karna chahte hain?</div>' +
+        '<div style="display:flex;flex-direction:column;gap:7px;">' +
+          '<button onclick="qfChooseNewOnly()" style="padding:10px 14px;border-radius:10px;border:2px solid #1565c0;background:rgba(21,101,192,0.08);font-size:0.82rem;font-weight:800;cursor:pointer;color:#1565c0;text-align:left;">🆕 Sirf Naye ' + newlyAddedFacts.length + ' Facts ki Quiz — Naye content se fresh start</button>' +
+          (oldUncoveredFacts.length > 0 ? '<button onclick="qfChooseContinue()" style="padding:10px 14px;border-radius:10px;border:2px solid #e65100;background:rgba(230,81,0,0.07);font-size:0.82rem;font-weight:800;cursor:pointer;color:#e65100;text-align:left;">▶️ Sab Uncovered se Continue — Naye + Pehle ke baki ' + (oldUncoveredFacts.length + newlyAddedFacts.length) + ' facts</button>' : '') +
+        '</div>' +
+      '</div>';
+    }
+
+    overlay.innerHTML = '<div style="background:var(--surface,#fff);border-radius:18px;padding:20px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-height:90vh;overflow-y:auto;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+        '<div style="font-size:1rem;font-weight:900;color:var(--text,#1a2e44);">📊 Quiz Coverage Check</div>' +
+        '<button onclick="document.getElementById('qfPrePopup').remove()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text2,#6b7f96);line-height:1;">✕</button>' +
+      '</div>' +
+
+      noFactsWarning + weakWarning + allCoveredMsg +
+
+      newContentBanner +
+
+      '<div style="background:linear-gradient(135deg,rgba(21,101,192,0.07),rgba(76,175,80,0.05));border:1.5px solid rgba(21,101,192,0.2);border-radius:12px;padding:13px;margin-bottom:13px;">' +
+        '<div style="font-size:0.8rem;font-weight:800;color:' + tl.color + ';margin-bottom:10px;">' + tl.icon + ' ' + tl.label + ' — Facts Progress</div>' +
+
+        '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px;">' +
+          '<div style="flex:1;min-width:80px;background:rgba(21,101,192,0.08);border-radius:10px;padding:8px 10px;text-align:center;">' +
+            '<div style="font-size:1.2rem;font-weight:900;color:#1565c0;">' + totalFacts + '</div>' +
+            '<div style="font-size:0.65rem;color:var(--text2,#6b7f96);font-weight:600;">Total Facts</div>' +
+          '</div>' +
+          '<div style="flex:1;min-width:80px;background:rgba(76,175,80,0.08);border-radius:10px;padding:8px 10px;text-align:center;">' +
+            '<div style="font-size:1.2rem;font-weight:900;color:#2e7d32;">' + covCount + '</div>' +
+            '<div style="font-size:0.65rem;color:var(--text2,#6b7f96);font-weight:600;">Cover Ho Gaye</div>' +
+          '</div>' +
+          '<div style="flex:1;min-width:80px;background:rgba(255,152,0,0.08);border-radius:10px;padding:8px 10px;text-align:center;">' +
+            '<div style="font-size:1.2rem;font-weight:900;color:#e65100;">' + availableFacts.length + '</div>' +
+            '<div style="font-size:0.65rem;color:var(--text2,#6b7f96);font-weight:600;">' + (params.qtype==='weak'?'Wrong Facts':'Baki Facts') + '</div>' +
+          '</div>' +
+          (wrongCount > 0 && params.qtype !== 'weak' ? '<div style="flex:1;min-width:80px;background:rgba(198,40,40,0.08);border-radius:10px;padding:8px 10px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#c62828;">' + wrongCount + '</div><div style="font-size:0.65rem;color:var(--text2,#6b7f96);font-weight:600;">Wrong Facts</div></div>' : '') +
+        '</div>' +
+
+        '<div style="background:var(--surface2,#f5f7fa);border-radius:20px;height:10px;overflow:hidden;margin-bottom:6px;">' +
+          '<div style="height:100%;width:' + pct + '%;background:' + pColor + ';border-radius:20px;transition:width 0.4s;"></div>' +
+        '</div>' +
+        '<div style="font-size:0.72rem;color:var(--text2,#6b7f96);text-align:center;font-weight:600;">' + pct + '% area cover ho chuka hai</div>' +
+      '</div>' +
+
+      '<div style="background:var(--surface2,#f5f7fa);border-radius:12px;padding:13px;margin-bottom:14px;">' +
+        '<div style="font-size:0.82rem;font-weight:800;color:var(--text,#1a2e44);margin-bottom:10px;">🔢 Kitne Questions Chahiye?</div>' +
+        '<div style="font-size:0.72rem;color:var(--text2,#6b7f96);margin-bottom:8px;">Max <strong style="color:var(--accent,#1565c0);">' + maxQ + '</strong> questions ban sakte hain (' + availableFacts.length + ' available facts se)</div>' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">' +
+          '<span style="font-size:0.72rem;color:var(--text2,#6b7f96);">1</span>' +
+          '<input type="range" id="qfPopupSlider" min="1" max="' + maxQ + '" value="' + defaultQ + '" style="flex:1;accent-color:var(--accent,#1565c0);cursor:pointer;" oninput="document.getElementById('qfPopupNum').value=this.value;document.getElementById('qfPopupDisp').textContent=this.value">' +
+          '<span style="font-size:0.72rem;color:var(--text2,#6b7f96);">' + maxQ + '</span>' +
+          '<input type="number" id="qfPopupNum" min="1" max="' + maxQ + '" value="' + defaultQ + '" style="width:52px;padding:5px 7px;border:1.5px solid var(--border,#d0d7e0);border-radius:8px;font-size:0.85rem;font-weight:700;color:var(--accent,#1565c0);background:var(--surface,#fff);outline:none;text-align:center;" oninput="var v=Math.min(' + maxQ + ',Math.max(1,this.value||1));this.value=v;document.getElementById('qfPopupSlider').value=v;document.getElementById('qfPopupDisp').textContent=v">' +
+        '</div>' +
+        '<div style="display:flex;gap:5px;flex-wrap:wrap;">' +
+          [5,10,15,20,30].filter(n => n <= maxQ).map(n => '<button onclick="document.getElementById('qfPopupSlider').value=' + n + ';document.getElementById('qfPopupNum').value=' + n + ';document.getElementById('qfPopupDisp').textContent=' + n + '" style="padding:5px 11px;border-radius:20px;border:1.5px solid var(--border,#d0d7e0);background:var(--surface,#fff);font-size:0.75rem;font-weight:700;cursor:pointer;color:var(--text,#1a2e44);">' + n + '</button>').join('') +
+          (maxQ > 0 ? '<button onclick="document.getElementById('qfPopupSlider').value=' + maxQ + ';document.getElementById('qfPopupNum').value=' + maxQ + ';document.getElementById('qfPopupDisp').textContent=' + maxQ + '" style="padding:5px 11px;border-radius:20px;border:1.5px solid rgba(21,101,192,0.4);background:rgba(21,101,192,0.07);font-size:0.75rem;font-weight:700;cursor:pointer;color:#1565c0;">Max (' + maxQ + ')</button>' : '') +
+        '</div>' +
+      '</div>' +
+
+      '<div style="font-size:0.72rem;color:var(--text2,#6b7f96);background:rgba(21,101,192,0.05);border-radius:8px;padding:8px 10px;margin-bottom:14px;line-height:1.6;">' +
+        '💡 <strong>Smart Coverage:</strong> ' + (params.qtype === 'weak' ? 'Sirf galat facts se questions — weak areas strengthen honge.' : params.qtype === 'new' ? 'Sirf uncovered facts se naye questions — har quiz naya content cover karegi.' : params.qtype === 'mixed' ? 'Nayi + wrong facts dono se — best of both worlds.' : 'Saare facts se random questions — full revision mode.') +
+        (covCount > 0 ? ' Covered facts repeat nahi honge.' : '') +
+      '</div>' +
+
+      '<div style="display:flex;gap:8px;">' +
+        '<button onclick="document.getElementById('qfPrePopup').remove()" style="flex:1;padding:12px;border-radius:12px;border:1.5px solid var(--border,#d0d7e0);background:none;font-size:0.85rem;font-weight:700;cursor:pointer;color:var(--text2,#6b7f96);">✕ Cancel</button>' +
+        '<button onclick="qfConfirmQuiz()" style="flex:2;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.85rem;font-weight:800;cursor:pointer;">🚀 <span id="qfPopupDisp">' + defaultQ + '</span> Questions ki Quiz Shuru Karo!</button>' +
+      '</div>' +
+    '</div>';
+
+    document.body.appendChild(overlay);
+
+    // Store params for confirm
+    window._qfPendingParams = { ...params, allFacts, availableFacts, key, newlyAddedFacts, oldUncoveredFacts };
   }
 
-  var totalFacts   = allFacts.length;
-  // covCount = kitne allFacts actually covered hain (normalize karke match)
-  var allFactNorms = allFacts.map(qfNorm);
-  var covCount = covered.filter(function(c){ return allFactNorms.includes(qfNorm(c)); }).length;
-  covCount = Math.min(covCount, totalFacts);
-  var wrongCount   = wrongF.length;
-  // remaining = actually uncovered facts
-  var remaining    = availableFacts.length;
-  // maxQ = available facts ki sankhya (no artificial 50 cap in display, just slider max)
-  var maxQ         = Math.max(1, availableFacts.length);
-  var defaultQ     = Math.min(10, maxQ);
-  var pct          = totalFacts > 0 ? Math.round((covCount / totalFacts) * 100) : 0;
-
-  var typeLabels = {
-    new:   { icon:'🆕', label:'Naya Content',  color:'#1565c0' },
-    weak:  { icon:'❌', label:'Weak/Wrong',    color:'#c62828' },
-    mixed: { icon:'🔀', label:'Mixed',         color:'#6a1b9a' },
-    all:   { icon:'📚', label:'Saare Facts',   color:'#2e7d32' }
-  };
-  var tl = typeLabels[params.qtype] || typeLabels.all;
-  var pColor = pct >= 80 ? '#4caf50' : pct >= 50 ? '#ff9800' : '#1565c0';
-
-  // Popup HTML banao
-  var overlay = document.createElement('div');
-  overlay.id = 'qfPrePopup';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
-
-  var noFactsWarning = totalFacts === 0
-    ? '<div style="background:rgba(198,40,40,0.1);border:1px solid rgba(198,40,40,0.3);border-radius:10px;padding:10px 12px;font-size:0.77rem;color:#c62828;font-weight:700;margin-bottom:10px;">⚠️ Notes mein koi facts nahi mile! Pehle notes/canvas mein content likho.</div>' : '';
-
-  var weakWarning = params.qtype === 'weak' && wrongCount === 0
-    ? '<div style="background:rgba(255,152,0,0.1);border:1px solid rgba(255,152,0,0.3);border-radius:10px;padding:10px 12px;font-size:0.77rem;color:#e65100;font-weight:700;margin-bottom:10px;">⚠️ Abhi koi wrong facts nahi hain! Pehle kuch quizzes do jo galat ho. Saare facts se quiz hogi.</div>' : '';
-
-  var allCoveredMsg = params.qtype === 'new' && covCount >= totalFacts && totalFacts > 0
-    ? '<div style="background:rgba(76,175,80,0.1);border:1px solid rgba(76,175,80,0.3);border-radius:10px;padding:10px 12px;font-size:0.77rem;color:#2e7d32;font-weight:700;margin-bottom:10px;">🎉 Saare facts cover ho chuke hain! Ab cycle restart hogi — phir se saare facts se quiz hogi.</div>' : '';
-
-  overlay.innerHTML = '<div style="background:var(--surface,#fff);border-radius:18px;padding:20px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-height:90vh;overflow-y:auto;">' +
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
-      '<div style="font-size:1rem;font-weight:900;color:var(--text,#1a2e44);">📊 Quiz Coverage Check</div>' +
-      '<button onclick="document.getElementById(\'qfPrePopup\').remove()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text2,#6b7f96);line-height:1;">✕</button>' +
-    '</div>' +
-
-    noFactsWarning + weakWarning + allCoveredMsg +
-
-    '<div style="background:linear-gradient(135deg,rgba(21,101,192,0.07),rgba(76,175,80,0.05));border:1.5px solid rgba(21,101,192,0.2);border-radius:12px;padding:13px;margin-bottom:13px;">' +
-      '<div style="font-size:0.8rem;font-weight:800;color:' + tl.color + ';margin-bottom:10px;">' + tl.icon + ' ' + tl.label + ' — Facts Progress</div>' +
-
-      '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px;">' +
-        '<div style="flex:1;min-width:80px;background:rgba(21,101,192,0.08);border-radius:10px;padding:8px 10px;text-align:center;">' +
-          '<div style="font-size:1.2rem;font-weight:900;color:#1565c0;">' + totalFacts + '</div>' +
-          '<div style="font-size:0.65rem;color:var(--text2,#6b7f96);font-weight:600;">Total Facts</div>' +
-        '</div>' +
-        '<div style="flex:1;min-width:80px;background:rgba(76,175,80,0.08);border-radius:10px;padding:8px 10px;text-align:center;">' +
-          '<div style="font-size:1.2rem;font-weight:900;color:#2e7d32;">' + covCount + '</div>' +
-          '<div style="font-size:0.65rem;color:var(--text2,#6b7f96);font-weight:600;">Cover Ho Gaye</div>' +
-        '</div>' +
-        '<div style="flex:1;min-width:80px;background:rgba(255,152,0,0.08);border-radius:10px;padding:8px 10px;text-align:center;">' +
-          '<div style="font-size:1.2rem;font-weight:900;color:#e65100;">' + availableFacts.length + '</div>' +
-          '<div style="font-size:0.65rem;color:var(--text2,#6b7f96);font-weight:600;">' + (params.qtype==='weak'?'Wrong Facts':'Baki Facts') + '</div>' +
-        '</div>' +
-        (wrongCount > 0 && params.qtype !== 'weak' ? '<div style="flex:1;min-width:80px;background:rgba(198,40,40,0.08);border-radius:10px;padding:8px 10px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#c62828;">' + wrongCount + '</div><div style="font-size:0.65rem;color:var(--text2,#6b7f96);font-weight:600;">Wrong Facts</div></div>' : '') +
-      '</div>' +
-
-      '<div style="background:var(--surface2,#f5f7fa);border-radius:20px;height:10px;overflow:hidden;margin-bottom:6px;">' +
-        '<div style="height:100%;width:' + pct + '%;background:' + pColor + ';border-radius:20px;transition:width 0.4s;"></div>' +
-      '</div>' +
-      '<div style="font-size:0.72rem;color:var(--text2,#6b7f96);text-align:center;font-weight:600;">' + pct + '% area cover ho chuka hai</div>' +
-    '</div>' +
-
-    '<div style="background:var(--surface2,#f5f7fa);border-radius:12px;padding:13px;margin-bottom:14px;">' +
-      '<div style="font-size:0.82rem;font-weight:800;color:var(--text,#1a2e44);margin-bottom:10px;">🔢 Kitne Questions Chahiye?</div>' +
-      '<div style="font-size:0.72rem;color:var(--text2,#6b7f96);margin-bottom:8px;">Max <strong style="color:var(--accent,#1565c0);">' + maxQ + '</strong> questions ban sakte hain (' + availableFacts.length + ' available facts se)</div>' +
-      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">' +
-        '<span style="font-size:0.72rem;color:var(--text2,#6b7f96);">1</span>' +
-        '<input type="range" id="qfPopupSlider" min="1" max="' + maxQ + '" value="' + defaultQ + '" style="flex:1;accent-color:var(--accent,#1565c0);cursor:pointer;" oninput="document.getElementById(\'qfPopupNum\').value=this.value;document.getElementById(\'qfPopupDisp\').textContent=this.value">' +
-        '<span style="font-size:0.72rem;color:var(--text2,#6b7f96);">' + maxQ + '</span>' +
-        '<input type="number" id="qfPopupNum" min="1" max="' + maxQ + '" value="' + defaultQ + '" style="width:52px;padding:5px 7px;border:1.5px solid var(--border,#d0d7e0);border-radius:8px;font-size:0.85rem;font-weight:700;color:var(--accent,#1565c0);background:var(--surface,#fff);outline:none;text-align:center;" oninput="var v=Math.min(' + maxQ + ',Math.max(1,this.value||1));this.value=v;document.getElementById(\'qfPopupSlider\').value=v;document.getElementById(\'qfPopupDisp\').textContent=v">' +
-      '</div>' +
-      '<div style="display:flex;gap:5px;flex-wrap:wrap;">' +
-        [5,10,15,20,30].filter(n => n <= maxQ).map(n => '<button onclick="document.getElementById(\'qfPopupSlider\').value=' + n + ';document.getElementById(\'qfPopupNum\').value=' + n + ';document.getElementById(\'qfPopupDisp\').textContent=' + n + '" style="padding:5px 11px;border-radius:20px;border:1.5px solid var(--border,#d0d7e0);background:var(--surface,#fff);font-size:0.75rem;font-weight:700;cursor:pointer;color:var(--text,#1a2e44);">' + n + '</button>').join('') +
-        (maxQ > 0 ? '<button onclick="document.getElementById(\'qfPopupSlider\').value=' + maxQ + ';document.getElementById(\'qfPopupNum\').value=' + maxQ + ';document.getElementById(\'qfPopupDisp\').textContent=' + maxQ + '" style="padding:5px 11px;border-radius:20px;border:1.5px solid rgba(21,101,192,0.4);background:rgba(21,101,192,0.07);font-size:0.75rem;font-weight:700;cursor:pointer;color:#1565c0;">Max (' + maxQ + ')</button>' : '') +
-      '</div>' +
-    '</div>' +
-
-    '<div style="font-size:0.72rem;color:var(--text2,#6b7f96);background:rgba(21,101,192,0.05);border-radius:8px;padding:8px 10px;margin-bottom:14px;line-height:1.6;">' +
-      '💡 <strong>Smart Coverage:</strong> ' + (params.qtype === 'weak' ? 'Sirf galat facts se questions — weak areas strengthen honge.' : params.qtype === 'new' ? 'Sirf uncovered facts se naye questions — har quiz naya content cover karegi.' : params.qtype === 'mixed' ? 'Nayi + wrong facts dono se — best of both worlds.' : 'Saare facts se random questions — full revision mode.') +
-      (covCount > 0 ? ' Covered facts repeat nahi honge.' : '') +
-    '</div>' +
-
-    '<div style="display:flex;gap:8px;">' +
-      '<button onclick="document.getElementById(\'qfPrePopup\').remove()" style="flex:1;padding:12px;border-radius:12px;border:1.5px solid var(--border,#d0d7e0);background:none;font-size:0.85rem;font-weight:700;cursor:pointer;color:var(--text2,#6b7f96);">✕ Cancel</button>' +
-      '<button onclick="qfConfirmQuiz()" style="flex:2;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.85rem;font-weight:800;cursor:pointer;">🚀 <span id="qfPopupDisp">' + defaultQ + '</span> Questions ki Quiz Shuru Karo!</button>' +
-    '</div>' +
-  '</div>';
-
-  document.body.appendChild(overlay);
-
-  // Store params for confirm
-  window._qfPendingParams = { ...params, allFacts, availableFacts, key };
+// "Sirf Naye Facts" button handler — only quiz on newly added facts
+function qfChooseNewOnly() {
+  var p = window._qfPendingParams;
+  if (!p) return;
+  var newFacts = p.newlyAddedFacts || [];
+  if (newFacts.length === 0) { qfConfirmQuiz(); return; }
+  // Override availableFacts to only newly added facts
+  window._qfPendingParams.availableFacts = newFacts;
+  // Also update slider max/default in the popup
+  var maxQ = Math.max(1, newFacts.length);
+  var defQ = Math.min(10, maxQ);
+  var sl = document.getElementById('qfPopupSlider');
+  var nm = document.getElementById('qfPopupNum');
+  var dp = document.getElementById('qfPopupDisp');
+  if (sl) { sl.max = maxQ; sl.value = defQ; }
+  if (nm) { nm.max = maxQ; nm.value = defQ; }
+  if (dp) dp.textContent = defQ;
+  // Remove new content banner to avoid confusion
+  var banner = document.querySelector('#qfPrePopup [data-new-banner]');
+  if (banner) banner.remove();
+  qfConfirmQuiz();
 }
+
+// "Sab Uncovered se Continue" button handler — new + old uncovered facts together
+function qfChooseContinue() {
+  var p = window._qfPendingParams;
+  if (!p) return;
+  var newFacts = p.newlyAddedFacts || [];
+  var oldUncov = p.oldUncoveredFacts || [];
+  // Combine: old uncovered first (pehle ka baki), then new facts
+  var combined = oldUncov.concat(newFacts.filter(function(f) {
+    return !oldUncov.some(function(o) { return qfNorm(o) === qfNorm(f); });
+  }));
+  if (combined.length === 0) combined = p.availableFacts;
+  window._qfPendingParams.availableFacts = combined;
+  var maxQ = Math.max(1, combined.length);
+  var defQ = Math.min(10, maxQ);
+  var sl = document.getElementById('qfPopupSlider');
+  var nm = document.getElementById('qfPopupNum');
+  var dp = document.getElementById('qfPopupDisp');
+  if (sl) { sl.max = maxQ; sl.value = defQ; }
+  if (nm) { nm.max = maxQ; nm.value = defQ; }
+  if (dp) dp.textContent = defQ;
+  qfConfirmQuiz();
+}
+
 
 // Confirm button press — update sliders and start actual quiz
 function qfConfirmQuiz() {
