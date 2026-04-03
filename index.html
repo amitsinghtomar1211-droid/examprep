@@ -8423,11 +8423,14 @@ function qfUpdateProgress(cq, usedFacts) {
 
   prog.coveredFacts = covered;
   prog.wrongFacts   = wrongF;
-  prog.totalKnown   = cq._qfTotalFacts || prog.totalKnown || 0;
+  var _total = cq._qfTotalFacts || prog.totalKnown || 0;
+  prog.totalKnown   = _total;
   prog.lastUpdated  = new Date().toLocaleDateString('hi-IN');
 
-  // Cycle complete check
-  if (prog.totalKnown > 0 && covered.length >= prog.totalKnown) {
+  // Cycle complete check — allFacts se match karke dekhte hain
+  var _allFactNorms = (cq._qfAllFacts || []).map(qfNorm);
+  var _covMatchCount = covered.filter(function(c){ return _allFactNorms.includes(qfNorm(c)); }).length;
+  if (_total > 0 && _covMatchCount >= _total) {
     showToast('🎉 Sabhi facts cover ho gaye! Progress reset ho rahi hai naye cycle ke liye.', 'success');
     prog.coveredFacts = [];
     prog.wrongFacts = [];
@@ -8465,10 +8468,15 @@ function qfShowPreQuizPopup(params) {
   }
 
   var totalFacts   = allFacts.length;
-  var covCount     = Math.min(covered.length, totalFacts);
+  // covCount = kitne allFacts actually covered hain (normalize karke match)
+  var allFactNorms = allFacts.map(qfNorm);
+  var covCount = covered.filter(function(c){ return allFactNorms.includes(qfNorm(c)); }).length;
+  covCount = Math.min(covCount, totalFacts);
   var wrongCount   = wrongF.length;
-  var remaining    = params.qtype === 'new' ? availableFacts.length : (totalFacts - covCount);
-  var maxQ         = Math.max(1, Math.min(availableFacts.length, 50));
+  // remaining = actually uncovered facts
+  var remaining    = availableFacts.length;
+  // maxQ = available facts ki sankhya (no artificial 50 cap in display, just slider max)
+  var maxQ         = Math.max(1, availableFacts.length);
   var defaultQ     = Math.min(10, maxQ);
   var pct          = totalFacts > 0 ? Math.round((covCount / totalFacts) * 100) : 0;
 
@@ -9053,12 +9061,18 @@ function showResults(){
   hlUpdateProgress(cq);
   // ── Update Fact Coverage Progress ──
   if(cq._qfKey){
-    var _usedSourceFacts=cq.questions.map(function(q){return q.sourceFact||'';}).filter(Boolean);
-    if(_usedSourceFacts.length===0&&cq._qfAvailFacts&&cq._qfAvailFacts.length>0){
-      // Fallback: agar AI ne sourceFact nahi diya to available facts ka slice use karo
-      _usedSourceFacts=cq._qfAvailFacts.slice(0,cq.questions.length);
+    // Strategy: available facts se sequential slice use karo (most reliable)
+    // AI ke sourceFact strings exact match nahi karte, isliye availFacts ka slice better hai
+    var _usedSourceFacts=[];
+    var _availF=cq._qfAvailFacts||[];
+    var _allF=cq._qfAllFacts||[];
+    if(_availF.length>0){
+      // Kitne questions the utne facts mark karo as covered (sequential)
+      _usedSourceFacts=_availF.slice(0,cq.questions.length);
+    } else if(_allF.length>0){
+      _usedSourceFacts=_allF.slice(0,cq.questions.length);
     }
-    qfUpdateProgress(cq,_usedSourceFacts);
+    if(_usedSourceFacts.length>0) qfUpdateProgress(cq,_usedSourceFacts);
   }
   save(); updateHistBadge();
   const wrong=cq.questions.filter(q=>!q.isCorrect);
