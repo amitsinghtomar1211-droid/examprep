@@ -4811,15 +4811,24 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
           </svg>
         </button>
 
-        <!-- Unified Sync Button - Send to Both Canvas & Unique Page -->
-        <button id="neSyncAllHlBtn" onclick="neSyncHighlightsToBoth()" title="Send highlights to Canvas & Revision"
-          style="width:32px;height:32px;border-radius:7px;border:1.5px solid rgba(76,175,80,0.35);
-          background:rgba(76,175,80,0.1);cursor:pointer;display:flex;align-items:center;
+        <!-- Canvas Highlights Button — sirf Canvas par bhejo -->
+        <button id="neSyncAllHlBtn" onclick="neSendAllHighlightsToCanvas()" title="📌 Highlights → Canvas (sirf Canvas, nayi wali only)"
+          style="width:32px;height:32px;border-radius:7px;border:1.5px solid rgba(21,101,192,0.4);
+          background:rgba(21,101,192,0.1);cursor:pointer;display:flex;align-items:center;
           justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;position:relative;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1565c0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
+          </svg>
+        </button>
+
+        <!-- Revision Page Highlights Button — sirf Revision par bhejo -->
+        <button id="neRevSyncBtn" onclick="rvSyncAllHighlights()" title="📋 Highlights → Revision Page (sirf Revision, nayi wali only)"
+          style="width:32px;height:32px;border-radius:7px;border:1.5px solid rgba(123,31,162,0.4);
+          background:rgba(123,31,162,0.1);cursor:pointer;display:flex;align-items:center;
+          justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;position:relative;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7b1fa2" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
           </svg>
-          <span id="neSyncBothDot" style="display:none;position:absolute;bottom:-3px;right:-3px;width:10px;height:10px;border-radius:50%;background:#ff9800;border:1.5px solid #fff;font-size:0.6rem;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;">2</span>
         </button>
 
         <!-- Revision Page Open Button -->
@@ -26861,49 +26870,43 @@ window.neSendAllHighlightsToCanvas = function() {
 
   // ── Batch key: current notes file identifier ──
   var _eCtx2 = (typeof _editorState !== 'undefined') ? _editorState : null;
-  var _batchKey = 'ne_' + ((_eCtx2 && _eCtx2.tid != null) ? _eCtx2.tid : 'unknown') +
+  var _batchKey = 'canvas_' + ((_eCtx2 && _eCtx2.tid != null) ? _eCtx2.tid : 'unknown') +
                   '_' + ((_eCtx2 && _eCtx2.sid != null) ? _eCtx2.sid : '0');
 
-  // Ensure _neHlSentBatches exists
+  // Ensure _neHlSentBatches exists (Canvas-only tracking)
   if(!window._neHlSentBatches) {
-    window._neHlSentBatches = {};
+    try { window._neHlSentBatches = JSON.parse(localStorage.getItem('_neHlSentBatches')||'{}'); } catch(e) { window._neHlSentBatches = {}; }
   }
 
   if(!window._neHlSentBatches[_batchKey]) {
-    window._neHlSentBatches[_batchKey] = { ids: [], texts: [] };
+    window._neHlSentBatches[_batchKey] = { ids: [] };
   }
   var _batch = window._neHlSentBatches[_batchKey];
 
-  // ── Collect all marks with color tagging - track by hlId ──
+  // ── Collect marks — filter ONLY by hlId (strict, no text fuzzy match) ──
   var allItemsByColor = { yellow: [], pink: [], green: [], blue: [] };
   
   marks.forEach(function(mark) {
     var hlId = mark.getAttribute('data-hlid');
     var txt = mark.textContent.trim();
-    if(!txt || !hlId) return;
-    
-    // Skip if this highlight ID was already sent
-    if(_batch.ids.indexOf(hlId) !== -1) return;
-    
-    // Skip if this text is a duplicate (3+ word match) of already sent text
-    var isDuplicate = false;
-    for(var j = 0; j < _batch.texts.length; j++){
-      if(window._neHas3WordDuplicate(txt, _batch.texts[j])){
-        isDuplicate = true;
-        if(typeof showToast === 'function') showToast('⚠️ Duplicate highlight skip ho gya', 'warning');
-        break;
-      }
+    if(!txt) return;
+
+    // Assign hlId if missing
+    if(!hlId) {
+      hlId = 'hl_' + Date.now() + '_' + Math.random().toString(36).substr(2,6);
+      mark.setAttribute('data-hlid', hlId);
     }
-    if(isDuplicate) return;
-    
+
+    // Skip ONLY if this exact hlId was already sent to Canvas
+    if(_batch.ids.indexOf(hlId) !== -1) return;
+
     var colorKey = 'yellow';
     if(mark.classList.contains('user-hl-pink'))  colorKey = 'pink';
     else if(mark.classList.contains('user-hl-green')) colorKey = 'green';
     else if(mark.classList.contains('user-hl-blue'))  colorKey = 'blue';
     
     var textColor = colorKey === 'pink' ? '#880e4f' : colorKey === 'green' ? '#1b5e20' : colorKey === 'blue' ? '#0d47a1' : '#5d4037';
-    var item = { text: txt, color: textColor, colorKey: colorKey, hlId: hlId };
-    allItemsByColor[colorKey].push(item);
+    allItemsByColor[colorKey].push({ text: txt, color: textColor, colorKey: colorKey, hlId: hlId });
   });
 
   // Total new items across all colors
@@ -26912,19 +26915,17 @@ window.neSendAllHighlightsToCanvas = function() {
 
   if(totalNew === 0) {
     var totalAll = marks.length;
-    showToast && showToast('ℹ️ ' + totalAll + ' highlight' + (totalAll>1?'s':'') + ' already canvas par hain. Nayi highlights karo phir bhejo!', 'info');
+    showToast && showToast('ℹ️ Saare ' + totalAll + ' highlights already canvas par bheje ja chuke hain. Nayi highlights karo phir bhejo!', 'info');
     return;
   }
 
   // ── COLOR SELECTION DIALOG ──
-  // Pehle check karo kaun se colors mein nayi highlights hain
   var availColors = [];
   if(allItemsByColor.yellow.length > 0) availColors.push('yellow');
   if(allItemsByColor.pink.length   > 0) availColors.push('pink');
   if(allItemsByColor.green.length  > 0) availColors.push('green');
   if(allItemsByColor.blue.length   > 0) availColors.push('blue');
 
-  // Agar sirf ek hi color hai to dialog skip karo, seedha bhejo
   function _doSendWithColors(selectedColors) {
     var items = [];
     selectedColors.forEach(function(c) {
@@ -26934,13 +26935,10 @@ window.neSendAllHighlightsToCanvas = function() {
       showToast && showToast('⚠️ Selected colors mein koi nayi highlight nahi!', 'error');
       return;
     }
-    // Register as sent
-    items.forEach(function(item) { 
-      _batch.ids.push(item.hlId);
-      _batch.texts.push(item.text);
-    });
-    // Persist to localStorage so duplicates are blocked even after page reload
-    window._neHlSentBatchesSave && window._neHlSentBatchesSave();
+    // Register as sent — only IDs, no text fuzzy match
+    items.forEach(function(item) { _batch.ids.push(item.hlId); });
+    // Persist immediately
+    try { localStorage.setItem('_neHlSentBatches', JSON.stringify(window._neHlSentBatches)); } catch(e) {}
     _neDoSendItemsToCanvas(items, _batchKey);
   }
 
@@ -27051,7 +27049,8 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
 
   var wrap = document.getElementById('scCanvasWrap');
   var wW   = wrap ? (wrap.offsetWidth  || 340) : 340;
-  var wH   = wrap ? (wrap.offsetHeight || 480) : 480;
+  var wH   = wrap ? (wrap.offsetHeight || 0) : 0;
+  if(wH < 100) wH = Math.max(400, window.innerHeight * 0.65);
 
   var PAD         = 14;
   var GAP_X       = 12;
@@ -27092,6 +27091,8 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
   var slideIdx = _makeHlSlide();
   _sc.curSlide = slideIdx;
   scRenderAll && scRenderAll(); _scSyncTextBlocksDOM && _scSyncTextBlocksDOM(); _scRenderSlideNav && _scRenderSlideNav();
+  // Re-measure after first render — DOM has actual height now
+  if(wrap && wrap.offsetHeight > 100) wH = wrap.offsetHeight;
 
   var colY   = [PAD, PAD];
   var placed = 0;
@@ -27101,7 +27102,8 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
     var c  = COLS === 1 ? 0 : (colY[0] <= colY[1] ? 0 : 1);
     var y  = colY[c];
 
-    if(y + bH > wH - PAD) {
+    // Only overflow to new slide if at least 1 item already placed (prevents blank first slide)
+    if(placed > 0 && y + bH > wH - PAD) {
       _scSyncCurrentSlideFromDOM && _scSyncCurrentSlideFromDOM();
       slideIdx = _makeHlSlide();
       _sc.curSlide = slideIdx;
