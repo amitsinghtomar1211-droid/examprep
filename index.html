@@ -6029,8 +6029,6 @@ function load(){
     S.questionVault=d.questionVault||[];
     S.savedQuestions=d.savedQuestions||[];
     S.wrongedQuestions=d.wrongedQuestions||[];
-    S.quizFactProgress=d.quizFactProgress||{};
-    S.hlQuizProgress=d.hlQuizProgress||{};
 
     var _needsClean = false;
     S.subjects.forEach(s=>{
@@ -9109,8 +9107,6 @@ function showResults(){
     if(_usedSourceFacts.length>0) qfUpdateProgress(cq,_usedSourceFacts);
   }
   save(); updateHistBadge();
-  // Progress Firebase mein bhi save karo (refresh/device change ke baad bhi yaad rahe)
-  if(typeof saveMetaToFirebase === 'function') saveMetaToFirebase();
   const wrong=cq.questions.filter(q=>!q.isCorrect);
   const right=cq.questions.filter(q=>q.isCorrect);
   const tough=cq.questions.filter(q=>q.difficulty==='tough');
@@ -9368,10 +9364,63 @@ function addToVault(questions, quizId, quizName, label, sid, secid, tid){
     questions: questions.map(q=>({...q, _qKey:makeQKey(q.question), saved:false, wronged:false}))
   };
   S.questionVault.unshift(entry);
-  // Keep vault to 200 quizzes max
+  // Local RAM mein 200 tak rakho
   if(S.questionVault.length>200)S.questionVault=S.questionVault.slice(0,200);
   updateVaultBadge();
   save();
+  // Firebase quizVault sub-collection mein permanently save karo
+  _saveQuizToFirebaseVault(entry);
+}
+
+// ── Ek quiz ko Firebase quizVault sub-collection mein save karo ──
+async function _saveQuizToFirebaseVault(entry){
+  if(!_db || !_currentUser) return;
+  try{
+    var uid = _currentUser.uid;
+    await _db.collection('users').doc(uid).collection('quizVault').doc(entry.quizId).set(
+      _fsClean(entry)
+    );
+  }catch(e){
+    console.warn('quizVault save error:', e.message);
+  }
+}
+
+// ── Firebase se saari quizzes load karo (app start / login par) ──
+async function _loadQuizVaultFromFirebase(){
+  if(!_db || !_currentUser) return;
+  try{
+    var uid = _currentUser.uid;
+    var snap = await _db.collection('users').doc(uid).collection('quizVault')
+                        .orderBy('dateRaw','desc')
+                        .limit(500)
+                        .get();
+    if(snap.empty) return;
+    var loaded = [];
+    snap.forEach(function(d){ loaded.push(d.data()); });
+    // Local RAM update — Firebase data authoritative hai
+    S.questionVault = loaded;
+    updateVaultBadge();
+    try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+  }catch(e){
+    console.warn('quizVault load error:', e.message);
+  }
+}
+
+// ── Vault se ek quiz delete karo (Firebase + local) ──
+async function deleteFromVault(quizId){
+  if(!confirm('Yeh quiz vault se delete karni hai?')) return;
+  S.questionVault = (S.questionVault||[]).filter(function(v){ return v.quizId !== quizId; });
+  updateVaultBadge();
+  save();
+  renderVaultPage && renderVaultPage();
+  if(_db && _currentUser){
+    try{
+      await _db.collection('users').doc(_currentUser.uid).collection('quizVault').doc(quizId).delete();
+      showToast('Quiz delete ho gayi ✅','success');
+    }catch(e){
+      console.warn('quizVault delete error:', e.message);
+    }
+  }
 }
 
 function updateVaultQFlag(qKey, flag, val){
@@ -9564,6 +9613,8 @@ function toggleVaultSave(quizId, qIdx, qKey, btn){
     showToast('Saved! 📌','success');
   }
   save();
+  // Firebase quizVault doc bhi update karo
+  _saveQuizToFirebaseVault(vault);
 }
 
 function toggleVaultWrong(quizId, qIdx, qKey, btn){
@@ -9586,6 +9637,8 @@ function toggleVaultWrong(quizId, qIdx, qKey, btn){
     showToast('Wronged! ❌','success');
   }
   save();
+  // Firebase quizVault doc bhi update karo
+  _saveQuizToFirebaseVault(vault);
 }
 
 // ==================== HISTORY ====================
@@ -9833,6 +9886,10 @@ Restore karna hai?`)) {
       // Keep current device's API key if restoreData doesn't have one
       if(restoreData.apiKey) S.apiKey = restoreData.apiKey;
       if(restoreData.model) S.model = restoreData.model;
+      // Agar backup mein questionVault tha to Firebase quizVault mein bhi upload karo
+      if(S.questionVault && S.questionVault.length > 0){
+        S.questionVault.forEach(function(entry){ _saveQuizToFirebaseVault(entry); });
+      }
       
       // Ensure all arrays exist
       S.subjects.forEach(s=>{
@@ -20542,8 +20599,6 @@ async function saveMetaToFirebase(){
       reportedQuestions: _fsClean(S.reportedQuestions||[]),
       pausedQuiz:        _fsClean(S.pausedQuiz||null),
       exams:             _fsClean(S.exams||[]),
-      quizFactProgress:  _fsClean(S.quizFactProgress||{}),
-      hlQuizProgress:    _fsClean(S.hlQuizProgress||{}),
       subjectIds:        (S.subjects||[]).map(function(s){ return s.id; }),
       topicFormat:       'v2',
       lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
@@ -20580,8 +20635,6 @@ async function saveToFirebase(){
         reportedQuestions: _fsClean(S.reportedQuestions||[]),
         pausedQuiz:        _fsClean(S.pausedQuiz||null),
         exams:             _fsClean(S.exams||[]),
-        quizFactProgress:  _fsClean(S.quizFactProgress||{}),
-        hlQuizProgress:    _fsClean(S.hlQuizProgress||{}),
         subjectIds:        (S.subjects||[]).map(function(s){ return s.id; }),
         topicFormat:       'v2',
         lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
@@ -20745,8 +20798,6 @@ async function loadFromFirebase(){
     S.reportedQuestions = meta.reportedQuestions||[];
     S.pausedQuiz        = meta.pausedQuiz||null;
     S.model             = meta.model||'meta-llama/llama-4-scout-17b-16e-instruct';
-    S.quizFactProgress  = meta.quizFactProgress||{};
-    S.hlQuizProgress    = meta.hlQuizProgress||{};
 
     S.subjects.forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
       if(!t.highlights) t.highlights=[];
@@ -20771,6 +20822,9 @@ async function loadFromFirebase(){
     updateHistBadge(); updateSavedBadge(); updateVaultBadge(); checkPausedQuiz();
     showToast('Cloud se data load ho gaya! ☁️ (' + cloudTopicCount + ' topics)', 'success');
     setSyncStatus('synced');
+
+    // quizVault alag collection se load karo (permanent storage)
+    _loadQuizVaultFromFirebase();
 
     // Agar purana format tha to naye format mein re-save karo
     if(!isV2){ setTimeout(function(){ saveToFirebase(); }, 2000); }
@@ -20846,11 +20900,10 @@ async function pullFromCloud(){
     S.wrongedQuestions  = meta.wrongedQuestions || S.wrongedQuestions || [];
     S.reportedQuestions = meta.reportedQuestions || S.reportedQuestions || [];
     S.pausedQuiz        = meta.pausedQuiz || null;
-    S.quizFactProgress  = meta.quizFactProgress || S.quizFactProgress || {};
-    S.hlQuizProgress    = meta.hlQuizProgress || S.hlQuizProgress || {};
 
     save(); // localStorage update karo
     renderSubjects();
+    // quizVault bhi refresh karo
     _loadQuizVaultFromFirebase();
     showToast('✅ Latest notes aa gaye! Dusri device ke changes sync ho gaye.', 'success');
   } catch(e) {
@@ -21135,8 +21188,6 @@ function _applyMetaUpdate(meta){
   S.wrongedQuestions  = meta.wrongedQuestions   || S.wrongedQuestions || [];
   S.reportedQuestions = meta.reportedQuestions  || S.reportedQuestions || [];
   S.pausedQuiz        = meta.pausedQuiz         || S.pausedQuiz || null;
-  S.quizFactProgress  = meta.quizFactProgress   || S.quizFactProgress || {};
-  S.hlQuizProgress    = meta.hlQuizProgress     || S.hlQuizProgress || {};
 
   // Agar naye subjects hain (dusri device pe add hua) — full reload
   var remoteIds = (meta.subjectIds||[]).map(String).sort().join(',');
@@ -21225,8 +21276,6 @@ async function _silentReloadFromFirebase(){
     S.wrongedQuestions  = meta.wrongedQuestions   || S.wrongedQuestions || [];
     S.reportedQuestions = meta.reportedQuestions  || S.reportedQuestions || [];
     S.pausedQuiz        = meta.pausedQuiz         || S.pausedQuiz || null;
-    S.quizFactProgress  = meta.quizFactProgress   || S.quizFactProgress || {};
-    S.hlQuizProgress    = meta.hlQuizProgress     || S.hlQuizProgress || {};
 
     S.subjects.forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
       if(!t.highlights) t.highlights=[];
