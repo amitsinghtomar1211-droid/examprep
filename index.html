@@ -8443,6 +8443,9 @@ function qfUpdateProgress(cq, usedFacts) {
     showToast('🎉 Sabhi facts cover ho gaye! Progress reset ho rahi hai naye cycle ke liye.', 'success');
     prog.coveredFacts = [];
     prog.wrongFacts = [];
+    // totalKnown PRESERVE karo at reset time — isi se naye facts detect honge
+    // Agar next time allFacts.length > totalKnown to "new facts added" detect hoga
+    prog.totalKnown = _total;
   }
 
   qfSaveProg(cq._qfKey, prog);
@@ -8458,38 +8461,60 @@ function qfShowPreQuizPopup(params) {
   var covered = prog.coveredFacts || [];
   var wrongF  = prog.wrongFacts || [];
 
-  // Filter facts based on type
-  var availableFacts = [];
+  // ── SMART NEW-FACTS DETECTION ──
+  // Covered facts me se jo current allFacts me match karte hain
+  var allFactNorms = allFacts.map(qfNorm);
   var covNormsBase = covered.map(qfNorm);
+  var covCount = covered.filter(function(c){ return allFactNorms.includes(qfNorm(c)); }).length;
+  covCount = Math.min(covCount, allFacts.length);
+  var totalFacts = allFacts.length;
+
+  // Kya pehle se saare purane facts cover ho chuke the (cycle reset ho chuki thi)?
+  // Condition: coveredFacts empty hai (reset ke baad) LEKIN allFacts me naye facts hain
+  // jo covered me nahi the kabhi bhi — matlab content badha hai reset ke baad
+  var storedTotalKnown = prog.totalKnown || 0;  // Pichli baar kitne total facts the reset ke waqt
+  var cycleJustReset = (covered.length === 0) && (storedTotalKnown > 0);
+
+  // Naye facts = jo current allFacts me hain lekin covered me nahi (fresh uncovered)
+  var freshUncovered = allFacts.filter(function(f){ return !covNormsBase.includes(qfNorm(f)); });
+
+  // "New facts aaye hain reset ke baad" scenario:
+  // 1. Cycle reset ho chuki hai (covered empty, totalKnown > 0)
+  // 2. AND content badha hai (totalFacts > storedTotalKnown)
+  var newFactsAfterReset = cycleJustReset && (totalFacts > storedTotalKnown) && (totalFacts - storedTotalKnown > 0);
+  var addedFactsCount = newFactsAfterReset ? (totalFacts - storedTotalKnown) : 0;
+
+  // "Progress incomplete hai aur naye facts aaye" scenario:
+  // Pehle kuch facts covered hain, reset nahi hua, lekin totalFacts badh gaye
+  var newFactsDuringProgress = (!cycleJustReset) && (covCount > 0) && (freshUncovered.length > 0) && (totalFacts > storedTotalKnown) && (storedTotalKnown > 0);
+
+  // Filter facts based on type + scenario
+  var availableFacts = [];
   if (params.qtype === 'weak') {
     availableFacts = wrongF.length > 0 ? wrongF : allFacts;
   } else if (params.qtype === 'new') {
-    availableFacts = allFacts.filter(function(f){ return !covNormsBase.includes(qfNorm(f)); });
-    if (availableFacts.length === 0) { availableFacts = allFacts; } // cycle restart
+    if (cycleJustReset && !newFactsAfterReset) {
+      // Normal cycle restart — saare facts se shuru
+      availableFacts = allFacts;
+    } else {
+      availableFacts = freshUncovered.length > 0 ? freshUncovered : allFacts;
+    }
   } else if (params.qtype === 'mixed') {
-    var uncovM = allFacts.filter(function(f){ return !covNormsBase.includes(qfNorm(f)); });
+    var uncovM = freshUncovered;
     availableFacts = uncovM.concat(wrongF.filter(function(w){
       return !uncovM.some(function(u){ return qfNorm(u)===qfNorm(w); });
     }));
     if (availableFacts.length === 0) availableFacts = allFacts;
   } else {
-    // 'all' type: rotation index se start karo taaki har baar alag facts aa yen
+    // 'all' type: rotation index se start karo
     var rotIdx = prog.rotationIdx || 0;
     availableFacts = allFacts.slice(rotIdx).concat(allFacts.slice(0, rotIdx));
   }
 
-  var totalFacts   = allFacts.length;
-  // covCount = kitne allFacts actually covered hain (normalize karke match)
-  var allFactNorms = allFacts.map(qfNorm);
-  var covCount = covered.filter(function(c){ return allFactNorms.includes(qfNorm(c)); }).length;
-  covCount = Math.min(covCount, totalFacts);
-  var wrongCount   = wrongF.length;
-  // remaining = actually uncovered facts
-  var remaining    = availableFacts.length;
-  // maxQ = available facts ki sankhya (no artificial 50 cap in display, just slider max)
-  var maxQ         = Math.max(1, availableFacts.length);
-  var defaultQ     = Math.min(10, maxQ);
-  var pct          = totalFacts > 0 ? Math.round((covCount / totalFacts) * 100) : 0;
+  var wrongCount = wrongF.length;
+  var maxQ       = Math.max(1, availableFacts.length);
+  var defaultQ   = Math.min(10, maxQ);
+  var pct        = totalFacts > 0 ? Math.round((covCount / totalFacts) * 100) : 0;
 
   var typeLabels = {
     new:   { icon:'🆕', label:'Naya Content',  color:'#1565c0' },
@@ -8500,19 +8525,58 @@ function qfShowPreQuizPopup(params) {
   var tl = typeLabels[params.qtype] || typeLabels.all;
   var pColor = pct >= 80 ? '#4caf50' : pct >= 50 ? '#ff9800' : '#1565c0';
 
-  // Popup HTML banao
-  var overlay = document.createElement('div');
-  overlay.id = 'qfPrePopup';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
-
+  // ── SCENARIO BANNERS ──
   var noFactsWarning = totalFacts === 0
     ? '<div style="background:rgba(198,40,40,0.1);border:1px solid rgba(198,40,40,0.3);border-radius:10px;padding:10px 12px;font-size:0.77rem;color:#c62828;font-weight:700;margin-bottom:10px;">⚠️ Notes mein koi facts nahi mile! Pehle notes/canvas mein content likho.</div>' : '';
 
   var weakWarning = params.qtype === 'weak' && wrongCount === 0
     ? '<div style="background:rgba(255,152,0,0.1);border:1px solid rgba(255,152,0,0.3);border-radius:10px;padding:10px 12px;font-size:0.77rem;color:#e65100;font-weight:700;margin-bottom:10px;">⚠️ Abhi koi wrong facts nahi hain! Pehle kuch quizzes do jo galat ho. Saare facts se quiz hogi.</div>' : '';
 
-  var allCoveredMsg = params.qtype === 'new' && covCount >= totalFacts && totalFacts > 0
-    ? '<div style="background:rgba(76,175,80,0.1);border:1px solid rgba(76,175,80,0.3);border-radius:10px;padding:10px 12px;font-size:0.77rem;color:#2e7d32;font-weight:700;margin-bottom:10px;">🎉 Saare facts cover ho chuke hain! Ab cycle restart hogi — phir se saare facts se quiz hogi.</div>' : '';
+  // Normal cycle restart (no new facts added)
+  var normalCycleRestart = cycleJustReset && !newFactsAfterReset
+    ? '<div style="background:rgba(76,175,80,0.1);border:1px solid rgba(76,175,80,0.3);border-radius:10px;padding:10px 12px;font-size:0.77rem;color:#2e7d32;font-weight:700;margin-bottom:10px;">🎉 Pichli cycle complete! Ab naye cycle ke liye saare <strong>' + totalFacts + ' facts</strong> se shuru hoga.</div>' : '';
+
+  // Progress incomplete tha aur naye facts aa gaye — unhe automatically add kar diya
+  var newFactsMergedBanner = newFactsDuringProgress
+    ? '<div style="background:rgba(21,101,192,0.1);border:1px solid rgba(21,101,192,0.3);border-radius:10px;padding:10px 12px;font-size:0.77rem;color:#1565c0;font-weight:700;margin-bottom:10px;">✨ <strong>' + freshUncovered.length + ' naye facts</strong> detect hue! Inhe baki uncovered facts ke saath add kar diya gaya hai — aage ki quizzes me cover honge.</div>' : '';
+
+  // ── SPECIAL: New facts aaye AFTER full cycle reset ──
+  // Yahan 2-button choice popup dikhana hai — isliye alag function se handle karenge
+  if (newFactsAfterReset && params.qtype !== 'weak') {
+    // Only new facts (jo reset ke baad add hue)
+    var onlyNewFacts = allFacts.slice(storedTotalKnown); // naye facts end mein hote hain usually
+    // Better: freshUncovered use karo (jo covered nahi hain) — same hi honge reset ke baad
+    var onlyNewAvail = freshUncovered.length > 0 ? freshUncovered : allFacts;
+    var allAvailForRestart = allFacts;
+
+    _qfShowChoicePopup({
+      params: params,
+      key: key,
+      allFacts: allFacts,
+      onlyNewFacts: onlyNewAvail,
+      allFactsForRestart: allAvailForRestart,
+      addedCount: addedFactsCount,
+      totalFacts: totalFacts,
+      storedTotal: storedTotalKnown,
+      covCount: covCount,
+      wrongF: wrongF,
+      pct: pct,
+      tl: tl
+    });
+    return;
+  }
+
+  // ── Update totalKnown in prog so next time we can detect new facts ──
+  // Only update if we're not in a reset state
+  if (!cycleJustReset && totalFacts > 0) {
+    prog.totalKnown = totalFacts;
+    qfSaveProg(key, prog);
+  }
+
+  // Popup HTML banao (normal flow)
+  var overlay = document.createElement('div');
+  overlay.id = 'qfPrePopup';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
 
   overlay.innerHTML = '<div style="background:var(--surface,#fff);border-radius:18px;padding:20px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-height:90vh;overflow-y:auto;">' +
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
@@ -8520,11 +8584,10 @@ function qfShowPreQuizPopup(params) {
       '<button onclick="document.getElementById(\'qfPrePopup\').remove()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text2,#6b7f96);line-height:1;">✕</button>' +
     '</div>' +
 
-    noFactsWarning + weakWarning + allCoveredMsg +
+    noFactsWarning + weakWarning + normalCycleRestart + newFactsMergedBanner +
 
     '<div style="background:linear-gradient(135deg,rgba(21,101,192,0.07),rgba(76,175,80,0.05));border:1.5px solid rgba(21,101,192,0.2);border-radius:12px;padding:13px;margin-bottom:13px;">' +
       '<div style="font-size:0.8rem;font-weight:800;color:' + tl.color + ';margin-bottom:10px;">' + tl.icon + ' ' + tl.label + ' — Facts Progress</div>' +
-
       '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px;">' +
         '<div style="flex:1;min-width:80px;background:rgba(21,101,192,0.08);border-radius:10px;padding:8px 10px;text-align:center;">' +
           '<div style="font-size:1.2rem;font-weight:900;color:#1565c0;">' + totalFacts + '</div>' +
@@ -8540,7 +8603,6 @@ function qfShowPreQuizPopup(params) {
         '</div>' +
         (wrongCount > 0 && params.qtype !== 'weak' ? '<div style="flex:1;min-width:80px;background:rgba(198,40,40,0.08);border-radius:10px;padding:8px 10px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#c62828;">' + wrongCount + '</div><div style="font-size:0.65rem;color:var(--text2,#6b7f96);font-weight:600;">Wrong Facts</div></div>' : '') +
       '</div>' +
-
       '<div style="background:var(--surface2,#f5f7fa);border-radius:20px;height:10px;overflow:hidden;margin-bottom:6px;">' +
         '<div style="height:100%;width:' + pct + '%;background:' + pColor + ';border-radius:20px;transition:width 0.4s;"></div>' +
       '</div>' +
@@ -8577,6 +8639,184 @@ function qfShowPreQuizPopup(params) {
 
   // Store params for confirm
   window._qfPendingParams = { ...params, allFacts, availableFacts, key };
+}
+
+// ── CHOICE POPUP: Jab cycle reset ke baad naye facts aa jaate hain ──
+function _qfShowChoicePopup(cfg) {
+  var params       = cfg.params;
+  var key          = cfg.key;
+  var allFacts     = cfg.allFacts;
+  var onlyNewFacts = cfg.onlyNewFacts;     // sirf naye uncovered facts
+  var allForRestart= cfg.allFactsForRestart; // saare facts (fresh start)
+  var addedCount   = cfg.addedCount;
+  var totalFacts   = cfg.totalFacts;
+  var storedTotal  = cfg.storedTotal;
+  var covCount     = cfg.covCount;
+  var wrongF       = cfg.wrongF;
+  var pct          = cfg.pct;
+  var tl           = cfg.tl;
+
+  var maxNew  = Math.max(1, onlyNewFacts.length);
+  var maxAll  = Math.max(1, allForRestart.length);
+  var defNew  = Math.min(10, maxNew);
+  var defAll  = Math.min(10, maxAll);
+  var pColor  = pct >= 80 ? '#4caf50' : pct >= 50 ? '#ff9800' : '#1565c0';
+
+  var overlay = document.createElement('div');
+  overlay.id = 'qfPrePopup';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.65);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
+
+  // Active tab state — 'new' ya 'all'
+  overlay.innerHTML = '<div style="background:var(--surface,#fff);border-radius:18px;padding:20px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.35);max-height:92vh;overflow-y:auto;">' +
+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+      '<div style="font-size:1rem;font-weight:900;color:var(--text,#1a2e44);">✨ Naya Content Mila!</div>' +
+      '<button onclick="document.getElementById(\'qfPrePopup\').remove()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text2,#6b7f96);line-height:1;">✕</button>' +
+    '</div>' +
+
+    // Info banner
+    '<div style="background:linear-gradient(135deg,rgba(21,101,192,0.1),rgba(76,175,80,0.08));border:1.5px solid rgba(21,101,192,0.25);border-radius:12px;padding:12px 14px;margin-bottom:14px;">' +
+      '<div style="font-size:0.82rem;font-weight:800;color:#1565c0;margin-bottom:6px;">🎯 Pichla Cycle Complete + Naya Data Add Hua</div>' +
+      '<div style="font-size:0.75rem;color:var(--text2,#6b7f96);line-height:1.6;">' +
+        'Aapne pehle <strong style="color:#2e7d32;">' + storedTotal + ' facts</strong> ka pura practice kar liya tha. ' +
+        'Ab <strong style="color:#1565c0;">' + addedCount + ' naye facts</strong> content mein add hue hain. ' +
+        'Aap choose karo:' +
+      '</div>' +
+    '</div>' +
+
+    // Two choice cards
+    '<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">' +
+
+      // Choice A — Sirf naye facts
+      '<div id="qfChoiceA" onclick="_qfSelectChoice(\'new\')" style="border:2px solid #1565c0;border-radius:14px;padding:14px;cursor:pointer;background:rgba(21,101,192,0.06);transition:all 0.2s;">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
+          '<div style="width:22px;height:22px;border-radius:50%;border:2px solid #1565c0;background:#1565c0;display:flex;align-items:center;justify-content:center;" id="qfRadioA"><div style="width:10px;height:10px;border-radius:50%;background:#fff;"></div></div>' +
+          '<div style="font-size:0.88rem;font-weight:900;color:#1565c0;">🆕 Sirf Naye Facts Practice Karo</div>' +
+        '</div>' +
+        '<div style="font-size:0.75rem;color:var(--text2,#6b7f96);line-height:1.6;padding-left:32px;">' +
+          'Sirf <strong style="color:#1565c0;">' + onlyNewFacts.length + ' naye facts</strong> se questions banenge. ' +
+          'Purane ' + storedTotal + ' facts dobara repeat nahi honge. Perfect agar purana sab याद hai!' +
+        '</div>' +
+        '<div style="margin-top:10px;padding-left:32px;">' +
+          '<div style="font-size:0.72rem;color:var(--text2,#6b7f96);margin-bottom:6px;">Kitne questions chahiye? (Max: ' + maxNew + ')</div>' +
+          '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<input type="range" id="qfSliderNew" min="1" max="' + maxNew + '" value="' + defNew + '" style="flex:1;accent-color:#1565c0;" oninput="document.getElementById(\'qfNumNew\').value=this.value;document.getElementById(\'qfDispA\').textContent=this.value">' +
+            '<input type="number" id="qfNumNew" min="1" max="' + maxNew + '" value="' + defNew + '" style="width:48px;padding:4px 6px;border:1.5px solid #1565c0;border-radius:8px;font-size:0.82rem;font-weight:700;color:#1565c0;text-align:center;" oninput="var v=Math.min(' + maxNew + ',Math.max(1,this.value||1));this.value=v;document.getElementById(\'qfSliderNew\').value=v;document.getElementById(\'qfDispA\').textContent=v">' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+
+      // Choice B — Saare facts se fresh start
+      '<div id="qfChoiceB" onclick="_qfSelectChoice(\'all\')" style="border:2px solid var(--border,#d0d7e0);border-radius:14px;padding:14px;cursor:pointer;background:var(--surface2,#f5f7fa);transition:all 0.2s;">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
+          '<div style="width:22px;height:22px;border-radius:50%;border:2px solid var(--border,#d0d7e0);background:var(--surface,#fff);display:flex;align-items:center;justify-content:center;" id="qfRadioB"><div style="width:10px;height:10px;border-radius:50%;background:transparent;"></div></div>' +
+          '<div style="font-size:0.88rem;font-weight:900;color:var(--text,#1a2e44);">🔄 Saare Facts Se Fresh Start</div>' +
+        '</div>' +
+        '<div style="font-size:0.75rem;color:var(--text2,#6b7f96);line-height:1.6;padding-left:32px;">' +
+          'Purane + naye dono milake <strong style="color:#2e7d32;">' + totalFacts + ' total facts</strong> se naya cycle shuru hoga. ' +
+          'Complete revision agar thoda repeat bhi karna hai.' +
+        '</div>' +
+        '<div style="margin-top:10px;padding-left:32px;">' +
+          '<div style="font-size:0.72rem;color:var(--text2,#6b7f96);margin-bottom:6px;">Kitne questions chahiye? (Max: ' + maxAll + ')</div>' +
+          '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<input type="range" id="qfSliderAll" min="1" max="' + maxAll + '" value="' + defAll + '" style="flex:1;accent-color:#2e7d32;" oninput="document.getElementById(\'qfNumAll\').value=this.value;document.getElementById(\'qfDispB\').textContent=this.value">' +
+            '<input type="number" id="qfNumAll" min="1" max="' + maxAll + '" value="' + defAll + '" style="width:48px;padding:4px 6px;border:1.5px solid #2e7d32;border-radius:8px;font-size:0.82rem;font-weight:700;color:#2e7d32;text-align:center;" oninput="var v=Math.min(' + maxAll + ',Math.max(1,this.value||1));this.value=v;document.getElementById(\'qfSliderAll\').value=v;document.getElementById(\'qfDispB\').textContent=v">' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div style="display:flex;gap:8px;">' +
+      '<button onclick="document.getElementById(\'qfPrePopup\').remove()" style="flex:1;padding:12px;border-radius:12px;border:1.5px solid var(--border,#d0d7e0);background:none;font-size:0.85rem;font-weight:700;cursor:pointer;color:var(--text2,#6b7f96);">✕ Cancel</button>' +
+      '<button onclick="_qfChoiceConfirm()" style="flex:2;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.88rem;font-weight:800;cursor:pointer;">🚀 <span id="qfDispA">' + defNew + '</span> Questions Shuru Karo!</button>' +
+    '</div>' +
+  '</div>';
+
+  document.body.appendChild(overlay);
+
+  // Store for choice confirm
+  window._qfChoiceCfg = {
+    params: params, key: key,
+    allFacts: allFacts,
+    onlyNewFacts: onlyNewFacts,
+    allForRestart: allForRestart,
+    selectedChoice: 'new'  // default
+  };
+}
+
+// Toggle selection between two choices in choice popup
+function _qfSelectChoice(choice) {
+  window._qfChoiceCfg.selectedChoice = choice;
+  var isNew = choice === 'new';
+  // Card A styling
+  var cardA = document.getElementById('qfChoiceA');
+  var cardB = document.getElementById('qfChoiceB');
+  var radioA = document.getElementById('qfRadioA');
+  var radioB = document.getElementById('qfRadioB');
+  if(cardA) { cardA.style.borderColor = isNew ? '#1565c0' : 'var(--border,#d0d7e0)'; cardA.style.background = isNew ? 'rgba(21,101,192,0.06)' : 'var(--surface2,#f5f7fa)'; }
+  if(cardB) { cardB.style.borderColor = !isNew ? '#2e7d32' : 'var(--border,#d0d7e0)'; cardB.style.background = !isNew ? 'rgba(76,175,80,0.06)' : 'var(--surface2,#f5f7fa)'; }
+  if(radioA) { radioA.style.background = isNew ? '#1565c0' : 'var(--surface,#fff)'; radioA.style.borderColor = isNew ? '#1565c0' : 'var(--border,#d0d7e0)'; radioA.querySelector('div').style.background = isNew ? '#fff' : 'transparent'; }
+  if(radioB) { radioB.style.background = !isNew ? '#2e7d32' : 'var(--surface,#fff)'; radioB.style.borderColor = !isNew ? '#2e7d32' : 'var(--border,#d0d7e0)'; radioB.querySelector('div').style.background = !isNew ? '#fff' : 'transparent'; }
+  // Update confirm button display count
+  var dispEl = document.getElementById(isNew ? 'qfDispA' : 'qfDispB');
+  var countEl = document.getElementById(isNew ? 'qfNumNew' : 'qfNumAll');
+  var mainDisp = isNew ? document.getElementById('qfDispA') : document.getElementById('qfDispB');
+  // Sync the button text
+  var btn = document.querySelector('#qfPrePopup button:last-child');
+  if(btn && countEl) btn.innerHTML = '🚀 ' + countEl.value + ' Questions Shuru Karo!';
+  // Also keep live as user types — attach listeners
+  ['qfNumNew','qfNumAll','qfSliderNew','qfSliderAll'].forEach(function(id){
+    var el = document.getElementById(id);
+    if(el && !el._qfSynced) {
+      el._qfSynced = true;
+      el.addEventListener('input', function(){
+        var cfg = window._qfChoiceCfg;
+        if(!cfg) return;
+        var active = cfg.selectedChoice;
+        var val = document.getElementById(active==='new'?'qfNumNew':'qfNumAll').value;
+        var btn2 = document.querySelector('#qfPrePopup button:last-child');
+        if(btn2) btn2.innerHTML = '🚀 ' + val + ' Questions Shuru Karo!';
+      });
+    }
+  });
+}
+
+// Confirm choice popup
+function _qfChoiceConfirm() {
+  var cfg = window._qfChoiceCfg;
+  if(!cfg) return;
+  var popup = document.getElementById('qfPrePopup');
+  var choice = cfg.selectedChoice;
+  var isNew = choice === 'new';
+  var count = parseInt(document.getElementById(isNew ? 'qfNumNew' : 'qfNumAll').value) || 10;
+  var availableFacts = isNew ? cfg.onlyNewFacts : cfg.allForRestart;
+  if(popup) popup.remove();
+
+  // If user chose "all" restart — reset progress so fresh cycle starts
+  if(!isNew) {
+    var prog = qfGetProg(cfg.key);
+    prog.coveredFacts = [];
+    prog.wrongFacts = [];
+    prog.rotationIdx = 0;
+    prog.totalKnown = cfg.allFacts.length;
+    qfSaveProg(cfg.key, prog);
+  } else {
+    // Sirf naye facts — totalKnown update karo taaki next time detect ho sake
+    var prog2 = qfGetProg(cfg.key);
+    prog2.totalKnown = cfg.allFacts.length;
+    qfSaveProg(cfg.key, prog2);
+  }
+
+  // Update sliders
+  var slider = document.getElementById('questionCount');
+  var numInp = document.getElementById('qCountNum');
+  var disp   = document.getElementById('qCountDisplay');
+  if(slider){ slider.value=count; slider.max=Math.max(slider.max,count); }
+  if(numInp){ numInp.value=count; numInp.max=Math.max(numInp.max,count); }
+  if(disp)  disp.textContent=count;
+
+  window._qfContext = { ...cfg.params, allFacts: cfg.allFacts, availableFacts: availableFacts, key: cfg.key, confirmedCount: count };
+  startQuizActual();
 }
 
 // Confirm button press — update sliders and start actual quiz
