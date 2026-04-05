@@ -26324,37 +26324,52 @@ function _scMoveBlockToSlide(b, el, bar, targetSlideIdx) {
   if(bar) bar.remove();
   _sc.activeBlock = null; _sc.activeBlockId = null;
 
-  var wrap = document.getElementById('scCanvasWrap');
-  var wW   = wrap ? (wrap.offsetWidth  || 340) : 340;
-  var wH   = wrap ? (wrap.offsetHeight || 480) : 480;
-  var PAD  = 14, GAP_X = 12, GAP_Y = 10;
-  var COLS = (wW >= 300) ? 2 : 1;
-  var BOX_W = COLS===2 ? Math.floor((wW-PAD*2-GAP_X)/2) : (wW-PAD*2);
+  // ── Position: use _scGetLayoutConfig so portrait/landscape is respected ──
+  var cfg = _scGetLayoutConfig();
 
+  // Find the bottom of the last block in target slide (col 0 = default)
   var tBlocks = targetSlide.textBlocks || [];
-  var colY = [PAD, PAD];
-  tBlocks.forEach(function(blk){
-    var bH  = 60;
-    var col = (COLS===2 && (blk.x||0) >= wW/2) ? 1 : 0;
-    var bot = (blk.y||0) + bH + GAP_Y;
-    if(bot > colY[col]) colY[col] = bot;
+  var lastY = 8;
+  tBlocks.forEach(function(blk) {
+    var blkEl = document.getElementById('scBlock_' + blk.id);
+    var blkH  = (blkEl && blkEl.offsetHeight > 10) ? blkEl.offsetHeight : 60;
+    var bot   = (blk.y || 0) + blkH + cfg.gap;
+    if(bot > lastY) lastY = bot;
   });
 
-  var c    = (COLS===1) ? 0 : (colY[0]<=colY[1] ? 0 : 1);
-  var newX = PAD + c*(BOX_W+GAP_X);
-  var newY = colY[c];
-  if(newY > wH-PAD-40){ newX=PAD; newY=PAD; }
-
-  var movedBlock = Object.assign({},b,{
-    id: 'scb_mv_'+Date.now(),
-    x: newX, y: newY, w: BOX_W
+  // New block goes into col 0 at the bottom — _scApplyLayout will restack everything
+  var movedBlock = Object.assign({}, b, {
+    id: 'scb_mv_' + Date.now(),
+    x: cfg.col0.x,
+    y: lastY,
+    w: cfg.col0.w
   });
   targetSlide.textBlocks.push(movedBlock);
 
   _sc.curSlide = targetSlideIdx;
-  scRenderAll && scRenderAll(); _scSyncTextBlocksDOM && _scSyncTextBlocksDOM(); _scRenderSlideNav && _scRenderSlideNav();
+
+  // Render → layout → scroll to show the moved block
+  scRenderAll && scRenderAll();
   _scSyncTextBlocksDOM && _scSyncTextBlocksDOM();
   _scRenderSlideNav && _scRenderSlideNav();
+
+  // After DOM settles, scroll the moved block into view
+  setTimeout(function() {
+    var newEl = document.getElementById('scBlock_' + movedBlock.id);
+    if(newEl) {
+      var scrollArea = document.getElementById('scScrollArea');
+      if(scrollArea) {
+        var blockTop = parseFloat(newEl.style.top) || 0;
+        scrollArea.scrollTo({ top: Math.max(0, blockTop - 60), behavior: 'smooth' });
+      } else {
+        newEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      // Briefly highlight the moved block so user can see it
+      newEl.style.outline = '2.5px solid #1565c0';
+      newEl.style.boxShadow = '0 0 0 4px rgba(21,101,192,0.18)';
+      setTimeout(function(){ newEl.style.outline=''; newEl.style.boxShadow=''; }, 1400);
+    }
+  }, 120);
 
   showToast && showToast(
     '\u2705 Block \u2192 '+(targetSlide.title||'Slide '+(targetSlideIdx+1))+' par move ho gaya!',
