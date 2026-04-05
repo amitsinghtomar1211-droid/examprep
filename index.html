@@ -1164,8 +1164,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 #scCanvasWrap {
   flex: 1;
   position: relative;
-  overflow: hidden;
+  overflow: hidden;    /* clips content that exceeds canvas */
+  overflow-x: hidden;
   min-height: 200px;
+  transition: padding-right 0.25s ease;
+}
+/* When side panel open, canvas shrinks to not be covered */
+#scCanvasWrap.sp-open {
+  padding-right: 56px;
 }
 #scCanvas {
   display: block;
@@ -1193,6 +1199,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   word-wrap: break-word;
   white-space: normal;      /* normal wrap — vertical type fix */
   overflow-wrap: break-word;
+  max-width: calc(100% - 8px); /* Never overflow beyond canvas edge */
   /* width fixed by JS but text wraps inside */
   box-sizing: border-box;
 }
@@ -1225,7 +1232,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .sc-text-block[contenteditable="true"] .sc-block-resize,
 .sc-text-block[contenteditable="true"] .sc-block-rotate { display: none; }
 
-  /* ── Move handle — center top of selected block for 360° drag ── */
+  /* Hide scrollbar in neSidePanel */
+  #neSidePanel::-webkit-scrollbar { display: none; }
+
+/* ── Move handle — center top of selected block for 360° drag ── */
   .sc-block-move {
     position: absolute;
     top: -13px; left: 50%; transform: translateX(-50%);
@@ -5060,23 +5070,38 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
       <div class="notes-editor-toolbar" id="formatToolbar"  style="display:none;"></div>
     </div>
 
-    <!-- ══ RIGHT SIDE PANEL (More tools, vertical) ══ -->
-    <div id="neSidePanel" style="
-      display:none;position:fixed;right:6px;top:100px;
-      width:46px;z-index:9900;
-      background:rgba(255,255,255,0.15);
-      border:none;box-shadow:none;
-      flex-direction:column;align-items:center;
-      padding:6px 0;gap:6px;overflow-y:auto;
-      backdrop-filter:blur(0px);
-    ">
-      <!-- Close side panel -->
-      <button onclick="neToggleSidePanel()" title="Close" style="
-        width:36px;height:36px;border-radius:10px;border:1.5px solid var(--border);
-        background:rgba(255,255,255,0.92);cursor:pointer;font-size:0.85rem;color:#c62828;
-        font-weight:800;display:flex;align-items:center;justify-content:center;
-        margin-bottom:2px;flex-shrink:0;-webkit-tap-highlight-color:transparent;
-        box-shadow:0 2px 10px rgba(0,0,0,0.14);">✕</button>
+    <!-- ══ RIGHT SIDE PANEL TOGGLE TAB — always visible ══ -->
+      <div id="neSidePanelTab" onclick="neToggleSidePanel()" title="Tools दिखाएं / छुपाएं"
+        style="position:fixed;right:0;top:50%;transform:translateY(-50%);
+          width:18px;z-index:9902;cursor:pointer;
+          background:linear-gradient(180deg,#1565c0,#1976d2);
+          border-radius:8px 0 0 8px;
+          padding:14px 2px;display:flex;align-items:center;justify-content:center;
+          box-shadow:-2px 0 10px rgba(21,101,192,0.3);
+          -webkit-tap-highlight-color:transparent;
+          transition:background 0.2s;">
+        <span style="writing-mode:vertical-rl;font-size:8px;color:#fff;font-weight:800;
+          letter-spacing:1.5px;user-select:none;transform:rotate(180deg);">TOOLS</span>
+      </div>
+
+      <!-- ══ RIGHT SIDE PANEL (More tools, vertical) ══ -->
+      <div id="neSidePanel" style="
+        display:none;position:fixed;right:6px;top:72px;bottom:65px;
+        width:48px;z-index:9900;
+        background:rgba(255,255,255,0.15);
+        border:none;box-shadow:none;
+        flex-direction:column;align-items:center;
+        padding:6px 0;gap:6px;overflow-y:auto;overflow-x:hidden;
+        backdrop-filter:blur(0px);
+        scrollbar-width:none;-ms-overflow-style:none;
+      ">
+        <!-- Close side panel -->
+        <button onclick="neToggleSidePanel()" title="Close" style="
+          width:36px;height:36px;border-radius:10px;border:1.5px solid var(--border);
+          background:rgba(255,255,255,0.92);cursor:pointer;font-size:0.85rem;color:#c62828;
+          font-weight:800;display:flex;align-items:center;justify-content:center;
+          margin-bottom:2px;flex-shrink:0;-webkit-tap-highlight-color:transparent;
+          box-shadow:0 2px 10px rgba(0,0,0,0.14);">✕</button>
 
       <!-- Redo -->
       <button onclick="neRedo()" title="Redo"
@@ -13505,10 +13530,32 @@ function neToggleDropdown() {
 }
 
 function neToggleSidePanel() {
-  _neSidePanelOpen = !_neSidePanelOpen;
-  var sp = document.getElementById('neSidePanel');
-  if(sp) sp.style.display = _neSidePanelOpen ? 'flex' : 'none';
-}
+    _neSidePanelOpen = !_neSidePanelOpen;
+    var sp  = document.getElementById('neSidePanel');
+    var tab = document.getElementById('neSidePanelTab');
+    var cw  = document.getElementById('scCanvasWrap');
+
+    if(sp)  sp.style.display = _neSidePanelOpen ? 'flex' : 'none';
+
+    // Tab color: blue when closed, orange when open (so user knows state)
+    if(tab) {
+      tab.style.background = _neSidePanelOpen
+        ? 'linear-gradient(180deg,#e65100,#ef6c00)'
+        : 'linear-gradient(180deg,#1565c0,#1976d2)';
+    }
+
+    // Shift canvas right so text blocks aren't hidden behind panel
+    if(cw) {
+      if(_neSidePanelOpen) cw.classList.add('sp-open');
+      else cw.classList.remove('sp-open');
+    }
+
+    // Re-fit canvas after panel width change settles
+    setTimeout(function() {
+      if(typeof scFitCanvas === 'function') scFitCanvas();
+      if(typeof _scAutoConfigureForDevice === 'function') _scAutoConfigureForDevice();
+    }, 180);
+  }
 
 // Compat wrappers — old code still calls these
 function neToggleToolbar() {
@@ -25955,7 +26002,8 @@ function _scCreateBlockDOM(b) {
   el.id = 'scBlock_' + b.id;
   el.style.left   = b.x + 'px';
   el.style.top    = b.y + 'px';
-  el.style.width  = (b.w || 140) + 'px';
+  el.style.width    = (b.w || 140) + 'px';
+  el.style.maxWidth  = 'calc(100% - 8px)'; // Prevent right-side overflow
   el.style.fontSize     = (b.fontSize||15) + 'px';
   el.style.color        = b.color || '#1a1a1a';
   el.style.transform    = b.angle ? 'rotate('+b.angle+'deg)' : '';
@@ -28022,6 +28070,86 @@ window.neSendAllHighlightsToCanvas = function() {
 
 // ══ END SEND ALL HIGHLIGHTS → CANVAS ══
 
+
+  
+  // ══ Re-layout canvas blocks after orientation/resize change ══
+  function _scRefitBlocksToWidth() {
+    if(typeof _sc === 'undefined' || !_sc || !_sc.open) return;
+
+    var wrap = document.getElementById('scCanvasWrap');
+    if(!wrap) return;
+
+    // Get side panel width if open
+    var _sp  = document.getElementById('neSidePanel');
+    var _spOff = (_sp && _sp.style.display !== 'none') ? (_sp.offsetWidth + 12) : 0;
+    var newW = Math.max(180, wrap.offsetWidth - _spOff);
+
+    var PAD     = newW >= 900 ? 18 : newW >= 600 ? 14 : 10;
+    var blockW  = newW - PAD * 2;
+
+    // Update all blocks in all slides
+    var slides = _sc.slides || [];
+    slides.forEach(function(slide) {
+      var blocks = slide.blocks || [];
+      var curY   = PAD;
+      blocks.forEach(function(b, idx) {
+        if(!b || b.type === 'img') return;
+        b.x = PAD;
+        b.w = blockW;
+        b.y = curY;
+        // Rough height estimate
+        var lines   = Math.max(1, Math.ceil((b.text || '').length / Math.max(10, Math.floor((blockW - 20) / 8.5))));
+        var lineH   = 24;
+        var estH    = lines * lineH + 24;
+        curY += estH + 10;
+      });
+    });
+
+    // Re-sync DOM blocks if canvas is open
+    if(typeof _scSyncTextBlocksDOM === 'function') _scSyncTextBlocksDOM();
+    if(typeof scRenderAll === 'function') scRenderAll();
+    if(typeof scFitCanvas === 'function') scFitCanvas();
+  }
+  
+// ══ Orientation & Resize handler — canvas auto-refit ══
+  (function() {
+    var _lastW = window.innerWidth;
+    var _lastH = window.innerHeight;
+    var _refitTimer = null;
+
+    function _scOnResize() {
+      var curW = window.innerWidth;
+      var curH = window.innerHeight;
+      var changed = (curW !== _lastW || curH !== _lastH);
+      _lastW = curW; _lastH = curH;
+      if(!changed) return;
+
+      clearTimeout(_refitTimer);
+      _refitTimer = setTimeout(function() {
+        // Re-configure device layout
+        if(typeof _scAutoConfigureForDevice === 'function') _scAutoConfigureForDevice();
+        // Re-layout all canvas blocks to new width (handles landscape↔portrait)
+        if(typeof _scRefitBlocksToWidth === 'function') _scRefitBlocksToWidth();
+        // Re-fit canvas to new dimensions
+        if(typeof scFitCanvas === 'function') scFitCanvas();
+        // Update canvas panel background
+        if(typeof _sc !== 'undefined' && _sc && _sc.open) {
+          var cur = _scCur && _scCur();
+          if(cur) {
+            var panel = document.getElementById('studyCanvasPanel');
+            if(panel) panel.style.background = cur.bg;
+          }
+        }
+      }, 250);
+    }
+
+    window.addEventListener('resize', _scOnResize, { passive: true });
+    // For iOS where resize doesn't fire reliably
+    window.addEventListener('orientationchange', function() {
+      setTimeout(_scOnResize, 350);
+    }, { passive: true });
+  })();
+  
 // ── Helper: actually send items array to canvas slides ──
 window._neDoSendItemsToCanvas = function(items, _batchKey) {
   if(!items || !items.length) {
@@ -28033,8 +28161,11 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
   scSnapshot();
 
   var wrap = document.getElementById('scCanvasWrap');
-  var wW   = wrap ? (wrap.offsetWidth  || 340) : 340;
-  var wH   = wrap ? (wrap.offsetHeight || 0) : 0;
+  // Smart width: subtract floating side panel if visible
+  var _spEl  = document.getElementById('neSidePanel');
+  var _spOff = (_spEl && _spEl.style.display !== 'none') ? (_spEl.offsetWidth + 12) : 0;
+  var wW     = wrap ? Math.max(180, (wrap.offsetWidth || 340) - _spOff) : 340;
+  var wH     = wrap ? (wrap.offsetHeight || 0) : 0;
   if(wH < 100) {
       // Better height: total canvas panel minus toolbar/footer heights
       var _tbH = (document.getElementById('scToolbarWrap')||{}).offsetHeight || 0;
