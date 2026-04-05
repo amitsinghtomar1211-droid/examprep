@@ -958,6 +958,19 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   /* Default bg — overridden by color picker */
   background: #fffde7;
 }
+/* Scrollable inner area — toolbar + canvas scroll, footer stays fixed */
+#scScrollArea {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  /* Smooth scroll on iOS */
+  scroll-behavior: smooth;
+}
+#scScrollArea::-webkit-scrollbar { width: 3px; }
+#scScrollArea::-webkit-scrollbar-thumb { background: rgba(21,101,192,0.25); border-radius: 3px; }
 #studyCanvasPanel.sc-open {
   transform: translateX(0);
 }
@@ -1201,10 +1214,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 
 /* ── Canvas area ── */
 #scCanvasWrap {
-  flex: 1;
   position: relative;
-  overflow: hidden;
-  min-height: 200px;
+  overflow: visible;
+  /* Height is driven by canvas element inside — grows with content */
+  flex-shrink: 0;
 }
 #scCanvas {
   display: block;
@@ -1360,8 +1373,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   background: rgba(255,255,255,0.97);
   border-top: 1.5px solid rgba(21,101,192,0.18);
   overflow: visible;
-  position: sticky;
-  bottom: 0;
+  /* Float at bottom of panel — outside scroll area */
+  position: relative;
   z-index: 20;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -5480,6 +5493,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 
   <!-- Background color row -->
   <!-- ══ TOOLBAR WRAP — Swipe/tap se hide/show ══ -->
+  <!-- Scrollable area: toolbar + canvas scroll together; footer stays fixed below -->
+  <div id="scScrollArea">
   <div id="scToolbarWrap" style="flex-shrink:0;transition:all 0.28s cubic-bezier(0.4,0,0.2,1);overflow:hidden;">
 
   <div id="scBgRow">
@@ -5658,7 +5673,9 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <!-- Text blocks rendered as DOM elements here -->
   </div>
 
-  <!-- Footer -->
+  </div><!-- /scScrollArea -->
+
+  <!-- Footer — fixed at panel bottom, outside scroll area -->
   <div id="scFooter">
     <!-- Slide navigator -->
     <div id="scSlideNav" style="display:flex;align-items:center;gap:4px;flex:1;overflow-x:auto;min-width:0;"></div>
@@ -25921,11 +25938,15 @@ function scInitCanvas() {
       _sc._autoFontSz = autoFontSz;
     }
 
-    // Width of canvas wrap
-    var cw = document.getElementById('scCanvasWrap');
-    if(cw) {
-      // Ensure canvas uses full available space
-      cw.style.minHeight = (isMobile ? Math.floor(wh * 0.55) : Math.floor(wh * 0.65)) + 'px';
+    // scScrollArea height — full panel minus footer
+    var footer = document.getElementById('scFooter');
+    var tbWrap = document.getElementById('scToolbarWrap');
+    var panel  = document.getElementById('studyCanvasPanel');
+    var scrollArea = document.getElementById('scScrollArea');
+    if(scrollArea && panel) {
+      // Let CSS flex handle it — just ensure it can grow
+      scrollArea.style.flex = '1';
+      scrollArea.style.minHeight = '0';
     }
   }
 
@@ -25956,21 +25977,55 @@ function _scRescaleBlocksForNewWidth(newW) {
 }
 
 function scFitCanvas() {
+  var scrollArea = document.getElementById('scScrollArea');
   var wrap = document.getElementById('scCanvasWrap');
   var cv   = document.getElementById('scCanvas');
   var qmcv = document.getElementById('scQmCanvas');
   var hlcv = document.getElementById('scHlCanvas');
   if(!wrap||!cv) return;
-  var w = wrap.offsetWidth, h = wrap.offsetHeight;
-  if(w<10||h<10) return;
+
+  // Width = wrap's visible width
+  var w = wrap.offsetWidth || (scrollArea ? scrollArea.offsetWidth : 0);
+  if(w < 10) return;
+
   // Rescale text blocks proportionally before canvas resize
   _scRescaleBlocksForNewWidth(w);
-  cv.width = w; cv.height = h;
-  if(qmcv) { qmcv.width=w; qmcv.height=h; }
+
+  // Height = max of (scroll area visible height) or (lowest text block bottom + padding)
+  var visibleH = scrollArea ? scrollArea.offsetHeight : window.innerHeight;
+  if(visibleH < 100) visibleH = 400;
+
+  // Find lowest text block bottom
+  var maxBottom = visibleH;
+  var cur = _scCur && _scCur();
+  if(cur && cur.textBlocks && cur.textBlocks.length) {
+    cur.textBlocks.forEach(function(b) {
+      // Approximate block height: lines * lineHeight * fontSize
+      var approxH = Math.max(60, (b.fontSize || 15) * 1.65 * 3);
+      var bottom = (b.y || 0) + approxH + 80; // 80px padding below lowest block
+      if(bottom > maxBottom) maxBottom = bottom;
+    });
+  }
+  // Also check rendered DOM blocks for actual height
+  wrap.querySelectorAll('.sc-text-block').forEach(function(el) {
+    var bottom = (parseFloat(el.style.top) || 0) + el.offsetHeight + 80;
+    if(bottom > maxBottom) maxBottom = bottom;
+  });
+
+  var h = Math.max(visibleH, maxBottom);
+
+  cv.width  = w; cv.height = h;
+  cv.style.width  = w + 'px';
+  cv.style.height = h + 'px';
+  if(qmcv) { qmcv.width=w; qmcv.height=h; qmcv.style.width=w+'px'; qmcv.style.height=h+'px'; }
   if(hlcv) {
     hlcv.width=w; hlcv.height=h;
     hlcv.style.width=w+'px'; hlcv.style.height=h+'px';
   }
+  // Set canvasWrap to match canvas height so scroll works
+  wrap.style.height = h + 'px';
+  wrap.style.minHeight = h + 'px';
+
   scRenderAll();
 }
 
@@ -26340,7 +26395,10 @@ function _scBlockDrag(b,el) {
     if(!drag) return; b.x=sbx+(e.clientX-sx); b.y=sby+(e.clientY-sy);
     el.style.left=b.x+'px'; el.style.top=b.y+'px';
   },{passive:true});
-  el.addEventListener('pointerup',function(){drag=false; if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);},{passive:true});
+  el.addEventListener('pointerup',function(){drag=false; if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);
+    // Expand canvas if block was dragged below visible area
+    clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,60);
+  },{passive:true});
 }
 
 function _scBlockResize(b,el,handle) {
@@ -26448,6 +26506,36 @@ function _scSyncTextBlocksDOM() {
   wrap.querySelectorAll('.sc-text-block').forEach(function(el){el.remove();});
   var cur=_scCur(); if(!cur) return;
   (cur.textBlocks||[]).forEach(function(b){_scCreateBlockDOM(b);});
+  // After DOM sync, expand canvas height if any block overflows
+  clearTimeout(_scExpandTimer);
+  _scExpandTimer = setTimeout(scExpandCanvasForContent, 80);
+}
+var _scExpandTimer;
+
+// Expand canvas height to fit all text blocks — called after any block add/move/resize
+function scExpandCanvasForContent() {
+  var wrap = document.getElementById('scCanvasWrap');
+  var cv   = document.getElementById('scCanvas');
+  var scrollArea = document.getElementById('scScrollArea');
+  if(!wrap||!cv) return;
+  var visibleH = scrollArea ? scrollArea.offsetHeight : 400;
+  var maxBottom = visibleH;
+  // Check all rendered text blocks
+  wrap.querySelectorAll('.sc-text-block').forEach(function(el) {
+    var bottom = (parseFloat(el.style.top)||0) + el.offsetHeight + 80;
+    if(bottom > maxBottom) maxBottom = bottom;
+  });
+  var newH = Math.max(visibleH, maxBottom);
+  if(Math.abs(newH - cv.height) > 10) {
+    cv.height = newH; cv.style.height = newH+'px';
+    var qmcv = document.getElementById('scQmCanvas');
+    var hlcv = document.getElementById('scHlCanvas');
+    if(qmcv){qmcv.height=newH;qmcv.style.height=newH+'px';}
+    if(hlcv){hlcv.height=newH;hlcv.style.height=newH+'px';}
+    wrap.style.height = newH+'px';
+    wrap.style.minHeight = newH+'px';
+    scRenderAll();
+  }
 }
 
 // Sync DOM state back into current slide's textBlocks
