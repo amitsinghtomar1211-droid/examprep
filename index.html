@@ -5425,6 +5425,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <button class="sc-fstrip-btn" id="scMindMapBtn" onclick="mmOpenPanel()" title="Mind Map — Flashcards se Mind Map banao" style="background:linear-gradient(135deg,rgba(0,105,92,0.22),rgba(46,125,50,0.22));border-color:rgba(0,150,136,0.45);color:#00695c;font-size:0.82rem;">🧠</button>
     <!-- Regenerate Highlights to Canvas -->
     <button class="sc-fstrip-btn" id="scRegenHlBtn" onclick="scRegenNewHighlights()" title="New Highlights → Canvas (sirf nayi wali)" style="background:linear-gradient(135deg,rgba(230,81,0,0.18),rgba(255,152,0,0.18));border-color:rgba(255,152,0,0.5);color:#e65100;font-size:0.75rem;position:relative;">🔄<span id="scRegenHlDot" style="display:none;position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;background:#e65100;"></span></button>
+    <!-- Advanced Arrange System Button -->
+    <button class="sc-fstrip-btn" id="scAdvArrangeBtn" onclick="scShowAdvArrangePanel()" title="Advanced Arrange — Number-wise boxes arrange karo, column transfer karo" style="background:linear-gradient(135deg,rgba(106,27,154,0.22),rgba(21,101,192,0.18));border-color:rgba(106,27,154,0.45);color:#6a1b9a;font-size:0.72rem;font-weight:900;">⊞</button>
     <!-- Undo -->
     <button class="sc-fstrip-btn" id="scFloatUndoBtn" onclick="scUndo&&scUndo()" title="Undo (Ctrl+Z)" style="font-size:0.82rem;opacity:0.5;">↩</button>
     <!-- Redo -->
@@ -28402,63 +28404,72 @@ window.neSendAllHighlightsToCanvas = function() {
 // ── Helper: actually send items array to canvas slides ──
 window._neDoSendItemsToCanvas = function(items, _batchKey) {
   if(!items || !items.length) {
-    showToast && showToast('⚠️ Highlights mein koi text nahi mila!', 'error');
+    showToast && showToast('\u26a0\ufe0f Highlights mein koi text nahi mila!', 'error');
     return;
   }
 
-  // ── Layout ──
   scSnapshot();
 
   var wrap = document.getElementById('scCanvasWrap');
   var wW   = wrap ? (wrap.offsetWidth  || 340) : 340;
-  var wH   = wrap ? (wrap.offsetHeight || 0) : 0;
+  var wH   = wrap ? (wrap.offsetHeight || 0)   : 0;
   if(wH < 100) {
-      // Better height: total canvas panel minus toolbar/footer heights
-      var _tbH = (document.getElementById('scToolbarWrap')||{}).offsetHeight || 0;
-      var _ftH = (document.getElementById('scFooter')||{}).offsetHeight || 48;
-      var _tbgH = (document.getElementById('scTbToggleBar')||{}).offsetHeight || 16;
-      var _panH = (document.getElementById('studyCanvasPanel')||{}).offsetHeight || 0;
-      if(_panH > 200) {
-        wH = _panH - _tbH - _ftH - _tbgH - 10;
-      }
-      if(wH < 200) wH = Math.max(400, window.innerHeight * 0.6);
-    }
-
-  // Device-aware single-column layout for proper horizontal text wrapping
-  var _isTablet  = wW >= 600;
-  var _isDesktop = wW >= 900;
-  var PAD        = _isDesktop ? 18 : _isTablet ? 14 : 10;
-  var GAP_Y      = _isDesktop ? 14 : 12;
-  var COLS       = 1;  // Always single column
-  var BOX_W      = wW - PAD * 2;
-  var FONT_SZ    = _isDesktop ? 16 : _isTablet ? 15 : 14;
-  var LINE_H     = FONT_SZ * 1.75;
-  var BOX_PAD_V  = 9;
-  var CHARS_PER  = Math.max(20, Math.floor((BOX_W - 20) / (FONT_SZ * 0.58)));
-
-  function estH(txt) {
-    var naturalBreaks = (txt.match(/\n/g) || []).length;
-    var charsFlat     = txt.replace(/\n/g, '').length;
-    var wrappedLines  = Math.ceil(charsFlat / CHARS_PER);
-    var totalLines    = Math.max(1, naturalBreaks + wrappedLines);
-    return totalLines * LINE_H + BOX_PAD_V * 2 + 12;
+    var _tbH  = (document.getElementById('scToolbarWrap')||{}).offsetHeight || 0;
+    var _ftH  = (document.getElementById('scFooter')||{}).offsetHeight || 48;
+    var _tbgH = (document.getElementById('scTbToggleBar')||{}).offsetHeight || 16;
+    var _panH = (document.getElementById('studyCanvasPanel')||{}).offsetHeight || 0;
+    if(_panH > 200) wH = _panH - _tbH - _ftH - _tbgH - 10;
+    if(wH < 200)    wH = Math.max(400, window.innerHeight * 0.6);
   }
 
-  // ── HIGHLIGHTS: NAYI DEDICATED SLIDES — Batch naming (Sent1, Sent2...) ��─
-  scSnapshot();
+  // ── LAYOUT: 4+4 two-column, exactly 8 per slide (4 col0 + 4 col1) ──
+  var PAD            = 10;
+  var GAP_X          = 10;   // gap between left and right column
+  var GAP_Y          = 8;    // vertical gap between boxes in same column
+  var BOXES_PER_COL  = 4;    // 4 boxes per column
+  var BOXES_PER_SLIDE = 8;   // 4 left + 4 right per slide
 
-  var _existingBatches = _sc.slides.filter(function(sl){ return sl.title && sl.title.indexOf('📌 Highlights') !== -1; });
+  var colW    = Math.floor((wW - PAD * 2 - GAP_X) / 2);
+  var FONT_SZ = wW >= 600 ? 15 : 13;
+  var LINE_H  = FONT_SZ * 1.6;
+  var BOX_PAD = 8;
+  var CHARS_PER = Math.max(14, Math.floor((colW - 16) / (FONT_SZ * 0.58)));
+
+  function estH(txt) {
+    var nat   = (txt.match(/\n/g) || []).length;
+    var flat  = txt.replace(/\n/g, '').length;
+    var lines = Math.max(1, nat + Math.ceil(flat / CHARS_PER));
+    return lines * LINE_H + BOX_PAD * 2 + 12;
+  }
+
+  // Distribute 4 boxes evenly in column height
+  function colBoxY(boxInCol, boxH) {
+    var usable   = wH - PAD * 2;
+    var totalNeeded = boxH * BOXES_PER_COL + GAP_Y * (BOXES_PER_COL - 1);
+    if(totalNeeded <= usable) {
+      return PAD + boxInCol * (boxH + GAP_Y);
+    } else {
+      var step = Math.floor(usable / BOXES_PER_COL);
+      return PAD + boxInCol * step;
+    }
+  }
+
+  // ── SLIDE CREATION ──
+  scSnapshot();
+  var _existingBatches = _sc.slides.filter(function(sl){ return sl.title && sl.title.indexOf('\ud83d\udccc Highlights') !== -1; });
   var _maxBatch = 0;
   _existingBatches.forEach(function(sl){
     var m = sl.title.match(/Sent(\d+)/);
-    if(m) { var n = parseInt(m[1]); if(n > _maxBatch) _maxBatch = n; }
+    if(m){ var n=parseInt(m[1]); if(n>_maxBatch) _maxBatch=n; }
   });
   var _thisBatch = _maxBatch + 1;
   var _hlNum = 0;
+
   function _makeHlSlide() {
     _hlNum++;
-    var batchLabel = '📌 Highlights Sent' + _thisBatch + (_hlNum > 1 ? ' (' + _hlNum + ')' : '');
-    var ns = _scNewSlide(batchLabel);
+    var label = '\ud83d\udccc Highlights Sent' + _thisBatch + (_hlNum > 1 ? ' (' + _hlNum + ')' : '');
+    var ns = _scNewSlide(label);
+    ns._hlLayout = { cols: 2, boxesPerCol: BOXES_PER_COL };
     _sc.slides.push(ns);
     return _sc.slides.length - 1;
   }
@@ -28466,27 +28477,33 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
   var slideIdx = _makeHlSlide();
   _sc.curSlide = slideIdx;
   scRenderAll && scRenderAll(); _scSyncTextBlocksDOM && _scSyncTextBlocksDOM(); _scRenderSlideNav && _scRenderSlideNav();
-  // Re-measure after first render — DOM has actual height now
   if(wrap && wrap.offsetHeight > 100) wH = wrap.offsetHeight;
 
-  var curY   = PAD;
-  var placed = 0;
+  var placed      = 0;   // total placed
+  var slotInSlide = 0;   // 0-7 within current slide
 
   items.forEach(function(item, i) {
-    var bH = estH(item.text);
-
-    // Only overflow to new slide if at least 1 item already placed (prevents blank first slide)
-    if(placed > 0 && curY + bH > wH - PAD) {
+    // Every 8 items → new slide
+    if(placed > 0 && slotInSlide >= BOXES_PER_SLIDE) {
       _scSyncCurrentSlideFromDOM && _scSyncCurrentSlideFromDOM();
       slideIdx = _makeHlSlide();
       _sc.curSlide = slideIdx;
-      curY = PAD;
+      slotInSlide = 0;
       scRenderAll && scRenderAll(); _scSyncTextBlocksDOM && _scSyncTextBlocksDOM(); _scRenderSlideNav && _scRenderSlideNav();
+      if(wrap && wrap.offsetHeight > 100) wH = wrap.offsetHeight;
     }
 
-    var x   = PAD;
-    var cur = _sc.slides[slideIdx];
-    if(!cur) return;
+    // Slots 0-3 → col0 (left), slots 4-7 → col1 (right)
+    var isCol1   = slotInSlide >= BOXES_PER_COL;
+    var colIdx   = isCol1 ? 1 : 0;
+    var boxInCol = isCol1 ? (slotInSlide - BOXES_PER_COL) : slotInSlide;
+
+    var bH   = estH(item.text);
+    var xPos = PAD + colIdx * (colW + GAP_X);
+    var yPos = colBoxY(boxInCol, bH);
+
+    var curSlide = _sc.slides[slideIdx];
+    if(!curSlide) return;
 
     var safeHtml = item.text
       .replace(/&/g,'&amp;')
@@ -28496,9 +28513,9 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
 
     var block = {
       id:        'scb_hl_' + Date.now() + '_' + i,
-      x:         x,
-      y:         curY,
-      w:         BOX_W,
+      x:         xPos,
+      y:         yPos,
+      w:         colW,
       html:      safeHtml,
       fontSize:  FONT_SZ,
       color:     item.color,
@@ -28508,7 +28525,7 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
       angle:     0
     };
 
-    cur.textBlocks.push(block);
+    curSlide.textBlocks.push(block);
 
     if(slideIdx === _sc.curSlide) {
       var el = _scCreateBlockDOM(block);
@@ -28518,14 +28535,13 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
       }
     }
 
-    curY = curY + bH + GAP_Y;
+    slotInSlide++;
     placed++;
   });
 
   _scRenderSlideNav && _scRenderSlideNav();
-
   var _hlTotal = _hlNum;
-  var msg = '✅ Batch Sent' + _thisBatch + ': ' + placed + ' nayi highlight' + (placed>1?'s':'') + ' → ' + _hlTotal + ' nayi slide' + (_hlTotal>1?'n':'') + ' mein!';
+  var msg = '\u2705 Batch Sent' + _thisBatch + ': ' + placed + ' highlights \u2192 ' + _hlTotal + ' slide' + (_hlTotal>1?'s':'') + ' (4+4 layout)!';
   showToast && showToast(msg, 'success');
 };
 
@@ -38262,6 +38278,545 @@ window.neOpenRevisionPage = function(){
 });
 
 
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// ⊞ ADVANCED ARRANGE SYSTEM — Number-wise select + auto arrange
+// Features:
+//  1. Numbered checkbox select → arrange in col0 or col1 by number order
+//  2. Transfer boxes: col0 ↔ col1
+//  3. Auto Portrait: landscape 2-col → portrait sequential (col0 top, col1 below)
+//  4. Auto Portrait reversal: portrait → landscape 2-col restore
+// ══════════════════════════════════════════════════════════════════════════
+
+// State for advanced arrange
+window._scArrangeState = {
+  open: false,
+  mode: 'select_col0',   // 'select_col0' | 'select_col1' | 'transfer'
+  selectedIds: []        // block ids selected in order (index = display number)
+};
+
+// ── Open the Advanced Arrange Panel overlay ──
+window.scShowAdvArrangePanel = function() {
+  var old = document.getElementById('_scAdvArrangeOverlay');
+  if(old) { old.remove(); _scArrangeState.open = false; return; }
+
+  var cur = _scCur();
+  if(!cur || !cur.textBlocks || cur.textBlocks.length === 0) {
+    showToast && showToast('Is slide pe koi block nahi hai!', 'error');
+    return;
+  }
+
+  _scArrangeState.open = true;
+  _scArrangeState.selectedIds = [];
+
+  var isLandscape = window.innerWidth > window.innerHeight;
+  var cfg = _scGetLayoutConfig();
+
+  // Build overlay
+  var overlay = document.createElement('div');
+  overlay.id = '_scAdvArrangeOverlay';
+  overlay.style.cssText = [
+    'position:absolute;inset:0;z-index:8000;',
+    'background:rgba(10,25,55,0.82);',
+    'display:flex;flex-direction:column;',
+    'border-radius:inherit;overflow:hidden;',
+    'font-family:inherit;'
+  ].join('');
+
+  // ── Header ──
+  var hdr = document.createElement('div');
+  hdr.style.cssText = [
+    'display:flex;align-items:center;justify-content:space-between;',
+    'padding:10px 14px;flex-shrink:0;',
+    'background:linear-gradient(135deg,#6a1b9a,#1565c0);',
+    'color:#fff;gap:8px;'
+  ].join('');
+  hdr.innerHTML = [
+    '<div>',
+      '<div style="font-size:0.9rem;font-weight:900;">\u229e Advanced Arrange</div>',
+      '<div style="font-size:0.66rem;opacity:0.8;margin-top:1px;">Boxes select karo \u2192 arrange / transfer / portrait</div>',
+    '</div>',
+    '<button id="_scArrangeClose" style="background:rgba(255,255,255,0.2);border:none;border-radius:8px;padding:4px 10px;color:#fff;cursor:pointer;font-size:0.85rem;font-weight:700;">\u2715</button>'
+  ].join('');
+  overlay.appendChild(hdr);
+
+  // ── Mode tabs ──
+  var tabBar = document.createElement('div');
+  tabBar.style.cssText = 'display:flex;gap:0;flex-shrink:0;border-bottom:2px solid rgba(255,255,255,0.12);';
+
+  var tabs = [
+    { id:'tab_col0',     label: '\u25a7 Col 1 Arrange',  mode:'select_col0' },
+    { id:'tab_col1',     label: '\u25a6 Col 2 Arrange',  mode:'select_col1' },
+    { id:'tab_transfer', label: '\u21c6 Transfer',        mode:'transfer'    },
+    { id:'tab_portrait', label: '\u21f3 Portrait',        mode:'portrait'    }
+  ];
+
+  tabs.forEach(function(t, ti) {
+    var btn = document.createElement('button');
+    btn.id  = t.id;
+    btn.textContent = t.label;
+    btn.style.cssText = [
+      'flex:1;padding:8px 4px;border:none;cursor:pointer;font-family:inherit;',
+      'font-size:0.65rem;font-weight:800;transition:all 0.15s;',
+      ti === 0
+        ? 'background:rgba(106,27,154,0.55);color:#fff;border-bottom:2px solid #ce93d8;'
+        : 'background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.6);border-bottom:2px solid transparent;'
+    ].join('');
+    btn.addEventListener('click', function() {
+      _scArrangeState.mode = t.mode;
+      _scArrangeState.selectedIds = [];
+      tabs.forEach(function(tt){ 
+        var b2 = document.getElementById(tt.id);
+        if(b2){ b2.style.background='rgba(255,255,255,0.06)';b2.style.color='rgba(255,255,255,0.6)';b2.style.borderBottom='2px solid transparent'; }
+      });
+      btn.style.background='rgba(106,27,154,0.55)';btn.style.color='#fff';btn.style.borderBottom='2px solid #ce93d8;';
+      _scRenderArrangeBody();
+    });
+    tabBar.appendChild(btn);
+  });
+  overlay.appendChild(tabBar);
+
+  // ── Body (scrollable block list) ──
+  var body = document.createElement('div');
+  body.id = '_scArrangeBody';
+  body.style.cssText = 'flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px;';
+  overlay.appendChild(body);
+
+  // ── Action bar ──
+  var actBar = document.createElement('div');
+  actBar.id = '_scArrangeActBar';
+  actBar.style.cssText = [
+    'flex-shrink:0;padding:10px 12px;',
+    'background:rgba(0,0,0,0.35);border-top:1px solid rgba(255,255,255,0.1);',
+    'display:flex;flex-wrap:wrap;gap:7px;align-items:center;'
+  ].join('');
+  overlay.appendChild(actBar);
+
+  // Attach overlay to canvas panel
+  var panel = document.getElementById('studyCanvasPanel');
+  if(!panel) { document.body.appendChild(overlay); } else { panel.appendChild(overlay); }
+
+  // Close button
+  document.getElementById('_scArrangeClose').addEventListener('click', function(){
+    overlay.remove(); _scArrangeState.open = false;
+  });
+
+  // Render initial mode
+  _scRenderArrangeBody();
+};
+
+// ── Render the block list for current mode ──
+window._scRenderArrangeBody = function() {
+  var body   = document.getElementById('_scArrangeBody');
+  var actBar = document.getElementById('_scArrangeActBar');
+  if(!body || !actBar) return;
+  body.innerHTML   = '';
+  actBar.innerHTML = '';
+
+  var cur = _scCur();
+  if(!cur || !cur.textBlocks) return;
+  var cfg  = _scGetLayoutConfig();
+  var mode = _scArrangeState.mode;
+
+  // Helper: get plain text preview
+  function preview(b) {
+    return (b.html||'').replace(/<[^>]+>/g,'').trim().substring(0,55) || '(empty)';
+  }
+
+  // Helper: which column is this block in?
+  function getCol(b) { return _scGetBlockCol(b, cfg); }
+
+  if(mode === 'portrait') {
+    // ── PORTRAIT MODE ──
+    _scRenderPortraitModeUI(body, actBar);
+    return;
+  }
+
+  if(mode === 'transfer') {
+    // ── TRANSFER MODE: show all blocks, let user move col0↔col1 ──
+    var title = document.createElement('div');
+    title.style.cssText = 'font-size:0.72rem;font-weight:800;color:rgba(255,255,255,0.7);margin-bottom:4px;';
+    title.textContent = 'Block select karo phir transfer karo (Col1 \u21c6 Col2):';
+    body.appendChild(title);
+
+    cur.textBlocks.forEach(function(b, idx) {
+      var col   = getCol(b);
+      var isSelected = _scArrangeState.selectedIds.indexOf(b.id) !== -1;
+      var row   = document.createElement('div');
+      row.style.cssText = [
+        'display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;cursor:pointer;',
+        'border:1.5px solid ',isSelected ? 'rgba(255,152,0,0.8)' : 'rgba(255,255,255,0.12)',';',
+        'background:',isSelected ? 'rgba(255,152,0,0.18)' : 'rgba(255,255,255,0.05)',';',
+        'transition:all 0.12s;'
+      ].join('');
+
+      var colBadge = document.createElement('span');
+      colBadge.style.cssText = [
+        'flex-shrink:0;width:20px;height:20px;border-radius:6px;font-size:0.62rem;font-weight:900;',
+        'display:flex;align-items:center;justify-content:center;',
+        col===0 ? 'background:rgba(21,101,192,0.5);color:#90caf9;' : 'background:rgba(106,27,154,0.5);color:#ce93d8;'
+      ].join('');
+      colBadge.textContent = col===0 ? 'L' : 'R';
+
+      var txt = document.createElement('span');
+      txt.style.cssText = 'flex:1;font-size:0.72rem;color:rgba(255,255,255,0.85);line-height:1.35;word-break:break-word;';
+      txt.textContent    = preview(b);
+
+      row.appendChild(colBadge);
+      row.appendChild(txt);
+      body.appendChild(row);
+
+      row.addEventListener('click', function(){
+        var sidx = _scArrangeState.selectedIds.indexOf(b.id);
+        if(sidx === -1) _scArrangeState.selectedIds.push(b.id);
+        else            _scArrangeState.selectedIds.splice(sidx,1);
+        _scRenderArrangeBody();
+      });
+    });
+
+    // Action: transfer to col0 / col1
+    var selCount = _scArrangeState.selectedIds.length;
+    var info = document.createElement('span');
+    info.style.cssText = 'font-size:0.68rem;color:rgba(255,255,255,0.55);flex:1;';
+    info.textContent   = selCount ? selCount + ' selected' : 'Koi block select nahi';
+    actBar.appendChild(info);
+
+    function mkTransBtn(label, col, color) {
+      var btn = document.createElement('button');
+      btn.textContent = label;
+      btn.style.cssText = [
+        'padding:7px 13px;border-radius:9px;border:none;cursor:pointer;',
+        'font-size:0.75rem;font-weight:800;font-family:inherit;',
+        'background:', color, ';color:#fff;',
+        selCount === 0 ? 'opacity:0.4;pointer-events:none;' : ''
+      ].join('');
+      btn.addEventListener('click', function(){
+        if(!_scArrangeState.selectedIds.length) return;
+        scSnapshot();
+        var cfg2 = _scGetLayoutConfig();
+        cur.textBlocks.forEach(function(b){
+          if(_scArrangeState.selectedIds.indexOf(b.id) === -1) return;
+          if(col === 0 && cfg2.col0) { b.x = cfg2.col0.x; b.w = cfg2.col0.w; }
+          if(col === 1 && cfg2.col1) { b.x = cfg2.col1.x; b.w = cfg2.col1.w; }
+          else if(col === 1 && !cfg2.col1) { b.x = cfg2.col0.x; b.w = cfg2.col0.w; } // portrait fallback
+        });
+        _scArrangeState.selectedIds = [];
+        _scApplyLayout && _scApplyLayout();
+        _scSyncTextBlocksDOM && _scSyncTextBlocksDOM();
+        showToast && showToast('\u2705 Blocks transfer ho gaye!', 'success');
+        _scRenderArrangeBody();
+      });
+      return btn;
+    }
+    actBar.appendChild(mkTransBtn('\u2190 Col 1 (Left)', 0, 'rgba(21,101,192,0.85)'));
+    actBar.appendChild(mkTransBtn('Col 2 (Right) \u2192', 1, 'rgba(106,27,154,0.85)'));
+    return;
+  }
+
+  // ── SELECT + ARRANGE MODE (col0 or col1) ──
+  var targetCol = (mode === 'select_col1') ? 1 : 0;
+  var colBlocks = cur.textBlocks.filter(function(b){ return getCol(b) === targetCol; });
+  var otherBlocks = cur.textBlocks.filter(function(b){ return getCol(b) !== targetCol; });
+
+  var colLabel = targetCol === 0 ? 'Col 1 (Left)' : 'Col 2 (Right)';
+  var title = document.createElement('div');
+  title.style.cssText = 'font-size:0.72rem;font-weight:800;color:rgba(255,255,255,0.7);margin-bottom:6px;';
+  title.textContent = colLabel + ' — Number order mein select karo:';
+  body.appendChild(title);
+
+  if(colBlocks.length === 0) {
+    var empty2 = document.createElement('div');
+    empty2.style.cssText = 'text-align:center;padding:20px;font-size:0.75rem;color:rgba(255,255,255,0.4);';
+    empty2.textContent = 'Is column mein koi block nahi hai!';
+    body.appendChild(empty2);
+  } else {
+    colBlocks.forEach(function(b, idx) {
+      var selIdx   = _scArrangeState.selectedIds.indexOf(b.id);
+      var isSelected = selIdx !== -1;
+      var row = document.createElement('div');
+      row.style.cssText = [
+        'display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;cursor:pointer;',
+        'border:1.5px solid ', isSelected ? 'rgba(255,193,7,0.8)' : 'rgba(255,255,255,0.1)', ';',
+        'background:', isSelected ? 'rgba(255,193,7,0.15)' : 'rgba(255,255,255,0.04)', ';',
+        'transition:all 0.12s;'
+      ].join('');
+
+      var numBadge = document.createElement('span');
+      numBadge.style.cssText = [
+        'flex-shrink:0;min-width:22px;height:22px;border-radius:7px;',
+        'font-size:0.72rem;font-weight:900;display:flex;align-items:center;justify-content:center;',
+        isSelected
+          ? 'background:rgba(255,193,7,0.9);color:#333;'
+          : 'background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);'
+      ].join('');
+      numBadge.textContent = isSelected ? (selIdx + 1) : (idx + 1);
+
+      var txt = document.createElement('span');
+      txt.style.cssText = 'flex:1;font-size:0.72rem;color:rgba(255,255,255,0.85);line-height:1.35;word-break:break-word;';
+      txt.textContent = preview(b);
+
+      row.appendChild(numBadge);
+      row.appendChild(txt);
+      body.appendChild(row);
+
+      row.addEventListener('click', function(){
+        var si = _scArrangeState.selectedIds.indexOf(b.id);
+        if(si === -1) _scArrangeState.selectedIds.push(b.id);
+        else          _scArrangeState.selectedIds.splice(si,1);
+        _scRenderArrangeBody();
+      });
+    });
+  }
+
+  // ── Action bar for arrange mode ──
+  var selCount = _scArrangeState.selectedIds.length;
+  var info = document.createElement('span');
+  info.style.cssText = 'font-size:0.68rem;color:rgba(255,255,255,0.55);flex:1;';
+  info.textContent   = selCount ? selCount + ' selected (number order)' : 'Blocks select karo';
+  actBar.appendChild(info);
+
+  // Select All
+  var selAllBtn = document.createElement('button');
+  selAllBtn.textContent = 'Sab';
+  selAllBtn.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;font-size:0.7rem;font-weight:700;font-family:inherit;';
+  selAllBtn.addEventListener('click', function(){
+    _scArrangeState.selectedIds = colBlocks.map(function(b){ return b.id; });
+    _scRenderArrangeBody();
+  });
+  actBar.appendChild(selAllBtn);
+
+  // Clear
+  var clrBtn = document.createElement('button');
+  clrBtn.textContent = 'Clear';
+  clrBtn.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;font-size:0.7rem;font-weight:700;font-family:inherit;';
+  clrBtn.addEventListener('click', function(){ _scArrangeState.selectedIds=[]; _scRenderArrangeBody(); });
+  actBar.appendChild(clrBtn);
+
+  // Arrange selected in this column by number order
+  var arrBtn = document.createElement('button');
+  arrBtn.textContent = '\u2b07 Arrange ' + colLabel;
+  arrBtn.style.cssText = [
+    'padding:7px 12px;border-radius:9px;border:none;cursor:pointer;',
+    'font-size:0.75rem;font-weight:800;font-family:inherit;',
+    'background:linear-gradient(135deg,#6a1b9a,#1565c0);color:#fff;',
+    selCount === 0 ? 'opacity:0.4;pointer-events:none;' : ''
+  ].join('');
+  arrBtn.addEventListener('click', function(){
+    if(!_scArrangeState.selectedIds.length) { showToast&&showToast('Pehle blocks select karo!','error'); return; }
+    scSnapshot();
+    _scDoNumberArrange(targetCol);
+  });
+  actBar.appendChild(arrBtn);
+};
+
+// ── Do the actual number-wise arrange in a column ──
+window._scDoNumberArrange = function(targetCol) {
+  var cur = _scCur(); if(!cur || !cur.textBlocks) return;
+  var cfg = _scGetLayoutConfig();
+  var colCfg = (targetCol === 1 && cfg.col1) ? cfg.col1 : cfg.col0;
+  var GAP_Y  = cfg.gap || 10;
+
+  // Get the selected blocks in selected order (user's chosen number sequence)
+  var selectedInOrder = [];
+  _scArrangeState.selectedIds.forEach(function(id){
+    var b = cur.textBlocks.find(function(x){ return x.id === id; });
+    if(b) selectedInOrder.push(b);
+  });
+
+  // Get unselected blocks in this column (they stay, keep their relative positions)
+  var unselected = cur.textBlocks.filter(function(b){
+    return _scGetBlockCol(b,cfg) === targetCol && _scArrangeState.selectedIds.indexOf(b.id) === -1;
+  });
+
+  // Helper: measure height
+  function getH(b) {
+    var el = document.getElementById('scBlock_' + b.id);
+    if(el && el.offsetHeight > 10) return el.offsetHeight;
+    var text = (b.html||'').replace(/<[^>]+>/g,'');
+    var fw = b.w || colCfg.w;
+    var cpl = Math.max(1, Math.floor((fw-20)/((b.fontSize||15)*0.58)));
+    return Math.max(40, Math.ceil(text.length/cpl) * (b.fontSize||15) * 1.7 + 18);
+  }
+
+  // Stack selected blocks top-to-bottom in column, starting at y=8
+  // Unselected blocks go after selected
+  var allToStack = selectedInOrder.concat(unselected);
+  var nextY = 8;
+  allToStack.forEach(function(b){
+    b.x = colCfg.x;
+    b.w = colCfg.w;
+    b.y = nextY;
+    nextY += getH(b) + GAP_Y;
+    // Update DOM immediately
+    var el = document.getElementById('scBlock_' + b.id);
+    if(el){ el.style.left=b.x+'px'; el.style.top=b.y+'px'; el.style.width=b.w+'px'; }
+  });
+
+  _scArrangeState.selectedIds = [];
+  clearTimeout(window._scExpandTimer);
+  window._scExpandTimer = setTimeout(scExpandCanvasForContent, 80);
+  showToast && showToast('\u2705 Blocks number order mein arrange ho gaye!', 'success');
+  _scRenderArrangeBody();
+};
+
+// ── Portrait mode UI ──
+window._scRenderPortraitModeUI = function(body, actBar) {
+  var cur = _scCur(); if(!cur) return;
+  var isLandscape = window.innerWidth > window.innerHeight;
+  var cfg = _scGetLayoutConfig();
+
+  var info = document.createElement('div');
+  info.style.cssText = 'font-size:0.75rem;color:rgba(255,255,255,0.75);line-height:1.5;margin-bottom:10px;';
+
+  if(isLandscape) {
+    info.innerHTML = [
+      '<b style="color:#ce93d8;">\u21f3 Auto Portrait Mode:</b><br>',
+      'Landscape ke dono columns ke blocks ko portrait mein',
+      ' <b>sequentially</b> arrange karega:<br>',
+      '<span style="color:#90caf9;">Col 1 (Left)</span> blocks pehle upar, phir ',
+      '<span style="color:#ce93d8;">Col 2 (Right)</span> blocks niche.<br><br>',
+      '<span style="font-size:0.68rem;opacity:0.7;">Note: Screen portrait karein pehle, ya yahan se force karo.</span>'
+    ].join('');
+  } else {
+    info.innerHTML = [
+      '<b style="color:#80cbc4;">\u21f3 Portrait Mode Active</b><br>',
+      'Blocks currently portrait mein hain.<br>',
+      'Landscape restore karne ke liye "Restore Landscape" click karo.'
+    ].join('');
+  }
+  body.appendChild(info);
+
+  // Preview: show col0 blocks then col1 blocks
+  var col0 = [], col1 = [];
+  (cur.textBlocks || []).forEach(function(b){
+    if(_scGetBlockCol(b, cfg) === 1) col1.push(b);
+    else col0.push(b);
+  });
+  col0.sort(function(a,b){ return (a.y||0)-(b.y||0); });
+  col1.sort(function(a,b){ return (a.y||0)-(b.y||0); });
+
+  function mkPreviewSection(label, blocks, color) {
+    if(!blocks.length) return;
+    var sec = document.createElement('div');
+    sec.style.cssText = 'margin-bottom:8px;';
+    var lbl = document.createElement('div');
+    lbl.style.cssText = 'font-size:0.66rem;font-weight:900;color:'+color+';margin-bottom:4px;';
+    lbl.textContent   = label + ' (' + blocks.length + ' blocks)';
+    sec.appendChild(lbl);
+    blocks.forEach(function(b, i){
+      var row = document.createElement('div');
+      row.style.cssText = 'font-size:0.68rem;color:rgba(255,255,255,0.65);padding:4px 8px;border-left:2px solid '+color+';margin-bottom:3px;border-radius:0 6px 6px 0;background:rgba(255,255,255,0.04);';
+      row.textContent = (i+1) + '. ' + (b.html||'').replace(/<[^>]+>/g,'').trim().substring(0,50);
+      sec.appendChild(row);
+    });
+    body.appendChild(sec);
+  }
+  mkPreviewSection('\u25a7 Col 1 Blocks (pehle aayenge)', col0, '#90caf9');
+  mkPreviewSection('\u25a6 Col 2 Blocks (baad mein aayenge)', col1, '#ce93d8');
+
+  // Action buttons
+  var applyBtn = document.createElement('button');
+  applyBtn.textContent = isLandscape ? '\u21f3 Force Portrait Arrange' : '\u21f3 Portrait Re-arrange';
+  applyBtn.style.cssText = 'flex:1;padding:9px 0;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#6a1b9a);color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;font-family:inherit;';
+  applyBtn.addEventListener('click', function(){ _scApplyPortraitArrange(); });
+  actBar.appendChild(applyBtn);
+
+  if(cur._portraitBackup) {
+    var restBtn = document.createElement('button');
+    restBtn.textContent = '\u21c4 Restore Landscape';
+    restBtn.style.cssText = 'padding:9px 14px;border-radius:10px;border:1.5px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.08);color:#fff;font-size:0.78rem;font-weight:800;cursor:pointer;font-family:inherit;';
+    restBtn.addEventListener('click', function(){ _scRestoreLandscape(); });
+    actBar.appendChild(restBtn);
+  }
+};
+
+// ── Apply portrait arrange: col0 blocks on top, col1 blocks below ──
+window._scApplyPortraitArrange = function() {
+  var cur = _scCur(); if(!cur || !cur.textBlocks || !cur.textBlocks.length) return;
+
+  scSnapshot();
+
+  var wrap   = document.getElementById('scCanvasWrap');
+  var wW     = wrap ? wrap.offsetWidth : 320;
+  var cfg    = _scGetLayoutConfig();
+  var GAP_Y  = 10;
+  var PAD    = 10;
+  var fullW  = wW - PAD * 2;
+
+  // Backup current landscape positions for restore
+  cur._portraitBackup = cur.textBlocks.map(function(b){
+    return { id: b.id, x: b.x, y: b.y, w: b.w };
+  });
+  cur._portraitMode = true;
+
+  // Separate col0 and col1 blocks, sort each by y
+  var cfg2 = _scGetLayoutConfig();
+  var col0  = cur.textBlocks.filter(function(b){ return _scGetBlockCol(b,cfg2) === 0; });
+  var col1  = cur.textBlocks.filter(function(b){ return _scGetBlockCol(b,cfg2) === 1; });
+  col0.sort(function(a,b){ return (a.y||0)-(b.y||0); });
+  col1.sort(function(a,b){ return (a.y||0)-(b.y||0); });
+
+  // All blocks together sequentially: col0 then col1
+  var allBlocks = col0.concat(col1);
+
+  function getH(b) {
+    var el = document.getElementById('scBlock_' + b.id);
+    if(el && el.offsetHeight > 10) return el.offsetHeight;
+    var text = (b.html||'').replace(/<[^>]+>/g,'');
+    var cpl  = Math.max(1, Math.floor((fullW-20)/((b.fontSize||15)*0.58)));
+    return Math.max(40, Math.ceil(text.length/cpl) * (b.fontSize||15) * 1.7 + 18);
+  }
+
+  var nextY = PAD;
+  allBlocks.forEach(function(b){
+    b.x = PAD;
+    b.w = fullW;
+    b.y = nextY;
+    nextY += getH(b) + GAP_Y;
+    var el = document.getElementById('scBlock_' + b.id);
+    if(el){ el.style.left=b.x+'px'; el.style.top=b.y+'px'; el.style.width=b.w+'px'; }
+  });
+
+  clearTimeout(window._scExpandTimer);
+  window._scExpandTimer = setTimeout(scExpandCanvasForContent, 80);
+  showToast && showToast('\u2705 Portrait arrange done! Col1 upar, Col2 niche.', 'success');
+  _scRenderArrangeBody();
+};
+
+// ── Restore landscape positions ──
+window._scRestoreLandscape = function() {
+  var cur = _scCur();
+  if(!cur || !cur._portraitBackup) { showToast&&showToast('Koi backup nahi mila!','error'); return; }
+  scSnapshot();
+  cur._portraitBackup.forEach(function(bk){
+    var b = cur.textBlocks.find(function(x){ return x.id === bk.id; });
+    if(!b) return;
+    b.x = bk.x; b.y = bk.y; b.w = bk.w;
+    var el = document.getElementById('scBlock_' + b.id);
+    if(el){ el.style.left=b.x+'px'; el.style.top=b.y+'px'; el.style.width=b.w+'px'; }
+  });
+  delete cur._portraitBackup;
+  delete cur._portraitMode;
+  clearTimeout(window._scExpandTimer);
+  window._scExpandTimer = setTimeout(scExpandCanvasForContent, 80);
+  showToast && showToast('\u21c4 Landscape layout restore ho gaya!', 'success');
+  _scRenderArrangeBody();
+};
+
+// ── CSS for arrange overlay ──
+(function(){
+  var st = document.createElement('style');
+  st.textContent = [
+    '#_scAdvArrangeOverlay * { box-sizing:border-box; }',
+    '#_scArrangeBody::-webkit-scrollbar { width:4px; }',
+    '#_scArrangeBody::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.2);border-radius:2px; }',
+    '#tab_col0,#tab_col1,#tab_transfer,#tab_portrait { -webkit-tap-highlight-color:transparent; }'
+  ].join('\n');
+  document.head.appendChild(st);
+})();
+
+// ══ END ADVANCED ARRANGE SYSTEM ══
 
 })();
 </script>
