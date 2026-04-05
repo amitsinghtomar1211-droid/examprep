@@ -26087,7 +26087,17 @@ function _scRenderTextBlocks() {
   wrap.querySelectorAll('.sc-text-block').forEach(function(el){ el.remove(); });
   var cur = _scCur();
   if(!cur) return;
+  // Create DOM first so heights are measurable
   (cur.textBlocks || []).forEach(function(b){ _scCreateBlockDOM(b); });
+  // Resolve overlaps using real DOM heights, then sync positions
+  _scResolveOverlaps();
+  (cur.textBlocks||[]).forEach(function(b){
+    var el=document.getElementById('scBlock_'+b.id);
+    if(el){ el.style.top=b.y+'px'; el.style.left=b.x+'px'; }
+  });
+  // Trigger canvas expand for scroll
+  clearTimeout(_scExpandTimer);
+  _scExpandTimer = setTimeout(scExpandCanvasForContent, 80);
 }
 
 function _scCreateBlockDOM(b) {
@@ -26396,8 +26406,15 @@ function _scBlockDrag(b,el) {
     el.style.left=b.x+'px'; el.style.top=b.y+'px';
   },{passive:true});
   el.addEventListener('pointerup',function(){drag=false; if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);
-    // Expand canvas if block was dragged below visible area
-    clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,60);
+    // Resolve overlaps after drag, then expand canvas
+    setTimeout(function(){
+      _scResolveOverlaps();
+      ((_scCur()||{}).textBlocks||[]).forEach(function(b){
+        var el2=document.getElementById('scBlock_'+b.id);
+        if(el2){el2.style.top=b.y+'px';el2.style.left=b.x+'px';}
+      });
+      clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,60);
+    },30);
   },{passive:true});
 }
 
@@ -26456,6 +26473,15 @@ function _scBlockRotate(b,el,handle) {
     handle.addEventListener('pointerup', function() {
       dragging = false;
       if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);
+      // Resolve overlaps after move-handle drag
+      setTimeout(function(){
+        _scResolveOverlaps();
+        ((_scCur()||{}).textBlocks||[]).forEach(function(b2){
+          var el2=document.getElementById('scBlock_'+b2.id);
+          if(el2){el2.style.top=b2.y+'px';el2.style.left=b2.x+'px';}
+        });
+        clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,60);
+      },30);
     }, { passive: true });
     handle.addEventListener('pointercancel', function() {
       dragging = false;
@@ -26501,18 +26527,59 @@ function _scWrapTap(e) {
   if(el) setTimeout(function(){ scEditBlock(b, el); }, 50);
 }
 
+// ══════════════════════════════════════════════════════
+// OVERLAP RESOLVER — Blocks strictly stack top-to-bottom, no overlap
+// ══════════════════════════════════════════════════════
+function _scResolveOverlaps() {
+  var cur = _scCur(); if(!cur || !cur.textBlocks || cur.textBlocks.length < 2) return;
+  var PADDING = 12; // px gap between boxes
+
+  // Sort by y (top to bottom)
+  var sorted = cur.textBlocks.slice().sort(function(a,b){ return (a.y||0)-(b.y||0); });
+
+  // Get block height: from DOM if rendered, else estimate
+  function getH(b) {
+    var el = document.getElementById('scBlock_' + b.id);
+    if(el && el.offsetHeight > 0) return el.offsetHeight;
+    var text = (b.html||'').replace(/<[^>]+>/g,'');
+    var charsPerLine = Math.max(1, Math.floor(((b.w||140) - 20) / ((b.fontSize||15) * 0.6)));
+    var lines = Math.max(1, Math.ceil(text.length / charsPerLine));
+    return lines * (b.fontSize||15) * 1.75 + 20;
+  }
+
+  var nextY = Math.max(8, sorted[0].y || 8);
+  for(var i = 0; i < sorted.length; i++) {
+    var b = sorted[i];
+    // Push block down if needed — never pull up
+    if(b.y < nextY) b.y = nextY;
+    // Sync back to original array
+    for(var j = 0; j < cur.textBlocks.length; j++) {
+      if(cur.textBlocks[j].id === b.id) { cur.textBlocks[j].y = b.y; break; }
+    }
+    nextY = b.y + getH(b) + PADDING;
+  }
+}
+
 function _scSyncTextBlocksDOM() {
   var wrap=document.getElementById('scCanvasWrap'); if(!wrap) return;
   wrap.querySelectorAll('.sc-text-block').forEach(function(el){el.remove();});
   var cur=_scCur(); if(!cur) return;
+  // First pass: create DOM so heights are measurable
   (cur.textBlocks||[]).forEach(function(b){_scCreateBlockDOM(b);});
-  // After DOM sync, expand canvas height if any block overflows
+  // Second pass: resolve overlaps using real DOM heights, re-position
+  _scResolveOverlaps();
+  // Third pass: re-sync positions to DOM
+  (cur.textBlocks||[]).forEach(function(b){
+    var el=document.getElementById('scBlock_'+b.id);
+    if(el) { el.style.top = b.y+'px'; el.style.left = b.x+'px'; }
+  });
+  // Expand canvas height for scrolling
   clearTimeout(_scExpandTimer);
   _scExpandTimer = setTimeout(scExpandCanvasForContent, 80);
 }
 var _scExpandTimer;
 
-// Expand canvas height to fit all text blocks — called after any block add/move/resize
+// Expand canvas height to fit all text blocks — enables scrolling
 function scExpandCanvasForContent() {
   var wrap = document.getElementById('scCanvasWrap');
   var cv   = document.getElementById('scCanvas');
@@ -26520,13 +26587,12 @@ function scExpandCanvasForContent() {
   if(!wrap||!cv) return;
   var visibleH = scrollArea ? scrollArea.offsetHeight : 400;
   var maxBottom = visibleH;
-  // Check all rendered text blocks
   wrap.querySelectorAll('.sc-text-block').forEach(function(el) {
     var bottom = (parseFloat(el.style.top)||0) + el.offsetHeight + 80;
     if(bottom > maxBottom) maxBottom = bottom;
   });
   var newH = Math.max(visibleH, maxBottom);
-  if(Math.abs(newH - cv.height) > 10) {
+  if(Math.abs(newH - (cv.height||0)) > 5) {
     cv.height = newH; cv.style.height = newH+'px';
     var qmcv = document.getElementById('scQmCanvas');
     var hlcv = document.getElementById('scHlCanvas');
