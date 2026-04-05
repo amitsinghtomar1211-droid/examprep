@@ -26034,9 +26034,29 @@ function scFitCanvas() {
 // ══════════════════════════════════════
 function scRenderAll() {
   _scRenderStrokes();
+  _scRenderColDivider();  // draw landscape column divider
   _scRenderTextBlocks();
   _scQmRender();
   _scRenderHlStrokes();
+}
+
+// Draw a subtle dashed vertical line between 2 columns in landscape
+function _scRenderColDivider() {
+  var isLandscape = window.innerWidth > window.innerHeight;
+  if(!isLandscape) return;
+  var cv = _sc && _sc.canvas; if(!cv || !_sc.ctx) return;
+  var cfg = _scGetLayoutConfig();
+  if(!cfg || cfg.cols < 2) return;
+  var ctx = _sc.ctx;
+  ctx.save();
+  ctx.setLineDash([4, 8]);
+  ctx.strokeStyle = 'rgba(21,101,192,0.15)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(cfg.splitX, 0);
+  ctx.lineTo(cfg.splitX, cv.height);
+  ctx.stroke();
+  ctx.restore();
 }
 
 // ══════════════════════════════════════
@@ -26089,13 +26109,9 @@ function _scRenderTextBlocks() {
   if(!cur) return;
   // Create DOM first so heights are measurable
   (cur.textBlocks || []).forEach(function(b){ _scCreateBlockDOM(b); });
-  // Resolve overlaps using real DOM heights, then sync positions
-  _scResolveOverlaps();
-  (cur.textBlocks||[]).forEach(function(b){
-    var el=document.getElementById('scBlock_'+b.id);
-    if(el){ el.style.top=b.y+'px'; el.style.left=b.x+'px'; }
-  });
-  // Trigger canvas expand for scroll
+  // Apply column layout + overlap resolution
+  _scApplyLayout();
+  // Expand canvas for scroll
   clearTimeout(_scExpandTimer);
   _scExpandTimer = setTimeout(scExpandCanvasForContent, 80);
 }
@@ -26406,13 +26422,9 @@ function _scBlockDrag(b,el) {
     el.style.left=b.x+'px'; el.style.top=b.y+'px';
   },{passive:true});
   el.addEventListener('pointerup',function(){drag=false; if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);
-    // Resolve overlaps after drag, then expand canvas
+    // After drag: snap to correct column, resolve stacking, expand
     setTimeout(function(){
-      _scResolveOverlaps();
-      ((_scCur()||{}).textBlocks||[]).forEach(function(b){
-        var el2=document.getElementById('scBlock_'+b.id);
-        if(el2){el2.style.top=b.y+'px';el2.style.left=b.x+'px';}
-      });
+      _scApplyLayout();
       clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,60);
     },30);
   },{passive:true});
@@ -26473,13 +26485,9 @@ function _scBlockRotate(b,el,handle) {
     handle.addEventListener('pointerup', function() {
       dragging = false;
       if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);
-      // Resolve overlaps after move-handle drag
+      // After move-handle drag: snap to column, resolve stacking
       setTimeout(function(){
-        _scResolveOverlaps();
-        ((_scCur()||{}).textBlocks||[]).forEach(function(b2){
-          var el2=document.getElementById('scBlock_'+b2.id);
-          if(el2){el2.style.top=b2.y+'px';el2.style.left=b2.x+'px';}
-        });
+        _scApplyLayout();
         clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,60);
       },30);
     }, { passive: true });
@@ -26513,67 +26521,194 @@ function _scWrapTap(e) {
   var blockX = Math.min(tapX, rect.width - blockW - 10);
 
   scSnapshot();
+  // Determine correct column and position based on tap location
+  var cfg = _scGetLayoutConfig();
+  var col = (cfg.cols === 2 && tapX >= cfg.splitX) ? 1 : 0;
+  var colCfg = (col === 1 && cfg.col1) ? cfg.col1 : cfg.col0;
+  // Find lowest block in this column for y
+  var colBlocks = (cur.textBlocks||[]).filter(function(bl){
+    return _scGetBlockCol(bl, cfg) === col;
+  });
+  var lowestY = 8;
+  colBlocks.forEach(function(bl){
+    var el2 = document.getElementById('scBlock_'+bl.id);
+    var h = el2 ? el2.offsetHeight : 60;
+    var bot = (bl.y||0) + h + cfg.gap;
+    if(bot > lowestY) lowestY = bot;
+  });
   var b = {
     id: 'scb_'+Date.now(),
-    x: Math.max(4, blockX),
-    y: Math.max(4, tapY - 10),
-    w: blockW,
+    x: colCfg.x,
+    y: Math.max(lowestY, Math.max(4, tapY - 10)),
+    w: colCfg.w,
     html: '',
     fontSize: 15, color: '#1a1a1a',
     bold: false, italic: false, underline: false, angle: 0
   };
   cur.textBlocks.push(b);
   var el = _scCreateBlockDOM(b);
-  if(el) setTimeout(function(){ scEditBlock(b, el); }, 50);
+  setTimeout(function(){
+    _scApplyLayout();
+    clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,80);
+    if(el) scEditBlock(b, el);
+  }, 60);
 }
 
 // ══════════════════════════════════════════════════════
 // OVERLAP RESOLVER — Blocks strictly stack top-to-bottom, no overlap
 // ══════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// COLUMN LAYOUT ENGINE
+// Portrait  → 1 column: left margin 8px, full width minus margin
+// Landscape → 2 columns: thin divider, user drags blocks between cols
+// User can freely reorder blocks vertically within each column
+// ══════════════════════════════════════════════════════════════
+
+// Returns layout config based on current orientation
+function _scGetLayoutConfig() {
+  var wrap = document.getElementById('scCanvasWrap');
+  var canvasW = wrap ? wrap.offsetWidth : 320;
+  var isLandscape = window.innerWidth > window.innerHeight;
+  var MARGIN = 8;      // left edge margin (portrait) / col edge margin (landscape)
+  var GAP    = 12;     // vertical gap between boxes
+  var COL_GAP = 14;    // gap between 2 columns (landscape)
+
+  if(isLandscape) {
+    var colW = Math.floor((canvasW - MARGIN*2 - COL_GAP) / 2);
+    return {
+      cols: 2,
+      col0: { x: MARGIN,              w: colW },
+      col1: { x: MARGIN + colW + COL_GAP, w: colW },
+      gap: GAP,
+      margin: MARGIN,
+      canvasW: canvasW,
+      splitX: MARGIN + colW + Math.floor(COL_GAP/2) // midpoint between cols
+    };
+  } else {
+    var colW1 = canvasW - MARGIN * 2;
+    return {
+      cols: 1,
+      col0: { x: MARGIN, w: colW1 },
+      col1: null,
+      gap: GAP,
+      margin: MARGIN,
+      canvasW: canvasW,
+      splitX: canvasW
+    };
+  }
+}
+
+// Assign block to column based on its x position
+function _scGetBlockCol(b, cfg) {
+  if(cfg.cols === 1) return 0;
+  // If block x is past midpoint → col 1, else col 0
+  return (b.x >= cfg.splitX) ? 1 : 0;
+}
+
+// Resolve overlaps within each column — stack blocks top-to-bottom
 function _scResolveOverlaps() {
-  var cur = _scCur(); if(!cur || !cur.textBlocks || cur.textBlocks.length < 2) return;
-  var PADDING = 12; // px gap between boxes
+  var cur = _scCur();
+  if(!cur || !cur.textBlocks || cur.textBlocks.length === 0) return;
+  var cfg = _scGetLayoutConfig();
 
-  // Sort by y (top to bottom)
-  var sorted = cur.textBlocks.slice().sort(function(a,b){ return (a.y||0)-(b.y||0); });
-
-  // Get block height: from DOM if rendered, else estimate
+  // Helper: get real rendered height or estimate
   function getH(b) {
     var el = document.getElementById('scBlock_' + b.id);
-    if(el && el.offsetHeight > 0) return el.offsetHeight;
+    if(el && el.offsetHeight > 10) return el.offsetHeight;
     var text = (b.html||'').replace(/<[^>]+>/g,'');
-    var charsPerLine = Math.max(1, Math.floor(((b.w||140) - 20) / ((b.fontSize||15) * 0.6)));
+    var fw = b.w || cfg.col0.w;
+    var charsPerLine = Math.max(1, Math.floor((fw - 20) / ((b.fontSize||15) * 0.58)));
     var lines = Math.max(1, Math.ceil(text.length / charsPerLine));
     return lines * (b.fontSize||15) * 1.75 + 20;
   }
 
-  var nextY = Math.max(8, sorted[0].y || 8);
-  for(var i = 0; i < sorted.length; i++) {
-    var b = sorted[i];
-    // Push block down if needed — never pull up
-    if(b.y < nextY) b.y = nextY;
-    // Sync back to original array
-    for(var j = 0; j < cur.textBlocks.length; j++) {
-      if(cur.textBlocks[j].id === b.id) { cur.textBlocks[j].y = b.y; break; }
+  // Fix each block: set correct column x and width, stack y
+  // Split into columns
+  var col0 = [], col1 = [];
+  cur.textBlocks.forEach(function(b) {
+    b.w = cfg.col0.w; // all blocks same width as column
+    var col = _scGetBlockCol(b, cfg);
+    if(col === 1 && cfg.col1) {
+      b.x = cfg.col1.x;
+      col1.push(b);
+    } else {
+      b.x = cfg.col0.x;
+      col0.push(b);
     }
-    nextY = b.y + getH(b) + PADDING;
+  });
+
+  // Sort each column by y
+  col0.sort(function(a,b){ return (a.y||0)-(b.y||0); });
+  col1.sort(function(a,b){ return (a.y||0)-(b.y||0); });
+
+  // Stack col0
+  var nextY = 8;
+  col0.forEach(function(b) {
+    if(b.y < nextY) b.y = nextY;
+    nextY = b.y + getH(b) + cfg.gap;
+  });
+
+  // Stack col1 (only in landscape)
+  if(cfg.cols === 2 && cfg.col1) {
+    nextY = 8;
+    col1.forEach(function(b) {
+      if(b.y < nextY) b.y = nextY;
+      nextY = b.y + getH(b) + cfg.gap;
+    });
+  } else {
+    // Portrait: move any col1 blocks to col0
+    col1.forEach(function(b) {
+      b.x = cfg.col0.x;
+      col0.push(b);
+    });
+    // Re-stack col0 with migrated blocks
+    if(col1.length > 0) {
+      col0.sort(function(a,b){ return (a.y||0)-(b.y||0); });
+      nextY = 8;
+      col0.forEach(function(b) {
+        if(b.y < nextY) b.y = nextY;
+        nextY = b.y + getH(b) + cfg.gap;
+      });
+    }
   }
+}
+
+// Apply layout: set block x, w to column, then resolve stacking
+function _scApplyLayout() {
+  var cur = _scCur(); if(!cur || !cur.textBlocks) return;
+  var cfg = _scGetLayoutConfig();
+
+  // First: assign x & w by column
+  cur.textBlocks.forEach(function(b) {
+    var col = _scGetBlockCol(b, cfg);
+    var colCfg = (col === 1 && cfg.col1) ? cfg.col1 : cfg.col0;
+    b.x = colCfg.x;
+    b.w = colCfg.w;
+  });
+
+  // Then resolve vertical stacking
+  _scResolveOverlaps();
+
+  // Sync to DOM
+  cur.textBlocks.forEach(function(b) {
+    var el = document.getElementById('scBlock_' + b.id);
+    if(el) {
+      el.style.left  = b.x + 'px';
+      el.style.top   = b.y + 'px';
+      el.style.width = b.w + 'px';
+    }
+  });
 }
 
 function _scSyncTextBlocksDOM() {
   var wrap=document.getElementById('scCanvasWrap'); if(!wrap) return;
   wrap.querySelectorAll('.sc-text-block').forEach(function(el){el.remove();});
   var cur=_scCur(); if(!cur) return;
-  // First pass: create DOM so heights are measurable
+  // Create DOM elements first (heights become measurable)
   (cur.textBlocks||[]).forEach(function(b){_scCreateBlockDOM(b);});
-  // Second pass: resolve overlaps using real DOM heights, re-position
-  _scResolveOverlaps();
-  // Third pass: re-sync positions to DOM
-  (cur.textBlocks||[]).forEach(function(b){
-    var el=document.getElementById('scBlock_'+b.id);
-    if(el) { el.style.top = b.y+'px'; el.style.left = b.x+'px'; }
-  });
-  // Expand canvas height for scrolling
+  // Apply column layout + overlap resolution
+  _scApplyLayout();
+  // Expand canvas for scroll
   clearTimeout(_scExpandTimer);
   _scExpandTimer = setTimeout(scExpandCanvasForContent, 80);
 }
@@ -36338,6 +36473,15 @@ window.addEventListener('resize',function(){ clearTimeout(_mmRT); _mmRT=setTimeo
       var panel = document.getElementById('studyCanvasPanel');
       if (panel && panel.classList.contains('sc-open')) {
         if (typeof scFitCanvas === 'function') scFitCanvas();
+        // Re-apply column layout on orientation change
+        if (typeof _scApplyLayout === 'function') {
+          var cur = typeof _scCur === 'function' ? _scCur() : null;
+          if(cur && cur.textBlocks && cur.textBlocks.length) {
+            // Reset col assignment — let new orientation decide
+            // blocks with col1 x in portrait should move to col0
+            _scApplyLayout();
+          }
+        }
         if (typeof _scSyncTextBlocksDOM === 'function') _scSyncTextBlocksDOM();
         if (typeof _scRenderSlideNav === 'function') _scRenderSlideNav();
       }
