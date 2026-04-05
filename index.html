@@ -1165,6 +1165,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   flex: 1;
   position: relative;
   overflow: hidden;
+  min-height: 200px;
 }
 #scCanvas {
   display: block;
@@ -1223,6 +1224,31 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 }
 .sc-text-block[contenteditable="true"] .sc-block-resize,
 .sc-text-block[contenteditable="true"] .sc-block-rotate { display: none; }
+
+  /* ── Move handle — center top of selected block for 360° drag ── */
+  .sc-block-move {
+    position: absolute;
+    top: -13px; left: 50%; transform: translateX(-50%);
+    width: 26px; height: 26px;
+    background: linear-gradient(135deg,#1565c0,#1976d2);
+    border-radius: 50%;
+    cursor: grab;
+    opacity: 0.92;
+    touch-action: none;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.65rem; color: #fff;
+    z-index: 12;
+    box-shadow: 0 3px 10px rgba(21,101,192,0.5);
+    border: 2px solid rgba(255,255,255,0.75);
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .sc-block-move:active { cursor: grabbing; }
+  .sc-text-block .sc-block-move { display: none; }
+  .sc-text-block.selected .sc-block-move { display: flex; }
+  .sc-text-block[contenteditable="true"] .sc-block-move { display: none; }
+  
 /* Text block resize handle */
 .sc-block-resize {
   position: absolute;
@@ -1292,9 +1318,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   padding: 6px 8px;
   min-height: 48px;
   flex-shrink: 0;
-  background: rgba(0,0,0,0.05);
-  border-top: 1px solid rgba(0,0,0,0.08);
+  background: rgba(255,255,255,0.97);
+  border-top: 1.5px solid rgba(21,101,192,0.18);
   overflow: visible;
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 /* Slide nav: full width, all dots visible */
 #scSlideNav {
@@ -24948,7 +24979,7 @@ function scOnEditorOpen(sid, secid, tid) {
     if(t && t.studyCanvas && (t.studyCanvas.textBlocks || t.studyCanvas.strokes)) {
       var old = t.studyCanvas;
       var s = _scNewSlide('Slide 1');
-      s.bg          = old.bg || '#fffde7';
+      s.bg          = old.bg || '#e3f2fd';
       s.textBlocks  = old.textBlocks || [];
       s.strokes     = old.strokes    || [];
       s.hlStrokes   = old.hlStrokes  || [];
@@ -25033,7 +25064,12 @@ function scToggleToolbar(forceState) {
         if(dy < -30 && !_scTbVisible) scToggleToolbar(true); // swipe up = show
       }, {passive:true});
 
-      // Canvas scroll/swipe does NOT auto-show toolbar - only Show button does
+      // Also: swipe up on canvas area = show toolbar
+      var cw = document.getElementById('scCanvasWrap');
+      // Canvas swipe-up to show toolbar REMOVED:
+      // Toolbar only re-shows via explicit button click (scToggleToolbar or SHOW button).
+      // This prevents accidental toolbar reveal during reading/scrolling.
+      if(cw) { /* swipe-up-to-show disabled */ }
     }, 1200);
   });
 })();
@@ -25045,8 +25081,9 @@ function scTogglePanel() {
   if(_sc.open) {
     panel.classList.add('sc-open');
     var cur = _scCur();
-    panel.style.background = (cur && cur.bg) ? cur.bg : '#e3f2fd';
+    if(cur) panel.style.background = cur.bg;
     scInitCanvas();
+    _scAutoConfigureForDevice && _scAutoConfigureForDevice();
     scRenderAll();
     scRenderToolbar();
     _scRenderSlideNav();
@@ -25062,6 +25099,8 @@ function scTogglePanel() {
 function scToggleFullscreen() {
   _sc.fullscreen = !_sc.fullscreen;
   var panel = document.getElementById('studyCanvasPanel');
+  // Re-configure device layout after fullscreen toggle
+  setTimeout(function() { _scAutoConfigureForDevice && _scAutoConfigureForDevice(); }, 100);
   var btn   = document.getElementById('scExpandBtn');
   if(!panel) return;
   if(_sc.fullscreen) {
@@ -25805,6 +25844,31 @@ function scInitCanvas() {
   }
 }
 
+  // ── Device-aware canvas auto-configuration ──
+  function _scAutoConfigureForDevice() {
+    var ww = window.innerWidth;
+    var wh = window.innerHeight;
+    var panel = document.getElementById('studyCanvasPanel');
+    if(!panel) return;
+
+    var isMobile  = ww < 600;
+    var isTablet  = ww >= 600 && ww < 1024;
+    var isDesktop = ww >= 1024;
+
+    // Auto font size for text blocks on canvas
+    var autoFontSz = isMobile ? 14 : isTablet ? 15 : 17;
+    if(typeof _sc !== 'undefined' && _sc) {
+      _sc._autoFontSz = autoFontSz;
+    }
+
+    // Width of canvas wrap
+    var cw = document.getElementById('scCanvasWrap');
+    if(cw) {
+      // Ensure canvas uses full available space
+      cw.style.minHeight = (isMobile ? Math.floor(wh * 0.55) : Math.floor(wh * 0.65)) + 'px';
+    }
+  }
+
 function scFitCanvas() {
   var wrap = document.getElementById('scCanvasWrap');
   var cv   = document.getElementById('scCanvas');
@@ -25906,6 +25970,12 @@ function _scCreateBlockDOM(b) {
   rotH.className = 'sc-block-rotate';
   rotH.textContent = '↻';
   el.appendChild(rotH);
+  // Move handle — 360° drag from top center
+  var moveH = document.createElement('div');
+  moveH.className = 'sc-block-move';
+  moveH.title = 'Kahi bhi drag karo (360°)';
+  moveH.innerHTML = '✥';
+  el.appendChild(moveH);
   el.addEventListener('pointerdown', function(e) {
     if(e.target===resizeH||e.target===rotH) return;
     e.stopPropagation();
@@ -25918,7 +25988,7 @@ function _scCreateBlockDOM(b) {
     if(now-_lt<320){ e.stopPropagation(); scEditBlock(b,el); }
     _lt = now;
   });
-  _scBlockDrag(b,el); _scBlockResize(b,el,resizeH); _scBlockRotate(b,el,rotH);
+  _scBlockDrag(b,el); _scBlockResize(b,el,resizeH); _scBlockRotate(b,el,rotH); _scBlockMoveDrag(b,el,moveH);
   wrap.appendChild(el);
   return el;
 }
@@ -26145,7 +26215,7 @@ function scEditBlock(b, el) {
     el.classList.remove('selected');
     // Save HTML content
     var clone = el.cloneNode(true);
-    clone.querySelectorAll('.sc-block-resize,.sc-block-rotate,.sc-block-actions').forEach(function(h){ h.remove(); });
+    clone.querySelectorAll('.sc-block-resize,.sc-block-rotate,.sc-block-move,.sc-block-actions').forEach(function(h){ h.remove(); });
     b.html = clone.innerHTML;
     b.x = parseFloat(el.style.left) || b.x;
     b.y = parseFloat(el.style.top)  || b.y;
@@ -26172,16 +26242,17 @@ function _scRefreshBlock(b) {
 function _scBlockDrag(b,el) {
   var sx,sy,sbx,sby,drag=false;
   el.addEventListener('pointerdown',function(e){
-    if(e.target.classList.contains('sc-block-resize')||e.target.classList.contains('sc-block-rotate')||e.target.classList.contains('sc-block-act-btn')||el.contentEditable==='true') return;
+    if(e.target.classList.contains('sc-block-resize')||e.target.classList.contains('sc-block-rotate')||e.target.classList.contains('sc-block-move')||e.target.classList.contains('sc-block-act-btn')||el.contentEditable==='true') return;
     if(_sc.mode!=='select'&&_sc.mode!=='text') return;
     e.preventDefault(); try{el.setPointerCapture(e.pointerId);}catch(x){}
     sx=e.clientX;sy=e.clientY;sbx=b.x;sby=b.y;drag=true;scSnapshot();
+    if(window._scLockSlideSwipe) window._scLockSlideSwipe(true);
   },{passive:false});
   el.addEventListener('pointermove',function(e){
     if(!drag) return; b.x=sbx+(e.clientX-sx); b.y=sby+(e.clientY-sy);
     el.style.left=b.x+'px'; el.style.top=b.y+'px';
   },{passive:true});
-  el.addEventListener('pointerup',function(){drag=false;},{passive:true});
+  el.addEventListener('pointerup',function(){drag=false; if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);},{passive:true});
 }
 
 function _scBlockResize(b,el,handle) {
@@ -26213,6 +26284,38 @@ function _scBlockRotate(b,el,handle) {
   },{passive:true});
   handle.addEventListener('pointerup',function(){r=false;},{passive:true});
 }
+
+  // Move handle drag — 360° repositioning from center-top handle
+  function _scBlockMoveDrag(b, el, handle) {
+    var sx, sy, sbx, sby, dragging = false;
+    handle.addEventListener('pointerdown', function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      try { handle.setPointerCapture(e.pointerId); } catch(x) {}
+      sx = e.clientX; sy = e.clientY;
+      sbx = b.x; sby = b.y;
+      dragging = true;
+      scSnapshot();
+      // Lock slide swipe during drag
+      if(window._scLockSlideSwipe) window._scLockSlideSwipe(true);
+    }, { passive: false });
+    handle.addEventListener('pointermove', function(e) {
+      if(!dragging) return;
+      e.stopPropagation();
+      b.x = sbx + (e.clientX - sx);
+      b.y = sby + (e.clientY - sy);
+      el.style.left = b.x + 'px';
+      el.style.top  = b.y + 'px';
+    }, { passive: true });
+    handle.addEventListener('pointerup', function() {
+      dragging = false;
+      if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);
+    }, { passive: true });
+    handle.addEventListener('pointercancel', function() {
+      dragging = false;
+      if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);
+    }, { passive: true });
+  }
 
 function _scWrapTap(e) {
   // In select mode — tap on empty area = deselect
@@ -27926,33 +28029,45 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
     return;
   }
 
+  // ── Layout ──
   scSnapshot();
 
   var wrap = document.getElementById('scCanvasWrap');
-  var wW   = wrap ? (wrap.offsetWidth  || window.innerWidth) : window.innerWidth;
+  var wW   = wrap ? (wrap.offsetWidth  || 340) : 340;
   var wH   = wrap ? (wrap.offsetHeight || 0) : 0;
-  if(wH < 100) wH = Math.max(400, window.innerHeight * 0.72);
+  if(wH < 100) {
+      // Better height: total canvas panel minus toolbar/footer heights
+      var _tbH = (document.getElementById('scToolbarWrap')||{}).offsetHeight || 0;
+      var _ftH = (document.getElementById('scFooter')||{}).offsetHeight || 48;
+      var _tbgH = (document.getElementById('scTbToggleBar')||{}).offsetHeight || 16;
+      var _panH = (document.getElementById('studyCanvasPanel')||{}).offsetHeight || 0;
+      if(_panH > 200) {
+        wH = _panH - _tbH - _ftH - _tbgH - 10;
+      }
+      if(wH < 200) wH = Math.max(400, window.innerHeight * 0.6);
+    }
 
-  var isTablet  = window.innerWidth >= 768;
-  var isDesktop = window.innerWidth >= 1024;
-  var FONT_SZ   = isDesktop ? 15 : isTablet ? 14 : 13;
-  var PAD       = 14;
-  var GAP_Y     = 12;
-  var BOX_W     = wW - PAD * 2;
-  var LINE_H    = FONT_SZ * 1.75;
-  var BOX_PAD_H = 14;
-  var BOX_PAD_V = 10;
-  var CHARS_PER = Math.max(20, Math.floor((BOX_W - BOX_PAD_H * 2) / (FONT_SZ * 0.52)));
+  // Device-aware single-column layout for proper horizontal text wrapping
+  var _isTablet  = wW >= 600;
+  var _isDesktop = wW >= 900;
+  var PAD        = _isDesktop ? 18 : _isTablet ? 14 : 10;
+  var GAP_Y      = _isDesktop ? 14 : 12;
+  var COLS       = 1;  // Always single column
+  var BOX_W      = wW - PAD * 2;
+  var FONT_SZ    = _isDesktop ? 16 : _isTablet ? 15 : 14;
+  var LINE_H     = FONT_SZ * 1.75;
+  var BOX_PAD_V  = 9;
+  var CHARS_PER  = Math.max(20, Math.floor((BOX_W - 20) / (FONT_SZ * 0.58)));
 
   function estH(txt) {
-    var rawLines = txt.split('\n');
-    var totalLines = 0;
-    rawLines.forEach(function(ln) {
-      totalLines += Math.max(1, Math.ceil((ln.length || 1) / CHARS_PER));
-    });
-    return Math.max(1, totalLines) * LINE_H + BOX_PAD_V * 2 + 10;
+    var naturalBreaks = (txt.match(/\n/g) || []).length;
+    var charsFlat     = txt.replace(/\n/g, '').length;
+    var wrappedLines  = Math.ceil(charsFlat / CHARS_PER);
+    var totalLines    = Math.max(1, naturalBreaks + wrappedLines);
+    return totalLines * LINE_H + BOX_PAD_V * 2 + 12;
   }
 
+  // ── HIGHLIGHTS: NAYI DEDICATED SLIDES — Batch naming (Sent1, Sent2...) ��─
   scSnapshot();
 
   var _existingBatches = _sc.slides.filter(function(sl){ return sl.title && sl.title.indexOf('📌 Highlights') !== -1; });
@@ -27974,39 +28089,66 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
   var slideIdx = _makeHlSlide();
   _sc.curSlide = slideIdx;
   scRenderAll && scRenderAll(); _scSyncTextBlocksDOM && _scSyncTextBlocksDOM(); _scRenderSlideNav && _scRenderSlideNav();
+  // Re-measure after first render — DOM has actual height now
   if(wrap && wrap.offsetHeight > 100) wH = wrap.offsetHeight;
 
-  var curY = PAD;
+  var curY   = PAD;
   var placed = 0;
 
   items.forEach(function(item, i) {
     var bH = estH(item.text);
+
+    // Only overflow to new slide if at least 1 item already placed (prevents blank first slide)
     if(placed > 0 && curY + bH > wH - PAD) {
       _scSyncCurrentSlideFromDOM && _scSyncCurrentSlideFromDOM();
       slideIdx = _makeHlSlide();
       _sc.curSlide = slideIdx;
       curY = PAD;
       scRenderAll && scRenderAll(); _scSyncTextBlocksDOM && _scSyncTextBlocksDOM(); _scRenderSlideNav && _scRenderSlideNav();
-      if(wrap && wrap.offsetHeight > 100) wH = wrap.offsetHeight;
     }
+
+    var x   = PAD;
     var cur = _sc.slides[slideIdx];
     if(!cur) return;
-    var safeHtml = item.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
-    var block = { id:'scb_hl_'+Date.now()+'_'+i, x:PAD, y:curY, w:BOX_W,
-      html:safeHtml, fontSize:FONT_SZ, color:item.color,
-      bold:true, italic:false, underline:false, angle:0 };
+
+    var safeHtml = item.text
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/\n/g,'<br>');
+
+    var block = {
+      id:        'scb_hl_' + Date.now() + '_' + i,
+      x:         x,
+      y:         curY,
+      w:         BOX_W,
+      html:      safeHtml,
+      fontSize:  FONT_SZ,
+      color:     item.color,
+      bold:      true,
+      italic:    false,
+      underline: false,
+      angle:     0
+    };
+
     cur.textBlocks.push(block);
+
     if(slideIdx === _sc.curSlide) {
       var el = _scCreateBlockDOM(block);
-      if(el) { el.classList.add('sc-new-flash'); setTimeout(function(e2){ e2.classList.remove('sc-new-flash'); }, 900, el); }
+      if(el) {
+        el.classList.add('sc-new-flash');
+        setTimeout(function(e2){ e2.classList.remove('sc-new-flash'); }, 900, el);
+      }
     }
-    curY += bH + GAP_Y;
+
+    curY = curY + bH + GAP_Y;
     placed++;
   });
 
   _scRenderSlideNav && _scRenderSlideNav();
+
   var _hlTotal = _hlNum;
-  var msg = '✅ Batch Sent' + _thisBatch + ': ' + placed + ' nayi highlight' + (placed>1?'s':'') + ' → ' + _hlTotal + ' slide mein!';
+  var msg = '✅ Batch Sent' + _thisBatch + ': ' + placed + ' nayi highlight' + (placed>1?'s':'') + ' → ' + _hlTotal + ' nayi slide' + (_hlTotal>1?'n':'') + ' mein!';
   showToast && showToast(msg, 'success');
 };
 
@@ -29015,7 +29157,7 @@ function scExportPDF() {
       'padding:10mm 10mm 8mm;',
       'box-sizing:border-box;',
       'page-break-after:always;',
-      'background:'+(slide.bg||'#fffde7')+';',
+      'background:'+(slide.bg||'#e3f2fd')+';',
       'position:relative;',
       'overflow:hidden;'
     ].join('');
@@ -33290,6 +33432,10 @@ function _scReadModeFreeze(freeze) {
       var cw = document.getElementById('scCanvasWrap');
       if(!cw) return;
 
+      // Slide swipe lock — locked during text block drag/edit
+      var _swipeLocked = false;
+      window._scLockSlideSwipe = function(lock) { _swipeLocked = !!lock; };
+
       var _sw = { active: false, startX: 0, startY: 0, startT: 0, moved: false };
       var SWIPE_MIN_X = 60;   // min px horizontal
       var SWIPE_MAX_Y = 80;   // max px vertical (so vertical scroll not triggered)
@@ -33298,6 +33444,10 @@ function _scReadModeFreeze(freeze) {
       cw.addEventListener('touchstart', function(e) {
         // Only single finger, not in shift-drag mode
         if(e.touches.length !== 1) return;
+        // Don't swipe if locked (text block being dragged/edited)
+        if(_swipeLocked) return;
+        // Don't swipe if any text block is in edit mode (contenteditable)
+        if(document.querySelector('.sc-text-block[contenteditable="true"]')) return;
         // Don't swipe if in read mode AND hl is active (user is highlighting)
         if(window._sc && window._sc.hlActive) return;
         var t = e.touches[0];
@@ -34417,7 +34567,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
 <!-- ════════════════════════════════════════════════════════════════════════════ -->
 <!-- REVISION PAGE PANEL - Exam Time Quick Revision System -->
 <!-- ════════════════════════════════════════════════════════════════════════════ -->
-<div id="rvPanel" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:1300;background:#e3f2fd;flex-direction:column;overflow:hidden;font-family:'Noto Sans Devanagari','Baloo 2',sans-serif;">
+<div id="rvPanel" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:1300;background:var(--bg,#f5f0ff);flex-direction:column;overflow:hidden;font-family:'Noto Sans Devanagari','Baloo 2',sans-serif;">
 
   <!-- Header -->
   <div id="rvHeader" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:linear-gradient(135deg,#7b1fa2,#9c27b0);color:#fff;flex-shrink:0;box-shadow:0 2px 12px rgba(0,0,0,0.18);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;gap:10px;">
@@ -34431,7 +34581,6 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     <div style="display:flex;gap:7px;align-items:center;flex-shrink:0;">
       <button onclick="rvToggleTools()" class="rv-tools-toggle" id="rvToolsToggleBtn" title="Tools dikhao/chupao" style="flex-shrink:0;"><span id="rvToolsToggleIcon">▲</span> Tools</button>
       <button onclick="rvToggleDragMode()" class="rv-move-btn" id="rvMoveBtn" title="Boxes ko drag karke move karo" style="flex-shrink:0;">Move</button>
-      <button onclick="rvToggleSlideLock()" id="rvSlideLockBtn" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;flex-shrink:0;" title="Lock: editing ke waqt slide change band">🔒 Lock</button>
       <button onclick="rvToggleMergeMode()" class="rv-merge-btn" id="rvMergeBtn" title="Do ya adhik boxes ko merge karo" style="flex-shrink:0;">Merge</button>
       <button onclick="rvRegenNewHighlights()" style="background:rgba(255,152,0,0.3);border:1px solid rgba(255,200,0,0.5);border-radius:8px;padding:5px 9px;color:#fff;cursor:pointer;font-size:0.68rem;font-weight:800;font-family:inherit;flex-shrink:0;" title="New Highlights → Revision (sirf nayi wali AI core points ke saath)">🔄 Regen</button>
       <button onclick="rvResetPositions()" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 8px;color:#fff;cursor:pointer;font-size:0.68rem;font-weight:800;font-family:inherit;flex-shrink:0;" title="Sab boxes ko default position par reset karo">Reset</button>
@@ -34464,7 +34613,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
   </div>
 
   <!-- Canvas Viewport -->
-  <div id="rvCanvas" style="flex:1;overflow:hidden;position:relative;background:#e3f2fd;touch-action:none;cursor:grab;">
+  <div id="rvCanvas" style="flex:1;overflow:hidden;position:relative;background:var(--bg,#f5f0ff);touch-action:none;cursor:grab;">
     <div id="rvMapWrap" style="position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform;">
     </div>
   </div>
@@ -34623,7 +34772,7 @@ body.night-mode .rv-box.center-node{color:#fff;}
 .rv-page-dot.active{background:#7b1fa2;color:#fff;border-color:#7b1fa2;}
 .rv-add-page-btn{width:28px;height:28px;border-radius:50%;border:2px dashed rgba(123,31,162,0.45);background:transparent;color:#7b1fa2;font-size:1rem;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 
-.rv-save-bar{position:fixed;bottom:60px;left:50%;transform:translateX(-50%);z-index:1350;display:flex;gap:8px;padding:8px 14px;background:rgba(255,255,255,0.97);border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.18);border:1.5px solid var(--border,#ddd);opacity:0;pointer-events:none;transition:all 0.25s ease;max-width:95vw;flex-wrap:wrap;justify-content:center;}
+.rv-save-bar{position:fixed;bottom:75px;left:50%;transform:translateX(-50%);z-index:1350;display:flex;gap:8px;padding:8px 14px;background:rgba(255,255,255,0.97);border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.18);border:1.5px solid var(--border,#ddd);opacity:0;pointer-events:none;transition:all 0.25s ease;}
 .rv-save-bar.visible{opacity:1;pointer-events:auto;}
 .rv-save-bar button{border:none;border-radius:10px;padding:8px 14px;font-size:0.78rem;font-weight:800;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px;transition:all 0.18s;}
 .rv-save-bar .rv-save-btn{background:linear-gradient(135deg,#7b1fa2,#9c27b0);color:#fff;}
@@ -34648,11 +34797,6 @@ body.night-mode .rv-box.center-node{color:#fff;}
 .rv-move-btn{background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:5px 10px;color:#fff;cursor:pointer;font-size:0.72rem;font-weight:800;font-family:inherit;transition:all 0.15s;}
 .rv-move-btn.active{background:rgba(76,175,80,0.5);border-color:#4caf50;box-shadow:0 0 8px rgba(76,175,80,0.4);}
 .rv-drag-mode .rv-box{cursor:move !important;border-style:dashed !important;}
-.rv-drag-handle{display:none;}
-.rv-drag-mode .rv-drag-handle{display:flex !important;align-items:center;justify-content:center;}
-@media(max-width:480px){.rv-save-bar{bottom:55px !important;}.rv-save-bar button{padding:5px 8px !important;font-size:0.7rem !important;}}
-@media(min-width:768px){.rv-box-text{font-size:0.85rem !important;}}
-@media(min-width:1024px){.rv-box-text{font-size:0.9rem !important;}}
 .rv-drag-mode .rv-box:hover{transform:translate(-50%,-50%) scale(1.03);box-shadow:0 6px 20px rgba(0,0,0,0.25) !important;}
 .rv-box.dragging{opacity:0.85;z-index:100 !important;box-shadow:0 8px 30px rgba(0,0,0,0.35) !important;}
 #rvHeader::-webkit-scrollbar{display:none;}
@@ -37703,97 +37847,6 @@ window.neOpenRevisionPage = function(){
     });
   }
 });
-
-// ════════════════════════════════════════
-// NEW FEATURES: Slide Lock + Swipe + Responsive
-// ════════════════════════════════════════
-
-// Slide Lock state
-var _rvSlideLocked = false;
-window.rvToggleSlideLock = function() {
-  _rvSlideLocked = !_rvSlideLocked;
-  var btn = document.getElementById('rvSlideLockBtn');
-  if(btn) {
-    if(_rvSlideLocked) {
-      btn.style.background = 'rgba(76,175,80,0.5)';
-      btn.style.borderColor = '#4caf50';
-      btn.textContent = '🔓 Unlck';
-      if(typeof showToast==='function') showToast('Slide Lock ON', 'info');
-    } else {
-      btn.style.background = 'rgba(255,255,255,0.18)';
-      btn.style.borderColor = 'rgba(255,255,255,0.35)';
-      btn.textContent = '🔒 Lock';
-      if(typeof showToast==='function') showToast('Slide Lock OFF', 'info');
-    }
-  }
-};
-
-// Touch swipe on rvCanvas: change slide only when not dragging/locked
-(function(){
-  document.addEventListener('DOMContentLoaded', function() {
-    var c = document.getElementById('rvCanvas');
-    if(!c) return;
-    var _ts = {sx:0, sy:0, t0:0, on:false};
-    c.addEventListener('touchstart', function(e){
-      if(e.touches.length !== 1) return;
-      _ts.on = true; _ts.sx = e.touches[0].clientX;
-      _ts.sy = e.touches[0].clientY; _ts.t0 = Date.now();
-    }, {passive:true});
-    c.addEventListener('touchend', function(e){
-      if(!_ts.on) return; _ts.on = false;
-      var dx = e.changedTouches[0].clientX - _ts.sx;
-      var dy = e.changedTouches[0].clientY - _ts.sy;
-      var dt = Date.now() - _ts.t0;
-      if(dt > 400 || Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx) * 0.7) return;
-      if(typeof _rvDragMode !== 'undefined' && _rvDragMode) return;
-      if(_rvSlideLocked) return;
-      if(typeof _rvMergeMode !== 'undefined' && _rvMergeMode) return;
-      if(dx < -50) { if(typeof rvNextPage==='function') rvNextPage(); }
-      else if(dx > 50) { if(typeof rvPrevPage==='function') rvPrevPage(); }
-    }, {passive:true});
-  });
-})();
-
-// Responsive font size for rv-box-text
-(function(){
-  function applyRvResponsive(){
-    var w = window.innerWidth;
-    var fs = w >= 1024 ? '0.9rem' : w >= 768 ? '0.82rem' : '0.76rem';
-    var mw = w >= 1024 ? '220px' : w >= 768 ? '190px' : '155px';
-    var sid = '_rvRespStyle';
-    var el = document.getElementById(sid);
-    if(!el){ el = document.createElement('style'); el.id = sid; document.head.appendChild(el); }
-    el.textContent = '.rv-box-text{font-size:'+fs+' !important;line-height:1.55;}'
-      + '.rv-box:not(.center-node){max-width:'+mw+' !important;}';
-  }
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', applyRvResponsive);
-  else applyRvResponsive();
-  window.addEventListener('resize', applyRvResponsive);
-})();
-
-// Add move-handle to rv-boxes in drag mode
-(function(){
-  var _origRvR = window.rvRender;
-  if(!_origRvR) return;
-  window.rvRender = function() {
-    _origRvR.apply(this, arguments);
-    if(typeof _rvDragMode === 'undefined' || !_rvDragMode) return;
-    document.querySelectorAll('.rv-box:not(.center-node)').forEach(function(el){
-      if(el.querySelector('.rv-drag-handle')) return;
-      var h = document.createElement('div');
-      h.className = 'rv-drag-handle';
-      h.title = 'Drag to reposition';
-      h.textContent = '✥ Move';
-      h.style.cssText = 'position:absolute;top:-16px;left:50%;transform:translateX(-50%);'
-        + 'background:rgba(33,150,243,0.88);color:#fff;border-radius:5px 5px 3px 3px;'
-        + 'padding:2px 8px;font-size:0.58rem;font-weight:800;cursor:move;z-index:20;'
-        + 'white-space:nowrap;touch-action:none;user-select:none;';
-      el.style.overflow = 'visible';
-      el.appendChild(h);
-    });
-  };
-})();
-
 
 
 
