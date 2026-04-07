@@ -14637,20 +14637,74 @@ function applyNightMode(on) {
   if(label) label.textContent = on ? 'Day Mode' : 'Night Mode';
 
   // ── Canvas panel background — night mode override ──
-  // Night mode ON: JS-set inline style hatao taaki CSS night-mode rules kaam karein
   var canvasPanel = document.getElementById('studyCanvasPanel');
   if(canvasPanel) {
     if(on) {
       canvasPanel.setAttribute('data-day-bg', canvasPanel.style.background || '');
       canvasPanel.style.background = '#1a1f2e';
     } else {
-      // Restore the saved day background
       var dayBg = canvasPanel.getAttribute('data-day-bg');
       if(!dayBg) {
         var cur2 = (window._scCur && window._scCur()) || null;
         dayBg = (cur2 && cur2.bg) ? cur2.bg : '#e3f2fd';
       }
       canvasPanel.style.background = dayBg;
+    }
+  }
+
+  // ── Text blocks ka inline color forcefully override karo ──
+  // Existing blocks ka inline style CSS se zyada priority leta hai
+  // isliye JS se har block ka color set karna zaroori hai
+  var NIGHT_TEXT = '#4ade80';  // green — night mode
+  document.querySelectorAll('.sc-text-block').forEach(function(el) {
+    if(on) {
+      // Save original inline color for restore
+      if(!el.hasAttribute('data-day-color')) {
+        el.setAttribute('data-day-color', el.style.color || '');
+      }
+      el.style.color = NIGHT_TEXT;
+      // Inner elements (bold, span, etc.) ke inline color bhi override karo
+      el.querySelectorAll('[style*="color"]').forEach(function(child) {
+        if(!child.hasAttribute('data-day-color')) {
+          child.setAttribute('data-day-color', child.style.color || '');
+        }
+        child.style.color = NIGHT_TEXT;
+      });
+    } else {
+      // Restore original colors
+      var orig = el.getAttribute('data-day-color');
+      el.style.color = orig || '';
+      el.removeAttribute('data-day-color');
+      el.querySelectorAll('[data-day-color]').forEach(function(child) {
+        child.style.color = child.getAttribute('data-day-color') || '';
+        child.removeAttribute('data-day-color');
+      });
+    }
+  });
+
+  // Agar _sc data mein bhi color stored hai to woh bhi update karo
+  // taaki slide reload/re-render ke baad bhi color sahi rahe
+  if(window._sc && window._sc.slides) {
+    window._sc.slides.forEach(function(slide) {
+      if(!slide.textBlocks) return;
+      slide.textBlocks.forEach(function(b) {
+        if(on) {
+          if(!b._dayColor) b._dayColor = b.color || '';
+          b.color = NIGHT_TEXT;
+          // HTML ke andar inline color spans bhi fix karo
+          if(b.html) {
+            if(!b._dayHtml) b._dayHtml = b.html;
+            b.html = b.html.replace(/color\s*:\s*[^;'"]+/gi, 'color:' + NIGHT_TEXT);
+          }
+        } else {
+          if(b._dayColor !== undefined) { b.color = b._dayColor; delete b._dayColor; }
+          if(b._dayHtml  !== undefined) { b.html  = b._dayHtml;  delete b._dayHtml;  }
+        }
+      });
+    });
+    // Re-render if canvas is open
+    if(window._sc.open && window.scRenderAll) {
+      window.scRenderAll();
     }
   }
 }
@@ -26306,7 +26360,7 @@ function _scCreateBlockDOM(b) {
   el.style.top    = b.y + 'px';
   el.style.width  = (b.w || 140) + 'px';
   el.style.fontSize     = (b.fontSize||15) + 'px';
-  el.style.color        = b.color || '#1a1a1a';
+  el.style.color        = (window._nightMode ? '#4ade80' : (b.color || '#1a1a1a'));
   el.style.transform    = b.angle ? 'rotate('+b.angle+'deg)' : '';
   el.style.fontWeight   = b.bold      ? '800' : '';
   el.style.fontStyle    = b.italic    ? 'italic' : '';
@@ -26597,7 +26651,7 @@ function _scRefreshBlock(b) {
   el.style.fontStyle      = b.italic    ? 'italic' : '';
   el.style.textDecoration = b.underline ? 'underline' : '';
   el.style.fontSize       = (b.fontSize||15) + 'px';
-  el.style.color          = b.color || '#1a1a1a';
+  el.style.color          = (window._nightMode ? '#4ade80' : (b.color || '#1a1a1a'));
   el.style.transform      = b.angle ? 'rotate('+b.angle+'deg)' : '';
   // Re-show action bar
   scSelectBlock(b, el);
