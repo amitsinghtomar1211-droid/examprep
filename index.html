@@ -33726,9 +33726,18 @@ function _shMakePeek(side, slideIdx, isNew) {
 }
 
 // ── Overlay drag move — loop through slides ──
-var _shLoopActive = false;
+var _shLoopActive   = false;
 var _shCurrentPeekSide = null;
-var _shLoopInterval = null;
+var _shLoopInterval = null;  // setInterval handle (continuous loop)
+var _shLoopTimeout  = null;  // setTimeout handle (initial hold delay)
+
+function _shClearLoopTimers() {
+  clearTimeout(_shLoopTimeout);
+  clearInterval(_shLoopInterval);
+  _shLoopTimeout  = null;
+  _shLoopInterval = null;
+  _shLoopActive   = false;
+}
 
 function _shOverlayMove(e) {
   var ov = document.getElementById('scSlideSwipeOverlay');
@@ -33740,19 +33749,25 @@ function _shOverlayMove(e) {
 
   if(side !== _shCurrentPeekSide) {
     _shCurrentPeekSide = side;
-    clearInterval(_shLoopInterval);
-    _shLoopActive = false;
+    _shClearLoopTimers(); // pehle wale timers saaf karo
 
     // Highlight active side
     ov.querySelectorAll('.sc-swipe-peek').forEach(function(p) {
       p.classList.toggle('highlighted', p.dataset.side === side);
     });
 
-    // Start loop after hold
+    // Loop sirf tab shuru ho jab user intentionally PEEK_HOLD ms tak ruke —
+    // Tab LOOP_DELAY interval se aage badhta rahe.
+    // Agar user turant chhod de to peek wahi rahegi jo dikha raha tha.
     if(!_sh.newSlideMode) {
-      _shLoopInterval = setInterval(function() {
+      _shLoopTimeout = setTimeout(function() {
+        // Pehla advance (PEEK_HOLD ke baad)
         _shAdvancePeek(side);
-      }, LOOP_DELAY);
+        // Phir regular interval
+        _shLoopInterval = setInterval(function() {
+          _shAdvancePeek(side);
+        }, LOOP_DELAY);
+      }, PEEK_HOLD);
     }
   }
 }
@@ -33764,12 +33779,13 @@ function _shAdvancePeek(side) {
   var peek = ov.querySelector('.sc-swipe-peek.' + side + '-peek');
   if(!peek) return;
 
-  var cur  = parseInt(peek.dataset.idx) || 0;
+  var cur = parseInt(peek.dataset.idx, 10);
+  if(isNaN(cur) || cur < 0) cur = 0; // safe fallback
   var total = window._sc.slides.length;
   var next = side === 'right' ? (cur + 1) % total : (cur - 1 + total) % total;
 
-  // Skip current slide
-  if(next === window._sc.curSlide) {
+  // Skip current slide (koi problem nahi agal-bagal wala slide current hi ho)
+  if(next === window._sc.curSlide && total > 2) {
     next = side === 'right' ? (next + 1) % total : (next - 1 + total) % total;
   }
 
@@ -33785,13 +33801,25 @@ function _shAdvancePeek(side) {
 }
 
 function _shOverlayUp(e) {
-  clearInterval(_shLoopInterval);
-  _shLoopInterval = null;
+  _shClearLoopTimers(); // timeout + interval dono saaf karo
 
   var ov = document.getElementById('scSlideSwipeOverlay');
-  var side = _shCurrentPeekSide || 'right';
+
+  // Release position se ACTUAL side detect karo — stale pointermove state par
+  // depend nahi karna (tab galat slide select hoti thi)
+  var side = _shCurrentPeekSide;
+  if(ov && e && typeof e.clientX === 'number') {
+    var rect = ov.getBoundingClientRect();
+    if(rect.width > 0) {
+      var relX = (e.clientX - rect.left) / rect.width;
+      side = relX < 0.5 ? 'left' : 'right';
+    }
+  }
+  side = side || 'right'; // fallback
+
   var peek = ov ? ov.querySelector('.sc-swipe-peek.' + side + '-peek') : null;
-  var targetIdx = peek ? parseInt(peek.dataset.idx) : -1;
+  var targetIdx = peek ? parseInt(peek.dataset.idx, 10) : -1;
+  if(isNaN(targetIdx)) targetIdx = -1;
 
   _shHidePeek();
   _shCurrentPeekSide = null;
@@ -33812,6 +33840,7 @@ function _shOverlayUp(e) {
 }
 
 function _shHidePeek() {
+  _shClearLoopTimers(); // ensure saare timers saaf hain
   var ov = document.getElementById('scSlideSwipeOverlay');
   if(ov) {
     ov.classList.remove('visible');
