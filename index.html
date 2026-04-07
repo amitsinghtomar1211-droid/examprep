@@ -33521,6 +33521,173 @@ function _shHidePeek() {
 }
 
 // ── 10. Actually move item ──
+// ══════════════════════════════════════════════════════════════
+// SMART PLACEMENT ENGINE — box move ke dauran auto-rearrange
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Estimate block height — DOM se lega warna text se calculate karega.
+ * Naye width (destW) ke saath recalculate karta hai kyunki destination
+ * slide ki width alag ho sakti hai.
+ */
+function _shEstimateBlockHeight(b, destW) {
+  var el = document.getElementById('scBlock_' + b.id);
+  var fs = b.fontSize || 15;
+  var lineH = fs * 1.78;
+  var padV  = 22; // top + bottom padding
+
+  // Agar DOM element mil gaya aur uski width destination ke kareeb hai
+  if(el && el.offsetHeight > 10) {
+    var elW = el.offsetWidth || destW;
+    // Agar width same hai to directly use karo
+    if(Math.abs(elW - destW) < 20) return el.offsetHeight;
+    // Warna text reflow estimate karo
+  }
+
+  // Plain text extract karo (HTML tags hatao)
+  var raw = (b.html || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '');
+  // Named HTML entities decode karo
+  raw = raw.replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"');
+
+  var innerW  = Math.max(60, destW - 24); // horizontal padding ~12px each side
+  var charW   = fs * 0.56;               // average char width estimate (monospace ~0.6, proportional ~0.52)
+  var charsPerLine = Math.max(1, Math.floor(innerW / charW));
+
+  // Para-wise calculation — newlines already break lines
+  var lines = 0;
+  raw.split('\n').forEach(function(para) {
+    var t = para.trim();
+    if(!t) { lines += 0.6; return; } // blank line = half line gap
+    lines += Math.max(1, Math.ceil(t.length / charsPerLine));
+  });
+  lines = Math.max(1, lines);
+
+  return Math.ceil(lines * lineH) + padV;
+}
+
+/**
+ * Destination slide ke col0 (portrait) ya appropriate column mein
+ * bottom pe smart placement karo — overlaps resolve karo.
+ * Ek movedBlock return karta hai jo destination slide mein push hoga.
+ */
+function _shSmartPlaceBlockOnSlide(blockData, toSlide, newId) {
+  var cfg    = window._scGetLayoutConfig ? window._scGetLayoutConfig() : { col0:{x:8,w:300}, gap:12 };
+  var GAP    = (cfg.gap || 12);
+  var colCfg = cfg.col0; // hamesha col0 mein place karo (portrait-safe)
+
+  // Destination slide ke existing blocks ko sort karo (top to bottom)
+  var existing = (toSlide.textBlocks || []).slice().sort(function(a,b){ return (a.y||0)-(b.y||0); });
+
+  // Bottom-most y find karo
+  var bottomY = 8;
+  existing.forEach(function(blk) {
+    var h   = _shEstimateBlockHeight(blk, colCfg.w);
+    var bot = (blk.y || 0) + h + GAP;
+    if(bot > bottomY) bottomY = bot;
+  });
+
+  // Moved block ki height estimate karo at destination width
+  var movedH = _shEstimateBlockHeight(blockData, colCfg.w);
+
+  // New block create karo with destination column layout
+  var movedBlock = JSON.parse(JSON.stringify(blockData));
+  movedBlock.id = newId || ('scb_mv_' + Date.now() + '_' + Math.floor(Math.random()*9999));
+  movedBlock.x  = colCfg.x;
+  movedBlock.w  = colCfg.w;
+  movedBlock.y  = bottomY;
+  movedBlock.angle = 0; // angle reset — naye slide mein straight rakho
+
+  return { block: movedBlock, estimatedH: movedH };
+}
+
+/**
+ * Destination slide ke saare blocks ko re-stack karo (overlap resolve).
+ * Yeh ensure karta hai ki koi bhi block kisi doosre ke upar overlap na kare.
+ */
+function _shResolveDestinationOverlaps(toSlide) {
+  if(!toSlide || !toSlide.textBlocks || toSlide.textBlocks.length < 2) return;
+
+  var cfg    = window._scGetLayoutConfig ? window._scGetLayoutConfig() : { col0:{x:8,w:300}, col1:null, gap:12 };
+  var GAP    = cfg.gap || 12;
+
+  // Columns separate karo
+  function getCol(b) {
+    if(!cfg.col1) return 0;
+    return (b.x >= (cfg.splitX || 9999)) ? 1 : 0;
+  }
+
+  [0, 1].forEach(function(colIdx) {
+    var colCfg = colIdx === 0 ? cfg.col0 : cfg.col1;
+    if(!colCfg) return;
+
+    var colBlocks = toSlide.textBlocks.filter(function(b){ return getCol(b) === colIdx; });
+    if(colBlocks.length < 2) return;
+
+    // Y ke hisaab se sort karo
+    colBlocks.sort(function(a,b){ return (a.y||0)-(b.y||0); });
+
+    var nextY = 8;
+    colBlocks.forEach(function(b) {
+      // Agar block already sahi jagah hai aur overlap nahi hai to mat badlo
+      if((b.y || 0) < nextY) {
+        b.y = nextY; // overlap hai — push down karo
+        // DOM update bhi karo
+        var el = document.getElementById('scBlock_' + b.id);
+        if(el) el.style.top = b.y + 'px';
+      }
+      var h = _shEstimateBlockHeight(b, colCfg.w);
+      nextY = b.y + h + GAP;
+    });
+  });
+}
+
+/**
+ * Move ke baad smooth scroll + highlight animation — user ko dikhaao kahan gaya block.
+ */
+function _shAnimateMovedBlock(blockId, targetSlideIdx) {
+  // Pehle us slide par navigate karo
+  if(window._sc) window._sc.curSlide = targetSlideIdx;
+  window.scRenderAll && window.scRenderAll();
+  window._scSyncTextBlocksDOM && window._scSyncTextBlocksDOM();
+  window._scRenderSlideNav && window._scRenderSlideNav();
+
+  // DOM settle hone do, phir scroll + highlight
+  setTimeout(function() {
+    var newEl = document.getElementById('scBlock_' + blockId);
+    if(!newEl) return;
+
+    // Smooth scroll to moved block
+    var scrollArea = document.getElementById('scScrollArea');
+    if(scrollArea) {
+      var blockTop = parseFloat(newEl.style.top) || newEl.offsetTop || 0;
+      scrollArea.scrollTo({ top: Math.max(0, blockTop - 80), behavior: 'smooth' });
+    } else {
+      newEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    // Highlight pulse animation
+    newEl.style.transition = 'outline 0.1s, box-shadow 0.3s';
+    newEl.style.outline    = '2.5px solid #1565c0';
+    newEl.style.boxShadow  = '0 0 0 6px rgba(21,101,192,0.22), 0 4px 18px rgba(21,101,192,0.18)';
+
+    // Pulse: 2 baar blink karo
+    setTimeout(function(){
+      newEl.style.outline   = '2.5px solid #e65100';
+      newEl.style.boxShadow = '0 0 0 6px rgba(230,81,0,0.18)';
+    }, 450);
+    setTimeout(function(){
+      newEl.style.outline   = '2.5px solid #1565c0';
+      newEl.style.boxShadow = '0 0 0 6px rgba(21,101,192,0.22)';
+    }, 900);
+    setTimeout(function(){
+      newEl.style.outline   = '';
+      newEl.style.boxShadow = '';
+      newEl.style.transition = '';
+    }, 1500);
+  }, 120);
+}
+
+// ── 10. Actually move item — SMART VERSION ──
 function _shMoveToExistingSlide(targetIdx) {
   var item = _sh.dragItem;
   if(!item) return;
@@ -33530,40 +33697,88 @@ function _shMoveToExistingSlide(targetIdx) {
 
   window.scSnapshot && window.scSnapshot();
 
+  var movedBlockId = null;
+
   if(item.type === 'block') {
-    // Remove from source
+    // ── Source se remove karo ──
     fromSlide.textBlocks = (fromSlide.textBlocks||[]).filter(function(b){ return b.id !== item.data.id; });
-    // Add to target
+
+    // ── SMART PLACEMENT: destination slide ke bottom par, correct width ke saath ──
     toSlide.textBlocks = toSlide.textBlocks || [];
-    toSlide.textBlocks.push(JSON.parse(JSON.stringify(item.data)));
-    showToast && showToast('📦 Box → Slide ' + (targetIdx+1) + ' par move ho gaya!', 'success');
+    var placed = _shSmartPlaceBlockOnSlide(item.data, toSlide, null);
+    toSlide.textBlocks.push(placed.block);
+    movedBlockId = placed.block.id;
+
+    // ── Destination slide ke existing overlaps resolve karo ──
+    _shResolveDestinationOverlaps(toSlide);
+
+    showToast && showToast('📦 Box → Slide ' + (targetIdx+1) + ' par smart move! Auto-arrange done ✅', 'success');
 
   } else if(item.type === 'text') {
-    // Create new text block on target with selected text
-    var newBlock = {
-      id: 'scb_' + Date.now(), x: 30, y: 30,
-      w: 180, html: item.text, fontSize: 15,
-      color: '#1a1a1a', bold: false, italic: false, underline: false, angle: 0
-    };
+    // ── Selected text ke liye naya block banao — properly placed ──
+    var cfg2   = window._scGetLayoutConfig ? window._scGetLayoutConfig() : { col0:{x:8,w:300}, gap:12 };
+    var colCfg2 = cfg2.col0;
     toSlide.textBlocks = toSlide.textBlocks || [];
+
+    // Bottom y find karo
+    var bottomY2 = 8;
+    (toSlide.textBlocks).forEach(function(blk2) {
+      var h2  = _shEstimateBlockHeight(blk2, colCfg2.w);
+      var bot2 = (blk2.y||0) + h2 + (cfg2.gap||12);
+      if(bot2 > bottomY2) bottomY2 = bot2;
+    });
+
+    var newBlock = {
+      id:        'scb_txt_' + Date.now(),
+      x:         colCfg2.x,
+      y:         bottomY2,
+      w:         colCfg2.w,
+      html:      item.text,
+      fontSize:  15,
+      color:     '#1a1a1a',
+      bold:      false,
+      italic:    false,
+      underline: false,
+      angle:     0
+    };
     toSlide.textBlocks.push(newBlock);
-    showToast && showToast('✂️ Text → Slide ' + (targetIdx+1) + ' par move ho gaya!', 'success');
+    _shResolveDestinationOverlaps(toSlide);
+    movedBlockId = newBlock.id;
+    showToast && showToast('✂️ Text → Slide ' + (targetIdx+1) + ' par smart move! ✅', 'success');
 
   } else if(item.type === 'qm') {
-    // Remove from source
+    // QMap nodes move — position offset adjust karo ──
     var srcIds = item.nodes.map(function(n){ return n.id; });
     fromSlide.qmNodes = (fromSlide.qmNodes||[]).filter(function(n){ return !srcIds.includes(n.id); });
     fromSlide.qmEdges = (fromSlide.qmEdges||[]).filter(function(e){ return !srcIds.includes(e.from) && !srcIds.includes(e.to); });
-    // Add to target
-    toSlide.qmNodes = (toSlide.qmNodes||[]).concat(JSON.parse(JSON.stringify(item.nodes)));
+
+    // Destination mein existing nodes ke saath overlap na ho — offset lagao
+    var existNodes = toSlide.qmNodes || [];
+    var maxX = 0, maxY = 0;
+    existNodes.forEach(function(n){ if((n.x||0) > maxX) maxX = n.x; if((n.y||0) > maxY) maxY = n.y; });
+    var offsetX = existNodes.length ? (maxX + 150) : 0;
+    var offsetY = existNodes.length ? 0 : 0;
+
+    var clonedNodes = JSON.parse(JSON.stringify(item.nodes));
+    // Find bounding box of moved nodes
+    var minNX = Infinity;
+    clonedNodes.forEach(function(n){ if((n.x||0) < minNX) minNX = n.x; });
+    // Shift all nodes so they start after existing content
+    clonedNodes.forEach(function(n){
+      n.x = (n.x||0) - minNX + offsetX + 20;
+    });
+
+    toSlide.qmNodes = (toSlide.qmNodes||[]).concat(clonedNodes);
     toSlide.qmEdges = (toSlide.qmEdges||[]).concat(JSON.parse(JSON.stringify(item.edges)));
-    showToast && showToast('🗺 Map nodes → Slide ' + (targetIdx+1) + ' par move ho gaye!', 'success');
+    showToast && showToast('🗺 Map nodes → Slide ' + (targetIdx+1) + ' par move ho gaye! ✅', 'success');
   }
 
-  // Re-render current slide
-  window.scRenderAll && window.scRenderAll();
-  window._scSyncTextBlocksDOM && window._scSyncTextBlocksDOM();
-  window._scRenderSlideNav && window._scRenderSlideNav();
+  // ── Navigate + animate ──
+  _shAnimateMovedBlock(movedBlockId, targetIdx);
+
+  // Expand canvas if needed
+  clearTimeout(window._scExpandTimer);
+  window._scExpandTimer = setTimeout(window.scExpandCanvasForContent || function(){}, 180);
 
   _sh.dragItem = null;
   if(_sh.dragEl) { _sh.dragEl.classList.remove('shift-dragging'); _sh.dragEl = null; }
@@ -33577,43 +33792,63 @@ function _shMoveToNewSlide(side) {
 
   window.scSnapshot && window.scSnapshot();
 
-  // Create new slide
+  // ── Naya slide banao ──
   var newSlide = window._scNewSlide && window._scNewSlide('Slide ' + (window._sc.slides.length + 1));
   if(!newSlide) return;
 
-  // Insert position
   var insertAt = side === 'right' ? item.fromSlide + 1 : item.fromSlide;
   window._sc.slides.splice(insertAt, 0, newSlide);
-  // Adjust curSlide if needed
   if(insertAt <= window._sc.curSlide) window._sc.curSlide++;
 
-  // Move item to new slide
+  var movedBlockId = null;
+
   if(item.type === 'block') {
     fromSlide.textBlocks = (fromSlide.textBlocks||[]).filter(function(b){ return b.id !== item.data.id; });
-    newSlide.textBlocks.push(JSON.parse(JSON.stringify(item.data)));
-    showToast && showToast('✨ New Slide ' + (insertAt+1) + ' bana + box move!', 'success');
+    // New slide par smart placement (khali slide hai, to y=8 se start hoga)
+    var placed2 = _shSmartPlaceBlockOnSlide(item.data, newSlide, null);
+    newSlide.textBlocks.push(placed2.block);
+    movedBlockId = placed2.block.id;
+    showToast && showToast('✨ New Slide ' + (insertAt+1) + ' bana — box smart place hua! ✅', 'success');
+
   } else if(item.type === 'text') {
-    var nb = { id:'scb_'+Date.now(), x:30, y:30, w:180, html: item.text, fontSize:15, color:'#1a1a1a', bold:false, italic:false, underline:false, angle:0 };
+    var cfg3   = window._scGetLayoutConfig ? window._scGetLayoutConfig() : { col0:{x:8,w:300}, gap:12 };
+    var nb = {
+      id:        'scb_txt_' + Date.now(),
+      x:         cfg3.col0.x,
+      y:         8,
+      w:         cfg3.col0.w,
+      html:      item.text,
+      fontSize:  15,
+      color:     '#1a1a1a',
+      bold:      false,
+      italic:    false,
+      underline: false,
+      angle:     0
+    };
     newSlide.textBlocks.push(nb);
-    showToast && showToast('✨ New Slide ' + (insertAt+1) + ' bana + text move!', 'success');
+    movedBlockId = nb.id;
+    showToast && showToast('✨ New Slide ' + (insertAt+1) + ' bana — text move hua! ✅', 'success');
+
   } else if(item.type === 'qm') {
-    var srcIds = item.nodes.map(function(n){ return n.id; });
-    fromSlide.qmNodes = (fromSlide.qmNodes||[]).filter(function(n){ return !srcIds.includes(n.id); });
-    fromSlide.qmEdges = (fromSlide.qmEdges||[]).filter(function(e){ return !srcIds.includes(e.from) && !srcIds.includes(e.to); });
+    var srcIds2 = item.nodes.map(function(n){ return n.id; });
+    fromSlide.qmNodes = (fromSlide.qmNodes||[]).filter(function(n){ return !srcIds2.includes(n.id); });
+    fromSlide.qmEdges = (fromSlide.qmEdges||[]).filter(function(e){ return !srcIds2.includes(e.from) && !srcIds2.includes(e.to); });
     newSlide.qmNodes = JSON.parse(JSON.stringify(item.nodes));
     newSlide.qmEdges = JSON.parse(JSON.stringify(item.edges));
-    showToast && showToast('✨ New Slide ' + (insertAt+1) + ' bana + map nodes move!', 'success');
+    showToast && showToast('✨ New Slide ' + (insertAt+1) + ' bana — map nodes move! ✅', 'success');
   }
 
-  window.scRenderAll && window.scRenderAll();
-  window._scSyncTextBlocksDOM && window._scSyncTextBlocksDOM();
-  window._scRenderSlideNav && window._scRenderSlideNav();
+  // ── Navigate + animate ──
+  _shAnimateMovedBlock(movedBlockId, insertAt);
+
+  clearTimeout(window._scExpandTimer);
+  window._scExpandTimer = setTimeout(window.scExpandCanvasForContent || function(){}, 180);
 
   _sh.dragItem = null;
   if(_sh.dragEl) { _sh.dragEl.classList.remove('shift-dragging'); _sh.dragEl = null; }
 }
 
-// Dummy handler for drag-move (for existing slide mode, peek handles it)
+// Dummy handlers (peek overlay handles actual drag tracking)
 function _shHandleDragMove(cx, cy) {}
 function _shHandleDragEnd(cx, cy, type) {}
 
