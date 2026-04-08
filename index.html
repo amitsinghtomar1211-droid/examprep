@@ -9414,12 +9414,13 @@ STRICT RULES:
 1. Sirf diye content se questions banao
 2. Har question BILKUL ALAG fact/concept pe — ek fact se sirf ek question
 3. 4 options: 1 sahi, 3 believable galat
-4. Options shuffle karo — correct A/B/C/D kuch bhi ho
+4. CRITICAL — Correct answer ki position RANDOMLY vary karo: kuch questions mein correct 0 (A), kuch mein 1 (B), kuch mein 2 (C), kuch mein 3 (D) — MATLAB: ek quiz mein A/B/C/D sabhi ki roughly equal baari aani chahiye, BILKUL ek hi option (jaise sab B ya sab A) repeat NAHI hona chahiye
 5. Explanation: kyun sahi, kyun galat, related facts
 6. EXACTLY ${count} questions — zyada ya kam NAHI
 7. Hindi mein likho
 8. JSON ke alawa KUCH MAT LIKHO
 9. Agar FACT- numbered list di gayi hai to SIRF unhi se questions banao — covered/SKIP facts se BILKUL nahi
+10. Correct answer distribution target: pehle ${Math.ceil(count/4)} questions mein sahi answer position: 0,1,2,3 ki rotation mein rakho
 
 RESPONSE FORMAT:
 {"questions":[{"question":"...","options":["...","...","...","..."],"correct":0,"explanation":"...","topic":"${label}","hint":"short hint","sourceFact":"FACT-N ya WEAK-N ya NEW-N — jo number diya tha wahi likho"}]}`;
@@ -9433,6 +9434,7 @@ RESPONSE FORMAT:
     const text=await callGroq(prompt,8000,true);
     const parsed=safeJsonParse(text);
     if(!parsed.questions?.length)throw new Error('Questions nahi mile');
+    parsed.questions=shuffleQuizOptions(parsed.questions);
 
     const quizId='q_'+Date.now();
     const quizName=label+' \u00b7 '+new Date().toLocaleDateString('hi-IN');
@@ -9712,7 +9714,8 @@ function showResults(){
         ${doubtful.length?`<span><strong style="color:var(--accent2);">🤔 ${doubtful.length} Doubtful</strong></span>`:''}
       </div>
       <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
-        <button class="btn btn-primary btn-sm" onclick="reAttemptQuiz('${cq.qid}')">🔄 Re-Attempt</button>
+        <button class="btn btn-primary btn-sm" onclick="reAttemptQuiz('${cq.qid}',false,false)">🔄 Re-Attempt</button>
+        <button class="btn btn-sm" onclick="reAttemptQuiz('${cq.qid}',true,true)" style="background:rgba(106,27,154,0.1);color:var(--purple);border:1px solid rgba(106,27,154,0.2);">🔀 Shuffle Re-Attempt</button>
         <button class="ans-hide-toggle" onclick="toggleAllResultAns(this)">🙈 Sab Answers Chhupao</button>
       </div>
       ${wrong.length?`
@@ -9817,18 +9820,42 @@ function openReportModalFromResult(qid,qIdx){
   document.getElementById('reportModal').classList.add('show');
 }
 
-function reAttemptQuiz(qid) {
+function shuffleQuizOptions(questions) {
+  return questions.map(function(q) {
+    const qc = Object.assign({}, q, {options: q.options.slice()});
+    const correctAnswer = qc.options[qc.correct];
+    for(let i = qc.options.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = qc.options[i]; qc.options[i] = qc.options[j]; qc.options[j] = tmp;
+    }
+    qc.correct = qc.options.indexOf(correctAnswer);
+    return qc;
+  });
+}
+
+function shuffleArray(arr) {
+  const a = arr.slice();
+  for(let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+  }
+  return a;
+}
+
+function reAttemptQuiz(qid, shuffleQ, shuffleOpts) {
   const original = S.quizHistory.find(h => h.id === qid);
   if(!original) return;
+  let qs = original.questions.map(q => ({...q, isCorrect:undefined, yourAnswer:undefined, difficulty:q.difficulty, isDoubtful:q.isDoubtful}));
+  if(shuffleOpts) qs = shuffleQuizOptions(qs);
+  if(shuffleQ) qs = shuffleArray(qs);
   window._cq = {
-    questions: original.questions.map(q => ({...q, isCorrect:undefined, yourAnswer:undefined, difficulty:q.difficulty, isDoubtful:q.isDoubtful})),
+    questions: qs,
     current:0, score:0,
     label: original.label + ' (Re-attempt)',
     examId: original.examId, examName: original.examName,
     qid: 'q_' + Date.now(),
     sid: original.sid||'all', secid: original.secid||'all', tid: original.tid||'all'
   };
-  // Navigate to quiz page first, then show quiz
   showPage('quiz', document.querySelector('[data-page=quiz]'));
   closeModal('quizDetailModal');
   document.getElementById('quizSetup').style.display='none';
@@ -9836,7 +9863,50 @@ function reAttemptQuiz(qid) {
   document.getElementById('quizActive').style.display='block';
   document.getElementById('quizResults').style.display='none';
   showQ(0);
-  showToast('Re-Attempt shuru! 🔄','success');
+  const msg = shuffleQ && shuffleOpts ? '🔀 Questions + Options shuffle karke Re-Attempt shuru!' : shuffleQ ? '🔀 Questions shuffle karke Re-Attempt shuru!' : shuffleOpts ? '🔀 Options shuffle karke Re-Attempt shuru!' : 'Re-Attempt shuru! 🔄';
+  showToast(msg,'success');
+}
+
+function editHistQ(hid, qi) {
+  const h = S.quizHistory.find(x => x.id === hid);
+  if(!h || !h.questions[qi]) return;
+  const q = h.questions[qi];
+  const ansDiv = document.getElementById('hist-ans-' + hid + '-' + qi);
+  const editId = 'hist-edit-' + hid + '-' + qi;
+  if(document.getElementById(editId)) {
+    document.getElementById(editId).remove();
+    return;
+  }
+  const el = document.createElement('div');
+  el.id = editId;
+  el.style.cssText = 'margin-top:8px;border:1.5px solid var(--accent);border-radius:10px;padding:10px;background:var(--surface2);';
+  el.innerHTML = `<div style="font-size:0.73rem;font-weight:700;color:var(--accent);margin-bottom:5px;">✏️ Question Edit Karo:</div>
+    <textarea id="eqt-${hid}-${qi}" style="width:100%;border:1px solid var(--border);border-radius:8px;padding:7px;font-size:0.79rem;background:var(--surface);color:var(--text);font-family:inherit;resize:vertical;min-height:60px;">${q.question.replace(/</g,'&lt;')}</textarea>
+    <div style="font-size:0.73rem;font-weight:700;color:var(--accent);margin:6px 0 3px;">💡 Explanation Edit Karo:</div>
+    <textarea id="eeq-${hid}-${qi}" style="width:100%;border:1px solid var(--border);border-radius:8px;padding:7px;font-size:0.79rem;background:var(--surface);color:var(--text);font-family:inherit;resize:vertical;min-height:70px;">${(q.explanation||'').replace(/</g,'&lt;')}</textarea>
+    <div style="display:flex;gap:7px;margin-top:7px;">
+      <button onclick="saveHistQ('${hid}',${qi})" style="padding:5px 14px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:0.77rem;font-weight:700;cursor:pointer;">✅ Save</button>
+      <button onclick="document.getElementById('${editId}').remove()" style="padding:5px 12px;background:rgba(0,0,0,0.06);color:var(--text2);border:1px solid var(--border);border-radius:8px;font-size:0.77rem;cursor:pointer;">✕ Cancel</button>
+    </div>`;
+  ansDiv.parentNode.insertBefore(el, ansDiv.nextSibling);
+}
+
+function saveHistQ(hid, qi) {
+  const h = S.quizHistory.find(x => x.id === hid);
+  if(!h || !h.questions[qi]) return;
+  const newQ = document.getElementById('eqt-' + hid + '-' + qi)?.value?.trim();
+  const newE = document.getElementById('eeq-' + hid + '-' + qi)?.value?.trim();
+  if(newQ) h.questions[qi].question = newQ;
+  if(newE !== undefined) h.questions[qi].explanation = newE;
+  const vq = S.questionVault ? S.questionVault.find(v => v.question === h.questions[qi].question || (newQ && v.question !== newQ)) : null;
+  save();
+  document.getElementById('hist-edit-' + hid + '-' + qi)?.remove();
+  const ansDiv = document.getElementById('hist-ans-' + hid + '-' + qi);
+  if(ansDiv) {
+    const expEl = ansDiv.querySelector('[data-expl]') || ansDiv.children[ansDiv.children.length-1];
+    showDetail(hid);
+  }
+  showToast('Question updated! ✅','success');
 }
 
 function endQuiz(){if(!confirm('Quiz band karna hai?'))return;resetQuizUI();}
@@ -10322,6 +10392,7 @@ function showDetail(qid){
         <button class="save-status-btn ${isSaved?'saved':'unsaved'}" onclick="toggleResultSave('${h.id}',${qi},'${qKey}',this)">${isSaved?'📌 Saved ✓':'📌 Save'}</button>
         <button class="wrong-status-btn ${isWronged?'wronged':'not-wronged'}" onclick="toggleResultWrong('${h.id}',${qi},'${qKey}',this)">${isWronged?'✓ Wronged':'❌ Mark'}</button>
         <button class="btn btn-xs" style="background:rgba(21,101,192,0.1);color:var(--accent);border:1px solid rgba(21,101,192,0.2);border-radius:8px;" onclick="openAiChatQuestion('${q.question.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.options[q.correct]||'').replace(/'/g,"\\'")}','${(q.explanation||'').replace(/'/g,"\\'").substring(0,100).replace(/\n/g,' ')}')">🤖 Chat</button>
+        <button class="btn btn-xs" style="background:rgba(111,66,193,0.1);color:var(--save-color);border:1px solid rgba(111,66,193,0.2);border-radius:8px;" onclick="editHistQ('${h.id}',${qi})">✏️ Edit</button>
         <button class="btn btn-xs btn-danger" onclick="confirmDeleteHistQ('${h.id}',${qi})">🗑️</button>
         <button class="btn btn-xs btn-report-q" onclick="openReportModalFromResult('${h.id}',${qi})">🚩</button>
       </div>
@@ -10336,8 +10407,16 @@ function showDetail(qid){
       <span class="badge ${h.examId?'badge-blue':'badge-orange'}">${h.examName}</span>
       <button class="ans-hide-toggle" style="font-size:0.7rem;padding:3px 9px;margin-left:auto;" onclick="toggleAllHistModalAns(this)">🙈 Sab Chhupao</button>
     </div>
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:11px;padding:10px;margin-bottom:10px;">
+      <div style="font-size:0.72rem;font-weight:800;color:var(--text2);margin-bottom:7px;text-transform:uppercase;letter-spacing:0.5px;">🔄 Re-Attempt Options</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" onclick="reAttemptQuiz('${h.id}',false,false)" style="font-size:0.76rem;">🔄 Same Order</button>
+        <button class="btn btn-sm" onclick="reAttemptQuiz('${h.id}',true,false)" style="font-size:0.76rem;background:rgba(25,118,210,0.12);color:var(--accent);border:1px solid rgba(25,118,210,0.25);">🔀 Questions Shuffle</button>
+        <button class="btn btn-sm" onclick="reAttemptQuiz('${h.id}',false,true)" style="font-size:0.76rem;background:rgba(230,81,0,0.1);color:var(--accent2);border:1px solid rgba(230,81,0,0.2);">🔀 Options Shuffle</button>
+        <button class="btn btn-sm" onclick="reAttemptQuiz('${h.id}',true,true)" style="font-size:0.76rem;background:linear-gradient(135deg,rgba(25,118,210,0.12),rgba(230,81,0,0.1));color:var(--purple);border:1px solid rgba(106,27,154,0.2);">🔀🔀 Full Shuffle</button>
+      </div>
+    </div>
     <div class="btn-row" style="margin-bottom:10px;">
-      <button class="btn btn-primary btn-sm" onclick="reAttemptQuiz('${h.id}')">🔄 Re-Attempt</button>
       <button class="btn btn-danger btn-sm" onclick="deleteQuizHistory('${h.id}');closeModal('quizDetailModal')">🗑️ Delete Quiz</button>
     </div>
     ${wrong.length?`<div style="font-size:0.82rem;font-weight:800;color:var(--red);margin-bottom:6px;">❌ Galat (${wrong.length}):</div>${wrong.map((q,i)=>renderHQ(q,i,true)).join('')}`:'<div style="color:var(--green);text-align:center;padding:10px;">🎉 Saare sahi the!</div>'}
