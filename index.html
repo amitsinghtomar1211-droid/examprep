@@ -9257,8 +9257,6 @@ async function startQuizActual(){
       showToast('⚠️ Canvas mein notes nahi hain! Pehle Canvas par notes likhkar Save karo.','error');
       return;
     }
-    // Control characters aur problematic chars hatao
-    canvasText = canvasText.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ');
     content=canvasText; label=label+' (Canvas)';
   } else {
     S.subjects.forEach(subj=>{
@@ -9424,7 +9422,7 @@ STRICT RULES:
 9. Agar FACT- numbered list di gayi hai to SIRF unhi se questions banao — covered/SKIP facts se BILKUL nahi
 
 RESPONSE FORMAT:
-{"questions":[{"question":"...","options":["...","...","...","..."],"correct":0,"explanation":"...","topic":"${label.replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/[\x00-\x1F]/g,' ')}","hint":"short hint","sourceFact":"FACT-N ya WEAK-N ya NEW-N — jo number diya tha wahi likho"}]}`;
+{"questions":[{"question":"...","options":["...","...","...","..."],"correct":0,"explanation":"...","topic":"${label}","hint":"short hint","sourceFact":"FACT-N ya WEAK-N ya NEW-N — jo number diya tha wahi likho"}]}`;
 
   document.getElementById('quizSetup').style.display='none';
   document.getElementById('quizLoading').classList.add('show');
@@ -9432,18 +9430,8 @@ RESPONSE FORMAT:
   document.getElementById('quizResults').style.display='none';
 
   try{
-    const text=await callGroq(prompt,5000);
-    let clean=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
-    // JSON object extract karo — extra text hone par bhi kaam kare
-    const _jStart=clean.indexOf('{'); const _jEnd=clean.lastIndexOf('}');
-    if(_jStart!==-1&&_jEnd!==-1)clean=clean.substring(_jStart,_jEnd+1);
-    let parsed;
-    try{ parsed=JSON.parse(clean); }
-    catch(jsonErr){
-      // Control characters remove karke dobara try karo
-      const sanitized=clean.replace(/[\x00-\x1F\x7F]/g,' ');
-      parsed=JSON.parse(sanitized);
-    }
+    const text=await callGroq(prompt,8000,true);
+    const parsed=safeJsonParse(text);
     if(!parsed.questions?.length)throw new Error('Questions nahi mile');
 
     const quizId='q_'+Date.now();
@@ -13841,17 +13829,19 @@ async function callGroqChat(messages, maxTokens=2000){
   return d.choices?.[0]?.message?.content||'';
 }
 
-async function callGroq(prompt, maxTokens=4000){
+async function callGroq(prompt, maxTokens=4000, useJsonFormat=false){
   const model = S.model || 'meta-llama/llama-4-scout-17b-16e-instruct';
+  const reqBody = {
+    model,
+    messages:[{role:'user',content:prompt}],
+    temperature:0.7,
+    max_tokens:maxTokens
+  };
+  if(useJsonFormat) reqBody.response_format = { type: 'json_object' };
   const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':`Bearer ${S.apiKey}`},
-    body:JSON.stringify({
-      model,
-      messages:[{role:'user',content:prompt}],
-      temperature:0.7,
-      max_tokens:maxTokens
-    })
+    body:JSON.stringify(reqBody)
   });
   if(!r.ok){
     const e=await r.json();
@@ -13863,6 +13853,46 @@ async function callGroq(prompt, maxTokens=4000){
   }
   const d=await r.json();
   return d.choices?.[0]?.message?.content||'';
+}
+
+function repairTruncatedJson(str) {
+  str = str.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+  const lastCompleteObj = str.lastIndexOf('"}');
+  if(lastCompleteObj === -1) return str;
+  let repaired = str.substring(0, lastCompleteObj + 2);
+  let openBrackets = (repaired.match(/\[/g)||[]).length;
+  let closeBrackets = (repaired.match(/]/g)||[]).length;
+  let openBraces = (repaired.match(/{/g)||[]).length;
+  let closeBraces = (repaired.match(/}/g)||[]).length;
+  while(closeBrackets < openBrackets) { repaired += ']'; closeBrackets++; }
+  while(closeBraces < openBraces) { repaired += '}'; closeBraces++; }
+  return repaired;
+}
+
+function safeJsonParse(text) {
+  let clean = text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
+  const jsonStart = clean.indexOf('{');
+  const jsonEnd = clean.lastIndexOf('}');
+  if(jsonStart !== -1 && jsonEnd > jsonStart) {
+    clean = clean.substring(jsonStart, jsonEnd + 1);
+  }
+  clean = clean.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+  clean = clean.replace(/[\x00-\x1F\x7F]/g, function(c){ return c==='\n'||c==='\r'||c==='\t'?c:''; });
+  try {
+    return JSON.parse(clean);
+  } catch(e1) {
+    try {
+      return JSON.parse(repairTruncatedJson(clean));
+    } catch(e2) {
+      const m = clean.match(/\{[\s\S]*"questions"\s*:\s*\[[\s\S]*\]\s*\}/);
+      if(m) {
+        try { return JSON.parse(m[0]); } catch(e3) {
+          try { return JSON.parse(repairTruncatedJson(m[0])); } catch(e4) {}
+        }
+      }
+      throw new Error('Quiz response parse nahi ho paya. Dobara try karo.');
+    }
+  }
 }
 
 // ==================== WEB SEARCH ====================
@@ -30913,7 +30943,7 @@ function scAiStartQuiz() {
   }).then(function(r){return r.json();}).then(function(data){
     var raw=(data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'[]';
     try {
-      _scQzQs    = JSON.parse(raw.replace(/```json|```/g,'').trim());
+      _scQzQs    = safeJsonParse(raw);
       _scQzCur   = 0; _scQzScore = 0; _scQzDone = false;
       _scQzRender();
       // Mark for rescan next time
