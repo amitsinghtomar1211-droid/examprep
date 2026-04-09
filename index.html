@@ -1287,6 +1287,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .sc-text-block {
   position: absolute;
   min-width: 80px;
+  min-height: 28px; /* cursor visible rehne ke liye */
   /* height auto — content ke hisaab se grow karega */
   padding: 6px 10px;
   /* default: border invisible — sirf select/edit mein dikhega */
@@ -1306,6 +1307,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   overflow-wrap: break-word;
   /* width fixed by JS but text wraps inside */
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
 }
 /* Handles hidden by default */
 .sc-text-block .sc-block-resize,
@@ -1329,15 +1331,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   border-style: solid;
   background: rgba(255,255,255,0.92);
   box-shadow: 0 2px 12px rgba(21,101,192,0.15);
-  outline: none;
-  user-select: text;
-  -webkit-user-select: text;
-  touch-action: auto;
+  outline: none !important;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  touch-action: auto !important;
   -webkit-touch-callout: default;
   z-index: 50;
-  min-height: 32px;
+  min-height: 36px;
   caret-color: #1565c0;
   -webkit-text-fill-color: inherit;
+  /* Keyboard open karne ke liye overflow visible */
+  overflow: visible;
 }
 .sc-text-block[contenteditable="true"] .sc-block-resize,
 .sc-text-block[contenteditable="true"] .sc-block-rotate { display: none; }
@@ -27008,7 +27012,7 @@ function scInitCanvas() {
   cv.addEventListener('pointerup',    _scDrawUp,    { passive:true  });
   cv.addEventListener('pointercancel',_scDrawUp,    { passive:true  });
   wrap.removeEventListener('pointerdown', _scWrapTap);
-  wrap.addEventListener('pointerdown', _scWrapTap, { passive:true });
+  wrap.addEventListener('pointerdown', _scWrapTap, { passive:false });
   if(qmcv) {
     qmcv.removeEventListener('pointerdown', _scQmDown);
     qmcv.removeEventListener('pointermove', _scQmMove);
@@ -27275,28 +27279,21 @@ function _scCreateBlockDOM(b) {
   moveH.innerHTML = '✥';
   el.appendChild(moveH);
   var _lt = 0;
+  el.setAttribute('tabindex', '-1'); // Focus ke liye zaroori
   el.addEventListener('pointerdown', function(e) {
     if(e.target===resizeH||e.target===rotH||e.target===moveH) return;
-    // Agar block abhi edit mode mein hai — click andar rehne do, blur mat karo
+    // Edit mode mein hai — andar click allow karo
     if(el.contentEditable === 'true') {
       e.stopPropagation();
       return;
     }
     e.stopPropagation();
-    var now = Date.now();
-    var isDoubleTap = (now - _lt < 400);
-    _lt = now;
-    if(isDoubleTap) {
-      _lt = 0;
-      scEditBlock(b, el);
-    } else {
-      if(_sc.mode==='select'||_sc.mode==='text') {
-        // Agar block already selected hai — turant edit mode kholo (single tap = edit on selected)
-        if(el.classList.contains('selected')) {
-          scEditBlock(b, el);
-        } else {
-          scSelectBlock(b, el);
-        }
+    if(_sc.mode==='select'||_sc.mode==='text') {
+      // Already selected hai → turant edit mode (single tap on selected)
+      if(_sc.activeBlockId === b.id) {
+        scEditBlock(b, el);
+      } else {
+        scSelectBlock(b, el);
       }
     }
   });
@@ -27521,75 +27518,62 @@ function _scMoveBlockToSlide(b, el, bar, targetSlideIdx) {
 
 function scEditBlock(b, el) {
   // Agar already edit mode mein hai toh dobara call mat karo
-  if(el.contentEditable === 'true') { el.focus(); return; }
+  if(el.contentEditable === 'true') {
+    el.focus();
+    return;
+  }
 
   // Hide handles during edit
   scHideAllBlockActions();
   el.classList.remove('selected');
+
+  // tabindex ensure karo taaki focus mile
+  if(!el.getAttribute('tabindex')) el.setAttribute('tabindex', '-1');
   
-  // Minimum height ensure karo taaki cursor visible rahe
-  if(!el.style.minHeight) el.style.minHeight = '32px';
-  
+  // Contenteditable ON
   el.contentEditable = 'true';
   el.style.userSelect = 'text';
   el.style.webkitUserSelect = 'text';
   el.style.touchAction = 'auto';
-  
-  // Focus immediately (no delay) — mobile keyboard ke liye
-  el.focus();
-  try {
-    var sel = window.getSelection();
-    var range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    sel.removeAllRanges();
-    sel.addRange(range);
-  } catch(ex) {}
-  
-  // Also requestAnimationFrame for reliability
-  requestAnimationFrame(function() {
-    if(el.contentEditable !== 'true') return;
-    el.focus();
+  el.style.minHeight = '32px';
+  el.style.webkitTapHighlightColor = 'transparent';
+
+  // === FOCUS — Mobile ke liye ek reliable trick ===
+  // 1. Turant focus try karo (synchronous context mein kaam karta hai)
+  try { el.focus(); } catch(ex) {}
+
+  // 2. Cursor END par set karo
+  function _setCursorEnd() {
     try {
       var sel = window.getSelection();
+      if(!sel) return;
       var range = document.createRange();
       range.selectNodeContents(el);
-      range.collapse(false); // false = end
+      range.collapse(false);
       sel.removeAllRanges();
       sel.addRange(range);
     } catch(ex) {}
+  }
+  _setCursorEnd();
+
+  // 3. requestAnimationFrame mein bhi try karo (fallback)
+  requestAnimationFrame(function() {
+    if(el.contentEditable !== 'true') return;
+    try { el.focus(); } catch(ex) {}
+    _setCursorEnd();
   });
 
-  // On blur — thoda wait karo, dekhte hain focus kahan gayi
-  // Mobile keyboard popup se blur aata hai — 300ms wait karo
-  var _blurGuard = false;
-  function onBlur() {
-    // Longer delay for mobile keyboard — 300ms reliable hai
-    setTimeout(function() {
-      // Agar focus wapas block par aa gayi — kuch mat karo
-      if(document.activeElement === el) return;
-      // Agar block abhi bhi contenteditable true hai — user ne explicitly click nahi kiya
-      // Mobile par keyboard hide hone par bhi blur aata hai — check karo ki user ne dismiss kiya
-      var af = document.activeElement;
-      var panel = document.getElementById('studyCanvasPanel');
-      if(af && panel && panel.contains(af)) {
-        // Focus panel mein hi hai — ek aur chance do
-        setTimeout(function() {
-          if(document.activeElement === el) return;
-          _doSave();
-        }, 200);
-        return;
-      }
-      // Agar body par focus gayi (keyboard hide) — save karo
-      _doSave();
-    }, 250);
-  }
-
+  // === BLUR HANDLER — Stable exit ===
+  var _saving = false;
   function _doSave() {
-    if(el.contentEditable !== 'true') return; // already saved
+    if(_saving || el.contentEditable !== 'true') return;
+    _saving = true;
     el.contentEditable = 'false';
+    el.style.userSelect = '';
+    el.style.webkitUserSelect = '';
+    el.style.touchAction = '';
     el.classList.remove('selected');
-    // Save HTML content
+    // HTML save karo (handles remove karke)
     var clone = el.cloneNode(true);
     clone.querySelectorAll('.sc-block-resize,.sc-block-rotate,.sc-block-move,.sc-block-actions').forEach(function(h){ h.remove(); });
     b.html = clone.innerHTML;
@@ -27597,11 +27581,36 @@ function scEditBlock(b, el) {
     b.y = parseFloat(el.style.top)  || b.y;
     scSnapshot();
     el.removeEventListener('blur', onBlur);
-    // Update active state
-    _sc.activeBlock = null; _sc.activeBlockId = null;
+    _sc.activeBlock = null;
+    _sc.activeBlockId = null;
+  }
+
+  function onBlur() {
+    // Mobile keyboard ke liye 350ms wait karo
+    setTimeout(function() {
+      if(el.contentEditable !== 'true') return;
+      // Agar wapas same element par focus ayi
+      if(document.activeElement === el) return;
+      // Agar focus canvas panel ke andar kisi aur element par gayi
+      var af = document.activeElement;
+      var panel = document.getElementById('studyCanvasPanel');
+      if(af && panel && panel.contains(af)) {
+        // Panel mein hai — 200ms aur wait
+        setTimeout(function() {
+          if(document.activeElement === el) return;
+          _doSave();
+        }, 200);
+        return;
+      }
+      _doSave();
+    }, 350);
   }
 
   el.addEventListener('blur', onBlur);
+
+  // Active block track karo
+  _sc.activeBlock = el;
+  _sc.activeBlockId = b.id;
 }
 
 function _scRefreshBlock(b) {
@@ -27617,24 +27626,39 @@ function _scRefreshBlock(b) {
 }
 
 function _scBlockDrag(b,el) {
-  var sx,sy,sbx,sby,drag=false;
+  var sx,sy,sbx,sby,drag=false,_hasMoved=false;
   el.addEventListener('pointerdown',function(e){
     if(e.target.classList.contains('sc-block-resize')||e.target.classList.contains('sc-block-rotate')||e.target.classList.contains('sc-block-move')||e.target.classList.contains('sc-block-act-btn')||el.contentEditable==='true') return;
     if(_sc.mode!=='select'&&_sc.mode!=='text') return;
     try{el.setPointerCapture(e.pointerId);}catch(x){}
-    sx=e.clientX;sy=e.clientY;sbx=b.x;sby=b.y;drag=true;scSnapshot();
-    if(window._scLockSlideSwipe) window._scLockSlideSwipe(true);
-  },{passive:false});
+    sx=e.clientX;sy=e.clientY;sbx=b.x;sby=b.y;drag=false;_hasMoved=false;
+    if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);
+  },{passive:true});
   el.addEventListener('pointermove',function(e){
-    if(!drag) return; b.x=sbx+(e.clientX-sx); b.y=sby+(e.clientY-sy);
+    if(el.contentEditable==='true') return;
+    var dx=e.clientX-sx, dy=e.clientY-sy;
+    // 8px threshold ke baad hi drag shuru hoga (tap se distinguish karne ke liye)
+    if(!_hasMoved && Math.sqrt(dx*dx+dy*dy) < 8) return;
+    if(!_hasMoved) {
+      _hasMoved=true; drag=true; scSnapshot();
+      if(window._scLockSlideSwipe) window._scLockSlideSwipe(true);
+    }
+    b.x=sbx+dx; b.y=sby+dy;
     el.style.left=b.x+'px'; el.style.top=b.y+'px';
   },{passive:true});
-  el.addEventListener('pointerup',function(){drag=false; if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);
-    // After drag: snap to correct column, resolve stacking, expand
-    setTimeout(function(){
-      _scApplyLayout();
-      clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,60);
-    },30);
+  el.addEventListener('pointerup',function(){
+    var wasDragging = drag;
+    drag=false;
+    if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);
+    // Edit mode mein layout change nahi — focus disturb hoga
+    if(el.contentEditable === 'true') return;
+    // Sirf actual drag ke baad layout apply karo
+    if(wasDragging) {
+      setTimeout(function(){
+        _scApplyLayout();
+        clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,60);
+      },30);
+    }
   },{passive:true});
 }
 
@@ -27758,13 +27782,15 @@ function _scWrapTap(e) {
   };
   cur.textBlocks.push(b);
   var el = _scCreateBlockDOM(b);
-  // Layout pehle settle karo, phir focus — 100ms reliable hai mobile pe
+  // iOS ke liye: focus() USER EVENT ke andar hi kaam karta hai, setTimeout mein nahi!
+  // Isliye turant edit mode mein daalo — layout baad mein settle hoga
+  if(el) {
+    scEditBlock(b, el); // Synchronous — iOS keyboard ke liye zaroori
+  }
+  // Layout aur canvas expand asynchronously
   setTimeout(function(){
     _scApplyLayout();
     clearTimeout(_scExpandTimer); _scExpandTimer = setTimeout(scExpandCanvasForContent, 80);
-    // Layout ke baad element ko re-fetch karo (position change ho sakti hai)
-    var freshEl = document.getElementById('scBlock_' + b.id) || el;
-    if(freshEl) scEditBlock(b, freshEl);
   }, 100);
 }
 
@@ -29232,21 +29258,23 @@ function scRenderToolbar() {
 function scAddTextBlock(){
   var cur=_scCur(); if(!cur) return; scSnapshot();
   var b={id:'scb_'+Date.now(),x:30,y:30+(Math.random()*60|0),w:180,html:'',fontSize:15,color:'#1a1a1a',bold:false,italic:false,underline:false,angle:0};
-  cur.textBlocks.push(b); var el=_scCreateBlockDOM(b); if(el) setTimeout(function(){
-    // Layout ke baad edit mode
-    _scApplyLayout && _scApplyLayout();
-    var freshEl = document.getElementById('scBlock_' + b.id) || el;
-    scEditBlock(b, freshEl);
-  },100);
+  cur.textBlocks.push(b);
+  var el=_scCreateBlockDOM(b);
+  if(el) {
+    // Synchronous focus for iOS keyboard
+    scEditBlock(b, el);
+    setTimeout(function(){ _scApplyLayout(); clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,80); }, 80);
+  }
 }
 function scAddBulletBlock(){
   var cur=_scCur(); if(!cur) return; scSnapshot();
   var b={id:'scb_'+Date.now(),x:30,y:30+(Math.random()*60|0),w:200,html:'• ',fontSize:14,color:'#1a1a1a',bold:false,italic:false,underline:false,angle:0};
-  cur.textBlocks.push(b); var el=_scCreateBlockDOM(b); if(el) setTimeout(function(){
-    _scApplyLayout && _scApplyLayout();
-    var freshEl = document.getElementById('scBlock_' + b.id) || el;
-    scEditBlock(b, freshEl);
-  },100);
+  cur.textBlocks.push(b);
+  var el=_scCreateBlockDOM(b);
+  if(el) {
+    scEditBlock(b, el);
+    setTimeout(function(){ _scApplyLayout(); clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,80); }, 80);
+  }
 }
 function scAddHeadingBlock(){
   var cur=_scCur(); if(!cur) return; scSnapshot();
@@ -40727,11 +40755,11 @@ function _removeReadingFloatControls() {
   if(old) old.remove();
 }
 
-// Long press handler for reading screens — DISABLED (manual mode only)
-// Auto-hide functionality hatai gai — ab user manually reading focus activate karta hai
+// Long press handler for reading screens — DISABLED (sirf manual button se)
+// Auto-hide band kar diya gaya — user screen par jyada time rahe to tools nahi hatenge
 var _longPressTimer = null;
 function _setupLongPressForReading(el, screenId) {
-  // Auto-hide disabled — reading focus sirf manual button se activate hota hai
+  // Auto-hide disabled — reading focus sirf manual button se karo
   return;
 }
 
