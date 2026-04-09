@@ -13447,7 +13447,104 @@ function printEditorContent() {
       mark.user-hl-green { background: #a5d6a7; padding: 1px 2px; border-radius: 2px; }
       mark.user-hl-blue { background: #90caf9; padding: 1px 2px; border-radius: 2px; }
       @media print { body { padding: 15px; } }
-    </style>
+    
+  /* ===== NOTES EDITOR TABLE FLOATING BAR ===== */
+  #neTableBar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 88888;
+    background: var(--surface);
+    border-top: 2px solid rgba(21,101,192,0.25);
+    box-shadow: 0 -4px 24px rgba(0,0,0,0.18);
+    transform: translateY(100%);
+    transition: transform 0.22s cubic-bezier(0.4,0,0.2,1);
+    max-height: 52vh;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #neTableBar.netb-open { transform: translateY(0); }
+  #neTableBar .netb-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 12px 5px;
+    background: linear-gradient(90deg,rgba(21,101,192,0.1),rgba(21,101,192,0.04));
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #neTableBar .netb-title {
+    font-size: 0.78rem; font-weight: 800; color: var(--accent);
+    display: flex; align-items: center; gap: 6px;
+  }
+  #neTableBar .netb-tabs {
+    display: flex; gap: 4px;
+  }
+  #neTableBar .netb-tab {
+    padding: 3px 10px; border-radius: 20px; border: 1.5px solid var(--border);
+    background: var(--surface2); font-size: 0.68rem; font-weight: 700;
+    cursor: pointer; color: var(--text2);
+    -webkit-tap-highlight-color: transparent;
+  }
+  #neTableBar .netb-tab.active {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+  }
+  #neTableBar .netb-close {
+    width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--border);
+    background: var(--surface2); font-size: 0.85rem; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text2); -webkit-tap-highlight-color: transparent;
+  }
+  #neTableBar .netb-panel {
+    display: none; padding: 8px 10px; overflow-x: auto; overflow-y: hidden;
+    flex-shrink: 0; scrollbar-width: none;
+  }
+  #neTableBar .netb-panel::-webkit-scrollbar { display: none; }
+  #neTableBar .netb-panel.netb-active { display: flex; }
+  #neTableBar .netb-row {
+    display: flex; align-items: center; gap: 5px; flex-wrap: nowrap;
+  }
+  #neTableBar .netb-sep {
+    width: 1.5px; height: 28px; background: var(--border); flex-shrink: 0; margin: 0 2px;
+  }
+  #neTableBar .nb {
+    min-width: 40px; height: 36px; border-radius: 9px;
+    border: 1.5px solid var(--border);
+    background: var(--surface2); font-size: 0.72rem; font-weight: 700;
+    color: var(--text); cursor: pointer; padding: 0 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; gap: 2px;
+    -webkit-tap-highlight-color: transparent; white-space: nowrap;
+    transition: background 0.1s, transform 0.08s;
+  }
+  #neTableBar .nb:active { transform: scale(0.93); }
+  #neTableBar .nb.red { color: var(--red); border-color: rgba(198,40,40,0.3); }
+  #neTableBar .nb.green { color: var(--green); border-color: rgba(46,125,50,0.3); }
+  #neTableBar .nb.blue { color: var(--accent); border-color: rgba(21,101,192,0.3); }
+  #neTableBar .nb.bold-btn { font-size: 1rem; font-weight: 900; }
+  #neTableBar .nb.active-fmt { background: var(--accent); color: #fff; border-color: var(--accent); }
+  /* Color swatches */
+  #neTableBar .netb-swatch-row {
+    display: flex; gap: 5px; align-items: center; flex-wrap: nowrap; overflow-x: auto;
+  }
+  #neTableBar .netb-swatch-row::-webkit-scrollbar { display: none; }
+  .netb-swatch {
+    width: 28px; height: 28px; border-radius: 7px; border: 2px solid transparent;
+    cursor: pointer; flex-shrink: 0; -webkit-tap-highlight-color: transparent;
+    transition: transform 0.1s, border-color 0.1s;
+  }
+  .netb-swatch:active { transform: scale(0.88); }
+  .netb-swatch.netb-sel { border-color: var(--accent) !important; box-shadow: 0 0 0 2px var(--accent); }
+  /* Color panel toggle */
+  #netbColorPanel {
+    display: none; padding: 8px 10px; flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  #netbColorPanel.netb-active { display: flex; flex-direction: column; gap: 7px; }
+  #netbColorPanel .netb-color-label {
+    font-size: 0.65rem; color: var(--text2); font-weight: 700; margin-bottom: 2px;
+  }
+  
+</style>
   </head><body>
     <h1>${title}</h1>
     <div>${richHTML}</div>
@@ -40674,7 +40771,495 @@ function _hookFCAuth() {
 setTimeout(_hookFCAuth, 2000);
 
 })();
+
+  // ================================================================
+  //  NOTES EDITOR — TABLE EDIT BAR (neTableBar)
+  // ================================================================
+  (function(){
+    var _netb_table = null;   // currently active <table>
+    var _netb_cell  = null;   // currently active <td>/<th>
+    var _netb_curTab = 'rows';
+
+    // ── Expose globally ──
+    window._netbHide = _netbHide;
+    window._netbTab  = _netbTab;
+    window._netbAddRowAbove  = _netbAddRowAbove;
+    window._netbAddRowBelow  = _netbAddRowBelow;
+    window._netbDelRow       = _netbDelRow;
+    window._netbFillRow      = _netbFillRow;
+    window._netbClearRow     = _netbClearRow;
+    window._netbDelTable     = _netbDelTable;
+    window._netbAddColLeft   = _netbAddColLeft;
+    window._netbAddColRight  = _netbAddColRight;
+    window._netbDelCol       = _netbDelCol;
+    window._netbFillCol      = _netbFillCol;
+    window._netbClearCol     = _netbClearCol;
+    window._netbResizeTable  = _netbResizeTable;
+    window._netbToggleBold   = _netbToggleBold;
+    window._netbToggleItalic = _netbToggleItalic;
+    window._netbToggleUnder  = _netbToggleUnder;
+    window._netbAlign        = _netbAlign;
+    window._netbFontSize     = _netbFontSize;
+    window._netbMakeCellEditable = _netbMakeCellEditable;
+    window._netbTextColor    = _netbTextColor;
+    window._netbCellBg       = _netbCellBg;
+
+    // ── Init: listen for clicks on tables in the notes editor ──
+    document.addEventListener('click', function(e) {
+      var cell = e.target.closest('td, th');
+      if (!cell) {
+        // click outside table — only hide if not clicking toolbar
+        var bar = document.getElementById('neTableBar');
+        if (bar && !bar.contains(e.target)) {
+          _netbHide();
+        }
+        return;
+      }
+      var area = document.getElementById('noteEditableArea');
+      if (!area || !area.contains(cell)) return; // not in notes editor
+      _netbShow(cell);
+    });
+
+    // Also handle touch (mobile tap)
+    document.addEventListener('touchend', function(e) {
+      var cell = e.target.closest('td, th');
+      if (!cell) return;
+      var area = document.getElementById('noteEditableArea');
+      if (!area || !area.contains(cell)) return;
+      _netbShow(cell);
+    }, { passive: true });
+
+    // ── Show toolbar ──
+    function _netbShow(cell) {
+      _netb_cell  = cell;
+      _netb_table = cell.closest('table');
+      if (!_netb_table) return;
+
+      // Make cell editable if in edit mode
+      var area = document.getElementById('noteEditableArea');
+      var editMode = area && area.contentEditable === 'true';
+      if (editMode) {
+        cell.contentEditable = 'true';
+        cell.focus();
+      }
+
+      // Update info label
+      var rows = _netb_table.querySelectorAll('tr');
+      var allCells = _netb_table.querySelectorAll('td,th');
+      var cellIdx = Array.from(rows).findIndex(function(r){ return r.contains(cell); });
+      var colIdx  = Array.from(cell.parentElement.querySelectorAll('td,th')).indexOf(cell);
+      var info = document.getElementById('netbCellInfo');
+      if(info) info.textContent = ' R'+(cellIdx+1)+' C'+(colIdx+1)+' | '+rows.length+' rows';
+
+      // Update format buttons state
+      _netbRefreshFmtBtns();
+
+      var bar = document.getElementById('neTableBar');
+      if(bar) bar.classList.add('netb-open');
+    }
+
+    function _netbHide() {
+      var bar = document.getElementById('neTableBar');
+      if(bar) bar.classList.remove('netb-open');
+      _netb_table = null;
+      _netb_cell = null;
+    }
+
+    function _netbTab(name) {
+      _netb_curTab = name;
+      var panels = { rows:'netbPanelRows', cols:'netbPanelCols', fmt:'netbPanelFmt', clr:'netbPanelClr' };
+      Object.keys(panels).forEach(function(k){
+        var p = document.getElementById(panels[k]);
+        if(p) p.className = 'netb-panel' + (k===name?' netb-active':'');
+      });
+      // Update tab buttons
+      document.querySelectorAll('#neTableBar .netb-tab').forEach(function(btn, i){
+        var names = ['rows','cols','fmt','clr'];
+        btn.className = 'netb-tab' + (names[i]===name?' active':'');
+      });
+    }
+
+    // ─── Helpers ───
+    function _netbRows() {
+      return _netb_table ? Array.from(_netb_table.querySelectorAll('tr')) : [];
+    }
+    function _netbCellRowIdx() {
+      if(!_netb_cell) return -1;
+      return _netbRows().findIndex(function(r){ return r.contains(_netb_cell); });
+    }
+    function _netbCellColIdx() {
+      if(!_netb_cell) return -1;
+      return Array.from(_netb_cell.parentElement.querySelectorAll('td,th')).indexOf(_netb_cell);
+    }
+    function _netbColCount() {
+      var rows = _netbRows();
+      if(!rows.length) return 0;
+      return rows[0].querySelectorAll('td,th').length;
+    }
+    function _netbNewCell(tag) {
+      var c = document.createElement(tag||'td');
+      c.contentEditable = 'true';
+      c.style.cssText = 'border:1.5px solid var(--border);padding:7px 9px;min-width:60px;outline:none;';
+      return c;
+    }
+    function _netbMarkMod() {
+      if(typeof markModified === 'function') markModified();
+    }
+    function _netbToast(msg, type) {
+      if(typeof showToast === 'function') showToast(msg, type||'success');
+    }
+
+    // ─── ROW OPERATIONS ───
+    function _netbAddRowAbove() {
+      if(!_netb_table) return;
+      var ri = _netbCellRowIdx();
+      if(ri < 0) { _netbAddRowBelow(); return; }
+      var cols = _netbColCount();
+      var tr = document.createElement('tr');
+      for(var c=0; c<cols; c++) tr.appendChild(_netbNewCell('td'));
+      var rows = _netbRows();
+      _netb_table.insertBefore(tr, rows[ri]);
+      _netbMarkMod();
+      _netbToast('+Row above ✅');
+    }
+
+    function _netbAddRowBelow() {
+      if(!_netb_table) return;
+      var ri = _netbCellRowIdx();
+      var rows = _netbRows();
+      var cols = _netbColCount();
+      var tr = document.createElement('tr');
+      for(var c=0; c<cols; c++) tr.appendChild(_netbNewCell('td'));
+      if(ri >= 0 && rows[ri] && rows[ri].nextSibling) {
+        _netb_table.insertBefore(tr, rows[ri].nextSibling);
+      } else {
+        _netb_table.appendChild(tr);
+      }
+      _netbMarkMod();
+      _netbToast('+Row below ✅');
+    }
+
+    function _netbDelRow() {
+      if(!_netb_table) return;
+      var ri = _netbCellRowIdx();
+      var rows = _netbRows();
+      if(rows.length <= 1) { _netbToast('Sirf ek row bacha hai!','error'); return; }
+      if(ri < 0) return;
+      rows[ri].remove();
+      _netb_cell = null;
+      _netbMarkMod();
+      _netbToast('Row delete ho gayi 🗑','success');
+    }
+
+    function _netbFillRow() {
+      if(!_netb_table || !_netb_cell) return;
+      var text = prompt('Is row ki saari cells mein kya likhna hai?', '');
+      if(text === null) return;
+      var ri = _netbCellRowIdx();
+      var rows = _netbRows();
+      if(ri < 0 || !rows[ri]) return;
+      rows[ri].querySelectorAll('td,th').forEach(function(c){ c.textContent = text; });
+      _netbMarkMod();
+      _netbToast('Row fill ho gayi ✅');
+    }
+
+    function _netbClearRow() {
+      if(!_netb_table || !_netb_cell) return;
+      var ri = _netbCellRowIdx();
+      var rows = _netbRows();
+      if(ri < 0 || !rows[ri]) return;
+      rows[ri].querySelectorAll('td,th').forEach(function(c){ c.textContent = ''; });
+      _netbMarkMod();
+      _netbToast('Row clear ho gayi ✅');
+    }
+
+    function _netbDelTable() {
+      if(!_netb_table) return;
+      if(!confirm('Puri table delete karna hai?')) return;
+      _netb_table.remove();
+      _netbHide();
+      _netbMarkMod();
+      _netbToast('Table delete ho gayi 🗑','success');
+    }
+
+    // ─── COL OPERATIONS ───
+    function _netbAddColLeft() {
+      if(!_netb_table || !_netb_cell) return;
+      var ci = _netbCellColIdx();
+      if(ci < 0) { _netbAddColRight(); return; }
+      _netbRows().forEach(function(tr, ri) {
+        var cells = tr.querySelectorAll('td,th');
+        var nc = _netbNewCell(ri===0 ? 'th' : 'td');
+        if(ri===0) nc.style.background='var(--bg2)';
+        if(cells[ci]) tr.insertBefore(nc, cells[ci]);
+        else tr.appendChild(nc);
+      });
+      _netbMarkMod();
+      _netbToast('+Col left ✅');
+    }
+
+    function _netbAddColRight() {
+      if(!_netb_table) return;
+      var ci = _netbCellColIdx();
+      _netbRows().forEach(function(tr, ri) {
+        var cells = tr.querySelectorAll('td,th');
+        var nc = _netbNewCell(ri===0 ? 'th' : 'td');
+        if(ri===0) nc.style.background='var(--bg2)';
+        var ref = ci >= 0 ? cells[ci+1] : null;
+        if(ref) tr.insertBefore(nc, ref);
+        else tr.appendChild(nc);
+      });
+      _netbMarkMod();
+      _netbToast('+Col right ✅');
+    }
+
+    function _netbDelCol() {
+      if(!_netb_table) return;
+      var ci = _netbCellColIdx();
+      if(ci < 0) return;
+      if(_netbColCount() <= 1) { _netbToast('Sirf ek column bacha hai!','error'); return; }
+      _netbRows().forEach(function(tr) {
+        var cells = tr.querySelectorAll('td,th');
+        if(cells[ci]) cells[ci].remove();
+      });
+      _netb_cell = null;
+      _netbMarkMod();
+      _netbToast('Col delete ho gaya 🗑','success');
+    }
+
+    function _netbFillCol() {
+      if(!_netb_table || !_netb_cell) return;
+      var ci = _netbCellColIdx();
+      if(ci < 0) return;
+      var text = prompt('Is column ki saari cells mein kya likhna hai?', '');
+      if(text === null) return;
+      _netbRows().forEach(function(tr) {
+        var cells = tr.querySelectorAll('td,th');
+        if(cells[ci]) cells[ci].textContent = text;
+      });
+      _netbMarkMod();
+      _netbToast('Col fill ho gaya ✅');
+    }
+
+    function _netbClearCol() {
+      if(!_netb_table || !_netb_cell) return;
+      var ci = _netbCellColIdx();
+      if(ci < 0) return;
+      _netbRows().forEach(function(tr) {
+        var cells = tr.querySelectorAll('td,th');
+        if(cells[ci]) cells[ci].textContent = '';
+      });
+      _netbMarkMod();
+      _netbToast('Col clear ho gaya ✅');
+    }
+
+    function _netbResizeTable(w) {
+      if(!_netb_table) return;
+      _netb_table.style.width = w;
+      _netbMarkMod();
+    }
+
+    // ─── FORMAT OPERATIONS ───
+    function _netbMakeCellEditable() {
+      if(!_netb_cell) return;
+      _netb_cell.contentEditable = 'true';
+      _netb_cell.focus();
+      _netbToast('Cell edit mode ON ✏️');
+    }
+
+    function _netbToggleBold() {
+      if(!_netb_cell) return;
+      _netb_cell.contentEditable = 'true';
+      _netb_cell.focus();
+      var isBold = window.getComputedStyle(_netb_cell).fontWeight >= 700 ||
+                   document.queryCommandState('bold');
+      _selectAllInCell(_netb_cell);
+      document.execCommand('bold', false, null);
+      _netbRefreshFmtBtns();
+      _netbMarkMod();
+    }
+
+    function _netbToggleItalic() {
+      if(!_netb_cell) return;
+      _netb_cell.contentEditable = 'true';
+      _netb_cell.focus();
+      _selectAllInCell(_netb_cell);
+      document.execCommand('italic', false, null);
+      _netbRefreshFmtBtns();
+      _netbMarkMod();
+    }
+
+    function _netbToggleUnder() {
+      if(!_netb_cell) return;
+      _netb_cell.contentEditable = 'true';
+      _netb_cell.focus();
+      _selectAllInCell(_netb_cell);
+      document.execCommand('underline', false, null);
+      _netbRefreshFmtBtns();
+      _netbMarkMod();
+    }
+
+    function _selectAllInCell(cell) {
+      var range = document.createRange();
+      range.selectNodeContents(cell);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+
+    function _netbRefreshFmtBtns() {
+      // just update visual state (best effort)
+      var bb = document.getElementById('netbBoldBtn');
+      var ib = document.getElementById('netbItalicBtn');
+      var ub = document.getElementById('netbUnderBtn');
+      try {
+        if(bb) bb.className = 'nb bold-btn' + (document.queryCommandState('bold')?' active-fmt':'');
+        if(ib) ib.className = 'nb bold-btn' + (document.queryCommandState('italic')?' active-fmt':'');
+        if(ub) ub.className = 'nb bold-btn' + (document.queryCommandState('underline')?' active-fmt':'');
+      } catch(e){}
+    }
+
+    function _netbAlign(dir) {
+      if(!_netb_cell) return;
+      _netb_cell.style.textAlign = dir;
+      _netbMarkMod();
+    }
+
+    function _netbFontSize(delta) {
+      if(!_netb_cell) return;
+      var cur = parseFloat(window.getComputedStyle(_netb_cell).fontSize) || 14;
+      var step = delta === '+1' ? 2 : -2;
+      _netb_cell.style.fontSize = (cur + step) + 'px';
+      _netbMarkMod();
+    }
+
+    // ─── COLOR OPERATIONS ───
+    function _netbTextColor(hex) {
+      if(!_netb_cell) return;
+      _netb_cell.contentEditable = 'true';
+      _netb_cell.focus();
+      _selectAllInCell(_netb_cell);
+      if(hex) {
+        document.execCommand('foreColor', false, hex);
+      } else {
+        document.execCommand('removeFormat', false, null);
+      }
+      window.getSelection().removeAllRanges();
+      _netbMarkMod();
+    }
+
+    function _netbCellBg(hex) {
+      if(!_netb_cell) return;
+      _netb_cell.style.backgroundColor = hex || '';
+      _netbMarkMod();
+    }
+
+  })(); // end IIFE
+  
 </script>
 
+
+  <!-- ===== NOTES EDITOR TABLE EDIT BAR ===== -->
+  <div id="neTableBar">
+    <div class="netb-header">
+      <div class="netb-title">
+        <span>&#x22CF;</span><span id="netbCellInfo" style="font-size:0.65rem;color:var(--text2);font-weight:600;"></span>
+      </div>
+      <div class="netb-tabs">
+        <button class="netb-tab active" onclick="_netbTab('rows')">Rows</button>
+        <button class="netb-tab" onclick="_netbTab('cols')">Cols</button>
+        <button class="netb-tab" onclick="_netbTab('fmt')">Format</button>
+        <button class="netb-tab" onclick="_netbTab('clr')">Color</button>
+      </div>
+      <button class="netb-close" onclick="_netbHide()">&#x2715;</button>
+    </div>
+
+    <!-- ROWS TAB -->
+    <div class="netb-panel netb-active" id="netbPanelRows">
+      <div class="netb-row">
+        <button class="nb green" onclick="_netbAddRowAbove()" title="Upar row add">+&#x2191;Row</button>
+        <button class="nb green" onclick="_netbAddRowBelow()" title="Neeche row add">+&#x2193;Row</button>
+        <button class="nb red" onclick="_netbDelRow()" title="Yeh row delete">&#x2212;Row</button>
+        <div class="netb-sep"></div>
+        <button class="nb blue" onclick="_netbFillRow()" title="Puri row same text">Row&#x3D;</button>
+        <button class="nb blue" onclick="_netbClearRow()" title="Puri row clear">Row&#x2715;</button>
+        <div class="netb-sep"></div>
+        <button class="nb red" onclick="_netbDelTable()" title="Puri table delete">&#x1F5D1; Table</button>
+      </div>
+    </div>
+
+    <!-- COLS TAB -->
+    <div class="netb-panel" id="netbPanelCols">
+      <div class="netb-row">
+        <button class="nb green" onclick="_netbAddColLeft()" title="Baayi taraf col add">+&#x2190;Col</button>
+        <button class="nb green" onclick="_netbAddColRight()" title="Dayi taraf col add">+&#x2192;Col</button>
+        <button class="nb red" onclick="_netbDelCol()" title="Yeh col delete">&#x2212;Col</button>
+        <div class="netb-sep"></div>
+        <button class="nb blue" onclick="_netbFillCol()" title="Pura col same text">Col&#x3D;</button>
+        <button class="nb blue" onclick="_netbClearCol()" title="Pura col clear">Col&#x2715;</button>
+        <div class="netb-sep"></div>
+        <button class="nb" onclick="_netbResizeTable('auto')" title="Table width auto">&#x2194;Auto</button>
+        <button class="nb" onclick="_netbResizeTable('100%')" title="Table full width">&#x2194;Full</button>
+      </div>
+    </div>
+
+    <!-- FORMAT TAB -->
+    <div class="netb-panel" id="netbPanelFmt">
+      <div class="netb-row">
+        <button class="nb bold-btn" id="netbBoldBtn" onclick="_netbToggleBold()" title="Bold">B</button>
+        <button class="nb bold-btn" id="netbItalicBtn" onclick="_netbToggleItalic()" title="Italic" style="font-style:italic;">I</button>
+        <button class="nb bold-btn" id="netbUnderBtn" onclick="_netbToggleUnder()" title="Underline" style="text-decoration:underline;">U</button>
+        <div class="netb-sep"></div>
+        <button class="nb" onclick="_netbAlign('left')" title="Left align">&#x21A4;</button>
+        <button class="nb" onclick="_netbAlign('center')" title="Centre align">&#x2263;</button>
+        <button class="nb" onclick="_netbAlign('right')" title="Right align">&#x21A6;</button>
+        <div class="netb-sep"></div>
+        <button class="nb" onclick="_netbFontSize('+1')" title="Font bada">A&#x2191;</button>
+        <button class="nb" onclick="_netbFontSize('-1')" title="Font chhota">A&#x2193;</button>
+        <div class="netb-sep"></div>
+        <button class="nb" onclick="_netbMakeCellEditable()" title="Cell edit enable">&#x270E;Edit</button>
+      </div>
+    </div>
+
+    <!-- COLOR TAB -->
+    <div class="netb-panel" id="netbPanelClr">
+      <div style="display:flex;flex-direction:column;gap:8px;width:100%;">
+        <div>
+          <div class="netb-color-label" style="font-size:0.65rem;color:var(--text2);font-weight:700;margin-bottom:4px;">Text Color</div>
+          <div class="netb-swatch-row">
+            <div class="netb-swatch" style="background:#000000;" onclick="_netbTextColor('#000000')" title="Black"></div>
+            <div class="netb-swatch" style="background:#c62828;" onclick="_netbTextColor('#c62828')" title="Red"></div>
+            <div class="netb-swatch" style="background:#1565c0;" onclick="_netbTextColor('#1565c0')" title="Blue"></div>
+            <div class="netb-swatch" style="background:#2e7d32;" onclick="_netbTextColor('#2e7d32')" title="Green"></div>
+            <div class="netb-swatch" style="background:#e65100;" onclick="_netbTextColor('#e65100')" title="Orange"></div>
+            <div class="netb-swatch" style="background:#6a1b9a;" onclick="_netbTextColor('#6a1b9a')" title="Purple"></div>
+            <div class="netb-swatch" style="background:#00695c;" onclick="_netbTextColor('#00695c')" title="Teal"></div>
+            <div class="netb-swatch" style="background:#f57f17;" onclick="_netbTextColor('#f57f17')" title="Yellow"></div>
+            <div class="netb-swatch" style="background:#37474f;" onclick="_netbTextColor('#37474f')" title="Dark Gray"></div>
+            <div class="netb-swatch" style="background:#ffffff;border:1.5px solid #ccc;" onclick="_netbTextColor('#ffffff')" title="White"></div>
+            <div class="netb-swatch" style="background:transparent;border:1.5px solid var(--border);" onclick="_netbTextColor('')" title="Reset">&#x2715;</div>
+          </div>
+        </div>
+        <div>
+          <div class="netb-color-label" style="font-size:0.65rem;color:var(--text2);font-weight:700;margin-bottom:4px;">Cell Fill Color</div>
+          <div class="netb-swatch-row">
+            <div class="netb-swatch" style="background:#fff8e1;" onclick="_netbCellBg('#fff8e1')" title="Light Yellow"></div>
+            <div class="netb-swatch" style="background:#e8f5e9;" onclick="_netbCellBg('#e8f5e9')" title="Light Green"></div>
+            <div class="netb-swatch" style="background:#e3f2fd;" onclick="_netbCellBg('#e3f2fd')" title="Light Blue"></div>
+            <div class="netb-swatch" style="background:#fce4ec;" onclick="_netbCellBg('#fce4ec')" title="Light Pink"></div>
+            <div class="netb-swatch" style="background:#f3e5f5;" onclick="_netbCellBg('#f3e5f5')" title="Light Purple"></div>
+            <div class="netb-swatch" style="background:#e0f2f1;" onclick="_netbCellBg('#e0f2f1')" title="Light Teal"></div>
+            <div class="netb-swatch" style="background:#fff3e0;" onclick="_netbCellBg('#fff3e0')" title="Light Orange"></div>
+            <div class="netb-swatch" style="background:#f5f5f5;" onclick="_netbCellBg('#f5f5f5')" title="Light Gray"></div>
+            <div class="netb-swatch" style="background:#ffcdd2;" onclick="_netbCellBg('#ffcdd2')" title="Pink"></div>
+            <div class="netb-swatch" style="background:#b2dfdb;" onclick="_netbCellBg('#b2dfdb')" title="Teal Light"></div>
+            <div class="netb-swatch" style="background:#ffffff;border:1.5px solid #ccc;" onclick="_netbCellBg('#ffffff')" title="White"></div>
+            <div class="netb-swatch" style="background:transparent;border:1.5px solid var(--border);" onclick="_netbCellBg('')" title="Reset">&#x2715;</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
 </body>
 </html>
