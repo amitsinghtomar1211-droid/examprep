@@ -1332,6 +1332,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   outline: none;
   user-select: text;
   -webkit-user-select: text;
+  touch-action: auto;
+  -webkit-touch-callout: default;
+  z-index: 50;
 }
 .sc-text-block[contenteditable="true"] .sc-block-resize,
 .sc-text-block[contenteditable="true"] .sc-block-rotate { display: none; }
@@ -27268,17 +27271,25 @@ function _scCreateBlockDOM(b) {
   moveH.title = 'Kahi bhi drag karo (360°)';
   moveH.innerHTML = '✥';
   el.appendChild(moveH);
-  el.addEventListener('pointerdown', function(e) {
-    if(e.target===resizeH||e.target===rotH) return;
-    e.stopPropagation();
-    if(_sc.mode==='select'||_sc.mode==='text') scSelectBlock(b,el);
-  });
   var _lt = 0;
   el.addEventListener('pointerdown', function(e) {
-    if(e.target===resizeH||e.target===rotH) return;
+    if(e.target===resizeH||e.target===rotH||e.target===moveH) return;
+    // Agar block abhi edit mode mein hai — click andar rehne do, blur mat karo
+    if(el.contentEditable === 'true') {
+      e.stopPropagation();
+      return;
+    }
+    e.stopPropagation();
     var now = Date.now();
-    if(now-_lt<320){ e.stopPropagation(); scEditBlock(b,el); }
-    _lt = now;
+    if(now - _lt < 350) {
+      // Double-tap — edit mode kholo
+      _lt = 0;
+      scEditBlock(b, el);
+    } else {
+      // Single tap — sirf select karo
+      _lt = now;
+      if(_sc.mode==='select'||_sc.mode==='text') scSelectBlock(b, el);
+    }
   });
   _scBlockDrag(b,el); _scBlockResize(b,el,resizeH); _scBlockRotate(b,el,rotH); _scBlockMoveDrag(b,el,moveH);
   wrap.appendChild(el);
@@ -27500,24 +27511,52 @@ function _scMoveBlockToSlide(b, el, bar, targetSlideIdx) {
 // ══ END MOVE BLOCK TO SLIDE ══
 
 function scEditBlock(b, el) {
+  // Agar already edit mode mein hai toh dobara call mat karo
+  if(el.contentEditable === 'true') { el.focus(); return; }
+
   // Hide handles during edit
   scHideAllBlockActions();
   el.classList.remove('selected');
   el.contentEditable = 'true';
 
-  // Focus + cursor at END
-  el.focus();
-  try {
-    var sel = window.getSelection();
-    var range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false); // false = end
-    sel.removeAllRanges();
-    sel.addRange(range);
-  } catch(ex) {}
+  // Focus + cursor at END — requestAnimationFrame se reliable focus
+  requestAnimationFrame(function() {
+    el.focus();
+    try {
+      var sel = window.getSelection();
+      var range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false); // false = end
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch(ex) {}
+  });
 
-  // On blur — save content, remove edit styling, back to plain text
+  // On blur — thoda wait karo, dekhte hain focus kahan gayi
+  // Agar focus panel ke andar kisi doosri cheez par gayi (jaise action button) toh blur ignore karo
+  var _blurGuard = false;
   function onBlur() {
+    // Small delay — agar focus turant wapas aaye (e.g. OS keyboard popup) toh exit mat karo
+    setTimeout(function() {
+      // Agar focus wapas block par aa gayi — kuch mat karo
+      if(document.activeElement === el) return;
+      // Agar focus panel ke kisi button par gayi — bhi ruko (action bar buttons)
+      var af = document.activeElement;
+      var panel = document.getElementById('studyCanvasPanel');
+      if(af && panel && panel.contains(af)) {
+        // Focus panel mein hi hai — ek aur chance do
+        setTimeout(function() {
+          if(document.activeElement === el) return;
+          _doSave();
+        }, 120);
+        return;
+      }
+      _doSave();
+    }, 80);
+  }
+
+  function _doSave() {
+    if(el.contentEditable !== 'true') return; // already saved
     el.contentEditable = 'false';
     el.classList.remove('selected');
     // Save HTML content
@@ -27531,6 +27570,7 @@ function scEditBlock(b, el) {
     // Update active state
     _sc.activeBlock = null; _sc.activeBlockId = null;
   }
+
   el.addEventListener('blur', onBlur);
 }
 
@@ -27636,6 +27676,9 @@ function _scBlockRotate(b,el,handle) {
   }
 
 function _scWrapTap(e) {
+  // Agar koi block abhi edit mode mein hai — wrap tap ignore karo
+  if(document.querySelector('.sc-text-block[contenteditable="true"]')) return;
+
   // In select mode — tap on empty area = deselect
   if(_sc.mode === 'select') {
     if(!e.target.closest('.sc-text-block') && !e.target.closest('.sc-block-actions')) {
@@ -27685,11 +27728,14 @@ function _scWrapTap(e) {
   };
   cur.textBlocks.push(b);
   var el = _scCreateBlockDOM(b);
+  // Layout pehle settle karo, phir focus — 100ms reliable hai mobile pe
   setTimeout(function(){
     _scApplyLayout();
-    clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,80);
-    if(el) scEditBlock(b, el);
-  }, 60);
+    clearTimeout(_scExpandTimer); _scExpandTimer = setTimeout(scExpandCanvasForContent, 80);
+    // Layout ke baad element ko re-fetch karo (position change ho sakti hai)
+    var freshEl = document.getElementById('scBlock_' + b.id) || el;
+    if(freshEl) scEditBlock(b, freshEl);
+  }, 100);
 }
 
 // ══════════════════════════════════════════════════════
