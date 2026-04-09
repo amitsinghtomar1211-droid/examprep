@@ -27538,11 +27538,9 @@ function scEditBlock(b, el) {
   el.style.minHeight = '32px';
   el.style.webkitTapHighlightColor = 'transparent';
 
-  // === FOCUS — Mobile ke liye ek reliable trick ===
-  // 1. Turant focus try karo (synchronous context mein kaam karta hai)
-  try { el.focus(); } catch(ex) {}
-
-  // 2. Cursor END par set karo
+  // === FOCUS — Mobile ke liye reliable + canvas zoom fix ===
+  // preventScroll:true zaroori hai — canvas mein CSS transform:scale(z) hai
+  // agar scroll hota hai to position galat calculate hoti hai (text "bahar" jaata hai)
   function _setCursorEnd() {
     try {
       var sel = window.getSelection();
@@ -27554,12 +27552,15 @@ function scEditBlock(b, el) {
       sel.addRange(range);
     } catch(ex) {}
   }
+
+  // 1. Focus with preventScroll (canvas zoom mein text bahar jaane ka fix)
+  try { el.focus({ preventScroll: true }); } catch(ex) { try { el.focus(); } catch(e2) {} }
   _setCursorEnd();
 
-  // 3. requestAnimationFrame mein bhi try karo (fallback)
+  // 2. RAF fallback
   requestAnimationFrame(function() {
     if(el.contentEditable !== 'true') return;
-    try { el.focus(); } catch(ex) {}
+    try { el.focus({ preventScroll: true }); } catch(ex) {}
     _setCursorEnd();
   });
 
@@ -29496,13 +29497,17 @@ window.neSendAllHighlightsToCanvas = function() {
   }
   var _batch = window._neHlSentBatches[_batchKey];
 
-  // ── Collect marks — filter ONLY by hlId (strict, no text fuzzy match) ──
+  // ── Collect marks — GROUP same-hlId marks into ONE item ──
+  // BUG FIX: Ek highlight jo multiple lines span karta hai, usme multiple <mark>
+  // elements hote hain — SAME data-hlid ke saath. Pehle har mark alag item banta
+  // tha → ek fact ke liye 3 boxes. Ab same-hlId marks merge hote hain → 1 box.
   var allItemsByColor = { yellow: [], pink: [], green: [], blue: [] };
-  
+  var _hlIdGroupMap = {}; // hlId → { textParts:[], color, colorKey }
+
   marks.forEach(function(mark) {
     var hlId = mark.getAttribute('data-hlid');
-    var txt = mark.textContent.trim();
-    if(!txt) return;
+    var txt = mark.textContent; // trim baad mein, spaces preserve karo
+    if(!txt || !txt.trim()) return;
 
     // Assign hlId if missing
     if(!hlId) {
@@ -29517,9 +29522,28 @@ window.neSendAllHighlightsToCanvas = function() {
     if(mark.classList.contains('user-hl-pink'))  colorKey = 'pink';
     else if(mark.classList.contains('user-hl-green')) colorKey = 'green';
     else if(mark.classList.contains('user-hl-blue'))  colorKey = 'blue';
-    
+
     var textColor = colorKey === 'pink' ? '#880e4f' : colorKey === 'green' ? '#1b5e20' : colorKey === 'blue' ? '#0d47a1' : '#5d4037';
-    allItemsByColor[colorKey].push({ text: txt, color: textColor, colorKey: colorKey, hlId: hlId });
+
+    // Same hlId already dekha? → text merge karo
+    if(_hlIdGroupMap[hlId]) {
+      var part = txt.trim();
+      if(part) _hlIdGroupMap[hlId].textParts.push(part);
+    } else {
+      _hlIdGroupMap[hlId] = {
+        textParts: txt.trim() ? [txt.trim()] : [],
+        color: textColor,
+        colorKey: colorKey
+      };
+    }
+  });
+
+  // Grouped items → allItemsByColor mein dalo (ek hlId = ek item = ek box)
+  Object.keys(_hlIdGroupMap).forEach(function(hlId) {
+    var g = _hlIdGroupMap[hlId];
+    if(!g.textParts.length) return;
+    var mergedText = g.textParts.join(' '); // multi-line text ek saath
+    allItemsByColor[g.colorKey].push({ text: mergedText, color: g.color, colorKey: g.colorKey, hlId: hlId });
   });
 
   // Total new items across all colors
