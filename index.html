@@ -1925,7 +1925,11 @@ body.night-mode .sc-color-dot:hover { border-color: rgba(255,255,255,0.7); }
 .editor-status{font-size:0.74rem;color:var(--text2);font-weight:600;}
 .editor-status.unsaved{color:var(--accent2);}
 /* Unified Editable Area */
-.ne-editable{font-size:17px;line-height:1.85;color:var(--text);word-break:break-word;white-space:pre-wrap;cursor:text;-webkit-user-select:text;user-select:text;}
+.ne-editable{font-size:17px;line-height:1.85;color:var(--text);word-break:break-word;white-space:normal;cursor:text;-webkit-user-select:text;user-select:text;}
+/* Rich HTML content (tables, formatted) — normal whitespace */
+.ne-editable.ne-rich-mode{white-space:normal;}
+/* Plain text only — preserve line breaks */
+.ne-editable.ne-plain-mode{white-space:pre-wrap;}
 .ne-editable.hl-mode-active{-webkit-user-select:none !important;user-select:none !important;cursor:crosshair;}
 /* Custom highlight selection overlay */
 .ne-hl-selection{background:rgba(255,235,59,0.4);position:absolute;pointer-events:none;border-radius:3px;}
@@ -1961,10 +1965,19 @@ body.night-mode .sc-color-dot:hover { border-color: rgba(255,255,255,0.7); }
 .ne-editable ul{padding-left:20px;margin:6px 0;}
 .ne-editable ol{padding-left:20px;margin:6px 0;}
 .ne-editable li{margin-bottom:3px;}
-.ne-editable table{border-collapse:collapse;width:100%;margin:10px 0;font-size:0.85rem;}
-.ne-editable td,.ne-editable th{border:1.5px solid var(--border);padding:6px 8px;text-align:left;}
+.ne-editable table{border-collapse:collapse;width:100%;max-width:100%;margin:10px 0;font-size:0.85rem;display:table;table-layout:fixed;}
+.ne-editable td,.ne-editable th{border:1.5px solid var(--border);padding:6px 8px;text-align:left;word-break:break-word;min-width:60px;}
 .ne-editable th{background:var(--bg2);font-weight:700;color:var(--accent);}
 .ne-editable tr:nth-child(even) td{background:var(--surface2);}
+/* Table scroll wrapper auto-added by JS */
+.ne-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;margin:10px 0;border-radius:6px;}
+.ne-table-wrap table{margin:0;}
+/* Mammoth docx converted content */
+.ne-editable p{margin:4px 0;line-height:1.75;}
+.ne-editable h1,.ne-editable h2,.ne-editable h3,.ne-editable h4{color:var(--accent);font-weight:700;margin:12px 0 6px;}
+.ne-editable h1{font-size:1.3em;} .ne-editable h2{font-size:1.15em;} .ne-editable h3{font-size:1.05em;}
+.ne-editable blockquote{border-left:3px solid var(--accent);margin:8px 0;padding:4px 12px;background:var(--surface2);border-radius:0 6px 6px 0;}
+.ne-editable img{max-width:100%;border-radius:6px;margin:6px 0;}
 /* Edit mode active button */
 .toolbar-btn.edit-active{background:var(--accent2);color:#fff;border-color:var(--accent2);}
 /* Dark theme editable */
@@ -6713,9 +6726,33 @@ function handleNoteFileUpload(input) {
     const reader = new FileReader();
     reader.onload = async function(e) {
       try {
-        const result = await mammoth.convertToHtml({arrayBuffer: e.target.result});
-        editor.innerHTML = result.value;
-        statusEl.textContent = '✅ Word file load ho gayi! (' + file.name + ')';
+        // Use styleMap to better preserve table/heading formatting
+        const result = await mammoth.convertToHtml({arrayBuffer: e.target.result}, {
+          styleMap: [
+            "p[style-name='Heading 1'] => h2:fresh",
+            "p[style-name='Heading 2'] => h3:fresh",
+            "p[style-name='Heading 3'] => h4:fresh",
+            "b => strong",
+            "i => em",
+            "u => u"
+          ]
+        });
+        // Clean Word-specific artifacts but preserve table/formatting structure
+        let cleanHtml = result.value
+          .replace(/<!--[\s\S]*?-->/g, '')
+          // Remove empty paragraphs that Word adds excessively
+          .replace(/<p><\/p>/gi, '')
+          .replace(/<p>\s*<\/p>/gi, '')
+          // Remove Word's mso- inline styles (cause layout issues) but keep other styles
+          .replace(/\s*mso-[^;":]+:[^;"]+(;|(?="))/g, '')
+          // Remove class attributes (Word class names are useless in browser)
+          .replace(/\s+class="[^"]*"/g, '')
+          // Fix any double spaces in tags
+          .replace(/  +/g, ' ');
+        editor.innerHTML = cleanHtml;
+        // Show any conversion warnings
+        const warnCount = result.messages ? result.messages.filter(m => m.type === 'warning').length : 0;
+        statusEl.textContent = '✅ Word file load ho gayi! (' + file.name + ')' + (warnCount ? ' ⚠️ ' + warnCount + ' warnings' : '');
         statusEl.style.color = 'var(--green)';
       } catch(err) {
         statusEl.textContent = '❌ DOCX read nahi ho saka: ' + err.message;
@@ -11894,16 +11931,49 @@ function _saveAndClose() {
 }
 
 // Load content into the editable area
+// Helper: wrap bare <table> tags in a scroll div for mobile
+function _neWrapTables(area) {
+  area.querySelectorAll('table').forEach(function(tbl) {
+    if(tbl.parentElement && tbl.parentElement.classList.contains('ne-table-wrap')) return;
+    var wrap = document.createElement('div');
+    wrap.className = 'ne-table-wrap';
+    tbl.parentNode.insertBefore(wrap, tbl);
+    wrap.appendChild(tbl);
+  });
+}
+// Helper: detect if HTML has rich formatting (tables, headings, lists etc.)
+function _neIsRichHTML(html) {
+  if(!html) return false;
+  return /<(table|thead|tbody|tr|td|th|h[1-6]|ul|ol|li|blockquote|img|figure|br\s*\/?>)/i.test(html);
+}
 function neLoadContent(text, isHtml) {
   const area = document.getElementById('noteEditableArea');
   if(isHtml) {
     area.innerHTML = text;
+    // Detect mode
+    if(_neIsRichHTML(text)) {
+      area.classList.add('ne-rich-mode');
+      area.classList.remove('ne-plain-mode');
+      _neWrapTables(area);
+    } else {
+      area.classList.add('ne-plain-mode');
+      area.classList.remove('ne-rich-mode');
+    }
     setTimeout(() => neAttachEraserToMarks(), 50);
   } else {
-    // Priority 1: Use saved richHTML (contains highlight marks) - most accurate
+    // Priority 1: Use saved richHTML (contains highlight marks + original formatting)
     if(_editorState.richHTML) {
       area.innerHTML = _editorState.richHTML;
       _editorState.richHTML = null;
+      // Set rich mode if HTML has tables/formatting
+      if(_neIsRichHTML(area.innerHTML)) {
+        area.classList.add('ne-rich-mode');
+        area.classList.remove('ne-plain-mode');
+        _neWrapTables(area);
+      } else {
+        area.classList.add('ne-plain-mode');
+        area.classList.remove('ne-rich-mode');
+      }
       // Re-populate highlights array from DOM (so eraser works correctly)
       _editorState.highlights = [];
       area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue').forEach(function(mark) {
@@ -11915,6 +11985,8 @@ function neLoadContent(text, isHtml) {
       setTimeout(() => neAttachEraserToMarks(), 50);
     } else {
       // Priority 2: Plain text with highlights applied from highlights array
+      area.classList.add('ne-plain-mode');
+      area.classList.remove('ne-rich-mode');
       const escaped = text
         .replace(/&/g,'&amp;')
         .replace(/</g,'&lt;')
