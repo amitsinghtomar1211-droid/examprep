@@ -5187,18 +5187,30 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
       </svg>
     </div>
 
-    <!-- ══ NOTES EDITOR READ MODE — MINI PILL (bottom-right, center-bottom ke beech, transparent) ══ -->
+    <!-- ══ NOTES EDITOR READ MODE — MINI PILL (draggable, position saved) ══ -->
     <div id="neReadMiniPill" style="
       display:none;position:fixed;
       right:8px;bottom:30%;
       z-index:10000;
       flex-direction:column;align-items:flex-end;gap:0;
+      touch-action:none;
     ">
+      <!-- Drag handle — upar ek chhoti grip strip -->
+      <div id="neRmDragHandle" title="Drag to move" style="
+        width:32px;height:14px;border-radius:8px 8px 0 0;
+        background:rgba(255,255,255,0.18);
+        border:1px solid rgba(255,255,255,0.22);
+        border-bottom:none;
+        display:flex;align-items:center;justify-content:center;
+        cursor:grab;-webkit-tap-highlight-color:transparent;
+        touch-action:none;
+      "><span style="display:block;width:14px;height:3px;border-radius:2px;background:rgba(255,255,255,0.5);box-shadow:0 3px 0 rgba(255,255,255,0.5);"></span></div>
       <!-- Toggle pill button (always visible when read mode ON) -->
       <div id="neRmPillToggle" onclick="neRmPillToggleExpand()" style="
-        width:32px;height:32px;border-radius:50%;
+        width:32px;height:32px;border-radius:0 0 50% 50%;
         background:rgba(255,255,255,0.08);
         border:1px solid rgba(255,255,255,0.18);
+        border-top:none;
         backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
         box-shadow:none;
         cursor:pointer;display:flex;align-items:center;justify-content:center;
@@ -5825,16 +5837,28 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     </svg>
   </div>
 
-  <!-- ══ READ MODE FLOATING MINI PILL (bottom-left, 4 tools inside + night mode) ══ -->
+  <!-- ══ READ MODE FLOATING MINI PILL (draggable, position saved) ══ -->
   <div id="scReadMiniBar" style="
     display:none;position:absolute;bottom:56px;left:6px;z-index:9998;
     flex-direction:column;align-items:flex-start;gap:0;
+    touch-action:none;
   ">
+    <!-- Drag handle -->
+    <div id="scRmDragHandle" title="Drag to move" style="
+      width:32px;height:14px;border-radius:8px 8px 0 0;
+      background:rgba(255,255,255,0.28);
+      border:1.5px solid rgba(255,255,255,0.45);
+      border-bottom:none;
+      display:flex;align-items:center;justify-content:center;
+      cursor:grab;-webkit-tap-highlight-color:transparent;
+      touch-action:none;
+    "><span style="display:block;width:14px;height:3px;border-radius:2px;background:rgba(255,255,255,0.6);box-shadow:0 3px 0 rgba(255,255,255,0.6);"></span></div>
     <!-- Toggle pill (always visible in read mode) -->
     <div id="scRmPillToggle" onclick="scRmPillToggleExpand()" style="
-      width:32px;height:32px;border-radius:50%;
+      width:32px;height:32px;border-radius:0 0 50% 50%;
       background:rgba(255,255,255,0.22);
       border:1.5px solid rgba(255,255,255,0.4);
+      border-top:none;
       backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
       box-shadow:0 2px 10px rgba(0,0,0,0.13);
       cursor:pointer;display:flex;align-items:center;justify-content:center;
@@ -34819,6 +34843,232 @@ window.neRmPillToggleExpand = function() {
   if(!tools) return;
   tools.style.display = (tools.style.display !== 'none') ? 'none' : 'flex';
 };
+
+// ═══════════════════════════════════════════════════════════
+// DRAGGABLE PILL — Notes Editor Read Pill (neReadMiniPill)
+// ═══════════════════════════════════════════════════════════
+(function _initNeRmDrag() {
+  var LS_KEY = 'neRmPillPos';
+  var DEFAULT = { right: 8, bottom: '30%' };
+
+  function _applyPos(el, pos) {
+    // Reset opposite axes first
+    el.style.left   = pos.left   !== undefined ? pos.left   + 'px' : '';
+    el.style.right  = pos.right  !== undefined ? pos.right  + 'px' : '';
+    el.style.top    = pos.top    !== undefined ? pos.top    + 'px' : '';
+    el.style.bottom = pos.bottom !== undefined ? pos.bottom + 'px' : '';
+  }
+
+  function _loadPos(el) {
+    try {
+      var raw = localStorage.getItem(LS_KEY);
+      if (raw) { _applyPos(el, JSON.parse(raw)); return; }
+    } catch(e) {}
+    el.style.right = DEFAULT.right + 'px';
+    el.style.bottom = DEFAULT.bottom;
+  }
+
+  function _savePos(pos) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(pos)); } catch(e) {}
+  }
+
+  function _initDrag(pill, handle) {
+    if (!pill || !handle) return;
+    _loadPos(pill);
+    var startX, startY, startLeft, startTop, dragging = false;
+
+    function _onStart(cx, cy) {
+      var rect = pill.getBoundingClientRect();
+      startX = cx; startY = cy;
+      startLeft = rect.left; startTop = rect.top;
+      dragging = true;
+      handle.style.cursor = 'grabbing';
+      // Switch to top/left positioning
+      pill.style.right  = ''; pill.style.bottom = '';
+      pill.style.left   = startLeft + 'px';
+      pill.style.top    = startTop  + 'px';
+    }
+
+    function _onMove(cx, cy) {
+      if (!dragging) return;
+      var dx = cx - startX, dy = cy - startY;
+      var newLeft = startLeft + dx;
+      var newTop  = startTop  + dy;
+      // Clamp to viewport
+      newLeft = Math.max(0, Math.min(window.innerWidth  - pill.offsetWidth,  newLeft));
+      newTop  = Math.max(0, Math.min(window.innerHeight - pill.offsetHeight, newTop));
+      pill.style.left = newLeft + 'px';
+      pill.style.top  = newTop  + 'px';
+    }
+
+    function _onEnd() {
+      if (!dragging) return;
+      dragging = false;
+      handle.style.cursor = 'grab';
+      var pos = { left: parseFloat(pill.style.left), top: parseFloat(pill.style.top) };
+      _savePos(pos);
+    }
+
+    // Touch events
+    handle.addEventListener('touchstart', function(e) {
+      e.preventDefault();
+      var t = e.touches[0];
+      _onStart(t.clientX, t.clientY);
+    }, { passive: false });
+    document.addEventListener('touchmove', function(e) {
+      if (!dragging) return;
+      e.preventDefault();
+      var t = e.touches[0];
+      _onMove(t.clientX, t.clientY);
+    }, { passive: false });
+    document.addEventListener('touchend', function() { _onEnd(); });
+
+    // Mouse events
+    handle.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      _onStart(e.clientX, e.clientY);
+    });
+    document.addEventListener('mousemove', function(e) { _onMove(e.clientX, e.clientY); });
+    document.addEventListener('mouseup', function() { _onEnd(); });
+  }
+
+  // Init when DOM ready
+  function _tryInit() {
+    var pill   = document.getElementById('neReadMiniPill');
+    var handle = document.getElementById('neRmDragHandle');
+    if (pill && handle) { _initDrag(pill, handle); }
+    else { setTimeout(_tryInit, 500); }
+  }
+  setTimeout(_tryInit, 800);
+})();
+
+// ═══════════════════════════════════════════════════════════
+// DRAGGABLE PILL — Canvas Read Mini Bar (scReadMiniBar)
+// ═══════════════════════════════════════════════════════════
+(function _initScRmDrag() {
+  var LS_KEY = 'scRmBarPos';
+
+  function _applyPos(el, pos) {
+    el.style.left   = pos.left   !== undefined ? pos.left   + 'px' : '';
+    el.style.right  = pos.right  !== undefined ? pos.right  + 'px' : '';
+    el.style.top    = pos.top    !== undefined ? pos.top    + 'px' : '';
+    el.style.bottom = pos.bottom !== undefined ? pos.bottom + 'px' : '';
+    // Canvas pill uses position:absolute, keep it that way
+  }
+
+  function _loadPos(el) {
+    try {
+      var raw = localStorage.getItem(LS_KEY);
+      if (raw) { _applyPos(el, JSON.parse(raw)); return; }
+    } catch(e) {}
+    // Default: bottom-left
+    el.style.left = '6px'; el.style.bottom = '56px';
+    el.style.right = ''; el.style.top = '';
+  }
+
+  function _savePos(pos) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(pos)); } catch(e) {}
+  }
+
+  function _initDrag(pill, handle) {
+    if (!pill || !handle) return;
+    _loadPos(pill);
+
+    var startX, startY, startLeft, startTop, dragging = false;
+    var container; // scScrollArea ya parent
+
+    function _getContainer() {
+      return pill.parentElement || document.getElementById('scScrollArea') || document.body;
+    }
+
+    function _onStart(cx, cy) {
+      container = _getContainer();
+      var pillRect = pill.getBoundingClientRect();
+      startX = cx; startY = cy;
+      startLeft = pillRect.left - container.getBoundingClientRect().left;
+      startTop  = pillRect.top  - container.getBoundingClientRect().top;
+      dragging = true;
+      handle.style.cursor = 'grabbing';
+      // Switch to absolute top/left
+      pill.style.right  = ''; pill.style.bottom = '';
+      pill.style.left   = startLeft + 'px';
+      pill.style.top    = startTop  + 'px';
+    }
+
+    function _onMove(cx, cy) {
+      if (!dragging) return;
+      var dx = cx - startX, dy = cy - startY;
+      var cr = _getContainer().getBoundingClientRect();
+      var newLeft = startLeft + dx;
+      var newTop  = startTop  + dy;
+      newLeft = Math.max(0, Math.min(cr.width  - pill.offsetWidth,  newLeft));
+      newTop  = Math.max(0, Math.min(cr.height - pill.offsetHeight, newTop));
+      pill.style.left = newLeft + 'px';
+      pill.style.top  = newTop  + 'px';
+    }
+
+    function _onEnd() {
+      if (!dragging) return;
+      dragging = false;
+      handle.style.cursor = 'grab';
+      var pos = { left: parseFloat(pill.style.left), top: parseFloat(pill.style.top) };
+      _savePos(pos);
+    }
+
+    handle.addEventListener('touchstart', function(e) {
+      e.preventDefault();
+      var t = e.touches[0];
+      _onStart(t.clientX, t.clientY);
+    }, { passive: false });
+    document.addEventListener('touchmove', function(e) {
+      if (!dragging) return;
+      e.preventDefault();
+      var t = e.touches[0];
+      _onMove(t.clientX, t.clientY);
+    }, { passive: false });
+    document.addEventListener('touchend', function() { _onEnd(); });
+
+    handle.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      _onStart(e.clientX, e.clientY);
+    });
+    document.addEventListener('mousemove', function(e) { _onMove(e.clientX, e.clientY); });
+    document.addEventListener('mouseup', function() { _onEnd(); });
+  }
+
+  // Hook: jab bhi read mode activate ho, position reload karo
+  var _origScRmPillToggle = window.scRmPillToggleExpand;
+  // Load pos whenever scReadMiniBar becomes visible
+  var _scRmBarObserver = new MutationObserver(function(muts) {
+    muts.forEach(function(m) {
+      if (m.target && m.target.id === 'scReadMiniBar') {
+        var bar = m.target;
+        if (bar.style.display !== 'none') {
+          try {
+            var raw = localStorage.getItem(LS_KEY);
+            if (raw) {
+              var pos = JSON.parse(raw);
+              bar.style.left   = pos.left   !== undefined ? pos.left   + 'px' : '';
+              bar.style.right  = pos.right  !== undefined ? pos.right  + 'px' : '';
+              bar.style.top    = pos.top    !== undefined ? pos.top    + 'px' : '';
+              bar.style.bottom = pos.bottom !== undefined ? pos.bottom + 'px' : '';
+            }
+          } catch(e) {}
+        }
+      }
+    });
+  });
+
+  function _tryInit() {
+    var pill   = document.getElementById('scReadMiniBar');
+    var handle = document.getElementById('scRmDragHandle');
+    if (pill && handle) {
+      _initDrag(pill, handle);
+      _scRmBarObserver.observe(pill, { attributes: true, attributeFilter: ['style'] });
+    } else { setTimeout(_tryInit, 500); }
+  }
+  setTimeout(_tryInit, 1000);
+})();
 
 window.neRmToggleHl = function() {
   var isOn = (typeof _hlCurrentMode!=='undefined' && _hlCurrentMode==='highlight');
