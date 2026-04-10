@@ -31326,6 +31326,49 @@ function _scGetNewFacts(content) {
   });
 }
 
+
+// ── Sync coveredFacts from Library's existing flashcards ──
+// Agar Library (overview section) mein pehle se flashcards hain,
+// toh unke Q/A text se canvas facts ko covered mark karo
+function _scSyncCoveredFromLibrary(canvasContent) {
+  try {
+    var allFacts = _scExtractFactLines(canvasContent);
+    if(!allFacts.length) return;
+    var covered  = (_scFC.coveredFacts || []).map(_scNormFact);
+    var changed  = false;
+
+    // Existing cards ki Q & A text combine karo
+    var cardTexts = (_scFC.cards || []).map(function(c){
+      return _scNormFact((c.q||'') + ' ' + (c.a||''));
+    });
+
+    allFacts.forEach(function(fact) {
+      var fn = _scNormFact(fact);
+      if(covered.indexOf(fn) !== -1) return; // already covered
+
+      // Check: kya koi existing card iss fact ke keywords cover karti hai?
+      var factWords = fn.split(' ').filter(function(w){ return w.length > 4; });
+      if(!factWords.length) return;
+
+      var matched = cardTexts.some(function(ct) {
+        // Majority of important words (>4 chars) must appear in card text
+        var hits = factWords.filter(function(w){ return ct.indexOf(w) !== -1; });
+        return hits.length >= Math.max(1, Math.ceil(factWords.length * 0.6));
+      });
+
+      if(matched) {
+        covered.push(fn);
+        changed = true;
+      }
+    });
+
+    if(changed) {
+      _scFC.coveredFacts = covered;
+      _scFCSave();
+    }
+  } catch(e) {}
+}
+
 // ── AI Chat panel ──
 var _scAiMsgs = [];
 
@@ -31516,6 +31559,8 @@ function scAiMakeFlashcards() {
   if(!content.trim()) { _scAiMsg('bot','⚠️ Canvas mein koi content nahi!'); return; }
 
   _scFCLoad();
+  // Library ke existing flashcards se coveredFacts sync karo
+  if(typeof _scSyncCoveredFromLibrary === 'function') _scSyncCoveredFromLibrary(content);
 
   // ── NEW FACTS CHECK ──
   var newFacts = _scGetNewFacts(content);
@@ -31530,10 +31575,10 @@ function scAiMakeFlashcards() {
       '✅ <b>Saare facts cover ho chuke hain!</b><br><br>' +
       '<div style="font-size:0.72rem;line-height:1.7;color:var(--text2,#37526d);background:rgba(21,101,192,0.06);padding:10px 12px;border-radius:10px;border-left:3px solid #1565c0;">' +
       '📊 <b>'+totalFacts.length+'</b> facts canvas par hain<br>' +
-      '🃏 <b>'+(_scFC.cards.length)+'</b> flashcards pehle se ban chuke hain<br>' +
-      '🔁 In sabhi facts se flashcards already generate ho chuke hain<br><br>' +
-      '➕ <b>Naye facts / points canvas par add karo</b> — tabhi naye flashcards banenge!<br><br>' +
-      '<span style="font-size:0.65rem;opacity:0.7;">⚠️ Purani cards ko phir se practice karna hai to session continue karo</span>' +
+      '🃏 <b>'+(_scFC.cards.length)+'</b> flashcards Library mein available hain<br>' +
+      '🔁 In sabhi canvas facts se pehle se flashcards ban chuke hain<br><br>' +
+      '➕ <b>Canvas par nayi information add karo</b> — tabhi naye uncovered facts se flashcards banenge!<br><br>' +
+      '<span style="font-size:0.65rem;opacity:0.7;">💡 Tip: Overview → Flashcards section mein apni cards dekh sakte ho</span>' +
       '</div>';
     document.getElementById('_scFCA').style.display = 'none';
     document.getElementById('_scFCBtns').style.display = 'none';
@@ -36122,6 +36167,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
 
     // ── COVERED FACTS CHECK (same system as canvas AI panel) ──
     if(typeof _scFCLoad === 'function') _scFCLoad();
+    if(typeof _scSyncCoveredFromLibrary === 'function') _scSyncCoveredFromLibrary(slidesText);
     if(typeof _scGetNewFacts === 'function' && typeof _scExtractFactLines === 'function') {
       var _allFacts2  = _scExtractFactLines(slidesText);
       var _newFacts2  = _scGetNewFacts(slidesText);
@@ -36134,9 +36180,9 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
             '✅ <b>Saare facts cover ho chuke hain!</b><br><br>' +
             '<div style="font-size:0.78rem;line-height:1.7;color:var(--text2);">' +
             '📊 <b>'+_allFacts2.length+'</b> facts canvas par hain<br>' +
-            '🃏 <b>'+(typeof _scFC !== 'undefined' ? _scFC.cards.length : '?')+'</b> flashcards pehle se ban chuke hain<br>' +
-            '🔁 In sabhi facts se flashcards already generate ho chuke hain<br><br>' +
-            '➕ <b>Naye facts / points canvas par add karo</b> — tabhi naye flashcards banenge!<br>' +
+            '🃏 <b>'+(typeof _scFC !== 'undefined' ? _scFC.cards.length : '?')+'</b> flashcards Library mein available hain<br>' +
+            '🔁 Canvas ke sabhi facts pehle se Library ke flashcards mein cover ho chuke hain<br><br>' +
+            '➕ <b>Canvas par nayi information add karo</b> — tabhi naye uncovered facts se flashcards banenge!<br>' +
             '<button onclick="if(typeof _scFCLoad===\'function\'){_scFCLoad();_scFC.coveredFacts=[];_scFC.hash=\'\';if(typeof _scFCSave===\'function\')_scFCSave();}this.parentElement.parentElement.remove();showToast&&showToast(\'Reset ho gaya!\',\'success\');" ' +
             'style="margin-top:8px;padding:5px 12px;border-radius:8px;border:none;background:rgba(198,40,40,0.1);color:#c62828;font-weight:800;font-size:0.72rem;cursor:pointer;font-family:inherit;">🔄 Reset karke naye banao</button>' +
             '</div>';
@@ -36171,6 +36217,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       // New facts info badge (dynamic)
       (function(){
         if(typeof _scFCLoad==='function') _scFCLoad();
+        if(typeof _scSyncCoveredFromLibrary==='function' && typeof _scCollectAllSlidesText==='function') _scSyncCoveredFromLibrary(_scCollectAllSlidesText());
         if(typeof _scGetNewFacts==='function' && typeof _scExtractFactLines==='function') {
           var _st = typeof _scCollectAllSlidesText==='function' ? _scCollectAllSlidesText() : '';
           var _all = _scExtractFactLines(_st);
@@ -36261,6 +36308,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     var factsToUse = slidesText; // default: pehli baar sab
     var isFirstTime = true;
     if(typeof _scFCLoad==='function') _scFCLoad();
+    if(typeof _scSyncCoveredFromLibrary==='function') _scSyncCoveredFromLibrary(slidesText);
     if(typeof _scGetNewFacts==='function' && typeof _scExtractFactLines==='function') {
       var _allF = _scExtractFactLines(slidesText);
       var _newF = _scGetNewFacts(slidesText);
