@@ -1025,8 +1025,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
-  /* Smooth scroll on iOS */
-  scroll-behavior: smooth;
+  /* scroll-behavior: smooth removed — Android keyboard + smooth scroll = cursor jump bug */
+  scroll-behavior: auto;
 }
 #scScrollArea::-webkit-scrollbar { width: 3px; }
 #scScrollArea::-webkit-scrollbar-thumb { background: rgba(21,101,192,0.25); border-radius: 3px; }
@@ -1342,8 +1342,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   -webkit-text-fill-color: inherit;
   /* Keyboard open karne ke liye overflow visible */
   overflow: visible;
-  /* Click/tap events andar flow hone chahiye — drag intercept nahi hona chahiye */
+  /* Click/tap freely andar jaaye — koi interception nahi */
   pointer-events: auto !important;
+  /* Android cursor blinking ensure karo */
+  -webkit-user-modify: read-write;
 }
 .sc-text-block[contenteditable="true"] .sc-block-resize,
 .sc-text-block[contenteditable="true"] .sc-block-rotate { display: none; }
@@ -27283,44 +27285,49 @@ function _scCreateBlockDOM(b) {
   moveH.innerHTML = '✥';
   el.appendChild(moveH);
   var _lt = 0;
-  el.setAttribute('tabindex', '0'); // Focus ke liye zaroori (0 = focusable in tab order)
-
-  // === CLICK DETECTION: pointerdown + pointerup pair track karo ===
-  // pointerdown pe drag start ho sakta hai — edit trigger pointerup pe karo (sirf genuine tap ke liye)
+  el.setAttribute('tabindex', '0'); // Focus ke liye zaroori
+  
+  // Tap detection variables (pointerdown start point save karo)
   var _pdX = 0, _pdY = 0, _pdT = 0;
+
   el.addEventListener('pointerdown', function(e) {
     if(e.target===resizeH||e.target===rotH||e.target===moveH) return;
-    // Edit mode mein hai — andar click naturally flow hone do (browser cursor place karega)
+    // Edit mode mein hai — browser naturally cursor place karega
+    // Sirf propagation rok do taaki canvas wrap ka _scWrapTap fire na ho
     if(el.contentEditable === 'true') {
-      e.stopPropagation(); // canvas wrap ka _scWrapTap fire na ho
+      e.stopPropagation();
       return;
     }
     e.stopPropagation();
+    // Tap start position save karo (drag vs tap distinguish karne ke liye)
     _pdX = e.clientX; _pdY = e.clientY; _pdT = Date.now();
   });
 
+  // pointerup pe edit trigger karo (pointerdown pe nahi)
+  // Reason: pointerdown pe _scBlockDrag ka setPointerCapture fire hota tha
+  // jo pointer OS-level pe capture kar leta tha → cursor bahar jaata tha
   el.addEventListener('pointerup', function(e) {
     if(e.target===resizeH||e.target===rotH||e.target===moveH) return;
-    if(el.contentEditable === 'true') return; // already edit mode mein hai
+    if(el.contentEditable === 'true') return; // already in edit mode
     if(_sc.mode!=='select'&&_sc.mode!=='text') return;
 
-    // Tap validate karo — agar drag hua to ignore (movement > 8px ya time > 500ms)
+    // Validate: sirf tap (not drag) — movement < 8px AND time < 500ms
     var dx = Math.abs(e.clientX - _pdX);
     var dy = Math.abs(e.clientY - _pdY);
     var dt = Date.now() - _pdT;
-    var isTap = (dx < 8 && dy < 8 && dt < 500);
-    if(!isTap) return;
+    if(dx > 8 || dy > 8 || dt > 500) return; // drag tha, edit mat karo
 
     if(_sc.activeBlockId === b.id) {
-      // Already selected → edit mode mein jaao, exact click position pass karo
-      console.log('[BlockTap] Already selected, entering edit mode. tap at:', e.clientX, e.clientY);
-      scEditBlock(b, el, e);
+      // Already selected → edit mode
+      console.log('[BlockTap] Edit mode enter. block:', b.id);
+      scEditBlock(b, el);
     } else {
-      // Pehle select karo
-      console.log('[BlockTap] Selecting block:', b.id);
+      // First tap → select karo
+      console.log('[BlockTap] Select block:', b.id);
       scSelectBlock(b, el);
     }
   });
+
   _scBlockDrag(b,el); _scBlockResize(b,el,resizeH); _scBlockRotate(b,el,rotH); _scBlockMoveDrag(b,el,moveH);
   wrap.appendChild(el);
   return el;
@@ -27540,15 +27547,12 @@ function _scMoveBlockToSlide(b, el, bar, targetSlideIdx) {
 }
 // ══ END MOVE BLOCK TO SLIDE ══
 
-function scEditBlock(b, el, _clickEvent) {
+function scEditBlock(b, el) {
   // Agar already edit mode mein hai toh dobara call mat karo
   if(el.contentEditable === 'true') {
-    console.log('[scEditBlock] Already in edit mode, re-focusing', b.id);
     try { el.focus({ preventScroll: true }); } catch(ex) {}
     return;
   }
-
-  console.log('[scEditBlock] Entering edit mode for block:', b.id, '| click event:', _clickEvent ? 'yes (clientX='+_clickEvent.clientX+')' : 'no');
 
   // Hide handles during edit
   scHideAllBlockActions();
@@ -27556,7 +27560,7 @@ function scEditBlock(b, el, _clickEvent) {
 
   // tabindex ensure karo taaki focus mile
   el.setAttribute('tabindex', '0');
-  
+
   // Contenteditable ON
   el.contentEditable = 'true';
   el.style.userSelect = 'text';
@@ -27566,40 +27570,30 @@ function scEditBlock(b, el, _clickEvent) {
   el.style.webkitTapHighlightColor = 'transparent';
   el.style.pointerEvents = 'auto';
 
-  // === CURSOR POSITION — Click hue jagah pe cursor place karo ===
-  // Agar click event available hai → cursor wahan place karo
-  // Warna → end pe place karo (fallback)
-  function _setCursorAtClick(clientX, clientY) {
-    try {
-      var sel = window.getSelection();
-      if(!sel) return;
-      // Modern browsers: caretPositionFromPoint / caretRangeFromPoint
-      var range = null;
-      if(document.caretRangeFromPoint) {
-        // Chrome / Safari / WebKit
-        range = document.caretRangeFromPoint(clientX, clientY);
-        console.log('[scEditBlock] caretRangeFromPoint used, range:', range ? 'ok' : 'null');
-      } else if(document.caretPositionFromPoint) {
-        // Firefox
-        var pos = document.caretPositionFromPoint(clientX, clientY);
-        if(pos) {
-          range = document.createRange();
-          range.setStart(pos.offsetNode, pos.offset);
-          range.collapse(true);
-          console.log('[scEditBlock] caretPositionFromPoint used');
-        }
-      }
-      if(range) {
-        sel.removeAllRanges();
-        sel.addRange(range);
-        return true;
-      }
-    } catch(ex) {
-      console.warn('[scEditBlock] Cursor at click failed:', ex.message);
-    }
-    return false;
+  // ══════════════════════════════════════════════════════
+  // ANDROID KEYBOARD FIX
+  // Problem: Android keyboard open hone par viewport resize hoti hai.
+  // Browser auto-scroll karta hai focused element ko visible karne ke liye.
+  // Lekin scCanvasWrap pe transform:scale(z) hai — isse scroll offset
+  // galat calculate hoti hai aur block visually "bahar" chala jaata hai.
+  //
+  // Fix Strategy:
+  // 1. scScrollArea ka overflow temporarily 'hidden' karo (auto-scroll band)
+  // 2. scCanvasWrap ki current scrollTop save karo
+  // 3. Focus ke baad visualViewport resize event pe scroll restore karo
+  // 4. Block ko manually visible position pe scroll karo (zoom-aware)
+  // ══════════════════════════════════════════════════════
+
+  var scrollArea = document.getElementById('scScrollArea');
+  var _savedOverflow = scrollArea ? scrollArea.style.overflowY : '';
+  var _savedScrollTop = scrollArea ? scrollArea.scrollTop : 0;
+
+  // Step 1: Auto-scroll lock — keyboard open hone par scroll jump rokne ke liye
+  if(scrollArea) {
+    scrollArea.style.overflowY = 'hidden';
   }
 
+  // Cursor set karne ka function — text ke end mein
   function _setCursorEnd() {
     try {
       var sel = window.getSelection();
@@ -27609,44 +27603,77 @@ function scEditBlock(b, el, _clickEvent) {
       range.collapse(false);
       sel.removeAllRanges();
       sel.addRange(range);
-      console.log('[scEditBlock] Cursor set at END (fallback)');
-    } catch(ex) {
-      console.warn('[scEditBlock] setCursorEnd error:', ex.message);
-    }
+    } catch(ex) {}
   }
 
-  // Store click coordinates for use after focus
-  var _cx = _clickEvent ? _clickEvent.clientX : null;
-  var _cy = _clickEvent ? _clickEvent.clientY : null;
+  // Step 2: Focus with preventScroll — browser scroll intercept band
+  try { el.focus({ preventScroll: true }); } catch(ex) { try { el.focus(); } catch(e2) {} }
+  _setCursorEnd();
 
-  // === FOCUS STRATEGY ===
-  // Step 1: focus karo (preventScroll=true → canvas zoom mein scroll nahi hoga)
-  try {
-    el.focus({ preventScroll: true });
-    console.log('[scEditBlock] el.focus({preventScroll:true}) called');
-  } catch(ex) {
-    try { el.focus(); } catch(e2) { console.warn('[scEditBlock] focus failed:', e2); }
-  }
-
-  // Step 2: focus ke baad cursor place karo (RAF mein — browser focus settle hone ke baad)
+  // Step 3: RAF mein bhi focus confirm karo
   requestAnimationFrame(function() {
-    if(el.contentEditable !== 'true') {
-      console.warn('[scEditBlock] RAF: contentEditable turned off before RAF ran!');
-      return;
-    }
+    if(el.contentEditable !== 'true') return;
     try { el.focus({ preventScroll: true }); } catch(ex) {}
-    
-    var placed = false;
-    if(_cx !== null && _cy !== null) {
-      placed = _setCursorAtClick(_cx, _cy);
-    }
-    if(!placed) {
-      _setCursorEnd();
-    }
-    console.log('[scEditBlock] RAF done. activeElement is block?', document.activeElement === el);
+    _setCursorEnd();
   });
 
-  // === BLUR HANDLER — Stable exit ===
+  // Step 4: Keyboard open hone ke baad (300-600ms) scroll restore + block visible karo
+  function _restoreAndScrollToBlock() {
+    if(el.contentEditable !== 'true') return;
+    if(!scrollArea) return;
+
+    // Overflow restore karo
+    scrollArea.style.overflowY = _savedOverflow || 'auto';
+
+    // Block ka position calculate karo (zoom-aware)
+    var zoom = window._scZoom || 1.0;
+    var blockTop = (parseFloat(el.style.top) || b.y || 0) * zoom;
+    var blockH = el.offsetHeight * zoom;
+    var areaH = scrollArea.offsetHeight;
+
+    // Block ko center mein laane ke liye scroll position
+    var targetScroll = Math.max(0, blockTop - (areaH / 2) + (blockH / 2));
+
+    // Smoothly scroll to block
+    try {
+      scrollArea.scrollTo({ top: targetScroll, behavior: 'smooth' });
+    } catch(ex) {
+      scrollArea.scrollTop = targetScroll;
+    }
+    console.log('[scEditBlock] Scroll restored. blockTop:', blockTop, 'targetScroll:', targetScroll, 'zoom:', zoom);
+  }
+
+  // visualViewport API — Android keyboard resize detect karne ka best way
+  if(window.visualViewport) {
+    var _vpHandler = function() {
+      // Keyboard open hone par viewport height kam hoti hai
+      // Ek baar fire hone ke baad handler hata do
+      window.visualViewport.removeEventListener('resize', _vpHandler);
+      setTimeout(_restoreAndScrollToBlock, 100);
+      console.log('[scEditBlock] visualViewport resize detected — keyboard likely opened');
+    };
+    window.visualViewport.addEventListener('resize', _vpHandler);
+    // Safety fallback — agar resize event 1.5s mein nahi aaya (desktop ya no keyboard)
+    setTimeout(function() {
+      window.visualViewport.removeEventListener('resize', _vpHandler);
+      // Overflow restore karo agar abhi tak nahi hua
+      if(scrollArea && scrollArea.style.overflowY === 'hidden') {
+        scrollArea.style.overflowY = _savedOverflow || 'auto';
+      }
+    }, 1500);
+  } else {
+    // Fallback: fixed timeout (older Android)
+    setTimeout(function() {
+      if(scrollArea && scrollArea.style.overflowY === 'hidden') {
+        scrollArea.style.overflowY = _savedOverflow || 'auto';
+      }
+      _restoreAndScrollToBlock();
+    }, 600);
+  }
+
+  // ══════════════════════════════════════════════════════
+  // BLUR HANDLER — Stable exit + save
+  // ══════════════════════════════════════════════════════
   var _saving = false;
   function _doSave() {
     if(_saving || el.contentEditable !== 'true') return;
@@ -27655,6 +27682,7 @@ function scEditBlock(b, el, _clickEvent) {
     el.style.userSelect = '';
     el.style.webkitUserSelect = '';
     el.style.touchAction = '';
+    el.style.pointerEvents = '';
     el.classList.remove('selected');
     // HTML save karo (handles remove karke)
     var clone = el.cloneNode(true);
@@ -27664,21 +27692,22 @@ function scEditBlock(b, el, _clickEvent) {
     b.y = parseFloat(el.style.top)  || b.y;
     scSnapshot();
     el.removeEventListener('blur', onBlur);
+    // Overflow restore karo agar edit mode exit ho gaya
+    if(scrollArea && scrollArea.style.overflowY === 'hidden') {
+      scrollArea.style.overflowY = _savedOverflow || 'auto';
+    }
     _sc.activeBlock = null;
     _sc.activeBlockId = null;
+    console.log('[scEditBlock] Edit mode exit — saved block:', b.id);
   }
 
   function onBlur() {
-    // Mobile keyboard ke liye 350ms wait karo
     setTimeout(function() {
       if(el.contentEditable !== 'true') return;
-      // Agar wapas same element par focus ayi
       if(document.activeElement === el) return;
-      // Agar focus canvas panel ke andar kisi aur element par gayi
       var af = document.activeElement;
       var panel = document.getElementById('studyCanvasPanel');
       if(af && panel && panel.contains(af)) {
-        // Panel mein hai — 200ms aur wait
         setTimeout(function() {
           if(document.activeElement === el) return;
           _doSave();
@@ -27694,6 +27723,7 @@ function scEditBlock(b, el, _clickEvent) {
   // Active block track karo
   _sc.activeBlock = el;
   _sc.activeBlockId = b.id;
+  console.log('[scEditBlock] Edit mode active for block:', b.id);
 }
 
 function _scRefreshBlock(b) {
@@ -27711,12 +27741,12 @@ function _scRefreshBlock(b) {
 function _scBlockDrag(b,el) {
   var sx,sy,sbx,sby,drag=false,_hasMoved=false;
   el.addEventListener('pointerdown',function(e){
-    // Edit mode mein drag bilkul nahi — pointer capture mat karo, cursor bahar chala jaata hai
+    // Edit mode mein drag bilkul nahi — setPointerCapture mat karo
+    // setPointerCapture = OS-level pointer capture → contenteditable cursor jump karta hai
     if(el.contentEditable==='true') return;
     if(e.target.classList.contains('sc-block-resize')||e.target.classList.contains('sc-block-rotate')||e.target.classList.contains('sc-block-move')||e.target.classList.contains('sc-block-act-btn')) return;
     if(_sc.mode!=='select'&&_sc.mode!=='text') return;
-    // setPointerCapture sirf tab — jab genuinely drag karna ho (edit mode nahi)
-    // Note: edit mode check upar ho chuka hai, ab safe hai capture karna
+    // Ab safe hai — edit mode nahi hai, pointer capture karo for smooth drag
     try{el.setPointerCapture(e.pointerId);}catch(x){}
     sx=e.clientX;sy=e.clientY;sbx=b.x;sby=b.y;drag=false;_hasMoved=false;
     if(window._scLockSlideSwipe) window._scLockSlideSwipe(false);
@@ -27872,7 +27902,7 @@ function _scWrapTap(e) {
   // iOS ke liye: focus() USER EVENT ke andar hi kaam karta hai, setTimeout mein nahi!
   // Isliye turant edit mode mein daalo — layout baad mein settle hoga
   if(el) {
-    scEditBlock(b, el, e); // Synchronous — iOS keyboard ke liye zaroori; click event pass karo
+    scEditBlock(b, el); // Synchronous — iOS keyboard ke liye zaroori
   }
   // Layout aur canvas expand asynchronously
   setTimeout(function(){
@@ -29348,8 +29378,8 @@ function scAddTextBlock(){
   cur.textBlocks.push(b);
   var el=_scCreateBlockDOM(b);
   if(el) {
-    // New block — cursor at end (null event = no click position)
-    scEditBlock(b, el, null);
+    // Synchronous focus for iOS keyboard
+    scEditBlock(b, el);
     setTimeout(function(){ _scApplyLayout(); clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,80); }, 80);
   }
 }
@@ -29359,7 +29389,7 @@ function scAddBulletBlock(){
   cur.textBlocks.push(b);
   var el=_scCreateBlockDOM(b);
   if(el) {
-    scEditBlock(b, el, null);
+    scEditBlock(b, el);
     setTimeout(function(){ _scApplyLayout(); clearTimeout(_scExpandTimer); _scExpandTimer=setTimeout(scExpandCanvasForContent,80); }, 80);
   }
 }
