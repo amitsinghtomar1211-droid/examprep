@@ -13330,50 +13330,54 @@ function applyHighlightFromRange(range, text) {
       neAttachLongPressMerge(m);
     });
 
-    var highlightText = text || createdMarks.map(m=>m.textContent).join('');
+    var highlightText = text || createdMarks.map(function(m){ return m.textContent; }).join('');
 
     if(mergeTarget) {
-      // ── MERGE MODE: existing highlight ka text update karo ──
-      var existingH = _editorState.highlights.find(function(h){ return h.id === uid; });
-      // Full merged text re-collect from DOM (saare marks ke saath)
-      var mergedTxt = neGetMergedTextForHlId(uid);
+      // ── MERGE MODE ──
+      // New marks already stamped with mergeTarget hlId.
+      // Update existing state entry (don't push a new one).
+      var finalMergedTxt = neGetMergedTextForHlId(uid); // reads ALL marks with this hlId
+      var existingH = (_editorState.highlights||[]).find(function(h){ return h.id===uid; });
       if(existingH) {
-        existingH.text = mergedTxt || highlightText;
-      } else {
-        _editorState.highlights.push({ id: uid, text: mergedTxt || highlightText, color });
+        existingH.text = finalMergedTxt || highlightText;
       }
-      showToast('➕ Merge ho gaya! Aur text add karne ke liye dobara highlight karo.', 'success');
+      // else: entry not found means first highlight was never pushed — shouldn't happen
+      // but guard anyway:
+      else {
+        _editorState.highlights.push({ id: uid, text: finalMergedTxt||highlightText, color: color });
+      }
 
-      // Canvas + Revision page mein update karo (existing blocks ka text update)
+      showToast('➕ Merge ho gaya! Aur text ke liye dobara highlight karo.', 'success');
+
+      // Cascade update — allowCreate=false (update existing box only, no new box)
       setTimeout(function(){
-        var finalText = neGetMergedTextForHlId(uid);
-        if(finalText) window.neUpdateHighlightEverywhere(uid, finalText);
-      }, 150);
+        var t = neGetMergedTextForHlId(uid);
+        if(t) window.neUpdateHighlightEverywhere(uid, t, false);
+      }, 100);
 
-      // Merge mode KEEP ACTIVE — user aur text add kar sake
-      // Plus icon dobara dikhao so user knows merge is still on
-      setTimeout(function(){ neShowPlusIconForHlId(uid); }, 200);
+      // Keep plus icon showing (merge still active)
+      setTimeout(function(){ neShowPlusIconForHlId(uid); }, 150);
 
     } else {
-      // ── NORMAL MODE: nayi highlight ──
-      _editorState.highlights.push({ id: uid, text: highlightText, color });
-      showToast('Highlight ho gaya! + tap karo aur text merge karo.', 'success');
-      // Plus icon dikhao (8 sec auto-hide)
+      // ── NORMAL MODE: brand new highlight ──
+      _editorState.highlights.push({ id: uid, text: highlightText, color: color });
+      showToast('Highlight ho gaya! + tap karo merge karne ke liye.', 'success');
+
+      // Show plus icon so user can activate merge
       setTimeout(function(){ neShowPlusIconForHlId(uid); }, 100);
+
+      // Auto-sync to Revision Page (only for new highlights, not merges)
+      if(typeof _rvAutoSync !== 'undefined' && _rvAutoSync && highlightText.trim()){
+        rvAutoAddHighlight(highlightText, color, uid);
+      }
     }
 
-    // Stretch handles dikhao
+    // Stretch handles (always show after highlight)
     setTimeout(function(){ neShowStretchHandles(createdMarks, uid); }, 150);
 
     markModified();
-    trackActivity('highlight', { name: (text||'').substring(0,40), tid: _editorState.tid });
+    trackActivity('highlight', { name: (highlightText||'').substring(0,40), tid: _editorState.tid });
     setTimeout(neUpdateHlCanvasBtn, 50);
-
-    // Auto-sync to Revision Page — ONLY if NOT merge mode
-    // (merge mode mein neUpdateHighlightEverywhere already handle karta hai)
-    if(!mergeTarget && typeof _rvAutoSync !== 'undefined' && _rvAutoSync && highlightText.trim()){
-      rvAutoAddHighlight(highlightText, color, uid);
-    }
 
   } catch(err) {
     showToast('Highlight mein problem aai, dobara try karo', 'error');
@@ -13381,399 +13385,267 @@ function applyHighlightFromRange(range, text) {
 }
 
 
-// ══════════════════════════════════════════════════════════════════
-// FEATURE A: HIGHLIGHT MERGE SYSTEM (Plus Icon)
-// ══════════════════════════════════════════════════════════════════
-// Active merge target hlId — jis highlight mein next highlight merge hoga
-window._hlMergeTargetId = null;
-// Auto-hide timer for plus icons
-var _hlPlusHideTimer = null;
 
-// Sab plus icons hide karo
-function neHideAllPlusIcons() {
-  document.querySelectorAll('.hl-plus-btn').forEach(function(btn) {
-    btn.style.display = 'none';
-  });
-  window._hlMergeTargetId = null;
+// ══════════════════════════════════════════════════════════════════
+// HIGHLIGHT MERGE + STRETCH + CASCADE  v2 — Professional rewrite
+// ══════════════════════════════════════════════════════════════════
+
+// ── State ──
+window._hlMergeTargetId = null;   // currently active merge hlId
+var _hlPlusHideTimer    = null;   // auto-hide timer for plus btn
+var _hlActivePlusBtn    = null;   // DOM reference to current plus btn
+
+// ── Helper: get merged text of all marks sharing hlId ──
+function neGetMergedTextForHlId(hlId) {
+  var area = document.getElementById('noteEditableArea');
+  if(!area) return '';
+  return Array.from(area.querySelectorAll('mark[data-hlid="' + hlId + '"]'))
+    .map(function(m){ return m.textContent; })
+    .join('')
+    .replace(/\s+/g,' ').trim();
 }
 
-// Ek highlight ke sabhi marks pe plus button lagao (last mark ke baad)
-function neShowPlusIconForHlId(hlId) {
-  // Pehle sab hide karo
-  neHideAllPlusIcons();
-  if(_hlPlusHideTimer) clearTimeout(_hlPlusHideTimer);
+// ── Helper: update _editorState.highlights text only (no new entry) ──
+function _hlUpdateStateText(hlId) {
+  var txt = neGetMergedTextForHlId(hlId);
+  if(!txt) return;
+  var arr = _editorState.highlights || [];
+  for(var i=0;i<arr.length;i++){
+    if(arr[i].id === hlId){ arr[i].text = txt; return; }
+  }
+}
 
+// ── Helper: remove plus btn DOM + clear timer ──
+function _hlClearPlusUI(cancelMerge) {
+  if(_hlPlusHideTimer){ clearTimeout(_hlPlusHideTimer); _hlPlusHideTimer = null; }
+  if(_hlActivePlusBtn){ try{ _hlActivePlusBtn.remove(); }catch(e){} _hlActivePlusBtn = null; }
+  document.querySelectorAll('.hl-plus-btn').forEach(function(b){ try{b.remove();}catch(e){} });
+  if(cancelMerge) window._hlMergeTargetId = null;
+}
+
+// ── Show plus button after last mark of hlId ──
+function neShowPlusIconForHlId(hlId) {
+  _hlClearPlusUI(false);
   var area = document.getElementById('noteEditableArea');
   if(!area) return;
-
-  // Is hlId ke saare marks dhundho — last mark ke baad plus lagao
   var marks = Array.from(area.querySelectorAll('mark[data-hlid="' + hlId + '"]'));
   if(!marks.length) return;
   var lastMark = marks[marks.length - 1];
+  var isActive = (window._hlMergeTargetId === hlId);
 
-  // Plus button banao
   var btn = document.createElement('span');
   btn.className = 'hl-plus-btn';
   btn.setAttribute('data-for-hlid', hlId);
-  btn.title = 'Iss highlight mein aur text merge karo';
-
-  // Agar merge already active hai is hlId ke liye → orange dikhao
-  var isActive = (window._hlMergeTargetId === hlId);
-  btn.style.cssText = [
-    'display:inline-flex',
-    'align-items:center',
-    'justify-content:center',
-    'width:20px',
-    'height:20px',
-    'border-radius:50%',
-    'background:' + (isActive ? '#e65100' : '#1565c0'),
-    'color:#fff',
-    'font-size:13px',
-    'font-weight:900',
-    'cursor:pointer',
-    'vertical-align:middle',
-    'margin-left:3px',
-    'user-select:none',
-    '-webkit-user-select:none',
-    'position:relative',
-    'z-index:999',
-    'flex-shrink:0',
-    'line-height:1',
-    'transform:' + (isActive ? 'scale(1.2)' : 'scale(1)')
-  ].join(';');
+  btn.title = isActive ? 'Merge ON — tap to stop' : 'Tap: merge more text into this highlight';
+  btn.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;'
+    + 'width:20px;height:20px;border-radius:50%;'
+    + 'background:' + (isActive ? '#e65100' : '#1565c0') + ';'
+    + 'color:#fff;font-size:13px;font-weight:900;cursor:pointer;'
+    + 'vertical-align:middle;margin:0 3px;user-select:none;-webkit-user-select:none;'
+    + 'position:relative;z-index:1000;flex-shrink:0;touch-action:none;'
+    + '-webkit-tap-highlight-color:transparent;box-shadow:0 1px 5px rgba(0,0,0,0.25);'
+    + (isActive ? 'transform:scale(1.25);' : '');
   btn.textContent = '+';
+  _hlActivePlusBtn = btn;
 
   btn.addEventListener('pointerdown', function(e) {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
     if(window._hlMergeTargetId === hlId) {
-      // Toggle off — merge cancel karo
-      window._hlMergeTargetId = null;
-      neHideAllPlusIcons();
-      showToast('✋ Merge band ho gaya', 'info');
+      _hlClearPlusUI(true);
+      showToast('\u270B Merge band ho gaya', 'info');
     } else {
       window._hlMergeTargetId = hlId;
       btn.style.background = '#e65100';
-      btn.style.transform = 'scale(1.2)';
-      showToast('✅ Merge ON! Ab koi bhi text highlight karo — woh iss group mein add ho jaayega', 'success');
-      // Auto-cancel after 60 seconds
+      btn.style.transform   = 'scale(1.25)';
+      btn.title = 'Merge ON — tap to stop';
+      showToast('\u2705 Merge ON! Koi bhi text highlight karo — usi group mein jayega', 'success');
       if(_hlPlusHideTimer) clearTimeout(_hlPlusHideTimer);
-      _hlPlusHideTimer = setTimeout(function() {
-        window._hlMergeTargetId = null;
-        neHideAllPlusIcons();
-        showToast('⏱ Merge timeout — phir se + tap karo', 'info');
+      _hlPlusHideTimer = setTimeout(function(){
+        _hlClearPlusUI(true);
+        showToast('\u23F1 Merge timeout', 'info');
       }, 60000);
     }
   });
 
-  // Insert right after last mark
-  if(lastMark.nextSibling) {
-    lastMark.parentNode.insertBefore(btn, lastMark.nextSibling);
-  } else {
-    lastMark.parentNode.appendChild(btn);
-  }
+  if(lastMark.nextSibling) lastMark.parentNode.insertBefore(btn, lastMark.nextSibling);
+  else lastMark.parentNode.appendChild(btn);
 
-  // Auto-hide after 10 seconds ONLY if merge not activated
   if(!isActive) {
-    _hlPlusHideTimer = setTimeout(function() {
-      if(window._hlMergeTargetId !== hlId) {
-        btn.remove();
-      }
+    _hlPlusHideTimer = setTimeout(function(){
+      if(window._hlMergeTargetId !== hlId) _hlClearPlusUI(false);
     }, 10000);
   }
 }
 
-// Long-press on existing mark → plus icon wapas dikhao
+// ── Long press on existing mark → show plus icon ──
 function neAttachLongPressMerge(mark) {
-  var _lpTimer = null;
-  mark.addEventListener('pointerdown', function(e) {
+  var _lpt = null;
+  mark.addEventListener('pointerdown', function(e){
     if(_hlCurrentMode === 'eraser') return;
-    _lpTimer = setTimeout(function() {
+    _lpt = setTimeout(function(){
       var hlId = mark.getAttribute('data-hlid');
-      if(hlId) {
-        neShowPlusIconForHlId(hlId);
-        showToast('👆 Plus icon wapas aaya! Merge karo ya kisi aur highlight ko tap karo.', 'info');
-      }
-    }, 700);
+      if(hlId){ neShowPlusIconForHlId(hlId); showToast('\uD83D\uDC46 Long press — tap + to merge', 'info'); }
+    }, 650);
   });
-  mark.addEventListener('pointerup',   function() { if(_lpTimer) clearTimeout(_lpTimer); });
-  mark.addEventListener('pointerleave',function() { if(_lpTimer) clearTimeout(_lpTimer); });
+  mark.addEventListener('pointerup',     function(){ clearTimeout(_lpt); });
+  mark.addEventListener('pointercancel', function(){ clearTimeout(_lpt); });
+  mark.addEventListener('pointermove',   function(){ clearTimeout(_lpt); });
 }
 
-// ══════════════════════════════════════════════════════════════════
-// FEATURE B: HIGHLIGHT STRETCH/SHRINK HANDLES
-// ══════════════════════════════════════════════════════════════════
+// ── Stretch/Shrink handles ──
 function neShowStretchHandles(marks, uid) {
-  // Pehle purane handles hata do
   document.querySelectorAll('.hl-stretch-handle').forEach(function(h){ h.remove(); });
   if(!marks || !marks.length) return;
-
-  var firstMark = marks[0];
-  var lastMark  = marks[marks.length - 1];
 
   function makeHandle(side) {
     var h = document.createElement('span');
     h.className = 'hl-stretch-handle';
-    h.setAttribute('data-side', side);
     h.setAttribute('data-hlid', uid);
-    h.title = side === 'left' ? 'Left se badhao/ghatao' : 'Right se badhao/ghatao';
-    h.style.cssText = [
-      'display:inline-flex',
-      'align-items:center',
-      'justify-content:center',
-      'width:20px',
-      'height:20px',
-      'border-radius:50%',
-      'background:#6a1b9a',
-      'color:#fff',
-      'font-size:11px',
-      'cursor:col-resize',
-      'vertical-align:middle',
-      'user-select:none',
-      '-webkit-user-select:none',
-      'position:relative',
-      'z-index:998',
-      'touch-action:none',
-      'flex-shrink:0'
-    ].join(';');
-    h.textContent = side === 'left' ? '◀' : '▶';
+    h.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;'
+      + 'width:20px;height:20px;border-radius:50%;background:#6a1b9a;color:#fff;'
+      + 'font-size:11px;cursor:col-resize;vertical-align:middle;margin:0 1px;'
+      + 'user-select:none;-webkit-user-select:none;z-index:998;position:relative;'
+      + 'touch-action:none;-webkit-tap-highlight-color:transparent;flex-shrink:0;';
+    h.textContent = side === 'left' ? '\u25C0' : '\u25B6';
     return h;
   }
 
   var leftH  = makeHandle('left');
   var rightH = makeHandle('right');
+  var firstM = marks[0];
+  var lastM  = marks[marks.length-1];
+  if(firstM.parentNode) firstM.parentNode.insertBefore(leftH, firstM);
+  if(lastM.nextSibling) lastM.parentNode.insertBefore(rightH, lastM.nextSibling);
+  else if(lastM.parentNode) lastM.parentNode.appendChild(rightH);
 
-  // Insert handles
-  if(firstMark.parentNode) {
-    firstMark.parentNode.insertBefore(leftH, firstMark);
-  }
-  if(lastMark.nextSibling) {
-    lastMark.parentNode.insertBefore(rightH, lastMark.nextSibling);
-  } else {
-    lastMark.parentNode && lastMark.parentNode.appendChild(rightH);
-  }
+  var _st = setTimeout(function(){ try{leftH.remove();rightH.remove();}catch(e){} }, 7000);
 
-  // Auto-hide after 6 seconds
-  var _stretchTimer = setTimeout(function() {
-    leftH.remove(); rightH.remove();
-  }, 6000);
-
-  // Touch/pointer drag to extend or shrink
-  function attachDragStretch(handle, side) {
-    var startX = 0;
-    var dragging = false;
-
-    handle.addEventListener('pointerdown', function(e) {
+  function attachDrag(handle, side) {
+    var sx=0, dragging=false;
+    handle.addEventListener('pointerdown', function(e){
       e.preventDefault(); e.stopPropagation();
-      startX = e.clientX;
-      dragging = true;
-      clearTimeout(_stretchTimer);
-      handle.setPointerCapture && handle.setPointerCapture(e.pointerId);
+      sx=e.clientX; dragging=true; clearTimeout(_st);
+      try{handle.setPointerCapture(e.pointerId);}catch(x){}
     });
-
-    handle.addEventListener('pointermove', function(e) {
+    handle.addEventListener('pointermove', function(e){
       if(!dragging) return;
-      var dx = e.clientX - startX;
-      // Snap every ~8px
-      if(Math.abs(dx) < 8) return;
-      startX = e.clientX;
-
-      var area = document.getElementById('noteEditableArea');
+      var dx=e.clientX-sx;
+      if(Math.abs(dx)<7) return;
+      sx=e.clientX;
+      var area=document.getElementById('noteEditableArea');
       if(!area) return;
-      var hlMarks = Array.from(area.querySelectorAll('mark[data-hlid="' + uid + '"]'));
+      var hlMarks=Array.from(area.querySelectorAll('mark[data-hlid="'+uid+'"]'));
       if(!hlMarks.length) return;
-
-      var targetMark = side === 'left' ? hlMarks[0] : hlMarks[hlMarks.length-1];
-      var sibling    = side === 'left' ? targetMark.previousSibling : targetMark.nextSibling;
-
-      if(dx > 0 && side === 'left') {
-        // Shrink from left — remove first char from first mark
-        var cur = targetMark.textContent;
-        if(cur.length <= 1) return;
-        var removed = cur[0];
-        targetMark.textContent = cur.slice(1);
-        // Put removed char back before mark as text
-        var tn = document.createTextNode(removed);
-        targetMark.parentNode.insertBefore(tn, targetMark);
-        neUpdateHighlightTextInState(uid, area);
-      } else if(dx < 0 && side === 'left') {
-        // Extend left — grab one char from prev text node
-        if(!sibling || sibling.nodeType !== Node.TEXT_NODE || !sibling.textContent.length) return;
-        var taken = sibling.textContent[sibling.textContent.length - 1];
-        sibling.textContent = sibling.textContent.slice(0, -1);
-        targetMark.textContent = taken + targetMark.textContent;
-        neUpdateHighlightTextInState(uid, area);
-      } else if(dx > 0 && side === 'right') {
-        // Extend right
-        if(!sibling || sibling.nodeType !== Node.TEXT_NODE || !sibling.textContent.length) return;
-        var taken2 = sibling.textContent[0];
-        sibling.textContent = sibling.textContent.slice(1);
-        targetMark.textContent = targetMark.textContent + taken2;
-        neUpdateHighlightTextInState(uid, area);
-      } else if(dx < 0 && side === 'right') {
-        // Shrink from right
-        var cur2 = targetMark.textContent;
-        if(cur2.length <= 1) return;
-        var removed2 = cur2[cur2.length-1];
-        targetMark.textContent = cur2.slice(0, -1);
-        var tn2 = document.createTextNode(removed2);
-        if(targetMark.nextSibling) {
-          targetMark.parentNode.insertBefore(tn2, targetMark.nextSibling);
-        } else {
-          targetMark.parentNode.appendChild(tn2);
-        }
-        neUpdateHighlightTextInState(uid, area);
+      var tM=side==='left'?hlMarks[0]:hlMarks[hlMarks.length-1];
+      var sib=side==='left'?tM.previousSibling:tM.nextSibling;
+      if(side==='left'&&dx>0){
+        if(tM.textContent.length<=1)return;
+        var c=tM.textContent[0]; tM.textContent=tM.textContent.slice(1);
+        tM.parentNode.insertBefore(document.createTextNode(c),tM);
+      } else if(side==='left'&&dx<0){
+        if(!sib||sib.nodeType!==3||!sib.textContent.length)return;
+        var c2=sib.textContent[sib.textContent.length-1];
+        sib.textContent=sib.textContent.slice(0,-1); tM.textContent=c2+tM.textContent;
+      } else if(side==='right'&&dx>0){
+        if(!sib||sib.nodeType!==3||!sib.textContent.length)return;
+        var c3=sib.textContent[0]; sib.textContent=sib.textContent.slice(1);
+        tM.textContent=tM.textContent+c3;
+      } else if(side==='right'&&dx<0){
+        if(tM.textContent.length<=1)return;
+        var c4=tM.textContent[tM.textContent.length-1];
+        tM.textContent=tM.textContent.slice(0,-1);
+        var tn=document.createTextNode(c4);
+        if(tM.nextSibling) tM.parentNode.insertBefore(tn,tM.nextSibling);
+        else tM.parentNode.appendChild(tn);
       }
+      _hlUpdateStateText(uid);
     });
+    handle.addEventListener('pointerup', function(){
+      if(!dragging) return; dragging=false;
+      // Stretch = update existing only, never create new entry
+      var nt=neGetMergedTextForHlId(uid);
+      if(nt) window.neUpdateHighlightEverywhere(uid,nt,false);
+      _st=setTimeout(function(){try{leftH.remove();rightH.remove();}catch(e){}},4000);
+    });
+    handle.addEventListener('pointercancel',function(){dragging=false;});
+  }
+  attachDrag(leftH,'left'); attachDrag(rightH,'right');
+}
 
-    handle.addEventListener('pointerup', function(e) {
-      dragging = false;
-      // After stretch done — cascade update karo
-      var newText = neGetMergedTextForHlId(uid);
-      if(newText) neUpdateHighlightEverywhere(uid, newText);
-      // Restart auto-hide
-      _stretchTimer = setTimeout(function(){ leftH.remove(); rightH.remove(); }, 4000);
-    });
+// ── CASCADE UPDATE: Canvas + Revision + Flashcard ──
+// allowCreate=true  → revision mein naya box bhi ban sakta hai (normal highlight)
+// allowCreate=false → sirf existing box update (stretch / merge update)
+window.neUpdateHighlightEverywhere = function(hlId, newText, allowCreate) {
+  if(!hlId||!newText||!newText.trim()) return;
+  newText=newText.trim();
+  if(allowCreate===undefined) allowCreate=true;
+
+  var safeHtml=newText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+
+  // 1. editorState
+  if(_editorState&&_editorState.highlights){
+    _editorState.highlights.forEach(function(h){ if(h.id===hlId) h.text=newText; });
   }
 
-  attachDragStretch(leftH, 'left');
-  attachDragStretch(rightH, 'right');
-}
-
-// Helper: Ek hlId ke saare marks ka merged text nikalo
-function neGetMergedTextForHlId(hlId) {
-  var area = document.getElementById('noteEditableArea');
-  if(!area) return '';
-  var marks = Array.from(area.querySelectorAll('mark[data-hlid="' + hlId + '"]'));
-  return marks.map(function(m){ return m.textContent.trim(); }).filter(Boolean).join(' ');
-}
-
-// Helper: editorState mein highlight text update karo after stretch
-function neUpdateHighlightTextInState(uid, area) {
-  var merged = neGetMergedTextForHlId(uid);
-  if(!merged) return;
-  var hArr = _editorState.highlights || [];
-  for(var i=0; i<hArr.length; i++) {
-    if(hArr[i].id === uid) { hArr[i].text = merged; break; }
-  }
-  markModified();
-}
-
-// ══════════════════════════════════════════════════════════════════
-// FEATURE C: CASCADE UPDATE — Canvas + Revision + Flashcard + Mindmap
-// ══════════════════════════════════════════════════════════════════
-window.neUpdateHighlightEverywhere = function(hlId, newText) {
-  if(!hlId || !newText || !newText.trim()) return;
-  newText = newText.trim();
-
-  var safeHtml = newText
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/\n/g,'<br>');
-
-  // 1. CANVAS BLOCKS UPDATE
-  if(window._sc && window._sc.slides) {
-    var canvasUpdated = false;
-    _sc.slides.forEach(function(slide) {
-      (slide.textBlocks || []).forEach(function(blk) {
-        if(blk.sourceHighlightId === hlId) {
-          blk.html = safeHtml;
-          canvasUpdated = true;
-        }
+  // 2. Canvas
+  if(window._sc&&window._sc.slides){
+    var cvUp=false;
+    _sc.slides.forEach(function(sl){
+      (sl.textBlocks||[]).forEach(function(blk){
+        if(blk.sourceHighlightId===hlId){blk.html=safeHtml;cvUp=true;}
       });
     });
-    if(canvasUpdated) {
-      // DOM update karo agar current slide visible hai
-      var curSlide = _sc.slides[_sc.curSlide];
-      if(curSlide) {
-        (curSlide.textBlocks || []).forEach(function(blk) {
-          if(blk.sourceHighlightId === hlId) {
-            var domEl = document.querySelector('[data-block-id="' + blk.id + '"] .sc-block-txt');
-            if(!domEl) domEl = document.querySelector('[data-scbid="' + blk.id + '"]');
-            if(domEl) domEl.innerHTML = safeHtml;
-          }
+    if(cvUp){
+      var cur=_sc.slides[_sc.curSlide];
+      if(cur){
+        (cur.textBlocks||[]).forEach(function(blk){
+          if(blk.sourceHighlightId!==hlId)return;
+          var el=document.querySelector('[data-scbid="'+blk.id+'"] .sc-block-txt');
+          if(!el){var w=document.querySelector('[data-scbid="'+blk.id+'"]');if(w)el=w.querySelector('.sc-block-txt');}
+          if(el)el.innerHTML=safeHtml;
         });
       }
-      // Canvas save karo
-      if(typeof scSave === 'function') scSave();
-      else if(typeof _scSave === 'function') _scSave();
+      if(typeof scSave==='function') scSave();
     }
   }
 
-  // 2. REVISION PAGE UPDATE
-  var tid = _editorState && _editorState.tid != null ? _editorState.tid : null;
-  if(tid != null && typeof rvLoad === 'function') {
-    var rvData = rvLoad(tid);
-    if(rvData && rvData.pages) {
-      var rvUpdated = false;
-      var rvFound   = false;
-      rvData.pages.forEach(function(p) {
-        (p.boxes || []).forEach(function(b) {
-          if(b.sourceHighlightId === hlId) {
-            b.originalText = newText;
-            b.corePoint    = newText;
-            rvUpdated = true;
-            rvFound   = true;
-          }
+  // 3. Revision page
+  var tid=_editorState&&_editorState.tid!=null?_editorState.tid:null;
+  if(tid!=null&&typeof rvLoad==='function'){
+    var rvData=rvLoad(tid);
+    if(rvData&&rvData.pages){
+      var found=false,changed=false;
+      rvData.pages.forEach(function(p){
+        (p.boxes||[]).forEach(function(b){
+          if(b.sourceHighlightId===hlId){b.originalText=newText;b.corePoint=newText;found=true;changed=true;}
         });
       });
-
-      // Agar box nahi mila → new box add karo with merged text
-      if(!rvFound && typeof rvGenId === 'function') {
-        var RV_MAX = (typeof RV_BOXES_PER_PAGE !== 'undefined') ? RV_BOXES_PER_PAGE : 12;
-        var targetPage = rvData.pages[rvData.pages.length - 1];
-        if((targetPage.boxes || []).length >= RV_MAX) {
-          rvData.pages.push({ boxes: [] });
-          targetPage = rvData.pages[rvData.pages.length - 1];
-        }
-        targetPage.boxes.push({
-          id: rvGenId(),
-          sourceHighlightId: hlId,
-          originalText: newText,
-          corePoint: newText,
-          color: 'yellow',
-          hideCount: 0,
-          visible: true,
-          createdAt: Date.now()
-        });
-        rvUpdated = true;
+      if(!found&&allowCreate&&typeof rvGenId==='function'){
+        var RVM=(typeof RV_BOXES_PER_PAGE!=='undefined')?RV_BOXES_PER_PAGE:12;
+        var tp=rvData.pages[rvData.pages.length-1];
+        if((tp.boxes||[]).length>=RVM){rvData.pages.push({boxes:[]});tp=rvData.pages[rvData.pages.length-1];}
+        tp.boxes.push({id:rvGenId(),sourceHighlightId:hlId,originalText:newText,
+          corePoint:newText,color:'yellow',hideCount:0,visible:true,createdAt:Date.now()});
+        changed=true;
       }
-
-      if(rvUpdated) {
-        try {
-          var rvKey2 = typeof rvKey === 'function' ? rvKey(tid) : ('rv_' + tid);
-          localStorage.setItem(rvKey2, JSON.stringify({
-            pages: rvData.pages,
-            zoom: rvData.zoom || 1,
-            panX: rvData.panX || 0,
-            panY: rvData.panY || 0
-          }));
-        } catch(e) {}
-        // Re-render if panel open hai
-        var rvPanel = document.getElementById('rvPanel');
-        if(rvPanel && rvPanel.style.display !== 'none' && typeof rvRenderPage === 'function') {
-          rvRenderPage();
-        }
+      if(changed){
+        try{
+          var rk=typeof rvKey==='function'?rvKey(tid):('rv_'+tid);
+          localStorage.setItem(rk,JSON.stringify({pages:rvData.pages,
+            zoom:rvData.zoom||1,panX:rvData.panX||0,panY:rvData.panY||0}));
+        }catch(e){}
+        var rvPan=document.getElementById('rvPanel');
+        if(rvPan&&rvPan.style.display!=='none'&&typeof rvRenderPage==='function') rvRenderPage();
       }
     }
   }
 
-  // 3. FLASHCARD UPDATE — editorHighlights mein text update karo
-  // (Flashcards regenerate hone par naya text use hoga)
-  if(_editorState && _editorState.highlights) {
-    _editorState.highlights.forEach(function(h) {
-      if(h.id === hlId) h.text = newText;
-    });
-  }
+  // 4. MindMap
+  var mmPan=document.getElementById('mindMapPanel')||document.getElementById('mmPanel');
+  if(mmPan&&mmPan.style.display!=='none')
+    showToast&&showToast('\uD83E\uDDE0 Mind Map: highlight update hua — refresh karo','info');
 
-  // 4. MINDMAP UPDATE — agar mindmap panel open hai aur isi hlId ka node hai
-  // MindMap panel close/reopen par fresh data se rebuild hoga
-  // Agar panel abhi open hai → toast dikhao ki reopen karo
-  var mmPanel = document.getElementById('mindMapPanel') || document.getElementById('mmPanel');
-  if(mmPanel && mmPanel.style.display !== 'none') {
-    showToast && showToast('🧠 Highlight update hua — Mind Map ko refresh karo for latest data', 'info');
-  }
-
-  markModified && markModified();
+  markModified&&markModified();
 };
 
 // Attach unhighlight listener to a mark element
