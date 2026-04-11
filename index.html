@@ -1941,67 +1941,7 @@ body.night-mode .sc-color-dot:hover { border-color: rgba(255,255,255,0.7); }
 /* Plain text only — preserve line breaks */
 .ne-editable.ne-plain-mode{white-space:pre-wrap;}
 .ne-editable.hl-mode-active{-webkit-user-select:none !important;user-select:none !important;cursor:crosshair;}
-/* ── Highlight Plus Merge Button ── */
-.hl-plus-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px; height: 18px;
-  border-radius: 50%;
-  background: #1565c0;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 900;
-  cursor: pointer;
-  vertical-align: middle;
-  margin: 0 2px;
-  user-select: none;
-  -webkit-user-select: none;
-  z-index: 999;
-  position: relative;
-  transition: transform 0.15s, background 0.15s;
-  -webkit-tap-highlight-color: transparent;
-  box-shadow: 0 1px 4px rgba(21,101,192,0.35);
-  animation: _hlPlusPop 0.25s ease;
-}
-.hl-plus-btn:active { transform: scale(0.85); }
-
-@keyframes _hlPlusPop {
-  from { transform: scale(0); opacity: 0; }
-  to   { transform: scale(1); opacity: 1; }
-}
-
-/* ── Highlight Stretch Handles ── */
-.hl-stretch-handle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px; height: 20px;
-  border-radius: 50%;
-  background: #6a1b9a;
-  color: #fff;
-  font-size: 10px;
-  cursor: col-resize;
-  vertical-align: middle;
-  margin: 0 1px;
-  user-select: none;
-  -webkit-user-select: none;
-  z-index: 998;
-  position: relative;
-  touch-action: none;
-  -webkit-tap-highlight-color: transparent;
-  box-shadow: 0 1px 4px rgba(106,27,154,0.35);
-  animation: _hlHandlePop 0.2s ease;
-}
-.hl-stretch-handle:active { transform: scale(1.2); }
-
-@keyframes _hlHandlePop {
-  from { transform: scale(0); opacity: 0; }
-  to   { transform: scale(1); opacity: 1; }
-}
-
-body.night-mode .hl-plus-btn     { background: #4a9eff; box-shadow: 0 1px 4px rgba(74,158,255,0.4); }
-body.night-mode .hl-stretch-handle { background: #bc8cff; box-shadow: 0 1px 4px rgba(188,140,255,0.4); }
+/* Custom highlight selection overlay */
 .ne-hl-selection{background:rgba(255,235,59,0.4);position:absolute;pointer-events:none;border-radius:3px;}
 /* Magnifier for text selection */
 .ne-magnifier{
@@ -12789,9 +12729,8 @@ function neAttachEraserToMarks() {
   area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue').forEach(mark => {
     // Always re-attach (ensures undo/redo ke baad bhi listener sahi ho)
     mark.style.cursor = (_hlCurrentMode === 'eraser') ? 'cell' : 'default';
-    mark.title = (_hlCurrentMode === 'eraser') ? '🧹 Tap karo to unhighlight' : 'Long press = merge, Eraser ON = remove';
+    mark.title = (_hlCurrentMode === 'eraser') ? '🧹 Tap karo to unhighlight' : 'Eraser ON karo to remove';
     neAttachUnhighlightToMark(mark);
-    neAttachLongPressMerge(mark);
   });
 }
 
@@ -13171,23 +13110,6 @@ function _cancelTouchSelection() {
     area.addEventListener('touchstart', function(e){ onNETouchStart(e); }, { passive: true });
     area.addEventListener('touchmove',  function(e){ onNETouchMove(e);  }, { passive: false });
     area.addEventListener('touchend',   function(e){ onNETouchEnd(e);   }, { passive: true });
-
-    // Cancel merge mode ONLY when tapping outside editor+plus+handle
-    document.addEventListener('pointerdown', function(e) {
-      if(!window._hlMergeTargetId) return; // nothing to cancel
-      var t = e.target;
-      if(!t) return;
-      // Don't cancel if: plus btn, stretch handle, or inside noteEditableArea
-      if(t.classList.contains('hl-plus-btn')) return;
-      if(t.classList.contains('hl-stretch-handle')) return;
-      var editorArea = document.getElementById('noteEditableArea');
-      if(editorArea && editorArea.contains(t)) return; // inside editor — let merge work
-      // Outside editor — cancel merge
-      window._hlMergeTargetId = null;
-      document.querySelectorAll('.hl-plus-btn').forEach(function(b){
-        b.style.background = '#1565c0'; b.style.transform = '';
-      });
-    }, { passive: true });
   }
   if(document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _attach);
@@ -13228,10 +13150,7 @@ function applyHighlightFromRange(range, text) {
              : color === 'green' ? 'user-hl-green'
              : color === 'blue'  ? 'user-hl-blue'
              : 'user-hl';
-
-  // ── MERGE SYSTEM: Agar merge target active hai to usi hlId use karo ──
-  var mergeTarget = window._hlMergeTargetId || null;
-  const uid = mergeTarget ? mergeTarget : ('hl_' + Date.now());
+  const uid = 'hl_' + Date.now();
 
   const area = document.getElementById('noteEditableArea');
   if(!area || !area.contains(range.commonAncestorContainer)) return;
@@ -13324,329 +13243,25 @@ function applyHighlightFromRange(range, text) {
       });
     }
 
-    // Attach eraser + long-press-merge listener to all created marks
-    createdMarks.forEach(function(m){
-      neAttachUnhighlightToMark(m);
-      neAttachLongPressMerge(m);
-    });
+    // Attach eraser listener to all created marks
+    createdMarks.forEach(function(m){ neAttachUnhighlightToMark(m); });
 
-    var highlightText = text || createdMarks.map(function(m){ return m.textContent; }).join('');
-
-    if(mergeTarget) {
-      // ── MERGE MODE ──
-      // New marks already stamped with mergeTarget hlId.
-      // Update existing state entry (don't push a new one).
-      var finalMergedTxt = neGetMergedTextForHlId(uid); // reads ALL marks with this hlId
-      var existingH = (_editorState.highlights||[]).find(function(h){ return h.id===uid; });
-      if(existingH) {
-        existingH.text = finalMergedTxt || highlightText;
-      }
-      // else: entry not found means first highlight was never pushed — shouldn't happen
-      // but guard anyway:
-      else {
-        _editorState.highlights.push({ id: uid, text: finalMergedTxt||highlightText, color: color });
-      }
-
-      showToast('➕ Merge ho gaya! Aur text ke liye dobara highlight karo.', 'success');
-
-      // Cascade update — allowCreate=false (update existing box only, no new box)
-      setTimeout(function(){
-        var t = neGetMergedTextForHlId(uid);
-        if(t) window.neUpdateHighlightEverywhere(uid, t, false);
-      }, 100);
-
-      // Keep plus icon showing (merge still active)
-      setTimeout(function(){ neShowPlusIconForHlId(uid); }, 150);
-
-    } else {
-      // ── NORMAL MODE: brand new highlight ──
-      _editorState.highlights.push({ id: uid, text: highlightText, color: color });
-      showToast('Highlight ho gaya! + tap karo merge karne ke liye.', 'success');
-
-      // Show plus icon so user can activate merge
-      setTimeout(function(){ neShowPlusIconForHlId(uid); }, 100);
-
-      // Auto-sync to Revision Page (only for new highlights, not merges)
-      if(typeof _rvAutoSync !== 'undefined' && _rvAutoSync && highlightText.trim()){
-        rvAutoAddHighlight(highlightText, color, uid);
-      }
-    }
-
-    // Stretch handles (always show after highlight)
-    setTimeout(function(){ neShowStretchHandles(createdMarks, uid); }, 150);
-
+    var highlightText = text || createdMarks.map(m=>m.textContent).join('');
+    _editorState.highlights.push({ id: uid, text: highlightText, color });
     markModified();
-    trackActivity('highlight', { name: (highlightText||'').substring(0,40), tid: _editorState.tid });
+    showToast('Highlight ho gaya!', 'success');
+    trackActivity('highlight', { name: (text||'').substring(0,40), tid: _editorState.tid });
     setTimeout(neUpdateHlCanvasBtn, 50);
+    
+    // Auto-sync to Revision Page if enabled
+    if(typeof _rvAutoSync !== 'undefined' && _rvAutoSync && highlightText.trim()){
+      rvAutoAddHighlight(highlightText, color, uid);
+    }
 
   } catch(err) {
     showToast('Highlight mein problem aai, dobara try karo', 'error');
   }
 }
-
-
-
-// ══════════════════════════════════════════════════════════════════
-// HIGHLIGHT MERGE + STRETCH + CASCADE  v2 — Professional rewrite
-// ══════════════════════════════════════════════════════════════════
-
-// ── State ──
-window._hlMergeTargetId = null;   // currently active merge hlId
-var _hlPlusHideTimer    = null;   // auto-hide timer for plus btn
-var _hlActivePlusBtn    = null;   // DOM reference to current plus btn
-
-// ── Helper: get merged text of all marks sharing hlId ──
-function neGetMergedTextForHlId(hlId) {
-  var area = document.getElementById('noteEditableArea');
-  if(!area) return '';
-  return Array.from(area.querySelectorAll('mark[data-hlid="' + hlId + '"]'))
-    .map(function(m){ return m.textContent; })
-    .join('')
-    .replace(/\s+/g,' ').trim();
-}
-
-// ── Helper: update _editorState.highlights text only (no new entry) ──
-function _hlUpdateStateText(hlId) {
-  var txt = neGetMergedTextForHlId(hlId);
-  if(!txt) return;
-  var arr = _editorState.highlights || [];
-  for(var i=0;i<arr.length;i++){
-    if(arr[i].id === hlId){ arr[i].text = txt; return; }
-  }
-}
-
-// ── Helper: remove plus btn DOM + clear timer ──
-function _hlClearPlusUI(cancelMerge) {
-  if(_hlPlusHideTimer){ clearTimeout(_hlPlusHideTimer); _hlPlusHideTimer = null; }
-  if(_hlActivePlusBtn){ try{ _hlActivePlusBtn.remove(); }catch(e){} _hlActivePlusBtn = null; }
-  document.querySelectorAll('.hl-plus-btn').forEach(function(b){ try{b.remove();}catch(e){} });
-  if(cancelMerge) window._hlMergeTargetId = null;
-}
-
-// ── Show plus button after last mark of hlId ──
-function neShowPlusIconForHlId(hlId) {
-  _hlClearPlusUI(false);
-  var area = document.getElementById('noteEditableArea');
-  if(!area) return;
-  var marks = Array.from(area.querySelectorAll('mark[data-hlid="' + hlId + '"]'));
-  if(!marks.length) return;
-  var lastMark = marks[marks.length - 1];
-  var isActive = (window._hlMergeTargetId === hlId);
-
-  var btn = document.createElement('span');
-  btn.className = 'hl-plus-btn';
-  btn.setAttribute('data-for-hlid', hlId);
-  btn.title = isActive ? 'Merge ON — tap to stop' : 'Tap: merge more text into this highlight';
-  btn.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;'
-    + 'width:20px;height:20px;border-radius:50%;'
-    + 'background:' + (isActive ? '#e65100' : '#1565c0') + ';'
-    + 'color:#fff;font-size:13px;font-weight:900;cursor:pointer;'
-    + 'vertical-align:middle;margin:0 3px;user-select:none;-webkit-user-select:none;'
-    + 'position:relative;z-index:1000;flex-shrink:0;touch-action:none;'
-    + '-webkit-tap-highlight-color:transparent;box-shadow:0 1px 5px rgba(0,0,0,0.25);'
-    + (isActive ? 'transform:scale(1.25);' : '');
-  btn.textContent = '+';
-  _hlActivePlusBtn = btn;
-
-  btn.addEventListener('pointerdown', function(e) {
-    e.preventDefault(); e.stopPropagation();
-    if(window._hlMergeTargetId === hlId) {
-      _hlClearPlusUI(true);
-      showToast('\u270B Merge band ho gaya', 'info');
-    } else {
-      window._hlMergeTargetId = hlId;
-      btn.style.background = '#e65100';
-      btn.style.transform   = 'scale(1.25)';
-      btn.title = 'Merge ON — tap to stop';
-      showToast('\u2705 Merge ON! Koi bhi text highlight karo — usi group mein jayega', 'success');
-      if(_hlPlusHideTimer) clearTimeout(_hlPlusHideTimer);
-      _hlPlusHideTimer = setTimeout(function(){
-        _hlClearPlusUI(true);
-        showToast('\u23F1 Merge timeout', 'info');
-      }, 60000);
-    }
-  });
-
-  if(lastMark.nextSibling) lastMark.parentNode.insertBefore(btn, lastMark.nextSibling);
-  else lastMark.parentNode.appendChild(btn);
-
-  if(!isActive) {
-    _hlPlusHideTimer = setTimeout(function(){
-      if(window._hlMergeTargetId !== hlId) _hlClearPlusUI(false);
-    }, 10000);
-  }
-}
-
-// ── Long press on existing mark → show plus icon ──
-function neAttachLongPressMerge(mark) {
-  var _lpt = null;
-  mark.addEventListener('pointerdown', function(e){
-    if(_hlCurrentMode === 'eraser') return;
-    _lpt = setTimeout(function(){
-      var hlId = mark.getAttribute('data-hlid');
-      if(hlId){ neShowPlusIconForHlId(hlId); showToast('\uD83D\uDC46 Long press — tap + to merge', 'info'); }
-    }, 650);
-  });
-  mark.addEventListener('pointerup',     function(){ clearTimeout(_lpt); });
-  mark.addEventListener('pointercancel', function(){ clearTimeout(_lpt); });
-  mark.addEventListener('pointermove',   function(){ clearTimeout(_lpt); });
-}
-
-// ── Stretch/Shrink handles ──
-function neShowStretchHandles(marks, uid) {
-  document.querySelectorAll('.hl-stretch-handle').forEach(function(h){ h.remove(); });
-  if(!marks || !marks.length) return;
-
-  function makeHandle(side) {
-    var h = document.createElement('span');
-    h.className = 'hl-stretch-handle';
-    h.setAttribute('data-hlid', uid);
-    h.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;'
-      + 'width:20px;height:20px;border-radius:50%;background:#6a1b9a;color:#fff;'
-      + 'font-size:11px;cursor:col-resize;vertical-align:middle;margin:0 1px;'
-      + 'user-select:none;-webkit-user-select:none;z-index:998;position:relative;'
-      + 'touch-action:none;-webkit-tap-highlight-color:transparent;flex-shrink:0;';
-    h.textContent = side === 'left' ? '\u25C0' : '\u25B6';
-    return h;
-  }
-
-  var leftH  = makeHandle('left');
-  var rightH = makeHandle('right');
-  var firstM = marks[0];
-  var lastM  = marks[marks.length-1];
-  if(firstM.parentNode) firstM.parentNode.insertBefore(leftH, firstM);
-  if(lastM.nextSibling) lastM.parentNode.insertBefore(rightH, lastM.nextSibling);
-  else if(lastM.parentNode) lastM.parentNode.appendChild(rightH);
-
-  var _st = setTimeout(function(){ try{leftH.remove();rightH.remove();}catch(e){} }, 7000);
-
-  function attachDrag(handle, side) {
-    var sx=0, dragging=false;
-    handle.addEventListener('pointerdown', function(e){
-      e.preventDefault(); e.stopPropagation();
-      sx=e.clientX; dragging=true; clearTimeout(_st);
-      try{handle.setPointerCapture(e.pointerId);}catch(x){}
-    });
-    handle.addEventListener('pointermove', function(e){
-      if(!dragging) return;
-      var dx=e.clientX-sx;
-      if(Math.abs(dx)<7) return;
-      sx=e.clientX;
-      var area=document.getElementById('noteEditableArea');
-      if(!area) return;
-      var hlMarks=Array.from(area.querySelectorAll('mark[data-hlid="'+uid+'"]'));
-      if(!hlMarks.length) return;
-      var tM=side==='left'?hlMarks[0]:hlMarks[hlMarks.length-1];
-      var sib=side==='left'?tM.previousSibling:tM.nextSibling;
-      if(side==='left'&&dx>0){
-        if(tM.textContent.length<=1)return;
-        var c=tM.textContent[0]; tM.textContent=tM.textContent.slice(1);
-        tM.parentNode.insertBefore(document.createTextNode(c),tM);
-      } else if(side==='left'&&dx<0){
-        if(!sib||sib.nodeType!==3||!sib.textContent.length)return;
-        var c2=sib.textContent[sib.textContent.length-1];
-        sib.textContent=sib.textContent.slice(0,-1); tM.textContent=c2+tM.textContent;
-      } else if(side==='right'&&dx>0){
-        if(!sib||sib.nodeType!==3||!sib.textContent.length)return;
-        var c3=sib.textContent[0]; sib.textContent=sib.textContent.slice(1);
-        tM.textContent=tM.textContent+c3;
-      } else if(side==='right'&&dx<0){
-        if(tM.textContent.length<=1)return;
-        var c4=tM.textContent[tM.textContent.length-1];
-        tM.textContent=tM.textContent.slice(0,-1);
-        var tn=document.createTextNode(c4);
-        if(tM.nextSibling) tM.parentNode.insertBefore(tn,tM.nextSibling);
-        else tM.parentNode.appendChild(tn);
-      }
-      _hlUpdateStateText(uid);
-    });
-    handle.addEventListener('pointerup', function(){
-      if(!dragging) return; dragging=false;
-      // Stretch = update existing only, never create new entry
-      var nt=neGetMergedTextForHlId(uid);
-      if(nt) window.neUpdateHighlightEverywhere(uid,nt,false);
-      _st=setTimeout(function(){try{leftH.remove();rightH.remove();}catch(e){}},4000);
-    });
-    handle.addEventListener('pointercancel',function(){dragging=false;});
-  }
-  attachDrag(leftH,'left'); attachDrag(rightH,'right');
-}
-
-// ── CASCADE UPDATE: Canvas + Revision + Flashcard ──
-// allowCreate=true  → revision mein naya box bhi ban sakta hai (normal highlight)
-// allowCreate=false → sirf existing box update (stretch / merge update)
-window.neUpdateHighlightEverywhere = function(hlId, newText, allowCreate) {
-  if(!hlId||!newText||!newText.trim()) return;
-  newText=newText.trim();
-  if(allowCreate===undefined) allowCreate=true;
-
-  var safeHtml=newText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
-
-  // 1. editorState
-  if(_editorState&&_editorState.highlights){
-    _editorState.highlights.forEach(function(h){ if(h.id===hlId) h.text=newText; });
-  }
-
-  // 2. Canvas
-  if(window._sc&&window._sc.slides){
-    var cvUp=false;
-    _sc.slides.forEach(function(sl){
-      (sl.textBlocks||[]).forEach(function(blk){
-        if(blk.sourceHighlightId===hlId){blk.html=safeHtml;cvUp=true;}
-      });
-    });
-    if(cvUp){
-      var cur=_sc.slides[_sc.curSlide];
-      if(cur){
-        (cur.textBlocks||[]).forEach(function(blk){
-          if(blk.sourceHighlightId!==hlId)return;
-          var el=document.querySelector('[data-scbid="'+blk.id+'"] .sc-block-txt');
-          if(!el){var w=document.querySelector('[data-scbid="'+blk.id+'"]');if(w)el=w.querySelector('.sc-block-txt');}
-          if(el)el.innerHTML=safeHtml;
-        });
-      }
-      if(typeof scSave==='function') scSave();
-    }
-  }
-
-  // 3. Revision page
-  var tid=_editorState&&_editorState.tid!=null?_editorState.tid:null;
-  if(tid!=null&&typeof rvLoad==='function'){
-    var rvData=rvLoad(tid);
-    if(rvData&&rvData.pages){
-      var found=false,changed=false;
-      rvData.pages.forEach(function(p){
-        (p.boxes||[]).forEach(function(b){
-          if(b.sourceHighlightId===hlId){b.originalText=newText;b.corePoint=newText;found=true;changed=true;}
-        });
-      });
-      if(!found&&allowCreate&&typeof rvGenId==='function'){
-        var RVM=(typeof RV_BOXES_PER_PAGE!=='undefined')?RV_BOXES_PER_PAGE:12;
-        var tp=rvData.pages[rvData.pages.length-1];
-        if((tp.boxes||[]).length>=RVM){rvData.pages.push({boxes:[]});tp=rvData.pages[rvData.pages.length-1];}
-        tp.boxes.push({id:rvGenId(),sourceHighlightId:hlId,originalText:newText,
-          corePoint:newText,color:'yellow',hideCount:0,visible:true,createdAt:Date.now()});
-        changed=true;
-      }
-      if(changed){
-        try{
-          var rk=typeof rvKey==='function'?rvKey(tid):('rv_'+tid);
-          localStorage.setItem(rk,JSON.stringify({pages:rvData.pages,
-            zoom:rvData.zoom||1,panX:rvData.panX||0,panY:rvData.panY||0}));
-        }catch(e){}
-        var rvPan=document.getElementById('rvPanel');
-        if(rvPan&&rvPan.style.display!=='none'&&typeof rvRenderPage==='function') rvRenderPage();
-      }
-    }
-  }
-
-  // 4. MindMap
-  var mmPan=document.getElementById('mindMapPanel')||document.getElementById('mmPanel');
-  if(mmPan&&mmPan.style.display!=='none')
-    showToast&&showToast('\uD83E\uDDE0 Mind Map: highlight update hua — refresh karo','info');
-
-  markModified&&markModified();
-};
 
 // Attach unhighlight listener to a mark element
 function neAttachUnhighlightToMark(mark) {
@@ -30170,18 +29785,17 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
       .replace(/\n/g,'<br>');
 
     var block = {
-      id:                'scb_hl_' + Date.now() + '_' + i,
-      x:                 xPos,
-      y:                 yPos,
-      w:                 colW,
-      html:              safeHtml,
-      fontSize:          FONT_SZ,
-      color:             item.color,
-      bold:              true,
-      italic:            false,
-      underline:         false,
-      angle:             0,
-      sourceHighlightId: item.hlId
+      id:        'scb_hl_' + Date.now() + '_' + i,
+      x:         xPos,
+      y:         yPos,
+      w:         colW,
+      html:      safeHtml,
+      fontSize:  FONT_SZ,
+      color:     item.color,
+      bold:      true,
+      italic:    false,
+      underline: false,
+      angle:     0
     };
 
     curSlide.textBlocks.push(block);
@@ -30731,84 +30345,95 @@ function neQmBarDelete() {
 }
 
 // Hook into _neQmDown — long press on node = show action bar
+// Short tap = drag as before, Long press = action bar
 (function() {
+  var _origNeQmDown = _neQmDown;
   var _longPressTimer = null;
   var _longPressNode  = null;
   var _longPressMoved = false;
 
-  function _wrapNeQmDown() {
-    var _orig = window._neQmDown;
-    if(typeof _orig !== 'function') return;
-    window._neQmDown = function(e) {
+  window._neQmDown = function(e) {
+    if(!e.isPrimary) return;
+    var pt  = _neQmPt(e);
+    var hit = _neQmNodeAt(pt.x, pt.y);
+
+    _longPressMoved = false;
+    _longPressNode  = hit;
+    clearTimeout(_longPressTimer);
+
+    if(hit) {
+      _longPressTimer = setTimeout(function(){
+        if(!_longPressMoved) {
+          // Long press — show action bar
+          if(navigator.vibrate) navigator.vibrate(35);
+          _neQm.selectedNode = hit;
+          _neQmRedraw();
+          neQmShowBar(hit);
+        }
+      }, 450);
+    }
+
+    // Let original handler also run (for drag etc.)
+    _origNeQmDown(e);
+  };
+
+  // Override neQmCanvas pointerdown after QM init
+  var _origNeQmInit = _neQmInit;
+  window._neQmInit = function() {
+    _origNeQmInit.apply(this, arguments);
+    var canvas = document.getElementById('neQmCanvas');
+    if(!canvas) return;
+    // Pointermove cancels long press if moved
+    canvas.addEventListener('pointermove', function(e){
       if(!e.isPrimary) return;
-      var pt  = _neQmPt(e);
-      var hit = _neQmNodeAt(pt.x, pt.y);
-      _longPressMoved = false; _longPressNode = hit;
-      clearTimeout(_longPressTimer);
-      if(hit) {
-        _longPressTimer = setTimeout(function(){
-          if(!_longPressMoved) {
-            if(navigator.vibrate) navigator.vibrate(35);
-            _neQm.selectedNode = hit; _neQmRedraw(); neQmShowBar(hit);
-          }
-        }, 450);
+      var pt = _neQmPt(e);
+      if(_longPressNode) {
+        var nx = _longPressNode.x, ny = _longPressNode.y;
+        var r  = _neQm.canvas.getBoundingClientRect();
+        var sx = _neQm.canvas.width/r.width;
+        var sy = _neQm.canvas.height/r.height;
+        var dx = (e.clientX-r.left)*sx - nx;
+        var dy = (e.clientY-r.top)*sy  - ny;
+        if(Math.hypot(dx,dy) > 10) {
+          clearTimeout(_longPressTimer); _longPressMoved = true;
+        }
       }
-      _orig(e);
-    };
-  }
-
-  function _wrapNeQmInit() {
-    var _origInit = window._neQmInit;
-    if(typeof _origInit !== 'function') return;
-    window._neQmInit = function() {
-      _origInit.apply(this, arguments);
-      var canvas = document.getElementById('neQmCanvas');
-      if(!canvas) return;
-      canvas.addEventListener('pointermove', function(e){
-        if(!e.isPrimary || !_longPressNode) return;
-        var r = _neQm.canvas.getBoundingClientRect();
-        var dx = (e.clientX-r.left)*(_neQm.canvas.width/r.width) - _longPressNode.x;
-        var dy = (e.clientY-r.top)*(_neQm.canvas.height/r.height) - _longPressNode.y;
-        if(Math.hypot(dx,dy) > 10){ clearTimeout(_longPressTimer); _longPressMoved = true; }
-      }, { passive: true });
-    };
-  }
-
-  if(document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function(){ _wrapNeQmDown(); _wrapNeQmInit(); });
-  } else { _wrapNeQmDown(); _wrapNeQmInit(); }
+    }, { passive: true });
+  };
 })();
 
-// Override _neQmDown to show bar on normal tap too
+// Also: single tap on selected node in default tool → show bar (not just double tap)
+// Override _neQmDown to show bar on normal tap too (when tool = bubble/box/circle/diamond)
 (function(){
   var _lastTapTime = 0;
   var _lastTapId   = null;
 
-  function _wrapNeQmDown2() {
-    var _orig = window._neQmDown;
-    window._neQmDown = function(e) {
-      if(!e.isPrimary) { _orig && _orig.call(this,e); return; }
-      var pt  = _neQmPt(e);
-      var hit = _neQmNodeAt(pt.x, pt.y);
-      var now = Date.now();
-      if(hit && _neQm.tool !== 'move' && _neQm.tool !== 'arrow' && _neQm.tool !== 'line') {
-        if(now - _lastTapTime < 380 && _lastTapId === hit.id) {
-          _lastTapTime = 0; _lastTapId = null;
-          e.preventDefault(); e.stopImmediatePropagation();
-          _neQm.selectedNode = hit; _neQmRedraw(); neQmShowBar(hit);
-          return;
-        }
-        _lastTapTime = now; _lastTapId = hit.id;
-      } else if(!hit) {
-        neQmHideBar(); _lastTapTime = 0; _lastTapId = null;
-      }
-      _orig && _orig.call(this, e);
-    };
-  }
+  var _orig = window._neQmDown;
+  window._neQmDown = function(e) {
+    if(!e.isPrimary) { _orig && _orig.call(this,e); return; }
+    var pt  = _neQmPt(e);
+    var hit = _neQmNodeAt(pt.x, pt.y);
+    var now = Date.now();
 
-  if(document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _wrapNeQmDown2);
-  } else { _wrapNeQmDown2(); }
+    if(hit && _neQm.tool !== 'move' && _neQm.tool !== 'arrow' && _neQm.tool !== 'line') {
+      if(now - _lastTapTime < 380 && _lastTapId === hit.id) {
+        // Double tap = action bar
+        _lastTapTime = 0; _lastTapId = null;
+        e.preventDefault(); e.stopImmediatePropagation();
+        _neQm.selectedNode = hit;
+        _neQmRedraw();
+        neQmShowBar(hit);
+        return;
+      }
+      _lastTapTime = now; _lastTapId = hit.id;
+    } else if(!hit) {
+      // Tap on empty = hide bar
+      neQmHideBar();
+      _lastTapTime = 0; _lastTapId = null;
+    }
+
+    _orig && _orig.call(this, e);
+  };
 })();
 
 // ═══════════════════════════════════════════════════════════════════
