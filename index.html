@@ -13172,19 +13172,21 @@ function _cancelTouchSelection() {
     area.addEventListener('touchmove',  function(e){ onNETouchMove(e);  }, { passive: false });
     area.addEventListener('touchend',   function(e){ onNETouchEnd(e);   }, { passive: true });
 
-    // Cancel merge mode when tapping outside plus/handle buttons
+    // Cancel merge mode ONLY when tapping outside editor+plus+handle
     document.addEventListener('pointerdown', function(e) {
-      if(e.target && (
-        e.target.classList.contains('hl-plus-btn') ||
-        e.target.classList.contains('hl-stretch-handle')
-      )) return; // plus/handle tap — don't cancel
-      // Agar merge active tha aur user ne normal tap kiya → cancel
-      if(window._hlMergeTargetId) {
-        window._hlMergeTargetId = null;
-        // Hide all plus buttons
-        document.querySelectorAll('.hl-plus-btn').forEach(function(b){ b.style.background='#1565c0'; b.style.transform=''; });
-        // Don't remove — let auto-hide timer handle it
-      }
+      if(!window._hlMergeTargetId) return; // nothing to cancel
+      var t = e.target;
+      if(!t) return;
+      // Don't cancel if: plus btn, stretch handle, or inside noteEditableArea
+      if(t.classList.contains('hl-plus-btn')) return;
+      if(t.classList.contains('hl-stretch-handle')) return;
+      var editorArea = document.getElementById('noteEditableArea');
+      if(editorArea && editorArea.contains(t)) return; // inside editor — let merge work
+      // Outside editor — cancel merge
+      window._hlMergeTargetId = null;
+      document.querySelectorAll('.hl-plus-btn').forEach(function(b){
+        b.style.background = '#1565c0'; b.style.transform = '';
+      });
     }, { passive: true });
   }
   if(document.readyState === 'loading') {
@@ -13333,21 +13335,29 @@ function applyHighlightFromRange(range, text) {
     if(mergeTarget) {
       // ── MERGE MODE: existing highlight ka text update karo ──
       var existingH = _editorState.highlights.find(function(h){ return h.id === uid; });
+      // Full merged text re-collect from DOM (saare marks ke saath)
+      var mergedTxt = neGetMergedTextForHlId(uid);
       if(existingH) {
-        // Full merged text re-collect from DOM
-        var mergedTxt = neGetMergedTextForHlId(uid);
         existingH.text = mergedTxt || highlightText;
       } else {
-        _editorState.highlights.push({ id: uid, text: highlightText, color });
+        _editorState.highlights.push({ id: uid, text: mergedTxt || highlightText, color });
       }
-      showToast('➕ Text merge ho gaya iss highlight mein!', 'success');
-      // Cascade update karo
-      var mergedFinal = neGetMergedTextForHlId(uid);
-      setTimeout(function(){ window.neUpdateHighlightEverywhere(uid, mergedFinal); }, 200);
+      showToast('➕ Merge ho gaya! Aur text add karne ke liye dobara highlight karo.', 'success');
+
+      // Canvas + Revision page mein update karo (existing blocks ka text update)
+      setTimeout(function(){
+        var finalText = neGetMergedTextForHlId(uid);
+        if(finalText) window.neUpdateHighlightEverywhere(uid, finalText);
+      }, 150);
+
+      // Merge mode KEEP ACTIVE — user aur text add kar sake
+      // Plus icon dobara dikhao so user knows merge is still on
+      setTimeout(function(){ neShowPlusIconForHlId(uid); }, 200);
+
     } else {
       // ── NORMAL MODE: nayi highlight ──
       _editorState.highlights.push({ id: uid, text: highlightText, color });
-      showToast('Highlight ho gaya!', 'success');
+      showToast('Highlight ho gaya! + tap karo aur text merge karo.', 'success');
       // Plus icon dikhao (8 sec auto-hide)
       setTimeout(function(){ neShowPlusIconForHlId(uid); }, 100);
     }
@@ -13358,9 +13368,10 @@ function applyHighlightFromRange(range, text) {
     markModified();
     trackActivity('highlight', { name: (text||'').substring(0,40), tid: _editorState.tid });
     setTimeout(neUpdateHlCanvasBtn, 50);
-    
-    // Auto-sync to Revision Page if enabled
-    if(typeof _rvAutoSync !== 'undefined' && _rvAutoSync && highlightText.trim()){
+
+    // Auto-sync to Revision Page — ONLY if NOT merge mode
+    // (merge mode mein neUpdateHighlightEverywhere already handle karta hai)
+    if(!mergeTarget && typeof _rvAutoSync !== 'undefined' && _rvAutoSync && highlightText.trim()){
       rvAutoAddHighlight(highlightText, color, uid);
     }
 
@@ -13405,26 +13416,30 @@ function neShowPlusIconForHlId(hlId) {
   btn.className = 'hl-plus-btn';
   btn.setAttribute('data-for-hlid', hlId);
   btn.title = 'Iss highlight mein aur text merge karo';
+
+  // Agar merge already active hai is hlId ke liye → orange dikhao
+  var isActive = (window._hlMergeTargetId === hlId);
   btn.style.cssText = [
     'display:inline-flex',
     'align-items:center',
     'justify-content:center',
-    'width:18px',
-    'height:18px',
+    'width:20px',
+    'height:20px',
     'border-radius:50%',
-    'background:#1565c0',
+    'background:' + (isActive ? '#e65100' : '#1565c0'),
     'color:#fff',
-    'font-size:12px',
+    'font-size:13px',
     'font-weight:900',
     'cursor:pointer',
     'vertical-align:middle',
-    'margin-left:2px',
+    'margin-left:3px',
     'user-select:none',
     '-webkit-user-select:none',
     'position:relative',
     'z-index:999',
     'flex-shrink:0',
-    'line-height:1'
+    'line-height:1',
+    'transform:' + (isActive ? 'scale(1.2)' : 'scale(1)')
   ].join(';');
   btn.textContent = '+';
 
@@ -13433,19 +13448,21 @@ function neShowPlusIconForHlId(hlId) {
     e.stopPropagation();
     if(window._hlMergeTargetId === hlId) {
       // Toggle off — merge cancel karo
+      window._hlMergeTargetId = null;
       neHideAllPlusIcons();
-      showToast('Merge cancel ho gaya', 'info');
+      showToast('✋ Merge band ho gaya', 'info');
     } else {
       window._hlMergeTargetId = hlId;
       btn.style.background = '#e65100';
-      btn.style.transform = 'scale(1.3)';
+      btn.style.transform = 'scale(1.2)';
       showToast('✅ Merge ON! Ab koi bhi text highlight karo — woh iss group mein add ho jaayega', 'success');
-      // Auto-cancel after 30 seconds
+      // Auto-cancel after 60 seconds
       if(_hlPlusHideTimer) clearTimeout(_hlPlusHideTimer);
       _hlPlusHideTimer = setTimeout(function() {
+        window._hlMergeTargetId = null;
         neHideAllPlusIcons();
-        showToast('Merge timeout — phir se plus tap karo', 'info');
-      }, 30000);
+        showToast('⏱ Merge timeout — phir se + tap karo', 'info');
+      }, 60000);
     }
   });
 
@@ -13456,12 +13473,14 @@ function neShowPlusIconForHlId(hlId) {
     lastMark.parentNode.appendChild(btn);
   }
 
-  // Auto-hide after 8 seconds (agar merge activate nahi hua)
-  _hlPlusHideTimer = setTimeout(function() {
-    if(window._hlMergeTargetId !== hlId) {
-      neHideAllPlusIcons();
-    }
-  }, 8000);
+  // Auto-hide after 10 seconds ONLY if merge not activated
+  if(!isActive) {
+    _hlPlusHideTimer = setTimeout(function() {
+      if(window._hlMergeTargetId !== hlId) {
+        btn.remove();
+      }
+    }, 10000);
+  }
 }
 
 // Long-press on existing mark → plus icon wapas dikhao
@@ -13686,15 +13705,39 @@ window.neUpdateHighlightEverywhere = function(hlId, newText) {
     var rvData = rvLoad(tid);
     if(rvData && rvData.pages) {
       var rvUpdated = false;
+      var rvFound   = false;
       rvData.pages.forEach(function(p) {
         (p.boxes || []).forEach(function(b) {
           if(b.sourceHighlightId === hlId) {
             b.originalText = newText;
-            b.corePoint    = newText; // Reset — AI re-process karega
+            b.corePoint    = newText;
             rvUpdated = true;
+            rvFound   = true;
           }
         });
       });
+
+      // Agar box nahi mila → new box add karo with merged text
+      if(!rvFound && typeof rvGenId === 'function') {
+        var RV_MAX = (typeof RV_BOXES_PER_PAGE !== 'undefined') ? RV_BOXES_PER_PAGE : 12;
+        var targetPage = rvData.pages[rvData.pages.length - 1];
+        if((targetPage.boxes || []).length >= RV_MAX) {
+          rvData.pages.push({ boxes: [] });
+          targetPage = rvData.pages[rvData.pages.length - 1];
+        }
+        targetPage.boxes.push({
+          id: rvGenId(),
+          sourceHighlightId: hlId,
+          originalText: newText,
+          corePoint: newText,
+          color: 'yellow',
+          hideCount: 0,
+          visible: true,
+          createdAt: Date.now()
+        });
+        rvUpdated = true;
+      }
+
       if(rvUpdated) {
         try {
           var rvKey2 = typeof rvKey === 'function' ? rvKey(tid) : ('rv_' + tid);
