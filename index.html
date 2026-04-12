@@ -30796,7 +30796,7 @@ function _ngmRenderHlList() {
   var area = document.getElementById('noteEditableArea');
   if(!area) { container.innerHTML = '<div style="font-size:0.76rem;color:var(--text2);">Notes editor open karo pehle.</div>'; return; }
 
-  // Collect marks in DOM order (this is the reading sequence)
+  // Collect marks in DOM order
   var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue');
   if(!marks || marks.length === 0) {
     container.innerHTML = '<div style="font-size:0.76rem;color:var(--text2);">Koi highlight nahi mila. Pehle notes mein text highlight karo.</div>';
@@ -30805,7 +30805,7 @@ function _ngmRenderHlList() {
   }
 
   // Merge same-hlId marks
-  var hlMap = {}; // hlId → {text, color, hlId, domOrder}
+  var hlMap = {};
   var domOrder = 0;
   marks.forEach(function(mark) {
     var hlId = mark.getAttribute('data-hlid');
@@ -30824,18 +30824,46 @@ function _ngmRenderHlList() {
   });
 
   var groups = _ngmLoad();
-  // Build map: hlId → group name
+  // Build set of already-grouped hlIds
+  var groupedHlIds = {};
   var hlGroupMap = {};
   groups.forEach(function(g) {
-    (g.hlIds || []).forEach(function(hid) { hlGroupMap[hid] = g; });
+    (g.hlIds || []).forEach(function(hid) {
+      groupedHlIds[hid] = true;
+      hlGroupMap[hid] = g;
+    });
   });
 
   container.innerHTML = '';
-  _ngmSelectedHlIds = _ngmSelectedHlIds.filter(function(id){ return hlMap[id]; }); // clean stale
+  _ngmSelectedHlIds = _ngmSelectedHlIds.filter(function(id){ return hlMap[id] && !groupedHlIds[id]; });
 
-  Object.values(hlMap).sort(function(a,b){ return a.domOrder - b.domOrder; }).forEach(function(hl) {
+  // Only ungrouped highlights
+  var ungroupedList = Object.values(hlMap)
+    .filter(function(hl){ return !groupedHlIds[hl.hlId]; })
+    .sort(function(a,b){ return a.domOrder - b.domOrder; });
+
+  var totalHighlights = Object.keys(hlMap).length;
+  var groupedCount = totalHighlights - ungroupedList.length;
+
+  // Summary line at top
+  if(groupedCount > 0) {
+    var summaryEl = document.createElement('div');
+    summaryEl.style.cssText = 'font-size:0.68rem;color:#00695c;background:rgba(0,105,92,0.07);border:1px solid rgba(0,105,92,0.2);border-radius:8px;padding:5px 10px;font-weight:700;';
+    summaryEl.textContent = '✅ ' + groupedCount + ' highlight' + (groupedCount>1?'s':'') + ' already grouped hain (neeche nahi dikhenge)';
+    container.appendChild(summaryEl);
+  }
+
+  if(ungroupedList.length === 0) {
+    var doneEl = document.createElement('div');
+    doneEl.style.cssText = 'font-size:0.76rem;color:var(--text2);text-align:center;padding:12px 0;';
+    doneEl.innerHTML = '🎉 Saare highlights grouped hain!<br><span style="font-size:0.68rem;">Nayi highlights add karo ya View tab mein groups dekho.</span>';
+    container.appendChild(doneEl);
+    _ngmUpdateActionRow();
+    return;
+  }
+
+  ungroupedList.forEach(function(hl) {
     var isSelected = _ngmSelectedHlIds.indexOf(hl.hlId) !== -1;
-    var assignedGroup = hlGroupMap[hl.hlId];
     var colorDot = { yellow:'#f9a825', pink:'#e91e63', green:'#2e7d32', blue:'#0d47a1' }[hl.colorKey] || '#f9a825';
     var bgColor = { yellow:'rgba(255,248,225,0.8)', pink:'rgba(252,228,236,0.8)', green:'rgba(232,245,233,0.8)', blue:'rgba(227,242,253,0.8)' }[hl.colorKey] || 'rgba(255,248,225,0.8)';
 
@@ -30849,14 +30877,11 @@ function _ngmRenderHlList() {
       (isSelected ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '') +
       '</div>';
 
-    var groupTag = assignedGroup
-      ? '<span style="font-size:0.62rem;background:rgba(0,105,92,0.15);color:#00695c;border:1px solid rgba(0,105,92,0.3);border-radius:5px;padding:1px 5px;font-weight:800;white-space:nowrap;">🏷 ' + _escHtml(assignedGroup.name) + '</span>'
-      : '<span style="font-size:0.62rem;color:var(--text2);">ungrouped</span>';
-
     item.innerHTML = checkCircle +
       '<div style="flex:1;min-width:0;">' +
-        '<div style="font-size:0.78rem;color:var(--text);line-height:1.4;word-break:break-word;">' + _escHtml(hl.text.length > 100 ? hl.text.substring(0,100)+'…' : hl.text) + '</div>' +
-        '<div style="margin-top:3px;">' + groupTag + '</div>' +
+        '<div style="font-size:0.78rem;color:var(--text);line-height:1.4;word-break:break-word;">' +
+          _escHtml(hl.text.length > 120 ? hl.text.substring(0,120)+'…' : hl.text) +
+        '</div>' +
       '</div>';
 
     item.addEventListener('click', function() {
@@ -30865,7 +30890,7 @@ function _ngmRenderHlList() {
       else _ngmSelectedHlIds.splice(idx, 1);
       _ngmRenderHlList();
       _ngmUpdateActionRow();
-      // Flash the mark in notes editor
+      // Outline in notes editor
       var area2 = document.getElementById('noteEditableArea');
       if(area2) {
         area2.querySelectorAll('[data-hlid="' + hl.hlId + '"]').forEach(function(m){
@@ -33635,20 +33660,25 @@ function scAiMakeFlashcards() {
   document.getElementById('_scFCHint').textContent = '';
 
   var curHash = _scContentHash();
-  // Use only new facts content from here — old hash bypass removed
   content = contentToUse;
 
-  // STEP 1: Topic + Exam Pattern Analysis via AI
-  var topicSnippet = _scDetectTopic(content);
-  var step1Prompt = 'You are an expert analyst of Indian competitive exams (UPSC, SSC CGL, Railway NTPC, State PSC).\n\nAnalyze these study notes and return a JSON object with:\n1. "topic": main topic name (e.g. "Indus Valley Civilization", "Vedic Period")\n2. "examPatterns": array of 8-10 strings describing HOW examiners typically ask questions from this topic (what specific facts/angles/tricky aspects they test)\n3. "criticalFacts": array of 10-12 most testable facts from the notes below\n4. "trickyAngles": array of 5-6 common confusion points or tricky question angles examiners use\n\nStudy Notes:\n---\n'+content+'\n---\n\nReturn ONLY valid JSON, no markdown, no extra text.';
+  // ══════════════════════════════════════════════════════════════════
+  // NEW: PER-HIGHLIGHT FLASHCARD SYSTEM
+  // Har highlight ke liye ek flashcard — group context ke saath
+  // Jyada highlights hone par batch processing (3 batches tak)
+  // ══════════════════════════════════════════════════════════════════
 
-  document.getElementById('_scFCQ').innerHTML = '🔍 <b>Step 1/3:</b> Examiner patterns analyze ho rahe hain...';
+  // Step 1: Topic analysis (same as before)
+  var topicSnippet = _scDetectTopic(content);
+  var step1Prompt = 'You are an expert analyst of Indian competitive exams (UPSC, SSC CGL, Railway NTPC, State PSC).\n\nAnalyze these study notes and return a JSON object with:\n1. "topic": main topic name\n2. "examPatterns": array of 6-8 strings describing HOW examiners typically ask questions from this topic\n3. "trickyAngles": array of 4-5 common confusion points examiners use\n\nStudy Notes:\n---\n'+content+'\n---\n\nReturn ONLY valid JSON, no markdown, no extra text.';
+
+  document.getElementById('_scFCQ').innerHTML = '🔍 <b>Step 1:</b> Topic aur exam patterns analyze ho rahe hain...';
 
   fetch('https://api.groq.com/openai/v1/chat/completions', {
     method:'POST',
     headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+apiKey },
     body: JSON.stringify({
-      model:'llama-3.3-70b-versatile', max_tokens:1200,
+      model:'llama-3.3-70b-versatile', max_tokens:800,
       messages:[
         { role:'system', content:'You are an expert on Indian competitive exam patterns. Always respond with valid JSON only. No markdown.' },
         { role:'user',   content: step1Prompt }
@@ -33661,87 +33691,201 @@ function scAiMakeFlashcards() {
       var clean1 = raw1.replace(/```json|```/g,'').trim();
       analysis = JSON.parse(clean1);
     } catch(e) {
-      analysis = { topic: topicSnippet, examPatterns:[], criticalFacts:[], trickyAngles:[] };
+      analysis = { topic: topicSnippet, examPatterns:[], trickyAngles:[] };
     }
 
-    document.getElementById('_scFCQ').innerHTML = '🌐 <b>Step 2/3:</b> "'+(analysis.topic||'topic')+'" ke liye web se examiner data collect ho raha hai...';
-
-    // STEP 2: Web-enriched Flashcard Generation using analysis
     var topicName = analysis.topic || topicSnippet;
     var patterns  = (analysis.examPatterns||[]).join('\n- ');
-    var critFacts = (analysis.criticalFacts||[]).join('\n- ');
     var tricky    = (analysis.trickyAngles||[]).join('\n- ');
 
-    var step2System = 'You are a MASTER flashcard creator for Indian competitive exams (UPSC CSE, SSC CGL, Railway NTPC, State PSC).\n\nIMPORTANT: In the canvas notes, some facts are marked as [GROUP:GroupName] or [GROUP]. This means those numbered points (1. 2. 3. etc.) are RELATED facts about the SAME main topic. When making flashcards from a GROUP:\n- Treat all numbered points as parts of ONE concept\n- Create flashcards that test each sub-fact within the context of the main fact\n- Example: If group has "1. Hospitals: 2509  2. Doctors: 1200" → make Q: "Hospital kitne hain?" A: "2509" AND Q: "Doctors kitne hain?" A: "1200" — both questions reference the GROUP topic\n- Also create one summary/comparison flashcard covering all points in the group\n- For standalone facts (no GROUP tag), make normal flashcards\n\nYour flashcards must:\n1. Ask EXACTLY what examiners ask — specific dates, names, firsts, comparisons, exceptions\n2. Question format should vary: "Kab?", "Kahan?", "Kaun?", "Kis naam se jaana jata hai?", "Pehli baar kab?", "Kisne?", "Kya kaha jata hai?", etc.\n3. Answers must be CRISP — 1-2 lines max, the exact fact the examiner wants\n4. Include tricky/confusing aspects that students often get wrong\n5. Cover data that appears in previous year questions\n\nKEY RULE: Do NOT make vague or obvious questions. Every question should feel like it came from an actual exam paper.\n\nReturn ONLY a valid JSON array:\n[{"q":"Question in Hindi/English mix","a":"Short crisp answer","difficulty":"easy|medium|hard","examRelevance":"why this is tested"},...]';
+    document.getElementById('_scFCQ').innerHTML = '📋 <b>Step 2:</b> Highlights extract ho rahe hain — har highlight ke liye flashcard banega...';
 
-    var step2User = 'Topic: '+topicName+'\n\n=== CANVAS NOTES ===\n'+content+'\n\n=== EXAMINER PATTERN ANALYSIS ===\nHow examiners ask from this topic:\n- '+patterns+'\n\n=== MOST TESTABLE FACTS (from analysis) ===\n- '+critFacts+'\n\n=== TRICKY ANGLES (common confusion points) ===\n- '+tricky+'\n\n=== YOUR TASK ===\nCreate 15-18 high-quality exam flashcards combining:\n1. Facts directly from the canvas notes\n2. Examiner patterns identified above\n3. Web knowledge about this topic (UPSC/SSC previous year question patterns for "'+topicName+'")\n\nEvery question must test a SPECIFIC fact that an examiner would actually ask. Return JSON array only.';
+    // ── Extract individual highlights from canvas blocks ──
+    // Each block may be a GROUP (multiple sub-highlights) or single
+    if(typeof _scSyncCurrentSlideFromDOM === 'function') _scSyncCurrentSlideFromDOM();
+    var hlUnits = []; // array of {text, groupName, groupItems:[text,...], isSingle}
 
-    document.getElementById('_scFCQ').innerHTML = '🧠 <b>Step 3/3:</b> Master flashcards generate ho rahe hain...';
+    if(typeof _sc !== 'undefined' && _sc.slides) {
+      _sc.slides.forEach(function(slide) {
+        (slide.textBlocks||[]).forEach(function(b) {
+          var rawTxt = (b.html||'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
+          if(!rawTxt) return;
 
-    fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+apiKey },
-      body: JSON.stringify({
-        model:'llama-3.3-70b-versatile', max_tokens:2500,
-        messages:[
-          { role:'system', content: step2System },
-          { role:'user',   content: step2User }
-        ]
-      })
-    }).then(function(r2){ return r2.json(); }).then(function(data2){
-      var raw2 = (data2.choices&&data2.choices[0]&&data2.choices[0].message&&data2.choices[0].message.content)||'[]';
-      try {
-        var clean2 = raw2.replace(/```json|```/g,'').trim();
-        // Extract JSON array if wrapped in extra text
-        var match = clean2.match(/\[[\s\S]*\]/);
-        if(match) clean2 = match[0];
-        var arr = JSON.parse(clean2);
-        _scFC.cards = arr.map(function(fc,i){
-          return {
-            id:'fc'+Date.now()+'_'+i,
-            q: fc.q||'?',
-            a: fc.a||'?',
-            difficulty: fc.difficulty||'medium',
-            examRelevance: fc.examRelevance||''
-          };
-        });
-        _scFC.hash  = curHash;
-        _scFC.topic = analysis.topic || topicName;
-        _scFC.generatedAt = new Date().toLocaleDateString('hi-IN');
-
-        // ── Mark all currently used facts as COVERED (normalized) ──
-        var usedFacts = _scExtractFactLines(scExtractContent());
-        var alreadyCovered = _scFC.coveredFacts || [];
-        var alreadyCoveredNorm = alreadyCovered.map(_scNormFact);
-        usedFacts.forEach(function(f){
-          var fn = _scNormFact(f);
-          if(alreadyCoveredNorm.indexOf(fn) === -1) {
-            alreadyCovered.push(fn); // store normalized
-            alreadyCoveredNorm.push(fn);
+          if(b._isGroupBox && b._groupItems && b._groupItems.length > 1) {
+            // GROUP box — each sub-item is one highlight
+            b._groupItems.forEach(function(itemTxt) {
+              if(itemTxt && itemTxt.trim()) {
+                hlUnits.push({
+                  text: itemTxt.trim(),
+                  groupName: b._groupName || null,
+                  groupContext: b._groupItems.join(' | '), // full group for context
+                  isSingle: false
+                });
+              }
+            });
+          } else {
+            // Single highlight box
+            hlUnits.push({
+              text: rawTxt,
+              groupName: null,
+              groupContext: null,
+              isSingle: true
+            });
           }
         });
-        _scFC.coveredFacts = alreadyCovered;
-        _scFC.allFactsHash = curHash;
+      });
+    }
 
-        _scFCSave();
-        // Show success message briefly
-        var newCount = arr.length;
-        var totalCovered = _scFC.coveredFacts.length;
-        document.getElementById('_scFCQ').innerHTML =
-          '✅ <b>'+newCount+' Master Flashcards</b> ready!<br>' +
-          '<small style="font-size:0.65rem;opacity:0.7;">Topic: '+_scFC.topic+' • 🌐 Web-enriched • '+totalCovered+' facts covered</small>';
-        setTimeout(function(){ _scFCStartSession(); }, 1200);
-      } catch(e) {
-        document.getElementById('_scFCQ').textContent = '❌ Parse error. Dobara try karo.';
-        console.error('FC parse error:', e, raw2);
-      }
-    }).catch(function(e){
-      document.getElementById('_scFCQ').textContent = '❌ Step 3 Network error: '+e.message;
+    // Fallback: if no structured data, split content by lines
+    if(hlUnits.length === 0) {
+      content.split('\n').forEach(function(line) {
+        line = line.trim();
+        if(line && !line.startsWith('===') && !line.startsWith('[')) {
+          hlUnits.push({ text: line, groupName: null, groupContext: null, isSingle: true });
+        }
+      });
+    }
+
+    if(hlUnits.length === 0) {
+      document.getElementById('_scFCQ').textContent = '❌ Canvas mein koi highlight data nahi mila!';
+      return;
+    }
+
+    // Filter already-covered highlights
+    var coveredNorms = (_scFC.coveredFacts||[]).map(function(f){ return typeof _scNormFact==='function'?_scNormFact(f):f.toLowerCase().trim(); });
+    var newHlUnits = hlUnits.filter(function(u){
+      var norm = typeof _scNormFact==='function' ? _scNormFact(u.text) : u.text.toLowerCase().trim();
+      return coveredNorms.indexOf(norm) === -1;
     });
 
+    var unitsToProcess = newHlUnits.length > 0 ? newHlUnits : hlUnits;
+    var totalUnits = unitsToProcess.length;
+
+    document.getElementById('_scFCQ').innerHTML = '🃏 <b>Step 2:</b> <b>' + totalUnits + ' highlights</b> se flashcards ban rahe hain...';
+
+    // ── BATCH PROCESSING: max 15 per batch, up to 3 batches ──
+    var BATCH_SIZE = 15;
+    var batches = [];
+    for(var bi = 0; bi < unitsToProcess.length; bi += BATCH_SIZE) {
+      batches.push(unitsToProcess.slice(bi, bi + BATCH_SIZE));
+    }
+    // Limit to 3 batches
+    if(batches.length > 3) batches = batches.slice(0, 3);
+
+    var allCards = [];
+    var batchsDone = 0;
+
+    var perHlSystem = 'You are a MASTER flashcard creator for Indian competitive exams (UPSC CSE, SSC CGL, Railway NTPC, State PSC).\n\nYou will receive a list of highlights from a student\'s notes. RULES:\n1. Generate EXACTLY ONE flashcard per highlight — no more, no less\n2. Each highlight\'s flashcard must test THAT specific highlight\'s information\n3. If a highlight has GROUP_CONTEXT, use that context to understand what the highlight is about — make the question more precise using context, but the ANSWER must be from the highlight itself\n4. For number/data highlights (e.g. "2509"): use GROUP_CONTEXT to understand WHAT 2509 means → Q: "Rajya mein kitne hospitals hain?" A: "2509"\n5. For short highlights: use context to frame a proper question\n6. Question format must vary: "Kab?", "Kahan?", "Kaun?", "Kitna/Kitne?", "Kis naam se?", "Kya hai?"\n7. Answers must be crisp — 1-2 lines max\n8. difficulty: easy/medium/hard based on how tricky the fact is\n\nKEY: Every highlight MUST produce exactly 1 flashcard. Do NOT skip any. Do NOT merge highlights.\n\nReturn ONLY a valid JSON array with SAME NUMBER of objects as input highlights:\n[{"q":"Question","a":"Answer","difficulty":"easy|medium|hard","sourceIdx":0},...]';
+
+    function processBatch(batchIdx) {
+      if(batchIdx >= batches.length) {
+        // All batches done — save and show
+        _finalizeFcCards(allCards, curHash, topicName, analysis);
+        return;
+      }
+
+      var batch = batches[batchIdx];
+      var totalBatches = Math.min(batches.length, 3);
+      document.getElementById('_scFCQ').innerHTML =
+        '🃏 <b>Batch ' + (batchIdx+1) + '/' + totalBatches + ':</b> ' + batch.length + ' highlights process ho rahe hain...';
+
+      // Build highlight list for this batch
+      var hlListStr = batch.map(function(u, idx) {
+        var line = (idx+1) + '. HIGHLIGHT: "' + u.text + '"';
+        if(u.groupName) line += '\n   GROUP_NAME: ' + u.groupName;
+        if(u.groupContext) line += '\n   GROUP_CONTEXT (related facts): ' + u.groupContext;
+        return line;
+      }).join('\n\n');
+
+      var batchUser = 'Topic: ' + topicName + '\n\n' +
+        '=== EXAM PATTERNS ===\n- ' + patterns + '\n\n' +
+        '=== TRICKY ANGLES ===\n- ' + tricky + '\n\n' +
+        '=== HIGHLIGHTS TO CONVERT (1 flashcard each) ===\n\n' + hlListStr + '\n\n' +
+        '=== YOUR TASK ===\n' +
+        'Generate exactly ' + batch.length + ' flashcards — one per highlight above (in same order).\n' +
+        'Use GROUP_CONTEXT to understand incomplete highlights (like numbers, short phrases).\n' +
+        'Include sourceIdx (0-based index of the highlight this card is for).\n' +
+        'Return JSON array only — exactly ' + batch.length + ' objects.';
+
+      fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+apiKey },
+        body: JSON.stringify({
+          model:'llama-3.3-70b-versatile', max_tokens: 150 * batch.length + 200,
+          messages:[
+            { role:'system', content: perHlSystem },
+            { role:'user',   content: batchUser }
+          ]
+        })
+      }).then(function(r2){ return r2.json(); }).then(function(data2){
+        var raw2 = (data2.choices&&data2.choices[0]&&data2.choices[0].message&&data2.choices[0].message.content)||'[]';
+        try {
+          var clean2 = raw2.replace(/```json|```/g,'').trim();
+          var match = clean2.match(/\[[\s\S]*\]/);
+          if(match) clean2 = match[0];
+          var arr = JSON.parse(clean2);
+          arr.forEach(function(fc, i) {
+            allCards.push({
+              id: 'fc' + Date.now() + '_b' + batchIdx + '_' + i,
+              q: fc.q || '?',
+              a: fc.a || '?',
+              difficulty: fc.difficulty || 'medium',
+              examRelevance: fc.examRelevance || ''
+            });
+          });
+        } catch(e) {
+          console.warn('Batch ' + batchIdx + ' parse error:', e, raw2);
+          // Still continue with next batch
+        }
+        batchsDone++;
+        processBatch(batchIdx + 1);
+      }).catch(function(e2){
+        console.warn('Batch ' + batchIdx + ' network error:', e2);
+        batchsDone++;
+        processBatch(batchIdx + 1); // continue even on error
+      });
+    }
+
+    // Start processing batches
+    processBatch(0);
+
   }).catch(function(e){
-    document.getElementById('_scFCQ').textContent = '❌ Step 1 Network error: '+e.message;
+    document.getElementById('_scFCQ').textContent = '❌ Step 1 Network error: ' + e.message;
   });
+}
+
+// ── Finalize and save generated flashcards ──
+function _finalizeFcCards(allCards, curHash, topicName, analysis) {
+  if(!allCards || allCards.length === 0) {
+    document.getElementById('_scFCQ').textContent = '❌ Koi flashcard generate nahi hua. Dobara try karo.';
+    return;
+  }
+
+  _scFC.cards = allCards;
+  _scFC.hash  = curHash;
+  _scFC.topic = topicName;
+  _scFC.generatedAt = new Date().toLocaleDateString('hi-IN');
+
+  // Mark all used facts as COVERED
+  var usedFacts = _scExtractFactLines(scExtractContent());
+  var alreadyCovered = _scFC.coveredFacts || [];
+  var alreadyCoveredNorm = alreadyCovered.map(function(f){ return typeof _scNormFact==='function'?_scNormFact(f):f; });
+  usedFacts.forEach(function(f){
+    var fn = typeof _scNormFact==='function' ? _scNormFact(f) : f;
+    if(alreadyCoveredNorm.indexOf(fn) === -1) {
+      alreadyCovered.push(fn);
+      alreadyCoveredNorm.push(fn);
+    }
+  });
+  _scFC.coveredFacts = alreadyCovered;
+  _scFC.allFactsHash = curHash;
+
+  _scFCSave();
+
+  document.getElementById('_scFCQ').innerHTML =
+    '✅ <b>' + allCards.length + ' Flashcards</b> ready!<br>' +
+    '<small style="font-size:0.65rem;opacity:0.7;">Topic: ' + topicName + ' • Har highlight ke liye ek card</small>';
+  setTimeout(function(){ _scFCStartSession(); }, 1200);
 }
 
 function _scFCStartSession() {
