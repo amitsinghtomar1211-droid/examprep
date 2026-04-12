@@ -33361,7 +33361,7 @@ function _scContentHash() {
 function _scExtractFactLines(content) {
   return content.split('\n')
     .map(function(l){ return l.trim(); })
-    .filter(function(l){ return l && !l.startsWith('===') && l.length > 8; });
+    .filter(function(l){ return l && !l.startsWith('===') && l.length > 0; });
 }
 
 // Normalize a fact line for comparison (lowercase + collapse spaces)
@@ -33769,8 +33769,7 @@ function scAiMakeFlashcards() {
     for(var bi = 0; bi < unitsToProcess.length; bi += BATCH_SIZE) {
       batches.push(unitsToProcess.slice(bi, bi + BATCH_SIZE));
     }
-    // Limit to 3 batches
-    if(batches.length > 3) batches = batches.slice(0, 3);
+    // No batch limit — process ALL highlights
 
     var allCards = [];
     var batchsDone = 0;
@@ -33785,7 +33784,7 @@ function scAiMakeFlashcards() {
       }
 
       var batch = batches[batchIdx];
-      var totalBatches = Math.min(batches.length, 3);
+      var totalBatches = batches.length;
       document.getElementById('_scFCQ').innerHTML =
         '🃏 <b>Batch ' + (batchIdx+1) + '/' + totalBatches + ':</b> ' + batch.length + ' highlights process ho rahe hain...';
 
@@ -33811,7 +33810,7 @@ function scAiMakeFlashcards() {
         method:'POST',
         headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+apiKey },
         body: JSON.stringify({
-          model:'llama-3.3-70b-versatile', max_tokens: 150 * batch.length + 200,
+          model:'llama-3.3-70b-versatile', max_tokens: 200 * batch.length + 300,
           messages:[
             { role:'system', content: perHlSystem },
             { role:'user',   content: batchUser }
@@ -33995,7 +33994,7 @@ function scAiStartQuiz() {
     method:'POST',
     headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+apiKey },
     body: JSON.stringify({
-      model:'llama-3.3-70b-versatile', max_tokens:2000,
+      model:'llama-3.3-70b-versatile', max_tokens:1200,
       messages:[
         { role:'system', content:'Create MCQ quiz from notes. Return ONLY valid JSON array, no markdown:\n[{"q":"Question","opts":["A","B","C","D"],"ans":0,"exp":"Explanation"},...]' },
         { role:'user',   content:'Notes:\n'+content+'\n\nCreate 8 MCQ from key facts only. Return JSON array only.' }
@@ -38521,58 +38520,137 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       msgsEl.scrollTop = msgsEl.scrollHeight;
     }
 
-    var prompt = 'Neeche diye gaye Canvas facts se SIRF flashcards banao.\n\n' +
-      '=== USER KI REQUIREMENTS ===\n' +
-      'Focus Area: ' + focus + '\n' +
-      'Difficulty: ' + diffInstr + '\n' +
-      'Question Types: ' + typeInstr + '\n' +
-      'Language: ' + langInstr + '\n' +
-      'Kitne banane hain: Neeche jitne bhi facts diye hain UNME SE HAR EK se kam se kam ek flashcard zaroor banao. Koi fact skip mat karo.\n' +
-      '===========================\n\n' +
-      'Response ONLY valid JSON array mein do, koi bhi extra text ya markdown nahi.\n' +
-      'Format: [{"q":"Question yahan","a":"Answer yahan"},...]\n\n' +
-      'FACTS (inhi se flashcards banao):\n' + factsToUse.substring(0, 7000);
-
     var groqKeyFC   = (typeof S !== 'undefined') ? S.apiKey : '';
     var groqModelFC = (typeof S !== 'undefined' && S.model) ? S.model : 'meta-llama/llama-4-scout-17b-16e-instruct';
 
-    fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKeyFC },
-      body: JSON.stringify({
-        model: groqModelFC,
-        messages: [{ role: 'system', content: 'Tu ek flashcard generator hai. SIRF valid JSON array return kar, koi extra text nahi.' }, { role: 'user', content: prompt }],
-        temperature: 0.5,
-        max_tokens: 2000
-      })
-    }).then(function(r){ return r.json(); }).then(function(data) {
+    // ── PER-HIGHLIGHT BATCH SYSTEM: har ek fact se ek flashcard guaranteed ──
+    // Extract individual highlight units from canvas slides with group context
+    var hlUnitsReq = [];
+    if(typeof _scSyncCurrentSlideFromDOM === 'function') _scSyncCurrentSlideFromDOM();
+    if(typeof _sc !== 'undefined' && _sc.slides) {
+      _sc.slides.forEach(function(slide) {
+        (slide.textBlocks||[]).forEach(function(b) {
+          var rawTxt = (b.html||'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
+          if(!rawTxt) return;
+          if(b._isGroupBox && b._groupItems && b._groupItems.length > 1) {
+            // GROUP box — each sub-item is one highlight, full group as context
+            b._groupItems.forEach(function(itemTxt) {
+              if(itemTxt && itemTxt.trim()) {
+                hlUnitsReq.push({
+                  text: itemTxt.trim(),
+                  groupName: b._groupName || null,
+                  groupContext: b._groupItems.join(' | '),
+                  isSingle: false
+                });
+              }
+            });
+          } else {
+            hlUnitsReq.push({ text: rawTxt, groupName: null, groupContext: null, isSingle: true });
+          }
+        });
+      });
+    }
+    // Fallback: line-by-line from factsToUse text
+    if(hlUnitsReq.length === 0) {
+      factsToUse.split('\n').forEach(function(line) {
+        line = line.trim();
+        if(line && !line.startsWith('===') && !line.startsWith('[')) {
+          hlUnitsReq.push({ text: line, groupName: null, groupContext: null, isSingle: true });
+        }
+      });
+    }
+
+    // Filter already-covered facts
+    var covNormsReq = (typeof _scFC !== 'undefined' && _scFC.coveredFacts)
+      ? _scFC.coveredFacts.map(function(f){ return typeof _scNormFact==='function' ? _scNormFact(f) : f.toLowerCase().trim(); })
+      : [];
+    var newHlReq = hlUnitsReq.filter(function(u){
+      var norm = typeof _scNormFact==='function' ? _scNormFact(u.text) : u.text.toLowerCase().trim();
+      return covNormsReq.indexOf(norm) === -1;
+    });
+    var unitsForReq = newHlReq.length > 0 ? newHlReq : hlUnitsReq;
+
+    // System prompt with user requirements baked in
+    var perHlSysReq = 'You are a MASTER flashcard creator for Indian competitive exams (UPSC, SSC, Railway, State PSC).\n\nUSER REQUIREMENTS:\n- Focus: ' + focus + '\n- Difficulty: ' + diffInstr + '\n- Question Types: ' + typeInstr + '\n- Language: ' + langInstr + '\n\nRULES:\n1. Generate EXACTLY ONE flashcard per highlight — no more, no less\n2. If highlight has GROUP_CONTEXT, use it to understand short/incomplete highlights (numbers, codes, short phrases)\n3. For number-only highlights (e.g. "27"): use GROUP_CONTEXT to form "Kitne?" question → A: "27"\n4. Every highlight MUST produce exactly 1 flashcard. Do NOT skip any.\n5. Return ONLY valid JSON array with SAME NUMBER of objects as input:\n[{"q":"Question","a":"Answer"},...]';
+
+    // Split into batches of 15
+    var BATCH_SZ_REQ = 15;
+    var batchesReq = [];
+    for(var bri = 0; bri < unitsForReq.length; bri += BATCH_SZ_REQ) {
+      batchesReq.push(unitsForReq.slice(bri, bri + BATCH_SZ_REQ));
+    }
+    var allCardsReq = [];
+    var totalBatchesReq = batchesReq.length;
+
+    // Update loading message with total count
+    var loadEl0 = document.getElementById('_scFcLoading');
+    if(loadEl0) loadEl0.innerHTML =
+      (isFirstTime ? '⌛ <strong>Saare ' : '🆕 <strong>Naye ') + unitsForReq.length +
+      ' highlights se</strong> flashcards ban rahe hain (' + totalBatchesReq + ' batches)...<br>' +
+      '<span style="font-size:0.75rem;opacity:0.8;">' + diff + ' · ' + typeList.join(', ') + '</span>';
+
+    function processReqBatch(batchIdx) {
+      if(batchIdx >= batchesReq.length) {
+        finalizeReqCards(allCardsReq);
+        return;
+      }
+      var batch = batchesReq[batchIdx];
+      var loadEl2 = document.getElementById('_scFcLoading');
+      if(loadEl2) loadEl2.innerHTML =
+        '🃏 <strong>Batch ' + (batchIdx+1) + '/' + totalBatchesReq + ':</strong> ' +
+        batch.length + ' highlights → flashcards...<br>' +
+        '<span style="font-size:0.72rem;opacity:0.7;">' + allCardsReq.length + ' ban chuke hain abhi tak</span>';
+
+      var hlListStr = batch.map(function(u, idx) {
+        var line = (idx+1) + '. HIGHLIGHT: "' + u.text + '"';
+        if(u.groupName)    line += '\n   GROUP_NAME: ' + u.groupName;
+        if(u.groupContext) line += '\n   GROUP_CONTEXT (saath ke facts): ' + u.groupContext;
+        return line;
+      }).join('\n\n');
+
+      var batchUserReq =
+        'Generate exactly ' + batch.length + ' flashcards — one per highlight below (same order):\n\n' +
+        hlListStr + '\n\n' +
+        'Return JSON array with exactly ' + batch.length + ' objects. No extra text.';
+
+      fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKeyFC },
+        body: JSON.stringify({
+          model: groqModelFC,
+          messages: [
+            { role: 'system', content: perHlSysReq },
+            { role: 'user',   content: batchUserReq }
+          ],
+          temperature: 0.5,
+          max_tokens: 200 * batch.length + 300
+        })
+      }).then(function(r){ return r.json(); }).then(function(data) {
+        if(data.error) {
+          console.warn('ReqBatch ' + batchIdx + ' API error:', data.error.message);
+        } else {
+          var raw = (data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'[]';
+          try {
+            var clean = raw.replace(/```json|```/g,'').trim();
+            var matchArr = clean.match(/\[[\s\S]*\]/);
+            if(matchArr) clean = matchArr[0];
+            var arr = JSON.parse(clean);
+            arr.forEach(function(fc) {
+              if(fc.q && fc.a) allCardsReq.push({ q: fc.q, a: fc.a });
+            });
+          } catch(e) { console.warn('ReqBatch ' + batchIdx + ' parse error:', e); }
+        }
+        processReqBatch(batchIdx + 1);
+      }).catch(function(e) {
+        console.warn('ReqBatch ' + batchIdx + ' network error:', e);
+        processReqBatch(batchIdx + 1);
+      });
+    }
+
+    function finalizeReqCards(cards) {
       if(btn) { btn.disabled = false; btn.innerHTML = '🃏 Flashcards banao'; }
       var loadEl = document.getElementById('_scFcLoading');
       if(loadEl) loadEl.remove();
-
-      if(data.error) {
-        if(msgsEl) {
-          var errDiv = document.createElement('div');
-          errDiv.className = 'ai-msg bot';
-          errDiv.style.color = '#c62828';
-          errDiv.textContent = '❌ Error: ' + (data.error.message || JSON.stringify(data.error));
-          msgsEl.appendChild(errDiv);
-          msgsEl.scrollTop = msgsEl.scrollHeight;
-        }
-        return;
-      }
-
-      var raw = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) ? data.choices[0].message.content : '';
-      // Parse JSON
-      var cards = [];
-      try {
-        var clean = raw.replace(/```json/g,'').replace(/```/g,'').trim();
-        cards = JSON.parse(clean);
-      } catch(e) {
-        // Try extracting JSON array
-        var m = raw.match(/\[[\s\S]*\]/);
-        if(m) { try { cards = JSON.parse(m[0]); } catch(e2) { cards = []; } }
-      }
 
       if(!cards || !cards.length) {
         if(msgsEl) {
@@ -38688,23 +38766,10 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
 
       var toastMsg = saved ? '🃏 ' + cards.length + ' Flashcards Library mein save ho gaye!' : '🃏 ' + cards.length + ' Flashcards ban gaye!';
       showToast && showToast(toastMsg, 'success');
-    }).catch(function(err) {
-      if(btn) { btn.disabled = false; btn.innerHTML = '🃏 Flashcards banao'; }
-      var loadEl = document.getElementById('_scFcLoading');
-      if(loadEl) loadEl.remove();
-      if(msgsEl) {
-        var errDiv = document.createElement('div');
-        errDiv.className = 'ai-msg bot';
-        errDiv.style.color = '#c62828';
-        var errMsg = err.message || 'Network error';
-        if(errMsg.indexOf('Failed to fetch') !== -1 || errMsg.indexOf('NetworkError') !== -1) {
-          errMsg = 'Network error — Internet connection check karo ya API key verify karo.';
-        }
-        errDiv.textContent = '❌ Error: ' + errMsg;
-        msgsEl.appendChild(errDiv);
-        msgsEl.scrollTop = msgsEl.scrollHeight;
-      }
-    });
+    } // end finalizeReqCards
+
+    // ── Start batch processing ──
+    processReqBatch(0);
   };
 
   // Close canvas AI chat when canvas panel closes
