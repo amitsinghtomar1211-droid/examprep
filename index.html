@@ -13319,7 +13319,33 @@ function _cancelTouchSelection() {
 function applyHighlightFromSelection(sel) {
   try {
     const range = sel.getRangeAt(0);
-    const text = sel.toString().trim();
+
+    // ── AUTO WORD-SNAP: agar start ya end kisi word ke beech mein hai ──
+    // to pura word automatically select karo — jaldi mein partial select fix
+    try {
+      // Snap START to word beginning
+      if(range.startContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
+        const txt = range.startContainer.textContent;
+        let s = range.startOffset;
+        // Agar hum kisi word ke bich mein hain (na whitespace pe, na start pe)
+        if(s > 0 && !/[\s\n]/.test(txt[s-1])) {
+          while(s > 0 && !/[\s\n]/.test(txt[s-1])) s--;
+          range.setStart(range.startContainer, s);
+        }
+      }
+      // Snap END to word ending
+      if(range.endContainer && range.endContainer.nodeType === Node.TEXT_NODE) {
+        const txt = range.endContainer.textContent;
+        let e = range.endOffset;
+        // Agar hum kisi word ke bich mein hain (na whitespace pe, na end pe)
+        if(e < txt.length && !/[\s\n]/.test(txt[e])) {
+          while(e < txt.length && !/[\s\n]/.test(txt[e])) e++;
+          range.setEnd(range.endContainer, e);
+        }
+      }
+    } catch(_snapErr) { /* silent fail — original range use hogi */ }
+
+    const text = range.toString().trim();
     sel.removeAllRanges();
     applyHighlightFromRange(range, text);
   } catch(e) {
@@ -14584,7 +14610,12 @@ function closeModal(id){
 }
 
 // ==================== TOAST ====================
-function showToast(msg,type='success'){const t=document.getElementById('toast');t.textContent=msg;t.className=`toast ${type} show`;setTimeout(()=>t.classList.remove('show'),3000);}
+function showToast(msg,type='success'){
+  // Read mode mein toasts hide karo — highlight controls ke upar overlap hoti thi
+  if((typeof _neFullReadMode!=='undefined' && _neFullReadMode) ||
+     (typeof _scReadMode!=='undefined' && _scReadMode)) return;
+  const t=document.getElementById('toast');t.textContent=msg;t.className=`toast ${type} show`;setTimeout(()=>t.classList.remove('show'),3000);
+}
 
 // ==================== PWA SYSTEM ====================
 let _deferredPrompt = null;
@@ -36040,7 +36071,7 @@ function _scReadModeFreeze(freeze) {
 
 // ── CANVAS PILL ──
 var _scRmHlAutoTimer = null;
-var _SC_HL_AUTO_SEC  = 4;
+var _SC_HL_AUTO_SEC  = 15;
 
 window.scRmPillToggleExpand = function() {
   var tools = document.getElementById('scRmPillTools');
@@ -36098,7 +36129,7 @@ function _scRmSyncButtons() {
 
 // ── NOTES EDITOR PILL ──
 var _neRmHlAutoTimer = null;
-var _NE_HL_AUTO_SEC  = 4;
+var _NE_HL_AUTO_SEC  = 15;
 
 window.neRmPillToggleExpand = function() {
   var tools = document.getElementById('neRmPillTools');
