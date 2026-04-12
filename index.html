@@ -1755,45 +1755,7 @@ body.night-mode #scBlockEditModal .scbem-fmt-btn.on { background:#4a9eff; color:
 body.night-mode #scBlockEditModal .scbem-textarea { background:#1a1a2e; color:#e0e0e0; border-color:#333; }
 
 /* ═══════════════════════════════════════════════════════
-   TABLE ICON BAR — har table ke top-left corner pe
-   ═══════════════════════════════════════════════════════ */
-.ne-tbl-icon-bar {
-  position:absolute; top:0; left:0; z-index:9;
-  display:flex; flex-direction:row; gap:2px;
-  pointer-events:auto;
-  transform:translateY(-100%);
-  opacity:0; transition:opacity 0.18s;
-  padding-bottom:2px;
-}
-/* ne-table-wrap already has overflow-x:auto — add position:relative */
-.ne-table-wrap {
-  position:relative !important;
-}
-.ne-table-wrap:hover .ne-tbl-icon-bar,
-.ne-table-wrap.ne-tbl-show-icons .ne-tbl-icon-bar {
-  opacity:1;
-}
-.ne-tbl-icon-btn {
-  display:flex; align-items:center; justify-content:center;
-  width:30px; height:26px; border-radius:6px 6px 0 0;
-  border:none; cursor:pointer; font-size:14px; line-height:1;
-  box-shadow:0 -2px 6px rgba(0,0,0,0.15);
-  transition:transform 0.12s, background 0.12s;
-  -webkit-tap-highlight-color:transparent;
-  user-select:none; touch-action:manipulation;
-}
-.ne-tbl-icon-btn:active { transform:scale(0.86); }
-.ne-tbl-icon-btn.ne-tbl-read {
-  background:#1976d2; color:#fff;
-}
-.ne-tbl-icon-btn.ne-tbl-edit {
-  background:#e65100; color:#fff;
-}
-body.night-mode .ne-tbl-icon-btn.ne-tbl-read { background:#4a9eff; }
-body.night-mode .ne-tbl-icon-btn.ne-tbl-edit  { background:#ff8a50; }
-
-/* ═══════════════════════════════════════════════════════
-   FEATURE 2: TABLE EDIT MODAL
+   FEATURE 2: TABLE EDIT MODAL (Long press se khulta)
    ═══════════════════════════════════════════════════════ */
 #neTableEditModal {
   position:fixed; inset:0; z-index:99998;
@@ -12310,67 +12272,12 @@ function _saveAndClose() {
 // Helper: wrap bare <table> tags in a scroll div for mobile
 function _neWrapTables(area) {
   area.querySelectorAll('table').forEach(function(tbl) {
-    var par = tbl.parentElement;
-    // Already wrapped
-    if(par && par.classList.contains('ne-table-wrap')) {
-      // Inject icons if not already present
-      if(!par.querySelector('.ne-tbl-icon-bar')) _neInjectTblIcons(par, tbl);
-      return;
-    }
+    if(tbl.parentElement && tbl.parentElement.classList.contains('ne-table-wrap')) return;
     var wrap = document.createElement('div');
     wrap.className = 'ne-table-wrap';
     tbl.parentNode.insertBefore(wrap, tbl);
     wrap.appendChild(tbl);
-    _neInjectTblIcons(wrap, tbl);
   });
-}
-
-function _neInjectTblIcons(wrap, tbl) {
-  // Bar already present? Skip
-  if(wrap.querySelector('.ne-tbl-icon-bar')) return;
-
-  var bar = document.createElement('div');
-  bar.className = 'ne-tbl-icon-bar';
-  bar.setAttribute('contenteditable','false');
-
-  var readBtn = document.createElement('button');
-  readBtn.className = 'ne-tbl-icon-btn ne-tbl-read';
-  readBtn.title = 'Read mode mein dekho';
-  readBtn.innerHTML = '👁';
-  readBtn.setAttribute('contenteditable','false');
-  readBtn.addEventListener('pointerdown', function(e){ e.stopPropagation(); e.preventDefault(); }, { capture:true });
-  readBtn.addEventListener('click', function(e) {
-    e.stopPropagation(); e.preventDefault();
-    window._netbCell = tbl.querySelector('td,th');
-    window._netbTable = tbl;
-    if(typeof window._neOpenTableModalMode === 'function') window._neOpenTableModalMode('read');
-  });
-
-  var editBtn = document.createElement('button');
-  editBtn.className = 'ne-tbl-icon-btn ne-tbl-edit';
-  editBtn.title = 'Edit karo';
-  editBtn.innerHTML = '✏️';
-  editBtn.setAttribute('contenteditable','false');
-  editBtn.addEventListener('pointerdown', function(e){ e.stopPropagation(); e.preventDefault(); }, { capture:true });
-  editBtn.addEventListener('click', function(e) {
-    e.stopPropagation(); e.preventDefault();
-    window._netbCell = tbl.querySelector('td,th');
-    window._netbTable = tbl;
-    if(typeof window._neOpenTableModalMode === 'function') window._neOpenTableModalMode('edit');
-  });
-
-  bar.appendChild(readBtn);
-  bar.appendChild(editBtn);
-  wrap.appendChild(bar);
-
-  // Mobile: touchstart pe icons dikhao
-  wrap.addEventListener('touchstart', function(){
-    // Pehle sab ke icons chhupao
-    document.querySelectorAll('.ne-table-wrap.ne-tbl-show-icons').forEach(function(w){
-      if(w !== wrap) w.classList.remove('ne-tbl-show-icons');
-    });
-    wrap.classList.add('ne-tbl-show-icons');
-  }, { passive:true });
 }
 // Helper: detect if HTML has rich formatting (tables, headings, lists etc.)
 function _neIsRichHTML(html) {
@@ -41535,11 +41442,46 @@ setTimeout(_hookFCAuth, 2000);
       window._netbMoveColLeft  = _netbMoveColLeft;
       window._netbMoveColRight = _netbMoveColRight;
 
-    // ─── Table icon bar — globally expose modal opener ───
-    // (Icons inject karna ab _neWrapTables function se hota hai — line ~12311)
-    // window._netbTable aur window._netbCell icon click se set hote hain
-    // _neOpenTableModalMode globally expose hai
-    window._neOpenTableModalMode = function(mode) { _neOpenTableModalMode(mode); };
+    // ── Init: Long press (500ms) on table → full screen modal ──
+    var _lpTimer = null, _lpTarget = null;
+
+    function _netbCancelLP() {
+      if(_lpTimer){ clearTimeout(_lpTimer); _lpTimer=null; }
+      if(_lpTarget){ var t=_lpTarget.closest('table'); if(t) t.classList.remove('ne-table-longpress-flash'); _lpTarget=null; }
+    }
+
+    document.addEventListener('pointerdown', function(e) {
+      var cell = e.target.closest('td, th');
+      if(!cell){ _netbCancelLP(); return; }
+      var area = document.getElementById('noteEditableArea');
+      if(!area||!area.contains(cell)){
+        console.log('[TableLP] Cancel: cell notes area ke bahar hai');
+        _netbCancelLP(); return;
+      }
+      // ✅ FIX: editMode check hataya — ab dono modes mein modal khulega
+      // (read mode mein view-only, edit mode mein full editing)
+      console.log('[TableLP] Long press start — area editMode:', area.contentEditable);
+      _lpTarget = cell;
+      var tbl = cell.closest('table');
+      _lpTimer = setTimeout(function(){
+        _lpTimer = null;
+        console.log('[TableLP] 500ms complete — opening table modal, table:', tbl);
+        if(!tbl){ console.warn('[TableLP] Table element nahi mila!'); return; }
+        tbl.classList.add('ne-table-longpress-flash');
+        setTimeout(function(){ tbl.classList.remove('ne-table-longpress-flash'); },400);
+        _netb_cell = cell; _netb_table = tbl;
+        try {
+          _neOpenTableModal();
+          console.log('[TableLP] Modal open hua ✅');
+        } catch(err) {
+          console.error('[TableLP] Modal open mein error:', err);
+        }
+      }, 500);
+    }, { passive: true });
+
+    document.addEventListener('pointermove', function(){ if(_lpTimer) _netbCancelLP(); }, { passive: true });
+    document.addEventListener('pointerup',     _netbCancelLP, { passive: true });
+    document.addEventListener('pointercancel', _netbCancelLP, { passive: true });
 
     // ── _netbShow kept for API compat — no-op (bottom bar hidden) ──
     function _netbShow(cell) {
@@ -41558,28 +41500,15 @@ setTimeout(_hookFCAuth, 2000);
     // ══════════════════════════════════════════════════════════════
     // TABLE EDIT MODAL — Full Screen, 3-row professional toolbar
     // ══════════════════════════════════════════════════════════════
-
-    // _neOpenTableModalMode: icon button se call hota hai — 'read' ya 'edit' force karo
-    function _neOpenTableModalMode(forcedMode) {
-      // Icon click se window._netbTable set hota hai — sync to local vars
-      if(window._netbTable) { _netb_table = window._netbTable; window._netbTable = null; }
-      if(window._netbCell)  { _netb_cell  = window._netbCell;  window._netbCell  = null; }
-      if(!_netb_table){ return; }
-      _neOpenTableModal(forcedMode);
-    }
-
-    function _neOpenTableModal(forcedMode) {
+    function _neOpenTableModal() {
       if(!_netb_table){ console.error('[TableModal] _netb_table null hai!'); return; }
       var old = document.getElementById('neTableEditModal');
       if(old) old.remove();
 
-      // Mode determine: forcedMode se override, warna editor state se
+      // ✅ Check karo ki editor edit mode mein hai ya nahi
       var area = document.getElementById('noteEditableArea');
-      var isEditMode;
-      if(forcedMode === 'read') { isEditMode = false; }
-      else if(forcedMode === 'edit') { isEditMode = true; }
-      else { isEditMode = area && area.contentEditable === 'true'; }
-      console.log('[TableModal] Opening modal, isEditMode:', isEditMode, 'forced:', forcedMode);
+      var isEditMode = area && area.contentEditable === 'true';
+      console.log('[TableModal] Opening modal, isEditMode:', isEditMode);
 
       var tableClone = _netb_table.cloneNode(true);
       // Edit mode mein cells editable honge, read mode mein nahi
