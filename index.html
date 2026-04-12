@@ -41454,16 +41454,28 @@ setTimeout(_hookFCAuth, 2000);
       var cell = e.target.closest('td, th');
       if(!cell){ _netbCancelLP(); return; }
       var area = document.getElementById('noteEditableArea');
-      if(!area||!area.contains(cell)){ _netbCancelLP(); return; }
-      var editMode = area && area.contentEditable==='true';
-      if(!editMode) return;
+      if(!area||!area.contains(cell)){
+        console.log('[TableLP] Cancel: cell notes area ke bahar hai');
+        _netbCancelLP(); return;
+      }
+      // ✅ FIX: editMode check hataya — ab dono modes mein modal khulega
+      // (read mode mein view-only, edit mode mein full editing)
+      console.log('[TableLP] Long press start — area editMode:', area.contentEditable);
       _lpTarget = cell;
       var tbl = cell.closest('table');
       _lpTimer = setTimeout(function(){
         _lpTimer = null;
-        if(tbl){ tbl.classList.add('ne-table-longpress-flash'); setTimeout(function(){ tbl.classList.remove('ne-table-longpress-flash'); },400); }
+        console.log('[TableLP] 500ms complete — opening table modal, table:', tbl);
+        if(!tbl){ console.warn('[TableLP] Table element nahi mila!'); return; }
+        tbl.classList.add('ne-table-longpress-flash');
+        setTimeout(function(){ tbl.classList.remove('ne-table-longpress-flash'); },400);
         _netb_cell = cell; _netb_table = tbl;
-        _neOpenTableModal();
+        try {
+          _neOpenTableModal();
+          console.log('[TableLP] Modal open hua ✅');
+        } catch(err) {
+          console.error('[TableLP] Modal open mein error:', err);
+        }
       }, 500);
     }, { passive: true });
 
@@ -41489,12 +41501,21 @@ setTimeout(_hookFCAuth, 2000);
     // TABLE EDIT MODAL — Full Screen, 3-row professional toolbar
     // ══════════════════════════════════════════════════════════════
     function _neOpenTableModal() {
-      if(!_netb_table) return;
+      if(!_netb_table){ console.error('[TableModal] _netb_table null hai!'); return; }
       var old = document.getElementById('neTableEditModal');
       if(old) old.remove();
 
+      // ✅ Check karo ki editor edit mode mein hai ya nahi
+      var area = document.getElementById('noteEditableArea');
+      var isEditMode = area && area.contentEditable === 'true';
+      console.log('[TableModal] Opening modal, isEditMode:', isEditMode);
+
       var tableClone = _netb_table.cloneNode(true);
-      tableClone.querySelectorAll('td,th').forEach(function(c){ c.contentEditable='true'; c.style.outline='none'; });
+      // Edit mode mein cells editable honge, read mode mein nahi
+      tableClone.querySelectorAll('td,th').forEach(function(c){
+        c.contentEditable = isEditMode ? 'true' : 'false';
+        c.style.outline='none';
+      });
 
       var _modalCell = null, _modalTable = tableClone;
 
@@ -41542,17 +41563,22 @@ setTimeout(_hookFCAuth, 2000);
 
       // Header
       var hdr=document.createElement('div'); hdr.className='netm-header';
-      var titleDiv=document.createElement('div'); titleDiv.className='netm-title'; titleDiv.innerHTML='⊞ Table Edit';
+      var titleDiv=document.createElement('div'); titleDiv.className='netm-title';
+      titleDiv.innerHTML = isEditMode ? '⊞ Table Edit' : '⊞ Table View';
       var cellInfoSpan=document.createElement('span'); cellInfoSpan.className='netm-cellinfo'; cellInfoSpan.textContent=_mRows().length+'r x '+_mColCount()+'c';
       var cancelBtn=document.createElement('button'); cancelBtn.className='netm-cancel'; cancelBtn.textContent='✕ Cancel';
       cancelBtn.addEventListener('pointerdown',function(e){ e.stopPropagation(); modal.remove(); });
       var okBtn=document.createElement('button'); okBtn.className='netm-ok'; okBtn.textContent='✓ OK';
       okBtn.addEventListener('pointerdown',function(e){ e.stopPropagation(); _doSave(); });
+      // Read-only mode mein OK button hide karo
+      if(!isEditMode) okBtn.style.display='none';
       hdr.appendChild(titleDiv); hdr.appendChild(cellInfoSpan); hdr.appendChild(cancelBtn); hdr.appendChild(okBtn);
       modal.appendChild(hdr);
 
       // Tools
       var toolsDiv=document.createElement('div'); toolsDiv.className='netm-tools';
+      // Read-only mode mein editing tools hide honge
+      if(!isEditMode) toolsDiv.style.display='none';
 
       function mkBtn(label,tip,cls,fn){
         var b=document.createElement('button');
@@ -41731,7 +41757,9 @@ setTimeout(_hookFCAuth, 2000);
 
       // Hint
       var hint=document.createElement('div'); hint.className='netm-hint';
-      hint.textContent='💡 Cell tap karo → select hogi → upar tools use karo • OK → changes save honge';
+      hint.textContent = isEditMode
+        ? '💡 Cell tap karo → select hogi → upar tools use karo • OK → changes save honge'
+        : '👁 Read-only mode — table dekhne ke liye hai • Edit ke liye notes ka ✏️ Edit button dabao';
       modal.appendChild(hint);
 
       // Table preview
@@ -41748,7 +41776,8 @@ setTimeout(_hookFCAuth, 2000);
           _modalTable.querySelectorAll('.netm-row-selected').forEach(function(r){r.classList.remove('netm-row-selected');});
           _modalCell=cell;
           if(cell.parentElement) cell.parentElement.classList.add('netm-row-selected');
-          cell.contentEditable='true'; cell.focus();
+          // Edit mode mein hi contentEditable set karo
+          if(isEditMode){ cell.contentEditable='true'; cell.focus(); }
           _mUpdateInfo(); _mRefreshFmt();
         }
       });
