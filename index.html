@@ -13274,12 +13274,39 @@ function onNETouchEnd(e) {
 
   if(!wasSelecting) return;
 
-  const text = _touchSelectedText.trim();
-  const range = _tsCurRange;
+  let range = _tsCurRange;
   _touchSelectedText = '';
   _tsCurRange = null;
 
-  if(!text || text.length < 1 || !range || range.collapsed) return;
+  if(!range || range.collapsed) return;
+
+  // ── AUTO WORD-SNAP (touch path) ─────────────────────────────────────
+  // Touch selection mein partial word select hone par pura word include karo
+  // New range banao taaki original DOM range disturb na ho
+  try {
+    let sNode = range.startContainer, sOff = range.startOffset;
+    let eNode = range.endContainer,   eOff = range.endOffset;
+
+    // Start: word-beginning tak jao
+    if(sNode && sNode.nodeType === Node.TEXT_NODE) {
+      const txt = sNode.textContent;
+      while(sOff > 0 && !/[\s\n\u00A0]/.test(txt[sOff - 1])) sOff--;
+    }
+    // End: word-ending tak jao
+    if(eNode && eNode.nodeType === Node.TEXT_NODE) {
+      const txt = eNode.textContent;
+      while(eOff < txt.length && !/[\s\n\u00A0]/.test(txt[eOff])) eOff++;
+    }
+
+    const snappedRange = document.createRange();
+    snappedRange.setStart(sNode, sOff);
+    snappedRange.setEnd(eNode, eOff);
+    if(!snappedRange.collapsed) range = snappedRange;
+  } catch(_) { /* fallback: original range use hogi */ }
+  // ────────────────────────────────────────────────────────────────────
+
+  const text = range.toString().trim();
+  if(!text || text.length < 1) return;
 
   applyHighlightFromRange(range, text);
 }
@@ -13318,36 +13345,50 @@ function _cancelTouchSelection() {
 // Apply highlight from browser Selection object
 function applyHighlightFromSelection(sel) {
   try {
-    const range = sel.getRangeAt(0);
+    const origRange = sel.getRangeAt(0);
 
-    // ── AUTO WORD-SNAP: agar start ya end kisi word ke beech mein hai ──
-    // to pura word automatically select karo — jaldi mein partial select fix
+    // ── AUTO WORD-SNAP (ROBUST) ──────────────────────────────────────────
+    // Live range ko seedha modify karne se mobile browsers mein text split
+    // hoti thi. Fix: pehle sab values save karo, phir brand new Range banao.
+    // ─────────────────────────────────────────────────────────────────────
+    let startNode = origRange.startContainer;
+    let startOff  = origRange.startOffset;
+    let endNode   = origRange.endContainer;
+    let endOff    = origRange.endOffset;
+
+    // START ko word-beginning tak le jao
+    // "txt[s-1] whitespace nahi hai" matlab hum word ke beech mein hain
+    if(startNode && startNode.nodeType === Node.TEXT_NODE) {
+      const txt = startNode.textContent;
+      while(startOff > 0 && !/[\s\n\u00A0]/.test(txt[startOff - 1])) {
+        startOff--;
+      }
+    }
+
+    // END ko word-ending tak le jao
+    // "txt[e] whitespace nahi hai" matlab abhi word khatam nahi hua
+    if(endNode && endNode.nodeType === Node.TEXT_NODE) {
+      const txt = endNode.textContent;
+      while(endOff < txt.length && !/[\s\n\u00A0]/.test(txt[endOff])) {
+        endOff++;
+      }
+    }
+
+    // Naya Range object — live selection se bilkul alag — snapped values ke saath
+    let finalRange;
     try {
-      // Snap START to word beginning
-      if(range.startContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
-        const txt = range.startContainer.textContent;
-        let s = range.startOffset;
-        // Agar hum kisi word ke bich mein hain (na whitespace pe, na start pe)
-        if(s > 0 && !/[\s\n]/.test(txt[s-1])) {
-          while(s > 0 && !/[\s\n]/.test(txt[s-1])) s--;
-          range.setStart(range.startContainer, s);
-        }
-      }
-      // Snap END to word ending
-      if(range.endContainer && range.endContainer.nodeType === Node.TEXT_NODE) {
-        const txt = range.endContainer.textContent;
-        let e = range.endOffset;
-        // Agar hum kisi word ke bich mein hain (na whitespace pe, na end pe)
-        if(e < txt.length && !/[\s\n]/.test(txt[e])) {
-          while(e < txt.length && !/[\s\n]/.test(txt[e])) e++;
-          range.setEnd(range.endContainer, e);
-        }
-      }
-    } catch(_snapErr) { /* silent fail — original range use hogi */ }
+      finalRange = document.createRange();
+      finalRange.setStart(startNode, startOff);
+      finalRange.setEnd(endNode, endOff);
+      // Agar naya range collapse ho gaya (edge case) to original use karo
+      if(finalRange.collapsed) finalRange = origRange;
+    } catch(_e) {
+      finalRange = origRange; // fallback
+    }
 
-    const text = range.toString().trim();
-    sel.removeAllRanges();
-    applyHighlightFromRange(range, text);
+    const text = finalRange.toString().trim();
+    sel.removeAllRanges(); // selection clear karo (range pehle save ho chuki)
+    if(text.length >= 1) applyHighlightFromRange(finalRange, text);
   } catch(e) {
     showToast('Select karne mein problem', 'error');
   }
