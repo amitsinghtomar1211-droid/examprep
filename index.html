@@ -26306,7 +26306,9 @@ var _sc = {
   isDrawing: false, drawPoints: [],
   kfX: null, kfY: null,
   activeBlock: null, activeBlockId: null,
-  dragText: ''
+  dragText: '',
+  mergeMode: false,       // Merge mode ON/OFF
+  mergeSourceId: null     // Pehle selected block ka id (jo merge karna hai)
 };
 
 // ── Slide default factory ──
@@ -27513,6 +27515,11 @@ function _scCreateBlockDOM(b) {
 }
 
 function scSelectBlock(b, el) {
+  // Merge mode mein hai aur ye doosra block hai
+  if(_sc.mergeMode && _sc.mergeSourceId && _sc.mergeSourceId !== b.id) {
+    scMergeBlocks(_sc.mergeSourceId, b.id);
+    return;
+  }
   scDeselectBlock();
   _sc.activeBlock=el; _sc.activeBlockId=b.id;
   el.classList.add('selected');
@@ -27570,6 +27577,37 @@ function _scShowBlockActions(b, el) {
     scOpenBlockEditModal(b, el);
   });
   bar.appendChild(editBtn);
+
+  // ── 🔗 Merge button — doosra block ke saath merge karo ──
+  var mergeBtn = document.createElement('button');
+  mergeBtn.className = 'sc-block-act-btn';
+  mergeBtn.id = '_scMergeBtn_' + b.id;
+  mergeBtn.title = 'Merge karo (doosra block select karo phir merge)';
+  mergeBtn.textContent = '🔗';
+  mergeBtn.style.cssText = 'background:rgba(106,27,154,0.13);color:#6a1b9a;font-size:0.85rem;';
+  if(_sc.mergeMode && _sc.mergeSourceId === b.id) {
+    mergeBtn.style.cssText = 'background:#6a1b9a;color:#fff;font-size:0.85rem;';
+    mergeBtn.title = 'Merge mode ON — kisi aur block par tap karo';
+  }
+  mergeBtn.addEventListener('pointerdown', function(e) {
+    e.stopPropagation();
+    if(_sc.mergeMode && _sc.mergeSourceId === b.id) {
+      // Cancel merge mode
+      _sc.mergeMode = false; _sc.mergeSourceId = null;
+      scDeselectBlock();
+      showToast && showToast('Merge cancel ho gayi ❌','error');
+    } else if(_sc.mergeMode && _sc.mergeSourceId && _sc.mergeSourceId !== b.id) {
+      // Merge source ke saath current block merge karo
+      scMergeBlocks(_sc.mergeSourceId, b.id);
+    } else {
+      // Merge mode start karo
+      _sc.mergeMode = true; _sc.mergeSourceId = b.id;
+      scDeselectBlock();
+      scSelectBlock(b, el);
+      showToast && showToast('🔗 Merge mode ON — ab doosra block tap karo jisme merge karna hai','success');
+    }
+  });
+  bar.appendChild(mergeBtn);
 
   // ── "→ Slide" button — doosri slide par move karo ──
   if(_sc.slides && _sc.slides.length > 1) {
@@ -27738,6 +27776,102 @@ function _scMoveBlockToSlide(b, el, bar, targetSlideIdx) {
   );
 }
 // ══ END MOVE BLOCK TO SLIDE ══
+
+// ══════════════════════════════════════════════════════════════════
+// 🔗 MERGE BLOCKS — Do blocks ka text ek naye block mein combine karo
+// Usage: scMergeBlocks(sourceId, targetId)
+// Source block ka content → Target block ke content ke NEECHE jud jaata hai
+// Dono blocks hat jaate hain, ek naya combined block ban jaata hai
+// ══════════════════════════════════════════════════════════════════
+function scMergeBlocks(sourceId, targetId) {
+  scSnapshot();
+  var cur = _scCur();
+  if(!cur || !cur.textBlocks) return;
+
+  var srcBlock = cur.textBlocks.find(function(b){ return b.id === sourceId; });
+  var tgtBlock = cur.textBlocks.find(function(b){ return b.id === targetId; });
+  if(!srcBlock || !tgtBlock) {
+    showToast && showToast('Block nahi mila ❌', 'error');
+    _sc.mergeMode = false; _sc.mergeSourceId = null;
+    return;
+  }
+
+  // ── Separator line styles — dono blocks ke beech ──
+  var SEPARATOR = '<div style="border-top:1.5px dashed rgba(21,101,192,0.35);margin:6px 0;"></div>';
+
+  // ── Combined HTML: source content + separator + target content ──
+  var srcHtml = srcBlock.html || '';
+  var tgtHtml = tgtBlock.html || '';
+  var mergedHtml = srcHtml + SEPARATOR + tgtHtml;
+
+  // ── Merged block position: jis block ki y position chhoti ho, wahan rakhein ──
+  var mergedX = Math.min(srcBlock.x || 0, tgtBlock.x || 0);
+  var mergedY = Math.min(srcBlock.y || 0, tgtBlock.y || 0);
+  var mergedW = Math.max(srcBlock.w || 140, tgtBlock.w || 140);
+
+  // ── Naya merged block object banao ──
+  var mergedBlock = {
+    id:         'blk_' + Date.now() + '_m',
+    x:          mergedX,
+    y:          mergedY,
+    w:          mergedW,
+    html:       mergedHtml,
+    fontSize:   srcBlock.fontSize || tgtBlock.fontSize || 15,
+    color:      srcBlock.color   || tgtBlock.color   || '#1a1a1a',
+    bold:       srcBlock.bold    || false,
+    italic:     srcBlock.italic  || false,
+    underline:  srcBlock.underline || false,
+    angle:      0
+  };
+
+  // ── Dono purane blocks hataao DOM se ──
+  var srcEl = document.getElementById('scBlock_' + sourceId);
+  var tgtEl = document.getElementById('scBlock_' + targetId);
+  if(srcEl) srcEl.remove();
+  if(tgtEl) tgtEl.remove();
+
+  // ── Data array se dono hataao ──
+  cur.textBlocks = cur.textBlocks.filter(function(b){
+    return b.id !== sourceId && b.id !== targetId;
+  });
+
+  // ── Naya merged block data mein push karo ──
+  cur.textBlocks.push(mergedBlock);
+
+  // ── Merged block ka DOM banao ──
+  var newEl = _scCreateBlockDOM(mergedBlock);
+
+  // ── Merge mode band karo ──
+  _sc.mergeMode = false;
+  _sc.mergeSourceId = null;
+  scHideAllBlockActions();
+  _sc.activeBlock = null;
+  _sc.activeBlockId = null;
+
+  // ── Highlight karo naya block ──
+  if(newEl) {
+    newEl.style.outline = '2.5px solid #6a1b9a';
+    newEl.style.boxShadow = '0 0 0 5px rgba(106,27,154,0.18)';
+    setTimeout(function(){
+      newEl.style.outline = '';
+      newEl.style.boxShadow = '';
+    }, 1600);
+    // Scroll into view
+    setTimeout(function(){
+      var scrollArea = document.getElementById('scScrollArea');
+      if(scrollArea) {
+        scrollArea.scrollTo({ top: Math.max(0, mergedY - 60), behavior: 'smooth' });
+      } else {
+        newEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 80);
+  }
+
+  // ── Save ──
+  scSave && scSave();
+  showToast && showToast('🔗 Blocks merge ho gaye! ✅', 'success');
+}
+// ══ END MERGE BLOCKS ══
 
 // ══════════════════════════════════════════════════════════════════
 // ✏️ CANVAS BOX EDIT MODAL — Full Screen, Keyboard-Safe
@@ -28152,6 +28286,11 @@ function _scWrapTap(e) {
   // In select mode — tap on empty area = deselect
   if(_sc.mode === 'select') {
     if(!e.target.closest('.sc-text-block') && !e.target.closest('.sc-block-actions')) {
+      // Agar merge mode ON hai to cancel karo
+      if(_sc.mergeMode) {
+        _sc.mergeMode = false; _sc.mergeSourceId = null;
+        showToast && showToast('Merge cancel ho gayi ❌','error');
+      }
       scDeselectBlock();
     }
     return;
