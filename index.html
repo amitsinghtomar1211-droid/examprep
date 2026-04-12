@@ -23218,6 +23218,20 @@ function _applyTopicUpdate(tid, newTopicData){
             safeFields.forEach(function(f){
               if(newTopicData[f] !== undefined) local[f] = newTopicData[f];
             });
+
+            // ── FIX: studyCanvas protect karo ──
+            // Agar local me newer canvas data hai (live _sc.slides se) to remote se mat overwrite karo
+            var _localScAt = (local.studyCanvas && local.studyCanvas.savedAt) || 0;
+            var _remoteScAt = (newTopicData.studyCanvas && newTopicData.studyCanvas.savedAt) || 0;
+            if(_remoteScAt > _localScAt) {
+              // Remote canvas zyada fresh hai — update karo (but live _sc.slides hain to skip)
+              var _liveCanvasOpen = window._sc && String(window._sc.tid) === String(tid) &&
+                                    window._sc.slides && window._sc.slides.length;
+              if(!_liveCanvasOpen) {
+                local.studyCanvas = newTopicData.studyCanvas;
+              }
+            }
+            // Agar local canvas newer hai ya live hai — remote se mat overwrite karo
             // notes[] — remote ke changes merge karo lekin active note ka editorRichHTML protect karo
             if(newTopicData.notes){
               newTopicData.notes.forEach(function(remoteNote){
@@ -23251,7 +23265,10 @@ function _applyTopicUpdate(tid, newTopicData){
             }
           } else {
             // ── Yeh topic IS DEVICE PE EDIT NAHI HO RAHA ──
-            // Fully replace karo — editorRichHTML aur editorHighlights BHAHI aate hain remote se
+            // Fully replace karo — lekin live canvas data protect karo
+            var _liveCanvasForThis = window._sc && String(window._sc.tid) === String(tid) &&
+                                     window._sc.slides && window._sc.slides.length;
+            var _localScData = sec.topics[i].studyCanvas; // backup before replace
             sec.topics[i] = newTopicData;
             var tp = sec.topics[i];
             if(!tp.highlights) tp.highlights = [];
@@ -23261,6 +23278,23 @@ function _applyTopicUpdate(tid, newTopicData){
               if(!n.editorHighlights) n.editorHighlights = [];
               if(n.editorRichHTML === undefined) n.editorRichHTML = null;
             });
+            // ── FIX: Canvas data protect karo — agar canvas live open hai ya local data newer hai ──
+            if(_liveCanvasForThis) {
+              // Canvas abhi live open hai — _sc.slides se fresh data use karo, remote se nahi
+              var _liveSavedAt = (_localScData && _localScData.savedAt) || 0;
+              var _remoteSavedAt = (newTopicData.studyCanvas && newTopicData.studyCanvas.savedAt) || 0;
+              if(_liveSavedAt >= _remoteSavedAt) {
+                tp.studyCanvas = _localScData; // local/live canvas zyada fresh hai
+              }
+              // _sc.slides already in memory — koi re-init nahi chahiye
+            } else if(_localScData && _localScData.slides && _localScData.slides.length) {
+              // Canvas open nahi hai, lekin local mein data tha
+              var _locAt = _localScData.savedAt || 0;
+              var _remAt = (tp.studyCanvas && tp.studyCanvas.savedAt) || 0;
+              if(_locAt > _remAt) {
+                tp.studyCanvas = _localScData; // local newer hai
+              }
+            }
           }
 
           updated = true;
@@ -23404,6 +23438,18 @@ async function _silentReloadFromFirebase(){
       if(t.finalNotesHTML)  localEditorData['fn_'+t.id] = t.finalNotesHTML;
       if(t.smartNotesHTML)  localEditorData['sn_'+t.id] = t.smartNotesHTML;
       if(t.masterNotesHTML) localEditorData['mn_'+t.id] = t.masterNotesHTML;
+      // ── FIX: studyCanvas bhi preserve karo — live-update se canvas data na wipe ho ──
+      if(t.studyCanvas && t.studyCanvas.slides && t.studyCanvas.slides.length) {
+        localEditorData['sc_'+t.id] = t.studyCanvas;
+      }
+      // Agar canvas abhi is topic ke liye LIVE open hai, uske in-memory slides bhi save karo
+      if(window._sc && String(window._sc.tid) === String(t.id) &&
+         window._sc.slides && window._sc.slides.length) {
+        localEditorData['sc_live_'+t.id] = {
+          v: 2, slides: JSON.parse(JSON.stringify(window._sc.slides)),
+          curSlide: window._sc.curSlide, savedAt: Date.now()
+        };
+      }
       (t.notes||[]).forEach(function(n){
         if(n.editorRichHTML !== undefined) localEditorData['n_'+n.id] = { richHTML: n.editorRichHTML, highlights: n.editorHighlights||[] };
       });
@@ -23428,6 +23474,21 @@ async function _silentReloadFromFirebase(){
       if(localEditorData['fn_'+t.id]) t.finalNotesHTML  = localEditorData['fn_'+t.id];
       if(localEditorData['sn_'+t.id]) t.smartNotesHTML  = localEditorData['sn_'+t.id];
       if(localEditorData['mn_'+t.id]) t.masterNotesHTML = localEditorData['mn_'+t.id];
+      // ── FIX: studyCanvas restore karo (live in-memory version ko priority do) ──
+      var _liveSc = localEditorData['sc_live_'+t.id];
+      var _savedSc = localEditorData['sc_'+t.id];
+      if(_liveSc && _liveSc.slides && _liveSc.slides.length) {
+        t.studyCanvas = _liveSc;
+        // Agar canvas abhi open hai, _sc.slides bhi update karo
+        if(window._sc && String(window._sc.tid) === String(t.id)) {
+          window._sc.slides   = JSON.parse(JSON.stringify(_liveSc.slides));
+          window._sc.curSlide = Math.min(_liveSc.curSlide || 0, window._sc.slides.length - 1);
+          if(typeof scRenderAll === 'function') setTimeout(scRenderAll, 50);
+          if(typeof _scRenderSlideNav === 'function') setTimeout(_scRenderSlideNav, 60);
+        }
+      } else if(_savedSc && _savedSc.slides && _savedSc.slides.length) {
+        t.studyCanvas = _savedSc;
+      }
       t.notes.forEach(function(n){
         if(!n.editorHighlights) n.editorHighlights=[];
         var ld = localEditorData['n_'+n.id];
@@ -30596,9 +30657,202 @@ window.neSendAllHighlightsToCanvas = function() {
                  allItemsByColor.green.length + allItemsByColor.blue.length;
 
   if(totalNew === 0) {
+    // ── SMART CHECK: Kya pehle bheji gayi highlights canvas par hain ya gayab ho gayi? ──
+    var _hasHlSlides = window._sc && window._sc.slides && window._sc.slides.some(function(sl){
+      return sl.title && sl.title.indexOf('\ud83d\udccc Highlights') !== -1;
+    });
+    var _sentCount = (_batch.ids || []).length;
+
+    if(_sentCount > 0 && !_hasHlSlides) {
+      // ── Previously sent highlights canvas par NAHI hain → Recovery Dialog ──
+      // Collect text of lost highlights from DOM
+      var _lostItems = [];
+      marks.forEach(function(mark) {
+        var hlId = mark.getAttribute('data-hlid');
+        if(!hlId || _batch.ids.indexOf(hlId) === -1) return; // not a "sent" one
+        var txt = mark.textContent.trim();
+        if(!txt) return;
+        var colorKey = 'yellow';
+        if(mark.classList.contains('user-hl-pink'))  colorKey = 'pink';
+        else if(mark.classList.contains('user-hl-green')) colorKey = 'green';
+        else if(mark.classList.contains('user-hl-blue'))  colorKey = 'blue';
+        var textColor = colorKey === 'pink' ? '#880e4f' : colorKey === 'green' ? '#1b5e20' : colorKey === 'blue' ? '#0d47a1' : '#5d4037';
+        // Group same hlId
+        var found = _lostItems.find(function(x){ return x.hlId === hlId; });
+        if(found) { found.text += ' ' + txt; }
+        else _lostItems.push({ hlId: hlId, text: txt, colorKey: colorKey, color: textColor });
+      });
+
+      // Show professional recovery dialog
+      var _recDlg = document.createElement('div');
+      _recDlg.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px);';
+
+      var _recBox = document.createElement('div');
+      _recBox.style.cssText = 'background:var(--surface,#fff);border-radius:18px;padding:24px 20px 20px;max-width:340px;width:92%;box-shadow:0 12px 40px rgba(0,0,0,0.32);font-family:inherit;border:2px solid rgba(230,81,0,0.2);';
+
+      _recBox.innerHTML =
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">' +
+          '<span style="font-size:1.6rem;">⚠️</span>' +
+          '<div>' +
+            '<div style="font-size:0.98rem;font-weight:800;color:#c62828;">Canvas Data Lost!</div>' +
+            '<div style="font-size:0.75rem;color:var(--text2,#666);margin-top:1px;">Live update ki wajah se canvas wipe ho gaya</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="background:rgba(198,40,40,0.06);border:1.5px solid rgba(198,40,40,0.18);border-radius:10px;padding:10px 12px;margin-bottom:16px;font-size:0.82rem;color:var(--text,#111);">' +
+          '📌 <strong>' + _lostItems.length + ' highlights</strong> pehle canvas par bheje gaye the<br>' +
+          '<span style="color:#c62828;font-weight:700;">lekin ab canvas par nahi hain</span> (shayad kisi doosre device ke save ki wajah se).' +
+        '</div>' +
+        '<div style="font-size:0.8rem;font-weight:700;color:var(--text2,#666);margin-bottom:10px;">Kya karna hai?</div>';
+
+      // Buttons container
+      var _btnWrap = document.createElement('div');
+      _btnWrap.style.cssText = 'display:flex;flex-direction:column;gap:9px;';
+
+      function _recBtn(emoji, label, sub, bg, color, fn) {
+        var b = document.createElement('button');
+        b.style.cssText = 'width:100%;padding:11px 14px;border-radius:11px;border:none;background:'+bg+';color:'+color+';text-align:left;cursor:pointer;display:flex;align-items:center;gap:10px;';
+        b.innerHTML = '<span style="font-size:1.2rem;">'+emoji+'</span><div><div style="font-size:0.86rem;font-weight:800;">'+label+'</div>'+(sub?'<div style="font-size:0.72rem;opacity:0.8;margin-top:1px;">'+sub+'</div>':'')+'</div>';
+        b.onclick = function() { _recDlg.remove(); fn(); };
+        return b;
+      }
+
+      // Option 1: Resend all lost highlights back to canvas
+      _btnWrap.appendChild(_recBtn('♻️', 'Purane ' + _lostItems.length + ' highlights wapas bhejo',
+        'Canvas par dobara bheje jayenge', '#e65100', '#fff', function() {
+          // Clear the batch ids so they're treated as new
+          _batch.ids = [];
+          try { localStorage.setItem('_neHlSentBatches', JSON.stringify(window._neHlSentBatches)); } catch(e) {}
+          // Now resend all
+          window.neSendAllHighlightsToCanvas();
+        }));
+
+      // Option 2: Cancel — do nothing
+      _btnWrap.appendChild(_recBtn('❌', 'Rehne do (koi change nahi)',
+        'Canvas waise hi rahega', 'var(--surface2,#f4f9fe)', 'var(--text,#111)', function() {}));
+
+      _recBox.appendChild(_btnWrap);
+
+      // Small note at bottom
+      var _note = document.createElement('div');
+      _note.style.cssText = 'font-size:0.7rem;color:var(--text2,#888);margin-top:12px;text-align:center;';
+      _note.textContent = '💡 Aage se: highlights bhejne ke baad Canvas → 💾 Save zaroor karein';
+      _recBox.appendChild(_note);
+
+      _recDlg.appendChild(_recBox);
+      _recDlg.addEventListener('click', function(e){ if(e.target===_recDlg) _recDlg.remove(); });
+      document.body.appendChild(_recDlg);
+      return;
+    }
+
+    // Normal case: highlights sent and still on canvas
     var totalAll = marks.length;
     showToast && showToast('ℹ️ Saare ' + totalAll + ' highlights already canvas par bheje ja chuke hain. Nayi highlights karo phir bhejo!', 'info');
     return;
+  }
+
+  // ── PARTIAL LOSS CHECK: Nayi highlights hain, lekin purani canvas par nahi hain ──
+  var _hasHlSlides2 = window._sc && window._sc.slides && window._sc.slides.some(function(sl){
+    return sl.title && sl.title.indexOf('\ud83d\udccc Highlights') !== -1;
+  });
+  var _alreadySentCount = (_batch.ids || []).length;
+  var _hasLostOld = _alreadySentCount > 0 && !_hasHlSlides2;
+
+  if(_hasLostOld) {
+    // New highlights + old ones are lost → Show combined recovery dialog
+    // Collect old lost items from DOM
+    var _oldLostItems = [];
+    marks.forEach(function(mark) {
+      var hlId = mark.getAttribute('data-hlid');
+      if(!hlId || _batch.ids.indexOf(hlId) === -1) return;
+      var txt = mark.textContent.trim();
+      if(!txt) return;
+      var colorKey2 = 'yellow';
+      if(mark.classList.contains('user-hl-pink'))  colorKey2 = 'pink';
+      else if(mark.classList.contains('user-hl-green')) colorKey2 = 'green';
+      else if(mark.classList.contains('user-hl-blue'))  colorKey2 = 'blue';
+      var tc2 = colorKey2==='pink'?'#880e4f':colorKey2==='green'?'#1b5e20':colorKey2==='blue'?'#0d47a1':'#5d4037';
+      var fnd = _oldLostItems.find(function(x){return x.hlId===hlId;});
+      if(fnd){fnd.text+=' '+txt;}else _oldLostItems.push({hlId:hlId,text:txt,colorKey:colorKey2,color:tc2});
+    });
+
+    var _combinedDlg = document.createElement('div');
+    _combinedDlg.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px);';
+
+    var _combinedBox = document.createElement('div');
+    _combinedBox.style.cssText = 'background:var(--surface,#fff);border-radius:18px;padding:24px 20px 20px;max-width:360px;width:92%;box-shadow:0 12px 40px rgba(0,0,0,0.32);font-family:inherit;border:2px solid rgba(21,101,192,0.2);';
+
+    _combinedBox.innerHTML =
+      '<div style="font-size:1rem;font-weight:800;color:var(--text,#111);margin-bottom:12px;">📤 Highlights → Canvas</div>' +
+      '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">' +
+        '<div style="background:rgba(46,125,50,0.07);border:1.5px solid rgba(46,125,50,0.25);border-radius:9px;padding:9px 12px;font-size:0.82rem;">' +
+          '✨ <strong>' + totalNew + ' nayi highlights</strong> canvas par bheji jayengi' +
+        '</div>' +
+        '<div style="background:rgba(198,40,40,0.07);border:1.5px solid rgba(198,40,40,0.25);border-radius:9px;padding:9px 12px;font-size:0.82rem;">' +
+          '⚠️ <strong>' + _oldLostItems.length + ' purani highlights</strong> canvas par nahi hain' +
+          '<div style="font-size:0.72rem;color:#c62828;margin-top:2px;">(Live update ki wajah se gayab ho gayi)</div>' +
+        '</div>' +
+      '</div>' +
+      '<div style="font-size:0.8rem;font-weight:700;color:var(--text2,#666);margin-bottom:10px;">Kya bhejna hai?</div>';
+
+    var _cBtnWrap = document.createElement('div');
+    _cBtnWrap.style.cssText = 'display:flex;flex-direction:column;gap:9px;';
+
+    function _cBtn(emoji, label, sub, bg, color, fn) {
+      var b = document.createElement('button');
+      b.style.cssText = 'width:100%;padding:11px 14px;border-radius:11px;border:none;background:'+bg+';color:'+color+';text-align:left;cursor:pointer;display:flex;align-items:center;gap:10px;';
+      b.innerHTML = '<span style="font-size:1.2rem;">'+emoji+'</span><div><div style="font-size:0.86rem;font-weight:800;">'+label+'</div>'+(sub?'<div style="font-size:0.72rem;opacity:0.8;margin-top:1px;">'+sub+'</div>':'')+'</div>';
+      b.onclick = function() { _combinedDlg.remove(); fn(); };
+      return b;
+    }
+
+    // Option A: Send only new
+    _cBtnWrap.appendChild(_cBtn('✨', 'Sirf ' + totalNew + ' nayi bhejna',
+      'Purani wali ignore karein', '#1565c0', '#fff', function() {
+        _doSendWithColors(availColors);
+      }));
+
+    // Option B: Send new + resend lost old ones
+    _cBtnWrap.appendChild(_cBtn('🔄', 'Nayi + ' + _oldLostItems.length + ' purani (sab)',
+      'Canvas par sab dono type aa jayenge', '#2e7d32', '#fff', function() {
+        // First clear batch ids so old ones are re-sent
+        _batch.ids = [];
+        try { localStorage.setItem('_neHlSentBatches', JSON.stringify(window._neHlSentBatches)); } catch(e) {}
+        // Now send all (new + previously-sent)
+        _doSendWithColors(availColors.length ? availColors : ['yellow','pink','green','blue'].filter(function(c){ return allItemsByColor[c] && allItemsByColor[c].length; }));
+        // Also re-collect old items and send them
+        setTimeout(function() {
+          // Re-run the full send to catch the cleared-batch highlights
+          window.neSendAllHighlightsToCanvas();
+        }, 800);
+      }));
+
+    // Option C: Only resend old lost ones (don't send new)
+    _cBtnWrap.appendChild(_cBtn('♻️', 'Sirf ' + _oldLostItems.length + ' purani wapas bhejna',
+      'Nayi highlights baad mein bhej sakte ho', 'rgba(230,81,0,0.9)', '#fff', function() {
+        _batch.ids = [];
+        try { localStorage.setItem('_neHlSentBatches', JSON.stringify(window._neHlSentBatches)); } catch(e) {}
+        // Only send old items (re-collected from DOM since batch was cleared)
+        _neDoSendItemsToCanvas(_oldLostItems, _batchKey);
+        // Re-register old ids as sent, but NOT new ones
+        _oldLostItems.forEach(function(item){ _batch.ids.push(item.hlId); });
+        try { localStorage.setItem('_neHlSentBatches', JSON.stringify(window._neHlSentBatches)); } catch(e) {}
+      }));
+
+    // Cancel
+    _cBtnWrap.appendChild(_cBtn('❌', 'Cancel',
+      '', 'var(--surface2,#f4f9fe)', 'var(--text,#111)', function() {}));
+
+    _combinedBox.appendChild(_cBtnWrap);
+
+    var _cnote = document.createElement('div');
+    _cnote.style.cssText = 'font-size:0.7rem;color:var(--text2,#888);margin-top:12px;text-align:center;';
+    _cnote.textContent = '💡 Aage se: highlights bhejne ke baad Canvas → 💾 Save karein';
+    _combinedBox.appendChild(_cnote);
+
+    _combinedDlg.appendChild(_combinedBox);
+    _combinedDlg.addEventListener('click', function(e){ if(e.target===_combinedDlg) _combinedDlg.remove(); });
+    document.body.appendChild(_combinedDlg);
+    return; // Dialog handle karega aage ka kaam
   }
 
   // ── COLOR SELECTION DIALOG ──
@@ -30861,6 +31115,40 @@ window._neDoSendItemsToCanvas = function(items, _batchKey) {
   var _hlTotal = _hlNum;
   var msg = '\u2705 Batch Sent' + _thisBatch + ': ' + placed + ' highlights \u2192 ' + _hlTotal + ' slide' + (_hlTotal>1?'s':'') + ' (4+4 layout)!';
   showToast && showToast(msg, 'success');
+
+  // ══════════════════════════════════════════════════════════════════
+  // AUTO-SAVE FIX: Highlights canvas par aa gaye — turant Firebase mein bhi save karo
+  // Agar yeh nahi kiya to kisi bhi live-update ke baad canvas data wipe ho sakta hai
+  // kyunki t.studyCanvas empty rehta hai jab tak user manually Save nahi karta
+  // ══════════════════════════════════════════════════════════════════
+  setTimeout(function() {
+    try {
+      if(!window._sc || !window._sc.tid) return;
+      var _t = (typeof getTop === 'function')
+        ? getTop(window._sc.sid, window._sc.secid, window._sc.tid)
+        : null;
+      if(!_t) return;
+      if(typeof _scSyncCurrentSlideFromDOM === 'function') _scSyncCurrentSlideFromDOM();
+      var _slidesToSave = window._sc.slides.map(function(s) {
+        return {
+          id: s.id, title: s.title, bg: s.bg,
+          textBlocks: JSON.parse(JSON.stringify(s.textBlocks || [])),
+          strokes: (typeof _scCompressStrokes === 'function')
+            ? _scCompressStrokes(s.strokes || [])
+            : (s.strokes || []),
+          qmNodes: JSON.parse(JSON.stringify(s.qmNodes || [])),
+          qmEdges: JSON.parse(JSON.stringify(s.qmEdges || []))
+        };
+      });
+      var _sz = JSON.stringify(_slidesToSave).length;
+      if(_sz > 700000) return; // too large — skip auto-save
+      _t.studyCanvas = { v: 2, slides: _slidesToSave, curSlide: window._sc.curSlide, savedAt: Date.now() };
+      if(typeof save === 'function') save();
+      if(typeof saveToFirebase === 'function' && window._currentUser && window._db) {
+        saveToFirebase();
+      }
+    } catch(e) { console.warn('HL→Canvas auto-save error:', e); }
+  }, 600);
 };
 
 window._scSmartSendToCanvas = function(text) {
