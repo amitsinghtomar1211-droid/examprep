@@ -5711,6 +5711,10 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
       <!-- Insert Table -->
       <button onclick="neInsertTable()" title="Table insert karo"
         style="width:36px;height:36px;border-radius:10px;border:1.5px solid rgba(46,125,50,0.35);background:rgba(46,125,50,0.09);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;font-size:0.9rem;font-weight:900;color:#2e7d32;box-shadow:0 2px 8px rgba(0,0,0,0.06);">&#x22CF;</button>
+
+      <!-- JSON → Table Import button -->
+      <button onclick="neOpenJsonTableImport()" title="JSON se Table import karo — paste karo aur insert!"
+        style="width:36px;height:36px;border-radius:10px;border:1.5px solid rgba(230,81,0,0.4);background:rgba(230,81,0,0.1);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;font-size:0.72rem;font-weight:900;color:#e65100;box-shadow:0 2px 8px rgba(0,0,0,0.07);letter-spacing:-1px;">{}</button>
   
       <!-- Word count -->
       <div style="font-size:0.55rem;color:var(--text2);text-align:center;padding:2px;flex-shrink:0;">
@@ -12550,6 +12554,428 @@ function toggleItalicColorPicker() {
       showToast('Table insert ho gayi! ✅', 'success');
     });
   }
+
+  // ══════════════════════════════════════════════════════════
+  // JSON → TABLE IMPORT  (Notes Editor)
+  // JSON array paste karo → preview dekho → ek click mein insert!
+  // ══════════════════════════════════════════════════════════
+  window.neOpenJsonTableImport = function() {
+    var area = document.getElementById('noteEditableArea');
+    if(!area || area.contentEditable !== 'true') {
+      showToast('Pehle Edit Mode ON karo!', 'error');
+      return;
+    }
+
+    // ── CURSOR POSITION SAVE ─────────────────────────────────────────────
+    // Modal khulne se pehle cursor ka exact position save karo.
+    // Modal mein click karne se focus shift hoti hai — isliye pehle save zaroori hai.
+    window._neJsonSavedRange = null;
+    var sel = window.getSelection();
+    if(sel && sel.rangeCount > 0) {
+      var r = sel.getRangeAt(0);
+      // Sirf tab save karo jab cursor noteEditableArea ke andar ho
+      if(area.contains(r.commonAncestorContainer)) {
+        window._neJsonSavedRange = r.cloneRange();
+      }
+    }
+    // Agar koi selection nahi thi — cursor end pe set karo as default
+    if(!window._neJsonSavedRange) {
+      var endRange = document.createRange();
+      endRange.selectNodeContents(area);
+      endRange.collapse(false); // end pe
+      window._neJsonSavedRange = endRange;
+    }
+
+    // ── Position label for UI ────────────────────────────────────────────
+    // User ko dikhao kahan insert hoga
+    var posLabel = '(notes ke ant mein)';
+    try {
+      var rr = window._neJsonSavedRange;
+      var container = rr.startContainer;
+      // Closest block element dhundo — para/heading/li etc.
+      var block = container.nodeType === Node.TEXT_NODE ? container.parentElement : container;
+      while(block && block !== area && !['P','DIV','H1','H2','H3','H4','LI','BLOCKQUOTE','TD','TH'].includes(block.tagName)) {
+        block = block.parentElement;
+      }
+      var preview = '';
+      if(block && block !== area) {
+        preview = (block.textContent || '').trim().slice(0, 40);
+        if(preview) posLabel = '"' + preview + (preview.length >= 40 ? '…' : '') + '" ke baad';
+      }
+      if(!preview) {
+        // Cursor content se position estimate karo
+        var textBefore = rr.startContainer.textContent ? rr.startContainer.textContent.slice(0, rr.startOffset) : '';
+        var snippet = textBefore.trim().slice(-30);
+        if(snippet) posLabel = '"…' + snippet + '" ke baad';
+      }
+    } catch(_) {}
+
+    // Remove old modal if any
+    var old = document.getElementById('neJsonTableModal');
+    if(old) old.remove();
+
+    var modal = document.createElement('div');
+    modal.id = 'neJsonTableModal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);padding:12px;';
+
+    modal.innerHTML = [
+      '<div style="background:var(--surface);border-radius:18px;box-shadow:0 12px 48px rgba(0,0,0,0.35);',
+        'width:min(98vw,680px);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">',
+
+        // ── Header ──
+        '<div style="display:flex;align-items:center;justify-content:space-between;',
+          'padding:13px 18px;border-bottom:1.5px solid var(--border);flex-shrink:0;',
+          'background:linear-gradient(90deg,rgba(230,81,0,0.08),rgba(21,101,192,0.05));">',
+          '<div>',
+            '<div style="font-weight:900;font-size:1rem;color:#e65100;">{} JSON → Table Import</div>',
+            '<div style="font-size:0.7rem;color:var(--text2);margin-top:2px;">',
+              'JSON array paste karo — columns auto-detect honge</div>',
+          '</div>',
+          '<button onclick="document.getElementById(\'neJsonTableModal\').remove()" ',
+            'style="background:none;border:none;font-size:1.3rem;cursor:pointer;',
+            'color:var(--text2);padding:4px 8px;border-radius:8px;">✕</button>',
+        '</div>',
+
+        // ── Insert position indicator ──────────────────────────────────────
+        '<div style="display:flex;align-items:center;gap:7px;padding:7px 16px;',
+          'background:rgba(21,101,192,0.05);border-bottom:1px solid var(--border);flex-shrink:0;">',
+          '<span style="font-size:0.75rem;color:var(--accent);font-weight:800;">📍 Insert position:</span>',
+          '<span id="neJsonPosLabel" style="font-size:0.72rem;color:var(--text2);flex:1;',
+            'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + posLabel + '</span>',
+          '<button onclick="neJsonChangePosition()" ',
+            'style="padding:3px 9px;border:1.5px solid var(--accent);border-radius:7px;',
+            'background:transparent;color:var(--accent);font-size:0.68rem;font-weight:800;',
+            'cursor:pointer;font-family:inherit;white-space:nowrap;">✏️ Change</button>',
+        '</div>',
+
+        // ── Paste area ──
+        '<div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface2);">',
+          '<div style="font-size:0.72rem;color:var(--text2);margin-bottom:5px;font-weight:700;">',
+            '📋 JSON paste karo (Array of Objects format):',
+          '</div>',
+          '<textarea id="neJsonInputTA" placeholder=\'[\n  { "Column1": "Value", "Column2": "Value" },\n  ...\n]\' ',
+            'style="width:100%;height:100px;padding:8px 10px;border:1.5px solid var(--border);',
+            'border-radius:10px;font-size:0.76rem;font-family:monospace;resize:vertical;',
+            'background:var(--surface);color:var(--text);outline:none;line-height:1.5;" ',
+            'oninput="neJsonTablePreview()"></textarea>',
+          '<div style="display:flex;gap:8px;margin-top:7px;flex-wrap:wrap;align-items:center;">',
+            '<button onclick="neJsonTablePreview()" ',
+              'style="padding:6px 14px;border:none;border-radius:8px;background:linear-gradient(135deg,#e65100,#ff7043);',
+              'color:#fff;font-weight:800;cursor:pointer;font-size:0.78rem;font-family:inherit;">',
+              '👁 Preview</button>',
+            '<button onclick="neJsonTableClear()" ',
+              'style="padding:6px 12px;border:1.5px solid var(--border);border-radius:8px;',
+              'background:var(--surface);color:var(--text2);font-weight:700;cursor:pointer;',
+              'font-size:0.78rem;font-family:inherit;">🗑 Clear</button>',
+            '<div id="neJsonParseStatus" style="font-size:0.7rem;color:var(--text2);margin-left:auto;"></div>',
+          '</div>',
+        '</div>',
+
+        // ── Options row ──
+        '<div style="display:flex;align-items:center;gap:12px;padding:8px 16px;',
+          'border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;background:var(--surface);">',
+          '<label style="display:flex;align-items:center;gap:5px;font-size:0.74rem;color:var(--text2);cursor:pointer;">',
+            '<input type="checkbox" id="neJsonHasHeader" checked ',
+              'onchange="neJsonTablePreview()" style="width:14px;height:14px;cursor:pointer;">',
+            'पहली row = Header (Bold)',
+          '</label>',
+          '<label style="display:flex;align-items:center;gap:5px;font-size:0.74rem;color:var(--text2);cursor:pointer;">',
+            '<input type="checkbox" id="neJsonBgHeader" checked ',
+              'onchange="neJsonTablePreview()" style="width:14px;height:14px;cursor:pointer;">',
+            'Header background color',
+          '</label>',
+          '<label style="display:flex;align-items:center;gap:5px;font-size:0.74rem;color:var(--text2);cursor:pointer;">',
+            'Header color: ',
+            '<input type="color" id="neJsonHeaderColor" value="#1565c0" ',
+              'onchange="neJsonTablePreview()" style="width:28px;height:22px;border:none;',
+              'border-radius:5px;cursor:pointer;padding:0;">',
+          '</label>',
+        '</div>',
+
+        // ── Preview ──
+        '<div style="flex:1;overflow:auto;padding:14px 16px;min-height:120px;">',
+          '<div id="neJsonTablePreviewBox" style="font-size:0.82rem;color:var(--text2);',
+            'text-align:center;padding:30px 0;">',
+            'JSON paste karke Preview click karo ☝️',
+          '</div>',
+        '</div>',
+
+        // ── Footer ──
+        '<div style="display:flex;align-items:center;justify-content:space-between;',
+          'gap:8px;padding:11px 16px;border-top:1.5px solid var(--border);flex-shrink:0;">',
+          '<div id="neJsonRowCount" style="font-size:0.7rem;color:var(--text2);"></div>',
+          '<div style="display:flex;gap:8px;">',
+            '<button onclick="document.getElementById(\'neJsonTableModal\').remove()" ',
+              'style="padding:8px 16px;border:1.5px solid var(--border);border-radius:9px;',
+              'background:var(--surface2);color:var(--text2);font-weight:700;cursor:pointer;',
+              'font-family:inherit;font-size:0.82rem;">Cancel</button>',
+            '<button onclick="neJsonTableInsert()" id="neJsonInsertBtn" disabled ',
+              'style="padding:8px 20px;border:none;border-radius:9px;',
+              'background:linear-gradient(135deg,#e65100,var(--accent));',
+              'color:#fff;font-weight:900;cursor:pointer;font-family:inherit;',
+              'font-size:0.84rem;opacity:0.5;">',
+              '📋 Notes mein Insert karo</button>',
+          '</div>',
+        '</div>',
+
+      '</div>'
+    ].join('');
+
+    document.body.appendChild(modal);
+    modal.addEventListener('click', function(e){ if(e.target === modal) modal.remove(); });
+    setTimeout(function(){ var ta = document.getElementById('neJsonInputTA'); if(ta) ta.focus(); }, 100);
+  };
+
+  // ── Parse + Preview ──
+  window._neJsonParsedData = null;  // globally store last parsed result
+
+  window.neJsonTablePreview = function() {
+    var ta     = document.getElementById('neJsonInputTA');
+    var box    = document.getElementById('neJsonTablePreviewBox');
+    var status = document.getElementById('neJsonParseStatus');
+    var rowCnt = document.getElementById('neJsonRowCount');
+    var insBtn = document.getElementById('neJsonInsertBtn');
+    if(!ta || !box) return;
+
+    var raw = ta.value.trim();
+    if(!raw) {
+      box.innerHTML = '<span style="color:var(--text2);">JSON paste karke Preview click karo ☝️</span>';
+      if(status) status.textContent = '';
+      if(insBtn) { insBtn.disabled = true; insBtn.style.opacity = '0.5'; }
+      window._neJsonParsedData = null;
+      return;
+    }
+
+    var data;
+    try {
+      data = JSON.parse(raw);
+    } catch(err) {
+      box.innerHTML = '<div style="color:var(--red);font-size:0.8rem;padding:16px;">❌ JSON parse error: ' + err.message + '<br><span style="color:var(--text2);font-size:0.72rem;">Hint: Double quotes use karo, trailing comma nahi honi chahiye</span></div>';
+      if(status) status.innerHTML = '<span style="color:var(--red);">❌ Invalid JSON</span>';
+      if(insBtn) { insBtn.disabled = true; insBtn.style.opacity = '0.5'; }
+      window._neJsonParsedData = null;
+      return;
+    }
+
+    // Accept array of objects
+    if(!Array.isArray(data) || data.length === 0) {
+      box.innerHTML = '<div style="color:var(--red);font-size:0.8rem;padding:16px;">❌ JSON ek Array of Objects hona chahiye: [{...}, {...}]</div>';
+      if(status) status.innerHTML = '<span style="color:var(--red);">❌ Array expected</span>';
+      if(insBtn) { insBtn.disabled = true; insBtn.style.opacity = '0.5'; }
+      window._neJsonParsedData = null;
+      return;
+    }
+
+    // Collect all unique keys (columns) preserving order
+    var cols = [];
+    var colSet = {};
+    data.forEach(function(row) {
+      if(typeof row === 'object' && row !== null) {
+        Object.keys(row).forEach(function(k) {
+          if(!colSet[k]) { colSet[k] = true; cols.push(k); }
+        });
+      }
+    });
+
+    if(cols.length === 0) {
+      box.innerHTML = '<div style="color:var(--red);font-size:0.8rem;padding:16px;">❌ Koi valid columns nahi mile!</div>';
+      if(insBtn) { insBtn.disabled = true; insBtn.style.opacity = '0.5'; }
+      window._neJsonParsedData = null;
+      return;
+    }
+
+    window._neJsonParsedData = { data: data, cols: cols };
+    box.innerHTML = _neJsonBuildTableHTML(data, cols, true); // preview=true
+    if(status) status.innerHTML = '<span style="color:var(--green);">✅ ' + data.length + ' rows · ' + cols.length + ' cols</span>';
+    if(rowCnt) rowCnt.textContent = data.length + ' rows, ' + cols.length + ' columns';
+    if(insBtn) { insBtn.disabled = false; insBtn.style.opacity = '1'; }
+  };
+
+  // ── Build HTML table string ──
+  function _neJsonBuildTableHTML(data, cols, isPreview) {
+    var headerColor  = (document.getElementById('neJsonHeaderColor') || {value:'#1565c0'}).value || '#1565c0';
+    var hasBgHeader  = !document.getElementById('neJsonBgHeader') || document.getElementById('neJsonBgHeader').checked;
+    var hasHeader    = !document.getElementById('neJsonHasHeader') || document.getElementById('neJsonHasHeader').checked;
+
+    var thBg   = hasBgHeader ? headerColor : 'transparent';
+    var thText = hasBgHeader ? '#fff' : 'var(--text)';
+
+    // Table wrapper
+    var html = '<table style="border-collapse:collapse;width:100%;font-family:inherit;font-size:0.85rem;margin:6px 0;">';
+
+    // Header row (column keys)
+    if(hasHeader) {
+      html += '<thead><tr>';
+      cols.forEach(function(col) {
+        html += '<th style="border:1.5px solid #bbb;padding:7px 10px;text-align:left;'
+              + 'background:' + thBg + ';color:' + thText + ';font-weight:800;white-space:nowrap;">'
+              + _escHtml(col) + '</th>';
+      });
+      html += '</tr></thead>';
+    }
+
+    // Data rows
+    html += '<tbody>';
+    data.forEach(function(row, ri) {
+      var rowBg = ri % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.025)';
+      html += '<tr style="background:' + rowBg + ';">';
+      cols.forEach(function(col) {
+        var val = (row && row[col] !== undefined && row[col] !== null) ? String(row[col]) : '';
+        html += '<td style="border:1.5px solid #bbb;padding:6px 10px;vertical-align:top;">'
+              + _escHtml(val) + '</td>';
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
+  function _escHtml(str) {
+    return String(str)
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;');
+  }
+
+  // ── Insert into Notes Editor ──
+  window.neJsonTableInsert = function() {
+    var pd = window._neJsonParsedData;
+    if(!pd || !pd.data || !pd.cols) {
+      showToast('Pehle JSON parse + Preview karo!', 'error');
+      return;
+    }
+    var area = document.getElementById('noteEditableArea');
+    if(!area || area.contentEditable !== 'true') {
+      showToast('Pehle Edit Mode ON karo!', 'error');
+      return;
+    }
+    var tableHTML = _neJsonBuildTableHTML(pd.data, pd.cols, false);
+
+    // ── CURSOR RESTORE ────────────────────────────────────────────────────
+    // Modal mein click karne se cursor position shift ho jaata tha.
+    // Ab saved range ko exactly restore karo pehle, phir insertHTML.
+    area.focus();
+    try {
+      if(window._neJsonSavedRange) {
+        var sel2 = window.getSelection();
+        sel2.removeAllRanges();
+        sel2.addRange(window._neJsonSavedRange);
+      }
+    } catch(_) { /* fallback: current cursor position pe insert hogi */ }
+    // ─────────────────────────────────────────────────────────────────────
+
+    neSaveSnapshot();
+    document.execCommand('insertHTML', false, tableHTML + '<br>');
+    markModified();
+    var modal = document.getElementById('neJsonTableModal');
+    if(modal) modal.remove();
+    window._neJsonParsedData = null;
+    window._neJsonSavedRange = null;
+    showToast('✅ Table insert ho gayi! (' + pd.data.length + ' rows)', 'success');
+  };
+
+  // ── Change insert position — modal band karke user ko notes mein click karne dena ──
+  window.neJsonChangePosition = function() {
+    // JSON data aur parse state bachao
+    var savedData = window._neJsonParsedData;
+    var savedJson = '';
+    var ta = document.getElementById('neJsonInputTA');
+    if(ta) savedJson = ta.value;
+
+    // Modal temporarily close karo
+    var modal = document.getElementById('neJsonTableModal');
+    if(modal) modal.style.display = 'none';
+
+    // Instruction overlay dikhao
+    var overlay = document.createElement('div');
+    overlay.id = 'neJsonPosOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:99998;display:flex;align-items:flex-end;' +
+      'justify-content:center;padding-bottom:40px;pointer-events:none;';
+    overlay.innerHTML =
+      '<div style="background:rgba(21,101,192,0.95);color:#fff;padding:12px 22px;border-radius:14px;' +
+        'font-size:0.85rem;font-weight:800;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,0.3);' +
+        'max-width:300px;line-height:1.5;">' +
+        '📍 Notes mein woh jagah tap karo<br>' +
+        '<span style="font-weight:400;font-size:0.75rem;opacity:0.85;">jahan table insert karni hai</span><br>' +
+        '<span style="font-size:0.72rem;opacity:0.7;margin-top:4px;display:block;">Tap karne ke baad modal wapas aayega</span>' +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    // Notes area pe ek-time click listener lagao
+    var area = document.getElementById('noteEditableArea');
+    function _onPosClick(e) {
+      // Clicked position ka range save karo
+      var clickSel = window.getSelection();
+      if(clickSel && clickSel.rangeCount > 0) {
+        var cr = clickSel.getRangeAt(0);
+        if(area.contains(cr.commonAncestorContainer)) {
+          window._neJsonSavedRange = cr.cloneRange();
+        }
+      }
+      area.removeEventListener('click', _onPosClick);
+      area.removeEventListener('touchend', _onPosTouchEnd);
+
+      // Overlay hatao
+      var ov = document.getElementById('neJsonPosOverlay');
+      if(ov) ov.remove();
+
+      // Modal wapas dikhao
+      var m = document.getElementById('neJsonTableModal');
+      if(m) {
+        m.style.display = 'flex';
+        // Position label update karo
+        var lbl = document.getElementById('neJsonPosLabel');
+        if(lbl) {
+          var posLabel = '(selected position)';
+          try {
+            var rr = window._neJsonSavedRange;
+            var container = rr.startContainer;
+            var block = container.nodeType === Node.TEXT_NODE ? container.parentElement : container;
+            while(block && block !== area && !['P','DIV','H1','H2','H3','H4','LI','BLOCKQUOTE','TD','TH'].includes(block.tagName)) {
+              block = block.parentElement;
+            }
+            var preview = block && block !== area ? (block.textContent||'').trim().slice(0,40) : '';
+            if(preview) posLabel = '"' + preview + (preview.length>=40?'…':'') + '" ke baad';
+            else {
+              var textBefore = rr.startContainer.textContent ? rr.startContainer.textContent.slice(0, rr.startOffset) : '';
+              var snippet = textBefore.trim().slice(-30);
+              if(snippet) posLabel = '"…' + snippet + '" ke baad';
+            }
+          } catch(_) {}
+          lbl.textContent = posLabel;
+        }
+        // Restore saved JSON
+        window._neJsonParsedData = savedData;
+        var ta2 = document.getElementById('neJsonInputTA');
+        if(ta2 && savedJson) ta2.value = savedJson;
+      }
+    }
+
+    // Touch support
+    function _onPosTouchEnd(e) {
+      setTimeout(_onPosClick, 80); // short delay to let selection settle
+    }
+
+    setTimeout(function() {
+      area.addEventListener('click', _onPosClick);
+      area.addEventListener('touchend', _onPosTouchEnd);
+    }, 100);
+  };
+
+  window.neJsonTableClear = function() {
+    var ta = document.getElementById('neJsonInputTA');
+    if(ta) ta.value = '';
+    var box = document.getElementById('neJsonTablePreviewBox');
+    if(box) box.innerHTML = '<span style="color:var(--text2);">JSON paste karke Preview click karo ☝️</span>';
+    var status = document.getElementById('neJsonParseStatus');
+    if(status) status.textContent = '';
+    var rowCnt = document.getElementById('neJsonRowCount');
+    if(rowCnt) rowCnt.textContent = '';
+    var insBtn = document.getElementById('neJsonInsertBtn');
+    if(insBtn) { insBtn.disabled = true; insBtn.style.opacity = '0.5'; }
+    window._neJsonParsedData = null;
+  };
 
   // ==================== NOTES EDITOR TABLE MODAL ====================
   var _neTableModal_cb = null;
