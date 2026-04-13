@@ -6089,7 +6089,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <!-- Slide title mini label -->
     <div class="sc-fstrip-btn sc-fstrip-title" id="scStripTitle">📋</div>
     <!-- AI Chat Button — Canvas page par AI se baat karo -->
-    <button class="sc-fstrip-btn" id="scAiChatBtn" onclick="if(typeof scOpenCanvasAiChat==='function'){scOpenCanvasAiChat();}else{showToast&&showToast('AI Chat load ho raha hai, thoda wait karo...','error');}" title="AI Chat — Canvas slides se flashcards banao" style="background:linear-gradient(135deg,rgba(21,101,192,0.18),rgba(106,27,154,0.18));border-color:rgba(106,27,154,0.4);color:#6a1b9a;font-size:0.82rem;">🤖</button>
+    <button class="sc-fstrip-btn" id="scAiChatBtn" onclick="scOpenCanvasAiChat()" title="AI Chat — Canvas slides se flashcards banao" style="background:linear-gradient(135deg,rgba(21,101,192,0.18),rgba(106,27,154,0.18));border-color:rgba(106,27,154,0.4);color:#6a1b9a;font-size:0.82rem;">🤖</button>
     <!-- Mind Map Button -->
     <button class="sc-fstrip-btn" id="scMindMapBtn" onclick="mmOpenPanel()" title="Mind Map — Flashcards se Mind Map banao" style="background:linear-gradient(135deg,rgba(0,105,92,0.22),rgba(46,125,50,0.22));border-color:rgba(0,150,136,0.45);color:#00695c;font-size:0.82rem;">🧠</button>
     <!-- Regenerate Highlights to Canvas -->
@@ -33462,17 +33462,23 @@ function _scSyncCoveredFromLibrary(canvasContent) {
         var fn = _scNormFact(fact);
         if(covered.indexOf(fn) !== -1) return;
 
-        var factWords = fn.split(' ').filter(function(w){ return w.length > 3; });
-
-        var matched = allCardTexts.some(function(ct) {
-          var hits = factWords.filter(function(w){ return ct.indexOf(w) !== -1; });
-          return hits.length >= Math.max(1, Math.ceil(factWords.length * 0.5));
+        // Method 1: Direct substring match (fact text card mein directly hai)
+        var directMatch = allCardTexts.some(function(ct) {
+          return ct.indexOf(fn) !== -1 || fn.indexOf(ct) !== -1;
         });
+        if(directMatch) { covered.push(fn); changed = true; return; }
 
-        if(matched) {
-          covered.push(fn);
-          changed = true;
+        // Method 2: Strict word match — sirf tab covered mano jab 85%+ meaningful words match karein
+        // AND minimum 5 meaningful words ho (short facts ke false positive rokne ke liye)
+        var factWords = fn.split(' ').filter(function(w){ return w.length > 3; });
+        if(factWords.length >= 5) {
+          var matched = allCardTexts.some(function(ct) {
+            var hits = factWords.filter(function(w){ return ct.indexOf(w) !== -1; });
+            return hits.length >= Math.ceil(factWords.length * 0.85);
+          });
+          if(matched) { covered.push(fn); changed = true; }
         }
+        // Note: 5 se kam meaningful words wale facts sirf direct match se hi covered honge
       });
 
       if(changed) {
@@ -34005,21 +34011,23 @@ function _finalizeFcCards(allCards, curHash, topicName, analysis) {
     _scFC.topic = topicName;
     _scFC.generatedAt = new Date().toLocaleDateString('hi-IN');
 
-    // Mark all used facts as COVERED
-    var usedFacts = _scExtractFactLines(scExtractContent());
+    // Mark ONLY the highlights that ACTUALLY had flashcards generated for them as COVERED
+    // Source: unitsToProcess (exact highlight texts) — inka flashcard bana, inhe covered karo
     var alreadyCovered = _scFC.coveredFacts || [];
     var alreadyCoveredNorm = alreadyCovered.map(function(f){ return typeof _scNormFact==='function'?_scNormFact(f):f; });
-    usedFacts.forEach(function(f){
-      var fn = typeof _scNormFact==='function' ? _scNormFact(f) : f;
-      if(alreadyCoveredNorm.indexOf(fn) === -1) {
-        alreadyCovered.push(fn);
-        alreadyCoveredNorm.push(fn);
-      }
-    });
+    // unitsToProcess = wahi highlights jinke liye AI ko bheja gaya tha
+    if(typeof unitsToProcess !== 'undefined') {
+      unitsToProcess.forEach(function(u){
+        var fn = typeof _scNormFact==='function' ? _scNormFact(u.text) : u.text.toLowerCase().trim();
+        if(alreadyCoveredNorm.indexOf(fn) === -1){
+          alreadyCovered.push(fn);
+          alreadyCoveredNorm.push(fn);
+        }
+      });
+    }
     _scFC.coveredFacts = alreadyCovered;
     _scFC.allFactsHash = curHash;
 
-    _scFCSave();
     _scFCSave();
 
     // Save canvas slides text so badge can show total fact count
@@ -38566,8 +38574,23 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       } catch(_wResetErr) {}
     if(typeof _scSyncCoveredFromLibrary === 'function') _scSyncCoveredFromLibrary(slidesText);
     if(typeof _scGetNewFacts === 'function' && typeof _scExtractFactLines === 'function') {
-      var _allFacts2  = _scExtractFactLines(slidesText);
-      var _newFacts2  = _scGetNewFacts(slidesText);
+      // hlUnits se count karo — yahi actual highlights hain jo covered check mein use hote hain
+      var _allHlUnits2 = [];
+      if(typeof _sc !== 'undefined' && _sc.slides) {
+        _sc.slides.forEach(function(slide){
+          (slide.textBlocks||[]).forEach(function(b){
+            var rawTxt = (b.html||'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
+            if(!rawTxt) return;
+            if(b._isGroupBox && b._groupItems && b._groupItems.length > 1){
+              b._groupItems.forEach(function(it){ if(it&&it.trim()) _allHlUnits2.push(it.trim()); });
+            } else { _allHlUnits2.push(rawTxt); }
+          });
+        });
+      }
+      if(_allHlUnits2.length === 0) _allHlUnits2 = _scExtractFactLines(slidesText);
+      var _coveredNorms2 = (_scFC.coveredFacts||[]).map(function(f){ return typeof _scNormFact==='function'?_scNormFact(f):f.toLowerCase().trim(); });
+      var _allFacts2  = _allHlUnits2;
+      var _newFacts2  = _allHlUnits2.filter(function(u){ return _coveredNorms2.indexOf(typeof _scNormFact==='function'?_scNormFact(u):u.toLowerCase().trim()) === -1; });
       if(_allFacts2.length > 0 && _newFacts2.length === 0) {
         var msgsEl0 = document.getElementById('scAiChatMsgs');
         if(msgsEl0) {
@@ -38581,7 +38604,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
             '🔁 Canvas ke sabhi facts pehle se Library ke flashcards mein cover ho chuke hain<br><br>' +
             '➕ <b>Canvas par nayi information add karo</b> — tabhi naye uncovered facts se flashcards banenge!<br>' +
             '<div style="display:flex;flex-direction:column;gap:6px;margin-top:10px;">' +
-            '<button onclick="if(typeof _scFCLoad===\'function\'){_scFCLoad();_scFC.coveredFacts=[];_scFC.hash=\'\';if(typeof _scFCSave===\'function\')_scFCSave();}var _el=this.closest?this.closest(\'.ai-msg\'):null;if(_el)_el.remove();else this.parentElement.parentElement.remove();showToast&&showToast(\'Tracking reset!\',\'success\');" ' +
+            '<button onclick="if(typeof _scFCLoad===\'function\'){_scFCLoad();_scFC.coveredFacts=[];_scFC.hash=\'\';if(typeof _scFCSave===\'function\')_scFCSave();}var _m=this.closest?this.closest(\'.ai-msg\'):null;if(_m)_m.remove();else this.parentElement.parentElement.remove();showToast&&showToast(\'Tracking reset!\',\'success\');" ' +
             'style="padding:7px 12px;border-radius:8px;border:none;background:rgba(21,101,192,0.1);color:#1565c0;font-weight:800;font-size:0.72rem;cursor:pointer;font-family:inherit;text-align:left;">📋 Sirf tracking reset karo (covered facts clear)</button>' +
             '<button onclick="if(typeof _scFCForceRegenAll===\'function\')_scFCForceRegenAll();" ' +
             'style="padding:7px 12px;border-radius:8px;border:1.5px solid rgba(230,81,0,0.4);background:rgba(230,81,0,0.07);color:#e65100;font-weight:800;font-size:0.72rem;cursor:pointer;font-family:inherit;text-align:left;">🔁 Sabhi highlights se fresh banao (data loss recovery)</button>' +
