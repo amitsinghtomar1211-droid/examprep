@@ -33803,21 +33803,24 @@ function scAiMakeFlashcards() {
           var rawTxt = (b.html||'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
           if(!rawTxt) return;
 
-          if(b._isGroupBox && b._groupItems && b._groupItems.length > 1) {
-            // GROUP box — each sub-item is one highlight
+          // ── HIGHLIGHT EXTRACTION: Har highlight se ek alag flashcard ──
+          // Priority 1: _groupItems array available hai (group box — most reliable)
+          if(b._isGroupBox && b._groupItems && b._groupItems.length > 0) {
+            // GROUP box — each sub-item is one highlight (1 item ho ya 10)
+            var gCtx = b._groupItems.join(' | ');
             b._groupItems.forEach(function(itemTxt) {
               if(itemTxt && itemTxt.trim()) {
                 hlUnits.push({
                   text: itemTxt.trim(),
                   groupName: b._groupName || null,
-                  groupContext: b._groupItems.join(' | '), // full group for context
-                  isSingle: false
+                  groupContext: gCtx,
+                  isSingle: b._groupItems.length === 1
                 });
               }
             });
           } else {
-            // Single highlight box — <br> se multiple lines ho sakti hain
-            // Har line ek alag highlight fact hai — alag alag flashcard banana hai
+            // Non-group box OR group box jisme _groupItems nahi hai
+            // HTML se <br>/<div>/<p> se individual highlight lines extract karo
             var rawHtml = b.html || '';
             // <br> → newline, then strip all other tags
             var multiLine = rawHtml
@@ -33831,15 +33834,17 @@ function scAiMakeFlashcards() {
               .map(function(l){ return l.trim(); })
               .filter(function(l){ return l.length > 2; });
             if(lineItems.length <= 1) {
-              // Single line — push as-is
+              // Single line — push as-is (ek box = ek highlight = ek flashcard)
               if(rawTxt) hlUnits.push({ text: rawTxt, groupName: null, groupContext: null, isSingle: true });
             } else {
-              // Multi-line box — har line alag hlUnit, baaki lines context mein
+              // Multi-line box — har line ek alag highlight fact hai
+              // Saari lines context mein rahegi taaki AI samajh sake topic kya hai
+              var lineCtx = lineItems.join(' | ');
               lineItems.forEach(function(lineText) {
                 hlUnits.push({
                   text: lineText,
-                  groupName: null,
-                  groupContext: lineItems.join(' | '), // sibling lines provide context
+                  groupName: b._groupName || null,
+                  groupContext: lineCtx,
                   isSingle: false
                 });
               });
@@ -38600,10 +38605,11 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
           (slide.textBlocks||[]).forEach(function(b){
             var rawTxt = (b.html||'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
             if(!rawTxt) return;
-            if(b._isGroupBox && b._groupItems && b._groupItems.length > 1){
+            if(b._isGroupBox && b._groupItems && b._groupItems.length > 0){
+              // Group box — har sub-item ek highlight (1 item ho ya zyada)
               b._groupItems.forEach(function(it){ if(it&&it.trim()) _allHlUnits2.push(it.trim()); });
             } else {
-              // Multi-line single box — split by <br>
+              // Non-group box — <br> se individual highlight lines extract karo
               var _ml2 = (b.html||'').replace(/<br[^>]*>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<p[^>]*>/gi,'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ');
               var _li2 = _ml2.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>2;});
               if(_li2.length > 1){ _li2.forEach(function(l){ _allHlUnits2.push(l); }); }
