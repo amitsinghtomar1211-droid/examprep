@@ -38597,7 +38597,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     } catch(_wResetErr) {}
     if(typeof _scSyncCoveredFromLibrary === 'function') _scSyncCoveredFromLibrary(slidesText);
 
-    // Extract all highlights from DOM
+    // Extract all highlights from DOM (group boxes + individual lines)
     var _allHlUnits = [];
     if(typeof _sc !== 'undefined' && _sc.slides) {
       _sc.slides.forEach(function(slide){
@@ -38610,11 +38610,9 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
               if(it&&it.trim()) _allHlUnits.push({ text: it.trim(), groupName: b._groupName||null, groupContext: gCtx });
             });
           } else {
-            var ml = (b.html||'').replace(/<br[^>]*>/gi,'
-').replace(/</p>/gi,'
-').replace(/<p[^>]*>/gi,'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ');
-            var li = ml.split('
-').map(function(l){return l.trim();}).filter(function(l){return l.length>2;});
+            var NL = String.fromCharCode(10);
+            var ml = (b.html||'').replace(/<br[^>]*>/gi,NL).replace(/<\/p>/gi,NL).replace(/<p[^>]*>/gi,'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ');
+            var li = ml.split(NL).map(function(l){return l.trim();}).filter(function(l){return l.length>2;});
             if(li.length > 1){
               var liCtx = li.join(' | ');
               li.forEach(function(lineText){ _allHlUnits.push({ text: lineText, groupName: b._groupName||null, groupContext: liCtx }); });
@@ -38661,7 +38659,6 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     var unitsToProcess = _newHlUnits.length > 0 ? _newHlUnits : _allHlUnits;
     var totalUnits = unitsToProcess.length;
     var isFirstTime = (_newHlUnits.length === _allHlUnits.length);
-
     var msgsEl = document.getElementById('scAiChatMsgs');
     var groqKey = S.apiKey;
 
@@ -38674,7 +38671,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       progressDiv.innerHTML = (isFirstTime
         ? '<b>' + totalUnits + ' highlights</b> se flashcards ban rahe hain (pehli baar)...'
         : '<b>' + totalUnits + ' naye highlights</b> se flashcards ban rahe hain...'
-      ) + '<br><small style="font-size:0.72rem;opacity:0.8;">Batch processing chal rahi hai — koi highlight nahi chhutega!</small>';
+      ) + '<br><small style="font-size:0.72rem;opacity:0.8;">Batch processing — koi highlight nahi chhutega!</small>';
       msgsEl.appendChild(progressDiv);
       msgsEl.scrollTop = msgsEl.scrollHeight;
     }
@@ -38684,58 +38681,34 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     for(var bi = 0; bi < unitsToProcess.length; bi += BATCH_SIZE) {
       batches.push(unitsToProcess.slice(bi, bi + BATCH_SIZE));
     }
-
     var allNewCards = [];
 
-    var sysPrompt = 'You are a MASTER flashcard creator for Indian competitive exams (UPSC, SSC, Railway, State PSC).
-
-RULES:
-1. Generate EXACTLY ONE flashcard per highlight — no more, no less
-2. Use GROUP (topic name) and CONTEXT (related facts) to understand incomplete highlights
-3. For number/data highlights: use CONTEXT to frame question → Q: What this means, A: The number
-4. Question format must vary: Kab?, Kahan?, Kaun?, Kitna?, Kya hai?, Kis naam se?
-5. Answers must be crisp — 1-2 lines max
-6. Do NOT skip any highlight, do NOT merge highlights
-7. Return ONLY a valid JSON array with SAME count as input highlights
-
-Format: [{"q":"Question","a":"Answer","difficulty":"easy|medium|hard"},...]';
+    var sysPrompt = 'You are a MASTER flashcard creator for Indian competitive exams (UPSC, SSC, Railway, State PSC). RULES: 1. Generate EXACTLY ONE flashcard per highlight. 2. Use GROUP and CONTEXT to understand incomplete highlights. 3. For number/data highlights use CONTEXT to frame question. 4. Vary question format: Kab?, Kahan?, Kaun?, Kitna?, Kya hai? 5. Answers must be crisp 1-2 lines. 6. Do NOT skip any highlight. 7. Return ONLY valid JSON array with SAME count as input. Format: [{"q":"Question","a":"Answer","difficulty":"easy|medium|hard"},...]';
 
     function updateProgress(batchIdx) {
       if(!progressDiv) return;
       var done = Math.min(batchIdx * BATCH_SIZE, totalUnits);
       var pct = batches.length > 0 ? Math.round((batchIdx / batches.length) * 100) : 0;
       progressDiv.innerHTML =
-        '<div style="font-weight:800;margin-bottom:8px;">Batch <b>'+(batchIdx+1)+'</b>/<b>'+batches.length+'</b> — <b>'+done+'/'+totalUnits+'</b> highlights done</div>' +
+        '<div style="font-weight:800;margin-bottom:8px;">Batch <b>'+(batchIdx+1)+'</b>/<b>'+batches.length+'</b> — <b>'+done+'/'+totalUnits+'</b> done</div>' +
         '<div style="background:var(--bg2,#d4eaf7);border-radius:20px;height:8px;overflow:hidden;margin-bottom:6px;">' +
           '<div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,#1565c0,#6a1b9a);border-radius:20px;transition:width 0.4s;"></div>' +
         '</div>' +
-        '<div style="font-size:0.72rem;color:var(--text2,#37526d);">✅ <b>'+done+'</b> ho gaye &nbsp;|&nbsp; ⏳ <b>'+(totalUnits-done)+'</b> baki</div>';
+        '<div style="font-size:0.72rem;">✅ <b>'+done+'</b> ho gaye  |  ⏳ <b>'+(totalUnits-done)+'</b> baki</div>';
     }
 
     function processBatch(batchIdx) {
-      if(batchIdx >= batches.length) {
-        finalizeBatchCards(allNewCards, unitsToProcess);
-        return;
-      }
+      if(batchIdx >= batches.length) { finalizeBatchCards(allNewCards, unitsToProcess); return; }
       updateProgress(batchIdx);
       var batch = batches[batchIdx];
+      var NL2 = String.fromCharCode(10);
       var hlListStr = batch.map(function(u, idx){
         var line = (idx+1) + '. HIGHLIGHT: "' + u.text + '"';
-        if(u.groupName) line += '
-   GROUP: ' + u.groupName;
-        if(u.groupContext && u.groupContext !== u.text) line += '
-   CONTEXT: ' + u.groupContext;
+        if(u.groupName) line += NL2 + '   GROUP: ' + u.groupName;
+        if(u.groupContext && u.groupContext !== u.text) line += NL2 + '   CONTEXT: ' + u.groupContext;
         return line;
-      }).join('
-
-');
-
-      var userMsg = 'Generate exactly ' + batch.length + ' flashcards for these highlights (one per highlight, same order):
-
-' + hlListStr + '
-
-Return JSON array only — exactly ' + batch.length + ' objects.';
-
+      }).join(NL2 + NL2);
+      var userMsg = 'Generate exactly ' + batch.length + ' flashcards for these highlights (one per highlight, same order):' + NL2 + NL2 + hlListStr + NL2 + NL2 + 'Return JSON array only — exactly ' + batch.length + ' objects.';
       fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
@@ -38743,123 +38716,94 @@ Return JSON array only — exactly ' + batch.length + ' objects.';
           model: 'llama-3.3-70b-versatile',
           max_tokens: 150 * batch.length + 300,
           temperature: 0.4,
-          messages: [
-            { role: 'system', content: sysPrompt },
-            { role: 'user', content: userMsg }
-          ]
+          messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userMsg }]
         })
       }).then(function(r){ return r.json(); }).then(function(data){
-        if(data.error) {
-          console.warn('Batch ' + batchIdx + ' API error:', data.error.message);
-        } else {
+        if(!data.error) {
           var raw = (data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'[]';
           try {
             var clean = raw.replace(/[`]{3}json|[`]{3}/g,'').trim();
             var match = clean.match(/[[sS]*]/);
             if(match) clean = match[0];
             var arr = JSON.parse(clean);
-            arr.forEach(function(fc){
-              if(fc.q && fc.a) allNewCards.push({ q: fc.q, a: fc.a, difficulty: fc.difficulty||'medium' });
-            });
-          } catch(e) { console.warn('Batch ' + batchIdx + ' parse error:', e); }
-        }
+            arr.forEach(function(fc){ if(fc.q && fc.a) allNewCards.push({ q: fc.q, a: fc.a, difficulty: fc.difficulty||'medium' }); });
+          } catch(e) { console.warn('Batch '+batchIdx+' parse error:', e); }
+        } else { console.warn('Batch '+batchIdx+' error:', data.error.message); }
         setTimeout(function(){ processBatch(batchIdx + 1); }, 200);
       }).catch(function(err){
-        console.warn('Batch ' + batchIdx + ' fetch error:', err);
+        console.warn('Batch '+batchIdx+' fetch error:', err);
         setTimeout(function(){ processBatch(batchIdx + 1); }, 500);
       });
     }
 
     function finalizeBatchCards(cards, usedUnits) {
       if(progressDiv) progressDiv.remove();
-
       if(!cards || !cards.length) {
         if(msgsEl) {
-          var eDiv = document.createElement('div');
-          eDiv.className = 'ai-msg bot';
-          eDiv.style.color = '#c62828';
+          var eDiv = document.createElement('div'); eDiv.className = 'ai-msg bot'; eDiv.style.color = '#c62828';
           eDiv.textContent = 'Koi flashcard nahi ban saka. Dobara try karo.';
           msgsEl.appendChild(eDiv);
         }
         return;
       }
-
       var t = null;
-      try {
-        if(typeof _sc !== 'undefined' && _sc.tid != null && typeof getTop === 'function') {
-          t = getTop(_sc.sid, _sc.secid, _sc.tid);
-        }
-      } catch(gtErr) { t = null; }
-
+      try { if(typeof _sc !== 'undefined' && _sc.tid != null && typeof getTop === 'function') t = getTop(_sc.sid, _sc.secid, _sc.tid); } catch(e) {}
       var addedCount = 0;
       if(t) {
         if(!t.flashcards) t.flashcards = [];
         var now = new Date().toLocaleDateString('hi-IN');
         var _existQA = {};
         (t.flashcards||[]).forEach(function(efc){
-          var eKey = typeof _scNormFact==='function' ? _scNormFact((efc.q||efc.front||'')+(efc.a||efc.back||'')) : ((efc.q||efc.front||'')+(efc.a||efc.back||'')).toLowerCase().trim();
-          _existQA[eKey] = true;
+          var k = typeof _scNormFact==='function'?_scNormFact((efc.q||efc.front||'')+(efc.a||efc.back||'')):((efc.q||efc.front||'')+(efc.a||efc.back||'')).toLowerCase().trim();
+          _existQA[k] = true;
         });
         var newLibCards = [];
         cards.forEach(function(card, ci){
           if(card.q && card.a) {
-            var dedupKey = typeof _scNormFact==='function' ? _scNormFact(card.q+card.a) : (card.q+card.a).toLowerCase().trim();
-            if(_existQA[dedupKey]) return;
-            _existQA[dedupKey] = true;
-            var cardId = 'fc_sc_' + Date.now() + '_' + ci;
-            var cardObj = { id: cardId, front: card.q, back: card.a, q: card.q, a: card.a, source: 'canvas', addedAt: now, difficulty: card.difficulty||'medium' };
-            t.flashcards.push(cardObj);
-            newLibCards.push(cardObj);
-            addedCount++;
+            var dk = typeof _scNormFact==='function'?_scNormFact(card.q+card.a):(card.q+card.a).toLowerCase().trim();
+            if(_existQA[dk]) return;
+            _existQA[dk] = true;
+            var cId = 'fc_sc_' + Date.now() + '_' + ci;
+            var cObj = { id:cId, front:card.q, back:card.a, q:card.q, a:card.a, source:'canvas', addedAt:now, difficulty:card.difficulty||'medium' };
+            t.flashcards.push(cObj); newLibCards.push(cObj); addedCount++;
           }
         });
         t.fcHash = '';
-        try { if(typeof save==='function') save(); else localStorage.setItem('epp5', JSON.stringify(S)); } catch(sE) {}
-
-        // Also save to scFC localStorage key
+        try { if(typeof save==='function') save(); else localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
         try {
           if(typeof _sc !== 'undefined' && _sc.tid != null) {
             var fcKey = 'scFC_' + _sc.tid;
-            var existingFc = {};
-            try { existingFc = JSON.parse(localStorage.getItem(fcKey)) || {}; } catch(pe) {}
-            var existCards2 = existingFc.cards || [];
-            var existQA2 = {};
-            existCards2.forEach(function(ec){ existQA2[typeof _scNormFact==='function'?_scNormFact((ec.q||'')+(ec.a||'')):(ec.q+ec.a).toLowerCase().trim()] = true; });
+            var exFc = {}; try { exFc = JSON.parse(localStorage.getItem(fcKey)) || {}; } catch(e) {}
+            var exCards = exFc.cards || [], exQA = {};
+            exCards.forEach(function(ec){ exQA[typeof _scNormFact==='function'?_scNormFact((ec.q||'')+(ec.a||'')):(ec.q+ec.a).toLowerCase().trim()] = true; });
             newLibCards.forEach(function(nc){
-              var ncKey = typeof _scNormFact==='function'?_scNormFact((nc.q||'')+(nc.a||'')):(nc.q+nc.a).toLowerCase().trim();
-              if(existQA2[ncKey]) return;
-              existQA2[ncKey] = true;
-              existCards2.push(nc);
+              var nk = typeof _scNormFact==='function'?_scNormFact((nc.q||'')+(nc.a||'')):(nc.q+nc.a).toLowerCase().trim();
+              if(exQA[nk]) return; exQA[nk] = true; exCards.push(nc);
             });
-            existingFc.cards = existCards2;
-            existingFc.progress = existingFc.progress || {};
-            localStorage.setItem(fcKey, JSON.stringify(existingFc));
+            exFc.cards = exCards; exFc.progress = exFc.progress || {};
+            localStorage.setItem(fcKey, JSON.stringify(exFc));
           }
-        } catch(fcSaveE) {}
+        } catch(e) {}
       }
-
-      // Mark ALL used highlights as covered (prevent future duplicates)
+      // Mark all used highlights as covered (no duplicates next time)
       if(typeof _scFC !== 'undefined' && usedUnits && usedUnits.length) {
         var covF = _scFC.coveredFacts || [];
-        var covFNorm = covF.map(function(f){ return typeof _scNormFact==='function'?_scNormFact(f):f.toLowerCase().trim(); });
+        var covFN = covF.map(function(f){ return typeof _scNormFact==='function'?_scNormFact(f):f.toLowerCase().trim(); });
         usedUnits.forEach(function(u){
-          var fn = typeof _scNormFact==='function' ? _scNormFact(u.text) : u.text.toLowerCase().trim();
-          if(covFNorm.indexOf(fn) === -1) { covF.push(fn); covFNorm.push(fn); }
+          var fn = typeof _scNormFact==='function'?_scNormFact(u.text):u.text.toLowerCase().trim();
+          if(covFN.indexOf(fn) === -1){ covF.push(fn); covFN.push(fn); }
         });
         _scFC.coveredFacts = covF;
         if(typeof _scFCSave === 'function') _scFCSave();
       }
-
       if(msgsEl) {
-        var doneDiv = document.createElement('div');
-        doneDiv.className = 'ai-msg bot';
-        doneDiv.innerHTML =
-          '<b>' + addedCount + ' naye flashcards Library mein save ho gaye!</b><br>' +
+        var dDiv = document.createElement('div'); dDiv.className = 'ai-msg bot';
+        dDiv.innerHTML = '<b>' + addedCount + ' naye flashcards Library mein save ho gaye!</b><br>' +
           '<div style="font-size:0.78rem;line-height:1.7;margin-top:5px;">' +
           '<b>' + totalUnits + '</b> highlights process hue<br>' +
-          '<b>' + addedCount + '</b> new cards added (same cards skip kiye)<br>' +
+          '<b>' + addedCount + '</b> cards added (duplicates skip)<br>' +
           'Library → Topic → Flashcards mein dekho!</div>';
-        msgsEl.appendChild(doneDiv);
+        msgsEl.appendChild(dDiv);
         msgsEl.scrollTop = msgsEl.scrollHeight;
       }
       if(typeof showToast==='function') showToast(addedCount + ' flashcards Library mein save!', 'success');
