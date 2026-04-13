@@ -33464,7 +33464,7 @@ function _scSyncCoveredFromLibrary(canvasContent) {
 
         // Method 1: Direct substring match (fact text card mein directly hai)
         var directMatch = allCardTexts.some(function(ct) {
-          return ct.indexOf(fn) !== -1 || fn.indexOf(ct) !== -1;
+          return ct.indexOf(fn) !== -1 && fn.length > 10; // card must contain full fact (fn.indexOf direction removed — caused false positives)
         });
         if(directMatch) { covered.push(fn); changed = true; return; }
 
@@ -38969,17 +38969,23 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
                 _scFCLoad();
                 var covF2  = _scFC.coveredFacts || [];
                 var covF2N = covF2.map(_scNormFact);
-                // _unitsToUseReq mein woh individual highlights hain jo is batch mein use hue
-                if(typeof _unitsToUseReq !== 'undefined' && _unitsToUseReq.length > 0) {
+                // FIXED: Sirf jinke flashcards actually bane (newCards) unhe covered mark karo
+                // Saare _unitsToUseReq mark karna GALAT tha — AI ne truncation se sirf kuch hi process kiye
+                if(typeof _unitsToUseReq !== 'undefined' && _unitsToUseReq.length > 0 && newCards && newCards.length > 0) {
+                  // Card Q+A text se highlight match karke accurate tracking karo
+                  var _newCardTexts = newCards.map(function(nc){
+                    return _scNormFact((nc.q||'')+' '+(nc.a||''));
+                  });
                   _unitsToUseReq.forEach(function(u){
                     var fn = _scNormFact(u.text);
-                    if(covF2N.indexOf(fn) === -1){ covF2.push(fn); covF2N.push(fn); }
-                  });
-                } else if(typeof _scExtractFactLines === 'function') {
-                  var usedF2 = _scExtractFactLines(slidesText);
-                  usedF2.forEach(function(f){
-                    var fn = _scNormFact(f);
-                    if(covF2N.indexOf(fn) === -1){ covF2.push(fn); covF2N.push(fn); }
+                    if(covF2N.indexOf(fn) !== -1) return; // already covered
+                    var uWords = fn.split(' ').filter(function(w){ return w.length > 3; });
+                    if(uWords.length < 2) return; // too short to match reliably
+                    var matched = _newCardTexts.some(function(ct){
+                      var hits = uWords.filter(function(w){ return ct.indexOf(w) !== -1; });
+                      return hits.length >= Math.ceil(uWords.length * 0.55);
+                    });
+                    if(matched){ covF2.push(fn); covF2N.push(fn); }
                   });
                 }
                 _scFC.coveredFacts = covF2;
