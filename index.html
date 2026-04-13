@@ -228,6 +228,11 @@ body.reading-focus:not(.night-mode) {
 }
 
 /* Auto-hide toolbar animations */
+/* Flashcard batch spinner animation */
+@keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+@keyframes fcPulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.fc-spinner { animation: spin 1s linear infinite; display:inline-block; }
+.fc-pulse { animation: fcPulse 1.2s ease infinite; }
 .sc-toolbar-autohide { transition: opacity 0.4s ease, max-height 0.4s ease, padding 0.3s ease !important; }
 .sc-toolbar-hidden { opacity: 0 !important; max-height: 0 !important; padding: 0 !important; overflow: hidden !important; pointer-events: none !important; }
 
@@ -33418,7 +33423,6 @@ function _scSyncCoveredFromLibrary(canvasContent) {
         if(covered.indexOf(fn) !== -1) return;
 
         var factWords = fn.split(' ').filter(function(w){ return w.length > 3; });
-        if(!factWords.length) { covered.push(fn); changed = true; return; }
 
         var matched = allCardTexts.some(function(ct) {
           var hits = factWords.filter(function(w){ return ct.indexOf(w) !== -1; });
@@ -33628,6 +33632,24 @@ function scAiMakeFlashcards() {
   if(!content.trim()) { _scAiMsg('bot','⚠️ Canvas mein koi content nahi!'); return; }
 
   _scFCLoad();
+  // AUTO-RESET: Agar library aur scFC dono mein 0 flashcards hain toh coveredFacts clear karo
+  // Yeh "Saare facts cover ho chuke hain" false positive se bachata hai
+  try {
+    var _libFcCount = 0;
+    if(typeof S !== 'undefined' && S.subjects && typeof _sc !== 'undefined' && _sc.tid != null) {
+      S.subjects.forEach(function(subj){
+        (subj.sections||[]).forEach(function(sec){
+          (sec.topics||[]).forEach(function(top){
+            if(String(top.id)===String(_sc.tid)) _libFcCount += (top.flashcards||[]).length;
+          });
+        });
+      });
+    }
+    if(_libFcCount === 0 && (!_scFC.cards || _scFC.cards.length === 0)) {
+      _scFC.coveredFacts = [];
+      _scFCSave();
+    }
+  } catch(_rstErr) {}
   // Library ke existing flashcards se coveredFacts sync karo
   if(typeof _scSyncCoveredFromLibrary === 'function') _scSyncCoveredFromLibrary(content);
 
@@ -33780,14 +33802,12 @@ function scAiMakeFlashcards() {
 
     document.getElementById('_scFCQ').innerHTML = '🃏 <b>Step 2:</b> <b>' + totalUnits + ' highlights</b> se flashcards ban rahe hain...';
 
-    // ── BATCH PROCESSING: max 15 per batch, up to 3 batches ──
-    var BATCH_SIZE = 15;
+    // ── BATCH PROCESSING: 25 per batch, ALL batches processed (no cap) ──
+    var BATCH_SIZE = 25;
     var batches = [];
     for(var bi = 0; bi < unitsToProcess.length; bi += BATCH_SIZE) {
       batches.push(unitsToProcess.slice(bi, bi + BATCH_SIZE));
     }
-    // Limit to 3 batches
-    if(batches.length > 3) batches = batches.slice(0, 3);
 
     var allCards = [];
     var batchsDone = 0;
@@ -33802,9 +33822,27 @@ function scAiMakeFlashcards() {
       }
 
       var batch = batches[batchIdx];
-      var totalBatches = Math.min(batches.length, 3);
+      var totalBatches = batches.length;
+      var _processed = batchIdx * 25;
+      var _pct = totalBatches > 0 ? Math.round((batchIdx / totalBatches) * 100) : 0;
+      var _remaining = totalUnits - _processed;
       document.getElementById('_scFCQ').innerHTML =
-        '🃏 <b>Batch ' + (batchIdx+1) + '/' + totalBatches + ':</b> ' + batch.length + ' highlights process ho rahe hain...';
+        '<div style="font-size:0.78rem;font-weight:800;color:var(--text,#0d1b2a);margin-bottom:10px;">' +
+          '🃏 Batch <b>' + (batchIdx+1) + '</b> / <b>' + totalBatches + '</b>' +
+          ' &nbsp;|&nbsp; <b>' + batch.length + '</b> highlights is batch mein' +
+        '</div>' +
+        '<div style="background:var(--bg2,#d4eaf7);border-radius:20px;height:8px;overflow:hidden;margin-bottom:8px;">' +
+          '<div style="height:100%;width:' + _pct + '%;background:linear-gradient(90deg,#1565c0,#6a1b9a);border-radius:20px;transition:width 0.4s ease;"></div>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--text2,#37526d);margin-bottom:10px;">' +
+          '<span>✅ <b>' + _processed + '</b> processed</span>' +
+          '<span>' + _pct + '%</span>' +
+          '<span>⏳ <b>' + _remaining + '</b> remaining</span>' +
+        '</div>' +
+        '<div style="font-size:0.72rem;color:#1565c0;background:rgba(21,101,192,0.07);padding:6px 10px;border-radius:8px;display:flex;align-items:center;gap:6px;">' +
+          '<span style="display:inline-block;animation:spin 1s linear infinite;font-size:0.9rem;">⏳</span>' +
+          ' AI <b>' + batch.length + '</b> highlights ke liye flashcards bana raha hai...' +
+        '</div>';
 
       // Build highlight list for this batch
       var hlListStr = batch.map(function(u, idx) {
@@ -33855,6 +33893,29 @@ function scAiMakeFlashcards() {
           // Still continue with next batch
         }
         batchsDone++;
+        // Show "batch done" progress before starting next batch
+        try {
+          var _doneProcessed = batchsDone * 25;
+          if(_doneProcessed > totalUnits) _doneProcessed = totalUnits;
+          var _donePct = Math.round((_doneProcessed / totalUnits) * 100);
+          var _cardsNow = allCards.length;
+          document.getElementById('_scFCQ').innerHTML =
+            '<div style="font-size:0.78rem;font-weight:800;color:var(--text,#0d1b2a);margin-bottom:8px;">' +
+              '✅ Batch <b>' + batchsDone + '</b>/<b>' + batches.length + '</b> complete — ' +
+              '<b>' + _cardsNow + '</b> flashcards ban chuke hain' +
+            '</div>' +
+            '<div style="background:var(--bg2,#d4eaf7);border-radius:20px;height:8px;overflow:hidden;margin-bottom:8px;">' +
+              '<div style="height:100%;width:' + _donePct + '%;background:linear-gradient(90deg,#1565c0,#6a1b9a);border-radius:20px;transition:width 0.5s ease;"></div>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--text2,#37526d);margin-bottom:8px;">' +
+              '<span>✅ <b>' + _doneProcessed + '</b> processed</span>' +
+              '<span style="font-weight:800;color:#2e7d32;">' + _donePct + '%</span>' +
+              '<span>📋 <b>' + (totalUnits - _doneProcessed) + '</b> remaining</span>' +
+            '</div>' +
+            (batchsDone < batches.length
+              ? '<div style="font-size:0.72rem;color:#e65100;background:rgba(230,81,0,0.07);padding:5px 10px;border-radius:8px;">⏳ Agla batch process ho raha hai...</div>'
+              : '');
+        } catch(_pErr) {}
         processBatch(batchIdx + 1);
       }).catch(function(e2){
         console.warn('Batch ' + batchIdx + ' network error:', e2);
@@ -38381,6 +38442,23 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
 
     // ── COVERED FACTS CHECK (same system as canvas AI panel) ──
     if(typeof _scFCLoad === 'function') _scFCLoad();
+      // AUTO-RESET: Library mein 0 flashcards → coveredFacts clear karo
+      try {
+        var _wLibCount = 0;
+        if(typeof S !== 'undefined' && S.subjects && typeof _sc !== 'undefined' && _sc.tid != null) {
+          S.subjects.forEach(function(subj){
+            (subj.sections||[]).forEach(function(sec){
+              (sec.topics||[]).forEach(function(top){
+                if(String(top.id)===String(_sc.tid)) _wLibCount += (top.flashcards||[]).length;
+              });
+            });
+          });
+        }
+        if(_wLibCount === 0 && typeof _scFC !== 'undefined' && (!_scFC.cards || _scFC.cards.length === 0)) {
+          if(typeof _scFC !== 'undefined') _scFC.coveredFacts = [];
+          if(typeof _scFCSave === 'function') _scFCSave();
+        }
+      } catch(_wResetErr) {}
     if(typeof _scSyncCoveredFromLibrary === 'function') _scSyncCoveredFromLibrary(slidesText);
     if(typeof _scGetNewFacts === 'function' && typeof _scExtractFactLines === 'function') {
       var _allFacts2  = _scExtractFactLines(slidesText);
