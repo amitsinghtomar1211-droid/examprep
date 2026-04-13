@@ -38776,7 +38776,15 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
         return;
       }
       var t = null;
-      try { if(typeof _sc !== 'undefined' && _sc.tid != null && typeof getTop === 'function') t = getTop(_sc.sid, _sc.secid, _sc.tid); } catch(e) {}
+      console.log('[FC-SAVE] finalizeBatchCards start — _sc.sid:', _sc&&_sc.sid, '_sc.secid:', _sc&&_sc.secid, '_sc.tid:', _sc&&_sc.tid, 'cards to save:', cards&&cards.length);
+      try {
+        if(typeof _sc !== 'undefined' && _sc.tid != null && typeof getTop === 'function') {
+          t = getTop(_sc.sid, _sc.secid, _sc.tid);
+          console.log('[FC-SAVE] getTop result:', t ? ('✅ topic found: ' + t.name) : '❌ NULL — topic not found! sid/secid/tid mismatch?');
+        } else {
+          console.warn('[FC-SAVE] getTop skip — _sc.tid null or getTop missing. _sc:', typeof _sc, 'getTop:', typeof getTop);
+        }
+      } catch(e) { console.error('[FC-SAVE] getTop exception:', e); }
       var addedCount = 0;
       if(t) {
         if(!t.flashcards) t.flashcards = [];
@@ -38786,6 +38794,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
           var k = typeof _scNormFact==='function'?_scNormFact((efc.q||efc.front||'')+(efc.a||efc.back||'')):((efc.q||efc.front||'')+(efc.a||efc.back||'')).toLowerCase().trim();
           _existQA[k] = true;
         });
+        console.log('[FC-SAVE] Existing flashcards in topic:', t.flashcards.length, '| New cards to process:', cards.length);
         var newLibCards = [];
         cards.forEach(function(card, ci){
           if(card.q && card.a) {
@@ -38798,11 +38807,21 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
           }
         });
         t.fcHash = '';
-        try { if(typeof save==='function') save(); else localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
+        console.log('[FC-SAVE] t.flashcards after push:', t.flashcards.length, '| addedCount:', addedCount);
+        try {
+          if(typeof save==='function') { save(); console.log('[FC-SAVE] ✅ save() called — epp5 localStorage updated'); }
+          else { localStorage.setItem('epp5', JSON.stringify(S)); console.log('[FC-SAVE] ✅ fallback epp5 save done'); }
+          // Verify: epp5 mein actual topic flashcards count check karo
+          try {
+            var _vs = JSON.parse(localStorage.getItem('epp5')||'{}'), _vfc = null;
+            (_vs.subjects||[]).forEach(function(subj){ (subj.sections||[]).forEach(function(sec){ (sec.topics||[]).forEach(function(top){ if(String(top.id)===String(_sc.tid)) _vfc=top.flashcards; }); }); });
+            console.log('[FC-SAVE] VERIFY epp5 — topic flashcards in storage:', _vfc ? _vfc.length : '❌ topic not found in saved epp5');
+          } catch(_ve){ console.warn('[FC-SAVE] epp5 verify error:', _ve); }
+        } catch(e) { console.error('[FC-SAVE] ❌ save() FAILED:', e); }
         try {
           if(typeof _sc !== 'undefined' && _sc.tid != null) {
             var fcKey = 'scFC_' + _sc.tid;
-            var exFc = {}; try { exFc = JSON.parse(localStorage.getItem(fcKey)) || {}; } catch(e) {}
+            var exFc = {}; try { exFc = JSON.parse(localStorage.getItem(fcKey)) || {}; } catch(e) { console.warn('[FC-SAVE] scFC parse error:', e); }
             var exCards = exFc.cards || [], exQA = {};
             exCards.forEach(function(ec){ exQA[typeof _scNormFact==='function'?_scNormFact((ec.q||'')+(ec.a||'')):(ec.q+ec.a).toLowerCase().trim()] = true; });
             newLibCards.forEach(function(nc){
@@ -38811,8 +38830,37 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
             });
             exFc.cards = exCards; exFc.progress = exFc.progress || {};
             localStorage.setItem(fcKey, JSON.stringify(exFc));
+            console.log('[FC-SAVE] ✅ scFC_'+_sc.tid+' saved — total cards in storage:', exFc.cards.length);
+          } else {
+            console.warn('[FC-SAVE] ⚠️ scFC localStorage SKIPPED — _sc.tid is null!');
           }
-        } catch(e) {}
+        } catch(e) { console.error('[FC-SAVE] ❌ scFC localStorage save FAILED:', e); }
+      } else {
+        // t is null — getTop failed, still try to save to scFC localStorage as fallback
+        console.error('[FC-SAVE] ❌ t is NULL — S object mein save NAHI hoga. getTop('+(_sc&&_sc.sid)+','+(_sc&&_sc.secid)+','+(_sc&&_sc.tid)+') returned null.');
+        console.warn('[FC-SAVE] Fallback: scFC localStorage mein direct save kar raha hoon...');
+        try {
+          if(typeof _sc !== 'undefined' && _sc.tid != null) {
+            var fcKey2 = 'scFC_' + _sc.tid;
+            var exFc2 = {}; try { exFc2 = JSON.parse(localStorage.getItem(fcKey2)) || {}; } catch(e2) { console.warn('[FC-SAVE] fallback scFC parse error:', e2); }
+            var exCards2 = exFc2.cards || [], exQA2 = {};
+            exCards2.forEach(function(ec){ exQA2[typeof _scNormFact==='function'?_scNormFact((ec.q||'')+(ec.a||'')):(ec.q+ec.a).toLowerCase().trim()] = true; });
+            var now2 = new Date().toLocaleDateString('hi-IN');
+            cards.forEach(function(card, ci){
+              if(card.q && card.a) {
+                var dk2 = typeof _scNormFact==='function'?_scNormFact(card.q+card.a):(card.q+card.a).toLowerCase().trim();
+                if(exQA2[dk2]) return; exQA2[dk2] = true;
+                var cObj2 = { id:'fc_sc_'+Date.now()+'_'+ci, front:card.q, back:card.a, q:card.q, a:card.a, source:'canvas', addedAt:now2, difficulty:card.difficulty||'medium' };
+                exCards2.push(cObj2); addedCount++;
+              }
+            });
+            exFc2.cards = exCards2; exFc2.progress = exFc2.progress || {};
+            localStorage.setItem(fcKey2, JSON.stringify(exFc2));
+            console.log('[FC-SAVE] ✅ Fallback scFC save done — cards:', exFc2.cards.length, '| addedCount:', addedCount);
+          } else {
+            console.error('[FC-SAVE] ❌ Fallback FAILED — _sc.tid bhi null hai, koi save nahi hua!');
+          }
+        } catch(e) { console.error('[FC-SAVE] ❌ Fallback save exception:', e); }
       }
       // Mark all used highlights as covered (no duplicates next time)
       if(typeof _scFC !== 'undefined' && usedUnits && usedUnits.length) {
