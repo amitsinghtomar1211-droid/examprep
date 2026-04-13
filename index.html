@@ -33474,7 +33474,7 @@ function _scSyncCoveredFromLibrary(canvasContent) {
         if(factWords.length >= 5) {
           var matched = allCardTexts.some(function(ct) {
             var hits = factWords.filter(function(w){ return ct.indexOf(w) !== -1; });
-            return hits.length >= Math.ceil(factWords.length * 0.85);
+            return hits.length >= factWords.length; // 100% strict — word repetition se covered mark na ho
           });
           if(matched) { covered.push(fn); changed = true; }
         }
@@ -33816,13 +33816,34 @@ function scAiMakeFlashcards() {
               }
             });
           } else {
-            // Single highlight box
-            hlUnits.push({
-              text: rawTxt,
-              groupName: null,
-              groupContext: null,
-              isSingle: true
-            });
+            // Single highlight box — <br> se multiple lines ho sakti hain
+            // Har line ek alag highlight fact hai — alag alag flashcard banana hai
+            var rawHtml = b.html || '';
+            // <br> → newline, then strip all other tags
+            var multiLine = rawHtml
+              .replace(/<br[^>]*>/gi, '\n')
+              .replace(/<\/p>/gi, '\n').replace(/<p[^>]*>/gi, '')
+              .replace(/<\/div>/gi, '\n').replace(/<div[^>]*>/gi, '')
+              .replace(/<[^>]*>/g, '')
+              .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+              .replace(/&nbsp;/g,' ');
+            var lineItems = multiLine.split('\n')
+              .map(function(l){ return l.trim(); })
+              .filter(function(l){ return l.length > 2; });
+            if(lineItems.length <= 1) {
+              // Single line — push as-is
+              if(rawTxt) hlUnits.push({ text: rawTxt, groupName: null, groupContext: null, isSingle: true });
+            } else {
+              // Multi-line box — har line alag hlUnit, baaki lines context mein
+              lineItems.forEach(function(lineText) {
+                hlUnits.push({
+                  text: lineText,
+                  groupName: null,
+                  groupContext: lineItems.join(' | '), // sibling lines provide context
+                  isSingle: false
+                });
+              });
+            }
           }
         });
       });
@@ -33870,7 +33891,7 @@ function scAiMakeFlashcards() {
     function processBatch(batchIdx) {
       if(batchIdx >= batches.length) {
         // All batches done — save and show
-        _finalizeFcCards(allCards, curHash, topicName, analysis);
+        _finalizeFcCards(allCards, curHash, topicName, analysis, unitsToProcess);
         return;
       }
 
@@ -33986,7 +34007,7 @@ function scAiMakeFlashcards() {
 }
 
 // ── Finalize and save generated flashcards ──
-function _finalizeFcCards(allCards, curHash, topicName, analysis) {
+function _finalizeFcCards(allCards, curHash, topicName, analysis, usedUnits) {
   if(!allCards || allCards.length === 0) {
     document.getElementById('_scFCQ').textContent = '❌ Koi flashcard generate nahi hua. Dobara try karo.';
     return;
@@ -34011,13 +34032,11 @@ function _finalizeFcCards(allCards, curHash, topicName, analysis) {
     _scFC.topic = topicName;
     _scFC.generatedAt = new Date().toLocaleDateString('hi-IN');
 
-    // Mark ONLY the highlights that ACTUALLY had flashcards generated for them as COVERED
-    // Source: unitsToProcess (exact highlight texts) — inka flashcard bana, inhe covered karo
+    // Mark ONLY highlights that were actually sent to AI as COVERED
     var alreadyCovered = _scFC.coveredFacts || [];
     var alreadyCoveredNorm = alreadyCovered.map(function(f){ return typeof _scNormFact==='function'?_scNormFact(f):f; });
-    // unitsToProcess = wahi highlights jinke liye AI ko bheja gaya tha
-    if(typeof unitsToProcess !== 'undefined') {
-      unitsToProcess.forEach(function(u){
+    if(usedUnits && usedUnits.length) {
+      usedUnits.forEach(function(u){
         var fn = typeof _scNormFact==='function' ? _scNormFact(u.text) : u.text.toLowerCase().trim();
         if(alreadyCoveredNorm.indexOf(fn) === -1){
           alreadyCovered.push(fn);
@@ -38583,7 +38602,13 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
             if(!rawTxt) return;
             if(b._isGroupBox && b._groupItems && b._groupItems.length > 1){
               b._groupItems.forEach(function(it){ if(it&&it.trim()) _allHlUnits2.push(it.trim()); });
-            } else { _allHlUnits2.push(rawTxt); }
+            } else {
+              // Multi-line single box — split by <br>
+              var _ml2 = (b.html||'').replace(/<br[^>]*>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<p[^>]*>/gi,'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ');
+              var _li2 = _ml2.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>2;});
+              if(_li2.length > 1){ _li2.forEach(function(l){ _allHlUnits2.push(l); }); }
+              else if(rawTxt) { _allHlUnits2.push(rawTxt); }
+            }
           });
         });
       }
