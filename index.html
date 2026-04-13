@@ -38673,22 +38673,38 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       (function(){
         if(typeof _scFCLoad==='function') _scFCLoad();
         if(typeof _scSyncCoveredFromLibrary==='function' && typeof _scCollectAllSlidesText==='function') _scSyncCoveredFromLibrary(_scCollectAllSlidesText());
-        if(typeof _scGetNewFacts==='function' && typeof _scExtractFactLines==='function') {
-          var _st = typeof _scCollectAllSlidesText==='function' ? _scCollectAllSlidesText() : '';
-          var _all = _scExtractFactLines(_st);
-          var _new = _scGetNewFacts(_st);
-          var _covered = _all.length - _new.length;
-          if(_all.length > 0) {
+        // Per-highlight count — DOM se individual highlights count karo
+          (function(){
+            var _badgeUnits = [];
+            if(typeof _sc !== 'undefined' && _sc.slides) {
+              _sc.slides.forEach(function(slide){
+                (slide.textBlocks||[]).forEach(function(b){
+                  var rT = (b.html||'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
+                  if(!rT) return;
+                  if(b._isGroupBox && b._groupItems && b._groupItems.length > 0){
+                    b._groupItems.forEach(function(it){ if(it&&it.trim()) _badgeUnits.push(it.trim()); });
+                  } else {
+                    var mlB=(b.html||'').replace(/<br[^>]*>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<p[^>]*>/gi,'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ');
+                    var liB=mlB.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>2;});
+                    if(liB.length>1){ liB.forEach(function(l){ _badgeUnits.push(l); }); } else if(rT) { _badgeUnits.push(rT); }
+                  }
+                });
+              });
+            }
+            if(_badgeUnits.length===0 && typeof _scExtractFactLines==='function' && typeof _scCollectAllSlidesText==='function') {
+              _badgeUnits = _scExtractFactLines(_scCollectAllSlidesText());
+            }
+            if(!_badgeUnits.length) return '';
+            var _covN3=(typeof _scFC!=='undefined'?(_scFC.coveredFacts||[]):[]).map(function(f){return typeof _scNormFact==='function'?_scNormFact(f):f.toLowerCase().trim();});
+            var _newB=_badgeUnits.filter(function(u){var t=typeof u==='string'?u:u;return _covN3.indexOf(typeof _scNormFact==='function'?_scNormFact(t):t.toLowerCase().trim())===-1;});
+            var _covB=_badgeUnits.length-_newB.length;
             return '<div style="margin-bottom:10px;padding:7px 10px;background:rgba(21,101,192,0.07);border-radius:9px;border-left:3px solid #1565c0;font-size:0.7rem;line-height:1.6;">' +
-              '📊 Canvas: <b>'+_all.length+'</b> facts total · <b style="color:#c62828;">'+_new.length+'</b> naye (uncovered) · <b style="color:#2e7d32;">'+_covered+'</b> covered<br>' +
-              (_new.length < _all.length
-                ? '🆕 <b>Sirf '+_new.length+' naye facts</b> se flashcards banenge (covered facts skip honge)'
-                : '✨ Pehli baar — <b>saare facts</b> se flashcards banenge') +
+              '📊 Canvas: <b>'+_badgeUnits.length+'</b> highlights total · <b style="color:#c62828;">'+_newB.length+'</b> naye · <b style="color:#2e7d32;">'+_covB+'</b> covered<br>' +
+              (_newB.length < _badgeUnits.length
+                ? '🆕 <b>Sirf '+_newB.length+' naye highlights</b> se flashcards banenge'
+                : '✨ Pehli baar — <b>saare '+_badgeUnits.length+' highlights</b> se flashcards banenge') +
               '</div>';
-          }
-        }
-        return '';
-      })(),
+          })(),
 
       // Difficulty only (count removed)
       '<div style="margin-bottom:10px;">',
@@ -38759,21 +38775,47 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       hard:  'Deep understanding check karo. Why/How type. Conceptual. Comparison-based.'
     }[diff] || 'Mixed difficulty.';
 
-    // ── CRITICAL: Sirf NAYE facts use karo ──
-    var factsToUse = slidesText; // default: pehli baar sab
-    var isFirstTime = true;
-    if(typeof _scFCLoad==='function') _scFCLoad();
-    if(typeof _scSyncCoveredFromLibrary==='function') _scSyncCoveredFromLibrary(slidesText);
-    if(typeof _scGetNewFacts==='function' && typeof _scExtractFactLines==='function') {
-      var _allF = _scExtractFactLines(slidesText);
-      var _newF = _scGetNewFacts(slidesText);
-      if(_allF.length > 0 && _newF.length < _allF.length) {
-        // Kuch facts already covered — sirf naye use karo
-        isFirstTime = false;
-        factsToUse = '=== SIRF NAYE / UNCOVERED FACTS ===\n(Pehle se covered facts yahan nahi hain)\n' + _newF.join('\n');
+    // ── CRITICAL: Har HIGHLIGHT se alag flashcard — per-highlight extraction ──
+      // DOM se individual highlights extract karo (group box mein bhi har item alag)
+      var _allHlUnitsReq = [];
+      if(typeof _sc !== 'undefined' && _sc.slides) {
+        _sc.slides.forEach(function(slide){
+          (slide.textBlocks||[]).forEach(function(b){
+            var rawTxt2 = (b.html||'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
+            if(!rawTxt2) return;
+            if(b._isGroupBox && b._groupItems && b._groupItems.length > 0){
+              var gCtxReq = b._groupItems.filter(function(x){return x&&x.trim();}).join(' | ');
+              b._groupItems.forEach(function(it){
+                if(it&&it.trim()) _allHlUnitsReq.push({ text: it.trim(), groupName: b._groupName||null, groupContext: gCtxReq });
+              });
+            } else {
+              var mlReq = (b.html||'').replace(/<br[^>]*>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<p[^>]*>/gi,'').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ');
+              var liReq = mlReq.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>2;});
+              if(liReq.length > 1){
+                var liCtxReq = liReq.join(' | ');
+                liReq.forEach(function(lineText){ _allHlUnitsReq.push({ text: lineText, groupName: b._groupName||null, groupContext: liCtxReq }); });
+              } else if(rawTxt2) {
+                _allHlUnitsReq.push({ text: rawTxt2, groupName: null, groupContext: null });
+              }
+            }
+          });
+        });
       }
-    }
-
+      if(_allHlUnitsReq.length === 0) {
+        (slidesText||'').split('\n').forEach(function(l){ var lt=l.trim(); if(lt&&!lt.startsWith('===')&&!lt.startsWith('[')&&lt.length>3) _allHlUnitsReq.push({text:lt,groupName:null,groupContext:null}); });
+      }
+      if(typeof _scFCLoad==='function') _scFCLoad();
+      if(typeof _scSyncCoveredFromLibrary==='function') _scSyncCoveredFromLibrary(slidesText);
+      var _covNormsReq = (typeof _scFC!=='undefined'?(_scFC.coveredFacts||[]):[]).map(function(f){ return typeof _scNormFact==='function'?_scNormFact(f):f.toLowerCase().trim(); });
+      var _newHlUnitsReq = _allHlUnitsReq.filter(function(u){ return _covNormsReq.indexOf(typeof _scNormFact==='function'?_scNormFact(u.text):u.text.toLowerCase().trim()) === -1; });
+      var _unitsToUseReq = _newHlUnitsReq.length > 0 ? _newHlUnitsReq : _allHlUnitsReq;
+      var isFirstTime = (_newHlUnitsReq.length === _allHlUnitsReq.length);
+      var factsToUse = _unitsToUseReq.map(function(u, idx){
+        var line = (idx+1) + '. ' + u.text;
+        if(u.groupName) line += ' [Topic: ' + u.groupName + ']';
+        if(u.groupContext && u.groupContext !== u.text) line += ' {Context: ' + u.groupContext + '}';
+        return line;
+      }).join('\n');
     // Remove form
     var existingForm = document.getElementById('_scFcReqForm');
     if(existingForm) existingForm.remove();
@@ -38786,24 +38828,28 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       loadDiv.className = 'ai-msg bot';
       loadDiv.id = '_scFcLoading';
       var loadLabel = isFirstTime
-        ? '⌛ <strong>Pehli baar — saare facts se</strong> flashcards ban rahe hain...'
-        : '🆕 <strong>Sirf naye facts se</strong> flashcards ban rahe hain...';
+        ? '⌛ <strong>' + (typeof _unitsToUseReq !== 'undefined' ? _unitsToUseReq.length : '') + ' highlights</strong> se flashcards ban rahe hain (pehli baar)...'
+          : '🆕 <strong>' + (typeof _unitsToUseReq !== 'undefined' ? _unitsToUseReq.length : '') + ' naye highlights</strong> se flashcards ban rahe hain...';
       loadDiv.innerHTML = loadLabel + '<br><span style="font-size:0.75rem;opacity:0.8;">' + diff + ' difficulty · ' + typeList.join(', ') + '</span>';
       msgsEl.appendChild(loadDiv);
       msgsEl.scrollTop = msgsEl.scrollHeight;
     }
 
-    var prompt = 'Neeche diye gaye Canvas facts se SIRF flashcards banao.\n\n' +
-      '=== USER KI REQUIREMENTS ===\n' +
-      'Focus Area: ' + focus + '\n' +
-      'Difficulty: ' + diffInstr + '\n' +
-      'Question Types: ' + typeInstr + '\n' +
-      'Language: ' + langInstr + '\n' +
-      'Kitne banane hain: Neeche jitne bhi facts diye hain UNME SE HAR EK se kam se kam ek flashcard zaroor banao. Koi fact skip mat karo.\n' +
-      '===========================\n\n' +
-      'Response ONLY valid JSON array mein do, koi bhi extra text ya markdown nahi.\n' +
-      'Format: [{"q":"Question yahan","a":"Answer yahan"},...]\n\n' +
-      'FACTS (inhi se flashcards banao):\n' + factsToUse.substring(0, 7000);
+    var prompt = 'Neeche diye gaye Canvas highlights se flashcards banao.\n\n' +
+        '=== USER KI REQUIREMENTS ===\n' +
+        'Focus Area: ' + focus + '\n' +
+        'Difficulty: ' + diffInstr + '\n' +
+        'Question Types: ' + typeInstr + '\n' +
+        'Language: ' + langInstr + '\n' +
+        '=== IMPORTANT RULES ===\n' +
+        '1. Har numbered item ek ALAG highlight hai — ek item se SIRF EK flashcard banao\n' +
+        '2. {Context:...} bracket mein jo likha hai woh sirf context ke liye hai — flashcard SIRF us numbered item ke baare mein banao\n' +
+        '3. [Topic:...] bracket mein topic name hai — question mein use karo\n' +
+        '4. Koi bhi item skip mat karo — TOTAL flashcards = TOTAL numbered items\n' +
+        '===========================\n\n' +
+        'Response ONLY valid JSON array mein do, koi bhi extra text ya markdown nahi.\n' +
+        'Format: [{"q":"Question yahan","a":"Answer yahan"},...]\n\n' +
+        '=== HIGHLIGHTS (har number = ek highlight = ek alag flashcard) ===\n' + factsToUse.substring(0, 7000);
 
     var groqKeyFC   = (typeof S !== 'undefined') ? S.apiKey : '';
     var groqModelFC = (typeof S !== 'undefined' && S.model) ? S.model : 'meta-llama/llama-4-scout-17b-16e-instruct';
@@ -38919,22 +38965,29 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
             });
           localStorage.setItem(fcKey, JSON.stringify({ cards: existingCards, progress: existingProgress, hash: '' }));
 
-          // ── coveredFacts update — naye facts covered mark karo ──
-          try {
-            if(typeof _scFC !== 'undefined' && typeof _scExtractFactLines === 'function' && typeof _scNormFact === 'function') {
-              _scFCLoad();
-              // Always mark ALL current canvas facts as covered (not just new ones)
-              var usedF2 = _scExtractFactLines(slidesText);
-              var covF2  = _scFC.coveredFacts || [];
-              var covF2N = covF2.map(_scNormFact);
-              usedF2.forEach(function(f){
-                var fn = _scNormFact(f);
-                if(covF2N.indexOf(fn) === -1){ covF2.push(fn); covF2N.push(fn); }
-              });
-              _scFC.coveredFacts = covF2;
-              _scFCSave();
-            }
-          } catch(cfErr) {}
+          // ── coveredFacts update — sirf jinke flashcards bane unhe covered mark karo ──
+            try {
+              if(typeof _scFC !== 'undefined' && typeof _scNormFact === 'function') {
+                _scFCLoad();
+                var covF2  = _scFC.coveredFacts || [];
+                var covF2N = covF2.map(_scNormFact);
+                // _unitsToUseReq mein woh individual highlights hain jo is batch mein use hue
+                if(typeof _unitsToUseReq !== 'undefined' && _unitsToUseReq.length > 0) {
+                  _unitsToUseReq.forEach(function(u){
+                    var fn = _scNormFact(u.text);
+                    if(covF2N.indexOf(fn) === -1){ covF2.push(fn); covF2N.push(fn); }
+                  });
+                } else if(typeof _scExtractFactLines === 'function') {
+                  var usedF2 = _scExtractFactLines(slidesText);
+                  usedF2.forEach(function(f){
+                    var fn = _scNormFact(f);
+                    if(covF2N.indexOf(fn) === -1){ covF2.push(fn); covF2N.push(fn); }
+                  });
+                }
+                _scFC.coveredFacts = covF2;
+                _scFCSave();
+              }
+            } catch(cfErr) {}
         } catch(fcSaveErr) {}
 
         // ── Canvas slides raw text bhi save karo — Quiz mein kaam aayega ──
