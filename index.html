@@ -33881,8 +33881,10 @@ function scAiMakeFlashcards() {
 
     document.getElementById('_scFCQ').innerHTML = '🃏 <b>Step 2:</b> <b>' + totalUnits + ' highlights</b> se flashcards ban rahe hain...';
 
-    // ── BATCH PROCESSING: 25 per batch, ALL batches processed (no cap) ──
-    var BATCH_SIZE = 25;
+    // ── PARALLEL BATCH PROCESSING: 40 per batch, 3 concurrent, unlimited capacity ──
+    var BATCH_SIZE = 40;
+    var PARALLEL_LIMIT = 3; // Groq rate limit ke andar safe parallel calls
+    var MAX_RETRY = 2;      // Failed batch ke liye retry attempts
     var batches = [];
     for(var bi = 0; bi < unitsToProcess.length; bi += BATCH_SIZE) {
       batches.push(unitsToProcess.slice(bi, bi + BATCH_SIZE));
@@ -33890,40 +33892,39 @@ function scAiMakeFlashcards() {
 
     var allCards = [];
     var batchsDone = 0;
+    var batchResults = new Array(batches.length);
 
     var perHlSystem = 'You are a MASTER flashcard creator for Indian competitive exams (UPSC CSE, SSC CGL, Railway NTPC, State PSC).\n\nYou will receive a list of highlights from a student\'s notes. RULES:\n1. Generate EXACTLY ONE flashcard per highlight — no more, no less\n2. Each highlight\'s flashcard must test THAT specific highlight\'s information\n3. If a highlight has GROUP_CONTEXT, use that context to understand what the highlight is about — make the question more precise using context, but the ANSWER must be from the highlight itself\n4. For number/data highlights (e.g. "2509"): use GROUP_CONTEXT to understand WHAT 2509 means → Q: "Rajya mein kitne hospitals hain?" A: "2509"\n5. For short highlights: use context to frame a proper question\n6. Question format must vary: "Kab?", "Kahan?", "Kaun?", "Kitna/Kitne?", "Kis naam se?", "Kya hai?"\n7. Answers must be crisp — 1-2 lines max\n8. difficulty: easy/medium/hard based on how tricky the fact is\n\nKEY: Every highlight MUST produce exactly 1 flashcard. Do NOT skip any. Do NOT merge highlights.\n\nReturn ONLY a valid JSON array with SAME NUMBER of objects as input highlights:\n[{"q":"Question","a":"Answer","difficulty":"easy|medium|hard","sourceIdx":0},...]';
 
-    function processBatch(batchIdx) {
-      if(batchIdx >= batches.length) {
-        // All batches done — save and show
-        _finalizeFcCards(allCards, curHash, topicName, analysis, unitsToProcess);
-        return;
-      }
-
-      var batch = batches[batchIdx];
-      var totalBatches = batches.length;
-      var _processed = batchIdx * 25;
-      var _pct = totalBatches > 0 ? Math.round((batchIdx / totalBatches) * 100) : 0;
-      var _remaining = totalUnits - _processed;
+    // ── Progress UI update helper ──
+    function _updateFcProgress(label) {
+      var _pct = batches.length > 0 ? Math.round((batchsDone / batches.length) * 100) : 0;
+      var _cardsNow = allCards.length;
+      var _processed = Math.min(batchsDone * BATCH_SIZE, totalUnits);
       document.getElementById('_scFCQ').innerHTML =
         '<div style="font-size:0.78rem;font-weight:800;color:var(--text,#0d1b2a);margin-bottom:10px;">' +
-          '🃏 Batch <b>' + (batchIdx+1) + '</b> / <b>' + totalBatches + '</b>' +
-          ' &nbsp;|&nbsp; <b>' + batch.length + '</b> highlights is batch mein' +
+          '\uD83C\uDFBD <b>' + batchsDone + '</b> / <b>' + batches.length + '</b> batches complete' +
+          ' \u00A0|\u00A0 \uD83C\uDFBD <b>' + _cardsNow + '</b> flashcards ready' +
         '</div>' +
-        '<div style="background:var(--bg2,#d4eaf7);border-radius:20px;height:8px;overflow:hidden;margin-bottom:8px;">' +
+        '<div style="background:var(--bg2,#d4eaf7);border-radius:20px;height:10px;overflow:hidden;margin-bottom:8px;">' +
           '<div style="height:100%;width:' + _pct + '%;background:linear-gradient(90deg,#1565c0,#6a1b9a);border-radius:20px;transition:width 0.4s ease;"></div>' +
         '</div>' +
-        '<div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--text2,#37526d);margin-bottom:10px;">' +
-          '<span>✅ <b>' + _processed + '</b> processed</span>' +
-          '<span>' + _pct + '%</span>' +
-          '<span>⏳ <b>' + _remaining + '</b> remaining</span>' +
+        '<div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--text2,#37526d);margin-bottom:8px;">' +
+          '<span>\u2705 <b>' + _processed + '</b> highlights</span>' +
+          '<span style="font-weight:800;color:#1565c0;">' + _pct + '%</span>' +
+          '<span>\u23F3 <b>' + Math.max(0, totalUnits - _processed) + '</b> remaining</span>' +
         '</div>' +
         '<div style="font-size:0.72rem;color:#1565c0;background:rgba(21,101,192,0.07);padding:6px 10px;border-radius:8px;display:flex;align-items:center;gap:6px;">' +
-          '<span style="display:inline-block;animation:spin 1s linear infinite;font-size:0.9rem;">⏳</span>' +
-          ' AI <b>' + batch.length + '</b> highlights ke liye flashcards bana raha hai...' +
+          '<span style="display:inline-block;animation:spin 1s linear infinite;font-size:0.9rem;">\u23F3</span>' +
+          ' ' + (label || (PARALLEL_LIMIT + ' batches parallel process ho rahe hain...')) +
         '</div>';
+    }
 
-      // Build highlight list for this batch
+    // ── Single batch API call with retry ──
+    function _fetchOneBatch(batchIdx, retryCount) {
+      retryCount = retryCount || 0;
+      var batch = batches[batchIdx];
+
       var hlListStr = batch.map(function(u, idx) {
         var line = (idx+1) + '. HIGHLIGHT: "' + u.text + '"';
         if(u.groupName) line += '\n   GROUP_NAME: ' + u.groupName;
@@ -33941,70 +33942,99 @@ function scAiMakeFlashcards() {
         'Include sourceIdx (0-based index of the highlight this card is for).\n' +
         'Return JSON array only — exactly ' + batch.length + ' objects.';
 
-      fetch('https://api.groq.com/openai/v1/chat/completions', {
+      // max_tokens: 200 per highlight + 300 buffer — generous for quality output
+      var maxTok = Math.min(8000, 200 * batch.length + 300);
+
+      return fetch('https://api.groq.com/openai/v1/chat/completions', {
         method:'POST',
         headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+apiKey },
         body: JSON.stringify({
-          model:'llama-3.3-70b-versatile', max_tokens: 150 * batch.length + 200,
+          model:'llama-3.3-70b-versatile',
+          max_tokens: maxTok,
+          temperature: 0.4,
           messages:[
             { role:'system', content: perHlSystem },
             { role:'user',   content: batchUser }
           ]
         })
       }).then(function(r2){ return r2.json(); }).then(function(data2){
+        // Rate limit hit → wait and retry
+        if(data2.error && (data2.error.code === 'rate_limit_exceeded' || (data2.error.message||'').toLowerCase().indexOf('rate') !== -1)) {
+          if(retryCount < MAX_RETRY) {
+            var waitMs = (retryCount + 1) * 5000;
+            console.warn('Rate limit batch ' + batchIdx + ', retry ' + (retryCount+1) + ' after ' + waitMs + 'ms');
+            return new Promise(function(res){ setTimeout(res, waitMs); }).then(function(){ return _fetchOneBatch(batchIdx, retryCount+1); });
+          }
+          console.warn('Rate limit exhausted for batch ' + batchIdx);
+          return [];
+        }
         var raw2 = (data2.choices&&data2.choices[0]&&data2.choices[0].message&&data2.choices[0].message.content)||'[]';
         try {
           var clean2 = raw2.replace(/```json|```/g,'').trim();
           var match = clean2.match(/\[[\s\S]*\]/);
           if(match) clean2 = match[0];
           var arr = JSON.parse(clean2);
-          arr.forEach(function(fc, i) {
-            allCards.push({
+          return arr.map(function(fc, i) {
+            return {
               id: 'fc' + Date.now() + '_b' + batchIdx + '_' + i,
               q: fc.q || '?',
               a: fc.a || '?',
               difficulty: fc.difficulty || 'medium',
               examRelevance: fc.examRelevance || ''
-            });
+            };
           });
         } catch(e) {
-          console.warn('Batch ' + batchIdx + ' parse error:', e, raw2);
-          // Still continue with next batch
+          console.warn('Batch ' + batchIdx + ' parse error:', e, raw2.substring(0,200));
+          return [];
         }
-        batchsDone++;
-        // Show "batch done" progress before starting next batch
-        try {
-          var _doneProcessed = batchsDone * 25;
-          if(_doneProcessed > totalUnits) _doneProcessed = totalUnits;
-          var _donePct = Math.round((_doneProcessed / totalUnits) * 100);
-          var _cardsNow = allCards.length;
-          document.getElementById('_scFCQ').innerHTML =
-            '<div style="font-size:0.78rem;font-weight:800;color:var(--text,#0d1b2a);margin-bottom:8px;">' +
-              '✅ Batch <b>' + batchsDone + '</b>/<b>' + batches.length + '</b> complete — ' +
-              '<b>' + _cardsNow + '</b> flashcards ban chuke hain' +
-            '</div>' +
-            '<div style="background:var(--bg2,#d4eaf7);border-radius:20px;height:8px;overflow:hidden;margin-bottom:8px;">' +
-              '<div style="height:100%;width:' + _donePct + '%;background:linear-gradient(90deg,#1565c0,#6a1b9a);border-radius:20px;transition:width 0.5s ease;"></div>' +
-            '</div>' +
-            '<div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--text2,#37526d);margin-bottom:8px;">' +
-              '<span>✅ <b>' + _doneProcessed + '</b> processed</span>' +
-              '<span style="font-weight:800;color:#2e7d32;">' + _donePct + '%</span>' +
-              '<span>📋 <b>' + (totalUnits - _doneProcessed) + '</b> remaining</span>' +
-            '</div>' +
-            (batchsDone < batches.length
-              ? '<div style="font-size:0.72rem;color:#e65100;background:rgba(230,81,0,0.07);padding:5px 10px;border-radius:8px;">⏳ Agla batch process ho raha hai...</div>'
-              : '');
-        } catch(_pErr) {}
-        processBatch(batchIdx + 1);
       }).catch(function(e2){
-        console.warn('Batch ' + batchIdx + ' network error:', e2);
-        batchsDone++;
-        processBatch(batchIdx + 1); // continue even on error
+        if(retryCount < MAX_RETRY) {
+          console.warn('Batch ' + batchIdx + ' network error, retry ' + (retryCount+1));
+          return new Promise(function(res){ setTimeout(res, 2000); }).then(function(){ return _fetchOneBatch(batchIdx, retryCount+1); });
+        }
+        console.warn('Batch ' + batchIdx + ' failed after retries:', e2);
+        return [];
       });
     }
 
-    // Start processing batches
-    processBatch(0);
+    // ── PARALLEL POOL RUNNER ──
+    // PARALLEL_LIMIT batches ek saath chalate hain, poora queue drain hone tak
+    var _batchQueue = [];
+    for(var _qi = 0; _qi < batches.length; _qi++) _batchQueue.push(_qi);
+    var _activeWorkers = 0;
+    var _batchesLaunched = 0;
+
+    function _launchNextBatch() {
+      if(_batchQueue.length === 0) return;
+      if(_activeWorkers >= PARALLEL_LIMIT) return;
+
+      var bIdx = _batchQueue.shift();
+      _activeWorkers++;
+
+      _fetchOneBatch(bIdx, 0).then(function(cards) {
+        (cards || []).forEach(function(c){ allCards.push(c); });
+        batchsDone++;
+        _activeWorkers--;
+        _updateFcProgress();
+        // Launch next from queue immediately
+        _launchNextBatch();
+        // All batches done?
+        if(batchsDone >= batches.length) {
+          _finalizeFcCards(allCards, curHash, topicName, analysis, unitsToProcess);
+        }
+      });
+
+      // Fill remaining parallel slots
+      if(_activeWorkers < PARALLEL_LIMIT && _batchQueue.length > 0) {
+        _launchNextBatch();
+      }
+    }
+
+    // Kick off parallel workers
+    _updateFcProgress('Parallel processing shuru — ' + Math.min(PARALLEL_LIMIT, batches.length) + ' batches ek saath...');
+    for(var _w = 0; _w < Math.min(PARALLEL_LIMIT, batches.length); _w++) {
+      _launchNextBatch();
+    }
 
   }).catch(function(e){
     document.getElementById('_scFCQ').textContent = '❌ Step 1 Network error: ' + e.message;
