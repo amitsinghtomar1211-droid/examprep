@@ -38708,31 +38708,60 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
         if(u.groupContext && u.groupContext !== u.text) line += NL2 + '   CONTEXT: ' + u.groupContext;
         return line;
       }).join(NL2 + NL2);
-      var userMsg = 'Generate exactly ' + batch.length + ' flashcards for these highlights (one per highlight, same order):' + NL2 + NL2 + hlListStr + NL2 + NL2 + 'Return JSON array only — exactly ' + batch.length + ' objects.';
+      var userMsg = 'Generate exactly ' + batch.length + ' flashcards for these highlights (one per highlight, same order):' + NL2 + NL2 + hlListStr + NL2 + NL2 + 'Return JSON array only - exactly ' + batch.length + ' objects.';
+      var useModel = (typeof S !== 'undefined' && S.model) ? S.model : 'meta-llama/llama-4-scout-17b-16e-instruct';
+      var useKey   = (typeof S !== 'undefined' && S.apiKey) ? S.apiKey : groqKey;
       fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + useKey },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          max_tokens: 150 * batch.length + 300,
-          temperature: 0.4,
+          model: useModel,
+          max_tokens: Math.min(120 * batch.length + 200, 4000),
+          temperature: 0.3,
           messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userMsg }]
         })
       }).then(function(r){ return r.json(); }).then(function(data){
-        if(!data.error) {
-          var raw = (data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'[]';
-          try {
-            var clean = raw.replace(/[`]{3}json|[`]{3}/g,'').trim();
-            var match = clean.match(/[[sS]*]/);
-            if(match) clean = match[0];
-            var arr = JSON.parse(clean);
-            arr.forEach(function(fc){ if(fc.q && fc.a) allNewCards.push({ q: fc.q, a: fc.a, difficulty: fc.difficulty||'medium' }); });
-          } catch(e) { console.warn('Batch '+batchIdx+' parse error:', e); }
-        } else { console.warn('Batch '+batchIdx+' error:', data.error.message); }
-        setTimeout(function(){ processBatch(batchIdx + 1); }, 200);
-      }).catch(function(err){
-        console.warn('Batch '+batchIdx+' fetch error:', err);
+        if(data.error) {
+          var errMsg = (data.error && (data.error.message || JSON.stringify(data.error))) || 'API error';
+          var isRateLimit = errMsg.indexOf('rate_limit') !== -1 || errMsg.indexOf('Rate limit') !== -1 || errMsg.indexOf('TPM') !== -1;
+          if(isRateLimit) {
+            // Extract retry time from error message
+            var retryMs = 65000; // default 65 seconds
+            var retryMatch = errMsg.match(/try again in ([0-9.]+)s/i);
+            if(retryMatch) retryMs = Math.ceil(parseFloat(retryMatch[1]) * 1000) + 2000;
+            var retrySec = Math.ceil(retryMs / 1000);
+            if(progressDiv) {
+              progressDiv.innerHTML = '<div style="font-weight:800;color:#e65100;margin-bottom:6px;">Rate limit aa gayi! ' + retrySec + 's baad retry hoga...</div>' +
+                '<div style="font-size:0.72rem;color:var(--text2);">Model: ' + useModel + ' — Batch ' + (batchIdx+1) + '/' + batches.length + '</div>';
+            }
+            setTimeout(function(){ processBatch(batchIdx); }, retryMs);
+            return;
+          }
+          // Non-rate-limit error — show and continue to next batch
+          if(msgsEl) {
+            var apiEDiv = document.createElement('div'); apiEDiv.className='ai-msg bot'; apiEDiv.style.color='#c62828';
+            apiEDiv.textContent = 'Batch ' + (batchIdx+1) + ' error: ' + errMsg.substring(0, 200);
+            msgsEl.appendChild(apiEDiv); msgsEl.scrollTop = msgsEl.scrollHeight;
+          }
+          setTimeout(function(){ processBatch(batchIdx + 1); }, 1000);
+          return;
+        }
+        var raw = (data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||'[]';
+        try {
+          var TICK3 = String.fromCharCode(96)+String.fromCharCode(96)+String.fromCharCode(96);
+          var clean = raw.split(TICK3+'json').join('').split(TICK3).join('').trim();
+          var arrStart = clean.indexOf('[');
+          var arrEnd = clean.lastIndexOf(']');
+          if(arrStart !== -1 && arrEnd > arrStart) clean = clean.substring(arrStart, arrEnd + 1);
+          var arr = JSON.parse(clean);
+          arr.forEach(function(fc){ if(fc.q && fc.a) allNewCards.push({ q: fc.q, a: fc.a, difficulty: fc.difficulty||'medium' }); });
+        } catch(parseErr) {
+          console.warn('Batch ' + batchIdx + ' parse error:', parseErr.message);
+        }
         setTimeout(function(){ processBatch(batchIdx + 1); }, 500);
+      }).catch(function(err){
+        console.warn('Batch ' + batchIdx + ' fetch error:', err);
+        setTimeout(function(){ processBatch(batchIdx + 1); }, 2000);
       });
     }
 
