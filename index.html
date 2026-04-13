@@ -6147,6 +6147,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         <button class="ai-chat-sug" onclick="scAiUseSuggestion('Important points bullet points mein batao')">📌 Key Points</button>
         <button class="ai-chat-sug" onclick="scAiUseSuggestion('Exam ke liye important questions kya hain?')">❓ Exam Qs</button>
         <button class="ai-chat-sug" onclick="scAiMakeFlashcards()">🃏 Flashcards Library mein save karo</button>
+        <button class="ai-chat-sug" onclick="_scFCForceRegenAll ? _scFCForceRegenAll() : scAiMakeFlashcards()" style="border-color:rgba(230,81,0,0.35);color:#e65100;">🔁 Sabhi highlights se fresh banao (data recovery)</button>
         <button class="ai-chat-sug" onclick="scCloseCanvasAiChat();mmOpenPanel()" style="background:rgba(0,105,92,0.12);border-color:rgba(0,150,136,0.4);color:#00695c;">🧠 Mind Map dekho</button>
       </div>
       <!-- Messages -->
@@ -8622,12 +8623,34 @@ function tvGoBack(){
 // ── Flashcard badge helper ──
 function tvGetFCBadge(tid) {
   try {
-    var raw = localStorage.getItem('scFC_' + (tid||'default'));
-    if(!raw) return 'No flashcards yet';
-    var d = JSON.parse(raw);
-    var cards = d.cards || [];
-    if(!cards.length) return 'No flashcards yet';
-    var prog = d.progress || {};
+    var key = 'scFC_' + (tid||'default');
+    var raw = localStorage.getItem(key);
+    var d   = raw ? JSON.parse(raw) : {};
+    var cards    = d.cards        || [];
+    var prog     = d.progress     || {};
+    var covered  = (d.coveredFacts || []).length;
+
+    // Get total canvas facts for this topic (from saved slides text)
+    var totalCanvasFacts = 0;
+    try {
+      var slidesRaw = localStorage.getItem('scSlides_' + (tid||'default'));
+      if(slidesRaw) {
+        var slidesText = JSON.parse(slidesRaw);
+        totalCanvasFacts = slidesText.split('\n')
+          .map(function(l){ return l.trim(); })
+          .filter(function(l){ return l && !l.startsWith('===') && l.length > 8; }).length;
+      }
+    } catch(se) {}
+
+    // No cards at all
+    if(!cards.length) {
+      if(totalCanvasFacts > 0) {
+        return '🔴 ' + totalCanvasFacts + ' highlights pending — Flashcards banao!';
+      }
+      return 'No flashcards yet';
+    }
+
+    // Confidence breakdown
     var sure=0, nc=0, dk=0, unseen=0;
     cards.forEach(function(c) {
       var p = prog[c.id];
@@ -8637,7 +8660,24 @@ function tvGetFCBadge(tid) {
       else if(conf==='dontknow') dk++;
       else unseen++;
     });
-    return cards.length + ' cards · ❌'+dk+' 🤔'+nc+' 🔵'+unseen+' ✅'+sure;
+
+    // Coverage health check
+    var coverageLine = '';
+    if(totalCanvasFacts > 0) {
+      var effectiveCovered = Math.min(covered, totalCanvasFacts);
+      var pct = Math.round((effectiveCovered / totalCanvasFacts) * 100);
+      var dot = pct >= 90 ? '🟢' : pct >= 50 ? '🟡' : '🔴';
+      if(pct >= 100) {
+        coverageLine = ' | ' + dot + ' All ' + totalCanvasFacts + ' highlights covered';
+      } else {
+        var pending = totalCanvasFacts - effectiveCovered;
+        coverageLine = ' | ' + dot + ' ' + effectiveCovered + '/' + totalCanvasFacts + ' covered · ⏳' + pending + ' pending';
+      }
+    } else if(covered > 0) {
+      coverageLine = ' | 🟢 ' + covered + ' facts covered';
+    }
+
+    return cards.length + ' cards' + coverageLine + ' · ❌'+dk+' 🤔'+nc+' 🔵'+unseen+' ✅'+sure;
   } catch(e) { return 'Flashcards'; }
 }
 
@@ -33677,6 +33717,13 @@ function scAiMakeFlashcards() {
       '<div style="display:flex;gap:7px;margin-top:10px;">' +
       '<button onclick="_scFCStartSession()" style="flex:1;padding:9px;border-radius:10px;border:none;background:rgba(21,101,192,0.12);color:#1565c0;font-weight:800;font-size:0.75rem;cursor:pointer;font-family:inherit;">🔄 Purani cards practice karo</button>' +
       '<button onclick="scCloseFC()" style="flex:1;padding:9px;border-radius:10px;border:none;background:rgba(198,40,40,0.1);color:#c62828;font-weight:800;font-size:0.75rem;cursor:pointer;font-family:inherit;">✕ Band karo</button>' +
+      '</div>' +
+      '<div style="margin-top:8px;border-top:1px solid var(--border,#bdd5ea);padding-top:8px;">' +
+      '<div style="font-size:0.62rem;color:var(--text2,#37526d);margin-bottom:5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">🔁 Data loss / deletion ke baad</div>' +
+      '<button onclick="_scFCForceRegenAll()" style="width:100%;padding:8px 10px;border-radius:10px;border:1.5px solid rgba(230,81,0,0.4);background:rgba(230,81,0,0.07);color:#e65100;font-weight:800;font-size:0.74rem;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px;">' +
+        '🔁 <span>Sabhi canvas highlights se fresh banao</span>' +
+      '</button>' +
+      '<div style="font-size:0.6rem;color:var(--text2,#888);margin-top:4px;text-align:center;">Covered ho chuke facts se bhi — ek baar ke liye</div>' +
       '</div>';
     return;
   }
@@ -33973,7 +34020,16 @@ function _finalizeFcCards(allCards, curHash, topicName, analysis) {
     _scFC.allFactsHash = curHash;
 
     _scFCSave();
+    _scFCSave();
 
+    // Save canvas slides text so badge can show total fact count
+    try {
+      if(typeof _sc !== 'undefined' && _sc.tid != null) {
+        var _slidesKey = 'scSlides_' + _sc.tid;
+        var _rawText = typeof scExtractContent === 'function' ? scExtractContent() : '';
+        if(_rawText && _rawText.trim()) localStorage.setItem(_slidesKey, JSON.stringify(_rawText));
+      }
+    } catch(_sErr) {}
   document.getElementById('_scFCQ').innerHTML =
     '✅ <b>' + allCards.length + ' Flashcards</b> ready!<br>' +
     '<small style="font-size:0.65rem;opacity:0.7;">Topic: ' + topicName + ' • Har highlight ke liye ek card</small>';
@@ -34063,6 +34119,55 @@ window._scFCRegenerate = function() {
   _scFCSave();
   var p = document.getElementById('_scFCPanel'); if(p) p.style.display='none';
   scAiMakeFlashcards();
+};
+
+// ── Force Regenerate ALL — sabhi canvas highlights se fresh flashcards banao ──
+// Use: Data loss, accidental deletion, ya user specifically chahta ho ki covered se bhi bane
+// After this: Normal process resume hota hai (next time sirf uncovered se)
+window._scFCForceRegenAll = function() {
+  if(!confirm('⚠️ Yeh canvas ke SABHI highlights se naye flashcards banaega — bhle pehle se cover ho ya nahi!\n\nLibrary mein pehle se saved canvas-flashcards replace ho jayenge.\n\nKya aap sure hain?')) return;
+
+  _scFCLoad();
+
+  // 1. scFC tracking clear karo
+  _scFC.coveredFacts = [];
+  _scFC.cards = [];
+  _scFC.progress = {};
+  _scFC.hash = '';
+  _scFC.allFactsHash = '';
+  _scFCSave();
+
+  // 2. Library mein canvas-sourced flashcards clear karo (sirf source:'canvas' wale)
+  try {
+    if(typeof S !== 'undefined' && S.subjects && typeof _sc !== 'undefined' && _sc.tid != null) {
+      S.subjects.forEach(function(subj) {
+        (subj.sections||[]).forEach(function(sec) {
+          (sec.topics||[]).forEach(function(top) {
+            if(String(top.id) === String(_sc.tid) && top.flashcards) {
+              // Keep only non-canvas cards (user-created manually)
+              top.flashcards = top.flashcards.filter(function(fc) {
+                return fc.source !== 'canvas';
+              });
+            }
+          });
+        });
+      });
+      // Save the main data
+      try { if(typeof save === 'function') save(); } catch(saveE) {
+        try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(lsE) {}
+      }
+    }
+  } catch(clrErr) {}
+
+  // 3. Close any open panels
+  var fcP = document.getElementById('_scFCPanel'); if(fcP) fcP.style.display = 'none';
+  var aiP = document.getElementById('_scAiPanel'); if(aiP) aiP.style.display = 'none';
+  var acP = document.getElementById('scAiChatPanel'); if(acP) { /* keep open for chat */ }
+
+  if(typeof showToast === 'function') showToast('🔄 Fresh generation shuru ho rahi hai — sabhi canvas highlights se!', 'info');
+
+  // 4. Run flashcard generation — _scFC is now empty so all highlights treated as new
+  setTimeout(function() { scAiMakeFlashcards(); }, 150);
 };
 
 // ── Quiz ──
@@ -38476,7 +38581,12 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
             '🔁 Canvas ke sabhi facts pehle se Library ke flashcards mein cover ho chuke hain<br><br>' +
             '➕ <b>Canvas par nayi information add karo</b> — tabhi naye uncovered facts se flashcards banenge!<br>' +
             '<button onclick="if(typeof _scFCLoad===\'function\'){_scFCLoad();_scFC.coveredFacts=[];_scFC.hash=\'\';if(typeof _scFCSave===\'function\')_scFCSave();}this.parentElement.parentElement.remove();showToast&&showToast(\'Reset ho gaya!\',\'success\');" ' +
-            'style="margin-top:8px;padding:5px 12px;border-radius:8px;border:none;background:rgba(198,40,40,0.1);color:#c62828;font-weight:800;font-size:0.72rem;cursor:pointer;font-family:inherit;">🔄 Reset karke naye banao</button>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;margin-top:10px;">' +
+            '<button onclick="if(typeof _scFCLoad==='function'){_scFCLoad();_scFC.coveredFacts=[];_scFC.hash='';if(typeof _scFCSave==='function')_scFCSave();}this.closest('.ai-msg')?this.closest('.ai-msg').remove():this.parentElement.parentElement.remove();showToast&&showToast('Tracking reset — dobara try karo!','success');" ' +
+            'style="padding:7px 12px;border-radius:8px;border:none;background:rgba(21,101,192,0.1);color:#1565c0;font-weight:800;font-size:0.72rem;cursor:pointer;font-family:inherit;text-align:left;">📋 Sirf tracking reset karo (covered facts clear)</button>' +
+            '<button onclick="if(typeof _scFCForceRegenAll==='function')_scFCForceRegenAll();" ' +
+            'style="padding:7px 12px;border-radius:8px;border:1.5px solid rgba(230,81,0,0.4);background:rgba(230,81,0,0.07);color:#e65100;font-weight:800;font-size:0.72rem;cursor:pointer;font-family:inherit;text-align:left;">🔁 Sabhi highlights se fresh banao (data loss recovery)</button>' +
+            '<div style="font-size:0.6rem;color:var(--text2,#888);padding:2px 0;">↑ Covered facts se bhi banenge — ek baar ke liye. Baad mein normal process resume hoga.</div>' +
             '</div>';
           msgsEl0.appendChild(blockDiv);
           msgsEl0.scrollTop = msgsEl0.scrollHeight;
