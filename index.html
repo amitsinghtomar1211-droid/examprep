@@ -27129,6 +27129,11 @@ function scTogglePanel() {
         panel.style.background = '#000000';
       }
     }
+    // ── Reset: hide all AI/FC/Quiz overlays so canvas shows content directly ──
+    var _aiP  = document.getElementById('_scAiPanel');  if(_aiP)  _aiP.style.display  = 'none';
+    var _fcP  = document.getElementById('_scFCPanel');  if(_fcP)  _fcP.style.display  = 'none';
+    var _qzP  = document.getElementById('_scQzPanel');  if(_qzP)  _qzP.style.display  = 'none';
+    var _ovP  = document.getElementById('scAiChatOverlay'); if(_ovP) _ovP.classList.remove('sc-ai-show');
     scInitCanvas();
     _scAutoConfigureForDevice && _scAutoConfigureForDevice();
     scRenderAll();
@@ -33599,31 +33604,6 @@ function _scAiCall(question) {
 // ── Flashcards ──
 var _scFCQueue = [], _scFCIdx = 0, _scFCFlipped = false;
 
-// ── Delete all flashcards for current topic and regenerate fresh ──
-function _scFCDeleteAllAndRegenerate() {
-  _scFCLoad();
-  var cardCount = _scFC.cards.length;
-  if(!confirm('⚠️ ' + cardCount + ' flashcards delete ho jayenge aur unka practice progress bhi reset hoga.\nKya aap sure hain?')) return;
-  // Clear everything
-  _scFC.cards = [];
-  _scFC.progress = {};
-  _scFC.coveredFacts = [];
-  _scFC.hash = '';
-  _scFC.allFactsHash = '';
-  _scFCSave();
-  // Also clear from Library topic object
-  try {
-    if(typeof _sc !== 'undefined' && _sc.tid != null && typeof getTop === 'function') {
-      var t = getTop(_sc.sid, _sc.secid, _sc.tid);
-      if(t) { t.flashcards = []; t.fcHash = ''; }
-      if(typeof save === 'function') save();
-    }
-  } catch(e) {}
-  scCloseFC();
-  // Now trigger fresh generation
-  setTimeout(function(){ scAiMakeFlashcards(); }, 300);
-}
-
 // ══════════════════════════════════════════════════════════════════
 // MASTER FLASHCARD GENERATOR — 2-Step: Web Enrichment + AI Examiner
 // ══════════════════════════════════════════════════════════════════
@@ -33643,7 +33623,7 @@ function scAiMakeFlashcards() {
   var newFacts = _scGetNewFacts(content);
   var totalFacts = _scExtractFactLines(content);
 
-  // All facts already covered → warn user with safe options
+  // All facts already covered → block with info message
   if(totalFacts.length > 0 && newFacts.length === 0) {
     scCloseAiChat();
     var fc0 = document.getElementById('_scFCPanel'); if(!fc0) { _scBuildAiPanel(); fc0 = document.getElementById('_scFCPanel'); }
@@ -33652,17 +33632,17 @@ function scAiMakeFlashcards() {
       '✅ <b>Saare facts cover ho chuke hain!</b><br><br>' +
       '<div style="font-size:0.72rem;line-height:1.7;color:var(--text2,#37526d);background:rgba(21,101,192,0.06);padding:10px 12px;border-radius:10px;border-left:3px solid #1565c0;">' +
       '📊 <b>'+totalFacts.length+'</b> facts canvas par hain<br>' +
-      '🃏 <b>'+(_scFC.cards.length)+'</b> flashcards pehle se available hain<br>' +
-      '🔁 Sabhi canvas facts ke flashcards ban chuke hain<br><br>' +
-      '➕ <b>Naye facts add karo canvas par</b> — tabhi sirf unse naye flashcards banenge' +
+      '🃏 <b>'+(_scFC.cards.length)+'</b> flashcards Library mein available hain<br>' +
+      '🔁 In sabhi canvas facts se pehle se flashcards ban chuke hain<br><br>' +
+      '➕ <b>Canvas par nayi information add karo</b> — tabhi naye uncovered facts se flashcards banenge!<br><br>' +
+      '<span style="font-size:0.65rem;opacity:0.7;">💡 Tip: Overview → Flashcards section mein apni cards dekh sakte ho</span>' +
       '</div>';
     document.getElementById('_scFCA').style.display = 'none';
     document.getElementById('_scFCBtns').style.display = 'none';
     document.getElementById('_scFCHint').innerHTML =
-      '<div style="display:flex;flex-direction:column;gap:7px;margin-top:10px;">' +
-      '<button onclick="_scFCStartSession()" style="padding:9px;border-radius:10px;border:none;background:rgba(21,101,192,0.12);color:#1565c0;font-weight:800;font-size:0.75rem;cursor:pointer;font-family:inherit;">🔄 Practice karo (existing cards)</button>' +
-      '<button onclick="_scFCDeleteAllAndRegenerate()" style="padding:9px;border-radius:10px;border:1.5px solid rgba(198,40,40,0.35);background:rgba(198,40,40,0.07);color:#c62828;font-weight:800;font-size:0.72rem;cursor:pointer;font-family:inherit;">🗑️ Purani delete karke nayi banao (progress reset hoga)</button>' +
-      '<button onclick="scCloseFC()" style="padding:8px;border-radius:10px;border:none;background:rgba(0,0,0,0.04);color:var(--text2,#666);font-weight:700;font-size:0.72rem;cursor:pointer;font-family:inherit;">✕ Band karo</button>' +
+      '<div style="display:flex;gap:7px;margin-top:10px;">' +
+      '<button onclick="_scFCStartSession()" style="flex:1;padding:9px;border-radius:10px;border:none;background:rgba(21,101,192,0.12);color:#1565c0;font-weight:800;font-size:0.75rem;cursor:pointer;font-family:inherit;">🔄 Purani cards practice karo</button>' +
+      '<button onclick="scCloseFC()" style="flex:1;padding:9px;border-radius:10px;border:none;background:rgba(198,40,40,0.1);color:#c62828;font-weight:800;font-size:0.75rem;cursor:pointer;font-family:inherit;">✕ Band karo</button>' +
       '</div>';
     return;
   }
@@ -33776,14 +33756,30 @@ function scAiMakeFlashcards() {
       return;
     }
 
-    // Filter already-covered highlights
-    var coveredNorms = (_scFC.coveredFacts||[]).map(function(f){ return typeof _scNormFact==='function'?_scNormFact(f):f.toLowerCase().trim(); });
+    // ── Filter already-covered highlights using _scGetNewFacts() system ──
+    // Build NEW facts set from same trusted source as the outer newFacts check
+    var _mainNewFacts = (typeof _scGetNewFacts === 'function') ? _scGetNewFacts(content) : [];
+    var _mainAllFacts = (typeof _scExtractFactLines === 'function') ? _scExtractFactLines(content) : [];
+    var _mainHasCovered = _mainAllFacts.length > 0 && _mainNewFacts.length < _mainAllFacts.length;
+    var _mainNewNorms = {};
+    _mainNewFacts.forEach(function(f){
+      var n = typeof _scNormFact==='function' ? _scNormFact(f) : f.toLowerCase().trim();
+      _mainNewNorms[n] = true;
+    });
     var newHlUnits = hlUnits.filter(function(u){
       var norm = typeof _scNormFact==='function' ? _scNormFact(u.text) : u.text.toLowerCase().trim();
-      return coveredNorms.indexOf(norm) === -1;
+      if(_mainHasCovered) return _mainNewNorms[norm] === true;
+      return true; // first time: all units are new
     });
 
-    var unitsToProcess = newHlUnits.length > 0 ? newHlUnits : hlUnits;
+    var unitsToProcess = newHlUnits.length > 0 ? newHlUnits
+      : (_mainHasCovered ? [] : hlUnits); // if all covered: empty — don't fallback to all
+    if(_mainHasCovered && unitsToProcess.length === 0) {
+      document.getElementById('_scFCQ').innerHTML =
+        '✅ <b>Saare highlights cover ho chuke hain!</b><br>' +
+        '<small style="font-size:0.65rem;opacity:0.7;">Canvas par naye highlights add karo — tabhi naye flashcards banenge.</small>';
+      return;
+    }
     var totalUnits = unitsToProcess.length;
 
     document.getElementById('_scFCQ').innerHTML = '🃏 <b>Step 2:</b> <b>' + totalUnits + ' highlights</b> se flashcards ban rahe hain...';
@@ -33885,14 +33881,7 @@ function _finalizeFcCards(allCards, curHash, topicName, analysis) {
     return;
   }
 
-  // ── APPEND new cards to existing ones (NEVER replace — progress preserved) ──
-  var existingCards = _scFC.cards || [];
-  var existingIds = {};
-  existingCards.forEach(function(c){ existingIds[c.id] = true; });
-  allCards.forEach(function(c){
-    if(!existingIds[c.id]) { existingCards.push(c); existingIds[c.id] = true; }
-  });
-  _scFC.cards = existingCards;
+  _scFC.cards = allCards;
   _scFC.hash  = curHash;
   _scFC.topic = topicName;
   _scFC.generatedAt = new Date().toLocaleDateString('hi-IN');
@@ -33903,17 +33892,19 @@ function _finalizeFcCards(allCards, curHash, topicName, analysis) {
   var alreadyCoveredNorm = alreadyCovered.map(function(f){ return typeof _scNormFact==='function'?_scNormFact(f):f; });
   usedFacts.forEach(function(f){
     var fn = typeof _scNormFact==='function' ? _scNormFact(f) : f;
-    if(alreadyCoveredNorm.indexOf(fn) === -1) { alreadyCovered.push(fn); alreadyCoveredNorm.push(fn); }
+    if(alreadyCoveredNorm.indexOf(fn) === -1) {
+      alreadyCovered.push(fn);
+      alreadyCoveredNorm.push(fn);
+    }
   });
   _scFC.coveredFacts = alreadyCovered;
   _scFC.allFactsHash = curHash;
+
   _scFCSave();
 
-  var addedCount = allCards.length;
-  var totalCount = _scFC.cards.length;
   document.getElementById('_scFCQ').innerHTML =
-    '✅ <b>' + addedCount + ' Naye Flashcards</b> add ho gaye!<br>' +
-    '<small style="font-size:0.65rem;opacity:0.7;">Total: ' + totalCount + ' cards · Topic: ' + topicName + '</small>';
+    '✅ <b>' + allCards.length + ' Flashcards</b> ready!<br>' +
+    '<small style="font-size:0.65rem;opacity:0.7;">Topic: ' + topicName + ' • Har highlight ke liye ek card</small>';
   setTimeout(function(){ _scFCStartSession(); }, 1200);
 }
 
@@ -38388,18 +38379,15 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
         if(msgsEl0) {
           var blockDiv = document.createElement('div');
           blockDiv.className = 'ai-msg bot';
-          var _existingCnt = typeof _scFC !== 'undefined' ? _scFC.cards.length : '?';
           blockDiv.innerHTML =
             '✅ <b>Saare facts cover ho chuke hain!</b><br><br>' +
-            '<div style="font-size:0.78rem;line-height:1.7;color:var(--text2);background:rgba(21,101,192,0.06);padding:10px;border-radius:8px;border-left:3px solid #1565c0;">' +
+            '<div style="font-size:0.78rem;line-height:1.7;color:var(--text2);">' +
             '📊 <b>'+_allFacts2.length+'</b> facts canvas par hain<br>' +
-            '🃏 <b>'+_existingCnt+'</b> flashcards already available hain<br>' +
-            '🔁 Saare canvas facts cover ho chuke hain<br><br>' +
-            '➕ <b>Naye facts canvas par add karo</b> — tabhi sirf unse flashcards banenge!' +
-            '</div>' +
-            '<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">' +
-            '<button onclick="this.closest(\'.ai-msg\').remove();" style="padding:6px 12px;border-radius:8px;border:none;background:rgba(21,101,192,0.1);color:#1565c0;font-weight:800;font-size:0.72rem;cursor:pointer;font-family:inherit;">✕ Theek hai, band karo</button>' +
-            '<button onclick="if(confirm(\'⚠️ Saari flashcards delete hongi aur practice progress reset hoga. Sure?\') && typeof _scFCDeleteAllAndRegenerate===\'function\'){this.closest(\'.ai-msg\').remove();_scFCDeleteAllAndRegenerate();}" style="padding:6px 12px;border-radius:8px;border:1.5px solid rgba(198,40,40,0.3);background:rgba(198,40,40,0.07);color:#c62828;font-weight:800;font-size:0.72rem;cursor:pointer;font-family:inherit;">🗑️ Delete karke fresh banao (progress reset)</button>' +
+            '🃏 <b>'+(typeof _scFC !== 'undefined' ? _scFC.cards.length : '?')+'</b> flashcards Library mein available hain<br>' +
+            '🔁 Canvas ke sabhi facts pehle se Library ke flashcards mein cover ho chuke hain<br><br>' +
+            '➕ <b>Canvas par nayi information add karo</b> — tabhi naye uncovered facts se flashcards banenge!<br>' +
+            '<button onclick="if(typeof _scFCLoad===\'function\'){_scFCLoad();_scFC.coveredFacts=[];_scFC.hash=\'\';if(typeof _scFCSave===\'function\')_scFCSave();}this.parentElement.parentElement.remove();showToast&&showToast(\'Reset ho gaya!\',\'success\');" ' +
+            'style="margin-top:8px;padding:5px 12px;border-radius:8px;border:none;background:rgba(198,40,40,0.1);color:#c62828;font-weight:800;font-size:0.72rem;cursor:pointer;font-family:inherit;">🔄 Reset karke naye banao</button>' +
             '</div>';
           msgsEl0.appendChild(blockDiv);
           msgsEl0.scrollTop = msgsEl0.scrollHeight;
@@ -38545,9 +38533,9 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       var loadDiv = document.createElement('div');
       loadDiv.className = 'ai-msg bot';
       loadDiv.id = '_scFcLoading';
-      var loadLabel = isFirstTime
-        ? '⌛ <strong>Pehli baar — saare facts se</strong> flashcards ban rahe hain...'
-        : '🆕 <strong>Sirf naye facts se</strong> flashcards ban rahe hain...';
+      var loadLabel = !hasCoveredFacts
+        ? '⌛ <strong>Pehli baar — saare ' + hlUnitsReq.length + ' highlights se</strong> flashcards ban rahe hain...'
+        : '🆕 <strong>Sirf ' + unitsForReq.length + ' naye highlights se</strong> flashcards ban rahe hain (' + (_allCanvasFacts.length - _newCanvasFacts.length) + ' pehle se covered)...';
       loadDiv.innerHTML = loadLabel + '<br><span style="font-size:0.75rem;opacity:0.8;">' + diff + ' difficulty · ' + typeList.join(', ') + '</span>';
       msgsEl.appendChild(loadDiv);
       msgsEl.scrollTop = msgsEl.scrollHeight;
@@ -38593,15 +38581,54 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       });
     }
 
-    // Filter already-covered facts
-    var covNormsReq = (typeof _scFC !== 'undefined' && _scFC.coveredFacts)
-      ? _scFC.coveredFacts.map(function(f){ return typeof _scNormFact==='function' ? _scNormFact(f) : f.toLowerCase().trim(); })
-      : [];
+    // ── Filter already-covered highlights ──
+    // Use _scGetNewFacts() output (same trusted system as scAiMakeFlashcards)
+    // to build a set of "new" normalized texts, then filter hlUnitsReq against it.
+    var _allCanvasFacts = (typeof _scExtractFactLines === 'function') ? _scExtractFactLines(slidesText) : [];
+    var _newCanvasFacts = (typeof _scGetNewFacts === 'function') ? _scGetNewFacts(slidesText) : _allCanvasFacts;
+    // Build a normalized set of NEW fact texts for fast lookup
+    var _newFactNorms = {};
+    _newCanvasFacts.forEach(function(f){
+      var n = typeof _scNormFact==='function' ? _scNormFact(f) : f.toLowerCase().trim();
+      _newFactNorms[n] = true;
+    });
+    // Also build norms for ALL facts (for fallback when nothing is covered yet)
+    var _allFactNorms = {};
+    _allCanvasFacts.forEach(function(f){
+      var n = typeof _scNormFact==='function' ? _scNormFact(f) : f.toLowerCase().trim();
+      _allFactNorms[n] = true;
+    });
+
+    var hasCoveredFacts = _allCanvasFacts.length > 0 && _newCanvasFacts.length < _allCanvasFacts.length;
+
     var newHlReq = hlUnitsReq.filter(function(u){
       var norm = typeof _scNormFact==='function' ? _scNormFact(u.text) : u.text.toLowerCase().trim();
-      return covNormsReq.indexOf(norm) === -1;
+      // If some facts are covered: only keep units whose text matches a NEW fact
+      if(hasCoveredFacts) return _newFactNorms[norm] === true;
+      // First time (nothing covered yet): keep all
+      return true;
     });
-    var unitsForReq = newHlReq.length > 0 ? newHlReq : hlUnitsReq;
+
+    // If filtering left nothing (e.g. very short/formatted text mismatch),
+    // fall back to ALL units so we never get stuck
+    var unitsForReq = (newHlReq.length > 0) ? newHlReq : (hasCoveredFacts ? [] : hlUnitsReq);
+
+    // Edge case: all facts covered but user somehow got here → show message
+    if(hasCoveredFacts && unitsForReq.length === 0) {
+      if(btn) { btn.disabled = false; btn.innerHTML = '🃏 Flashcards banao'; }
+      var loadElX = document.getElementById('_scFcLoading');
+      if(loadElX) loadElX.remove();
+      if(msgsEl) {
+        var noNewDiv = document.createElement('div');
+        noNewDiv.className = 'ai-msg bot';
+        noNewDiv.innerHTML =
+          '✅ <b>Saare highlights cover ho chuke hain!</b><br>' +
+          '<span style="font-size:0.78rem;color:var(--text2);">Canvas par naye highlights add karo — tabhi naye flashcards banenge.</span>';
+        msgsEl.appendChild(noNewDiv);
+        msgsEl.scrollTop = msgsEl.scrollHeight;
+      }
+      return;
+    }
 
     // System prompt with user requirements baked in
     var perHlSysReq = 'You are a MASTER flashcard creator for Indian competitive exams (UPSC, SSC, Railway, State PSC).\n\nUSER REQUIREMENTS:\n- Focus: ' + focus + '\n- Difficulty: ' + diffInstr + '\n- Question Types: ' + typeInstr + '\n- Language: ' + langInstr + '\n\nRULES:\n1. Generate EXACTLY ONE flashcard per highlight — no more, no less\n2. If highlight has GROUP_CONTEXT, use it to understand short/incomplete highlights (numbers, codes, short phrases)\n3. For number-only highlights (e.g. "27"): use GROUP_CONTEXT to form "Kitne?" question → A: "27"\n4. Every highlight MUST produce exactly 1 flashcard. Do NOT skip any.\n5. Return ONLY valid JSON array with SAME NUMBER of objects as input:\n[{"q":"Question","a":"Answer"},...]';
@@ -38618,8 +38645,8 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
     // Update loading message with total count
     var loadEl0 = document.getElementById('_scFcLoading');
     if(loadEl0) loadEl0.innerHTML =
-      (isFirstTime ? '⌛ <strong>Saare ' : '🆕 <strong>Naye ') + unitsForReq.length +
-      ' highlights se</strong> flashcards ban rahe hain (' + totalBatchesReq + ' batches)...<br>' +
+      (!hasCoveredFacts ? '⌛ <strong>Saare ' : '🆕 <strong>Naye ') + unitsForReq.length +
+      ' highlights se</strong> flashcards ban rahe hain (' + totalBatchesReq + ' batch' + (totalBatchesReq > 1 ? 'es' : '') + ')...<br>' +
       '<span style="font-size:0.75rem;opacity:0.8;">' + diff + ' · ' + typeList.join(', ') + '</span>';
 
     function processReqBatch(batchIdx) {
@@ -38705,96 +38732,90 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
       } catch(gtErr) { t = null; }
 
       var saved = false;
-      var now = new Date().toLocaleDateString('hi-IN');
-      var newCards = [];
-
-      // Build new card objects from generated cards
-      cards.forEach(function(card, ci) {
-        if(card.q && card.a) {
-          var cardId = 'fc_sc_' + Date.now() + '_' + ci + '_' + Math.random().toString(36).slice(2,6);
-          newCards.push({
-            id:      cardId,
-            front:   card.q,
-            back:    card.a,
-            q:       card.q,
-            a:       card.a,
-            source:  'canvas',
-            addedAt: now
-          });
-        }
-      });
-
-      // ── APPEND to Library topic flashcards (never replace) ──
       if(t) {
         if(!t.flashcards) t.flashcards = [];
-        newCards.forEach(function(nc){ t.flashcards.push(nc); });
-        t.fcHash = '';
-      }
-
-      // ── APPEND to scFC_ localStorage key (never replace, progress preserved) ──
-      try {
-        var fcKey = 'scFC_' + (_sc.tid != null ? _sc.tid : 'default');
-        var existing = {};
-        try { existing = JSON.parse(localStorage.getItem(fcKey)) || {}; } catch(pe) {}
-        var existingCards2 = existing.cards || [];
-        var existingProgress2 = existing.progress || {};
-        var existingCovered2 = existing.coveredFacts || [];
-        var existingCovNorm2 = existingCovered2.map(function(f){ return typeof _scNormFact==='function'?_scNormFact(f):f.toLowerCase().trim(); });
-        // Append only new cards (dedup by id)
-        var existingIds2 = {};
-        existingCards2.forEach(function(c){ existingIds2[c.id]=true; });
-        newCards.forEach(function(nc) {
-          if(!existingIds2[nc.id]) { existingCards2.push(nc); existingIds2[nc.id]=true; }
+        var now = new Date().toLocaleDateString('hi-IN');
+        var addedCount = 0;
+        var newCards = [];
+        cards.forEach(function(card, ci) {
+          if(card.q && card.a) {
+            var cardId = 'fc_sc_' + Date.now() + '_' + ci;
+            var cardObj = {
+              id:      cardId,
+              front:   card.q,
+              back:    card.a,
+              q:       card.q,
+              a:       card.a,
+              source:  'canvas',
+              addedAt: now
+            };
+            t.flashcards.push(cardObj);
+            newCards.push(cardObj);
+            addedCount++;
+          }
         });
-        // Mark covered facts
-        if(typeof _scExtractFactLines === 'function' && typeof _scNormFact === 'function') {
-          var usedF2 = _scExtractFactLines(slidesText);
-          usedF2.forEach(function(f){
-            var fn = _scNormFact(f);
-            if(existingCovNorm2.indexOf(fn) === -1){ existingCovered2.push(fn); existingCovNorm2.push(fn); }
+        t.fcHash = '';
+
+        // ── FIX: scFC_<tid> key mein bhi save karo (library yahan se padhti hai) ──
+        try {
+          var fcKey = 'scFC_' + (_sc.tid != null ? _sc.tid : 'default');
+          var existing = {};
+          try { existing = JSON.parse(localStorage.getItem(fcKey)) || {}; } catch(pe) {}
+          var existingCards = existing.cards || [];
+          var existingProgress = existing.progress || {};
+          newCards.forEach(function(nc) {
+            existingCards.push({ id: nc.id, q: nc.q, a: nc.a, source: 'canvas', addedAt: now });
           });
-        }
-        localStorage.setItem(fcKey, JSON.stringify({
-          cards: existingCards2,
-          progress: existingProgress2,
-          coveredFacts: existingCovered2,
-          hash: ''
-        }));
-        // Sync in-memory _scFC
-        if(typeof _scFC !== 'undefined' && typeof _scFCLoad === 'function') _scFCLoad();
-        saved = newCards.length > 0;
-      } catch(fcSaveErr) { console.warn('fcSave error:', fcSaveErr); }
+          localStorage.setItem(fcKey, JSON.stringify({ cards: existingCards, progress: existingProgress, hash: '' }));
 
-      // ── Canvas slides raw text save karo — Quiz mein kaam aayega ──
-      try {
-        if(_sc.tid != null) {
-          var slidesKey = 'scSlides_' + _sc.tid;
-          var rawSlidesText = typeof _scCollectAllSlidesText === 'function' ? _scCollectAllSlidesText() : slidesText;
-          if(rawSlidesText && rawSlidesText.trim()) localStorage.setItem(slidesKey, JSON.stringify(rawSlidesText));
-        }
-      } catch(slidesSaveErr) {}
+          // ── coveredFacts update — naye facts covered mark karo ──
+          try {
+            if(typeof _scFC !== 'undefined' && typeof _scExtractFactLines === 'function' && typeof _scNormFact === 'function') {
+              _scFCLoad();
+              // Always mark ALL current canvas facts as covered (not just new ones)
+              var usedF2 = _scExtractFactLines(slidesText);
+              var covF2  = _scFC.coveredFacts || [];
+              var covF2N = covF2.map(_scNormFact);
+              usedF2.forEach(function(f){
+                var fn = _scNormFact(f);
+                if(covF2N.indexOf(fn) === -1){ covF2.push(fn); covF2N.push(fn); }
+              });
+              _scFC.coveredFacts = covF2;
+              _scFCSave();
+            }
+          } catch(cfErr) {}
+        } catch(fcSaveErr) {}
 
-      try {
-        if(typeof save === 'function') save();
-      } catch(saveErr) {
-        try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(lsErr) {}
+        // ── Canvas slides raw text bhi save karo — Quiz mein kaam aayega ──
+        try {
+          if(_sc.tid != null) {
+            var slidesKey = 'scSlides_' + _sc.tid;
+            var rawSlidesText = typeof _scCollectAllSlidesText === 'function' ? _scCollectAllSlidesText() : slidesText;
+            if(rawSlidesText && rawSlidesText.trim()) {
+              localStorage.setItem(slidesKey, JSON.stringify(rawSlidesText));
+            }
+          }
+        } catch(slidesSaveErr) {}
+
+        try {
+          if(typeof save === 'function') save();
+        } catch(saveErr) {
+          try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(lsErr) {}
+        }
+        saved = (addedCount > 0);
       }
 
       // Show success message in chat
-      var totalNow = 0;
-      try { var _tmp=JSON.parse(localStorage.getItem('scFC_'+(_sc.tid||'default'))||'{}'); totalNow=(_tmp.cards||[]).length; } catch(e) {}
       if(msgsEl) {
         var resDiv = document.createElement('div');
         resDiv.className = 'ai-msg bot';
         var topicName2 = t ? t.name : '';
         var saveMsg = saved
-          ? ' Library → <strong>' + topicName2 + '</strong> mein add ho gaye! ✅'
-          : ' <em style="color:var(--text2,#666);font-size:0.78rem;">(Topic context nahi mila)</em>';
-        resDiv.innerHTML =
-          '🎉 <strong>' + newCards.length + ' Naye Flashcards</strong> ban gaye!' + saveMsg +
-          '<br><span style="font-size:0.7rem;color:var(--text2);">Total library mein: <b>' + totalNow + '</b> cards</span>' +
+          ? ' Library → <strong>' + topicName2 + '</strong> ke Flashcards mein save ho gaye! ✅'
+          : ' <em style="color:var(--text2,#666);font-size:0.78rem;">(Topic context nahi mila — Library mein manually save karo)</em>';
+        resDiv.innerHTML = '🎉 <strong>' + cards.length + ' Flashcards</strong> ban gaye!' + saveMsg +
           '<br><br><strong>Preview (pehle 3):</strong><br>' +
-          newCards.slice(0, 3).map(function(c, i){
+          cards.slice(0, 3).map(function(c, i){
             return '<div style="margin-top:5px;padding:5px 8px;background:rgba(21,101,192,0.07);border-radius:6px;font-size:0.78rem;">' +
               '<strong>Q' + (i+1) + ':</strong> ' + c.q + '<br>' +
               '<em>A: ' + c.a + '</em></div>';
@@ -38803,7 +38824,7 @@ body.night-mode #scAiChatPanel .ai-msg.bot {
         msgsEl.scrollTop = msgsEl.scrollHeight;
       }
 
-      var toastMsg = '🃏 ' + newCards.length + ' naye flashcards add! Total: ' + totalNow;
+      var toastMsg = saved ? '🃏 ' + cards.length + ' Flashcards Library mein save ho gaye!' : '🃏 ' + cards.length + ' Flashcards ban gaye!';
       showToast && showToast(toastMsg, 'success');
     } // end finalizeReqCards
 
@@ -42960,18 +42981,15 @@ window._fcShuffleCards = function(tid, sid, secid) {
     if(!raw) return;
     var d = JSON.parse(raw);
     if(!d.cards || d.cards.length < 2) { if(typeof showToast==='function') showToast('Kam se kam 2 cards chahiye shuffle ke liye','error'); return; }
-    // Fisher-Yates shuffle on cards array — progress stays attached by cardId so it is SAFE
-    // Progress object uses card.id as key → reordering array does NOT affect progress
+    // Fisher-Yates shuffle — only card order, progress preserved
     var arr = d.cards.slice();
     for(var i = arr.length - 1; i > 0; i--) {
       var j = Math.floor(Math.random() * (i + 1));
       var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
     }
     d.cards = arr;
-    // Save shuffledAt flag so library view knows to show shuffled order within each confidence group
-    d.shuffledAt = Date.now();
     localStorage.setItem(key, JSON.stringify(d));
-    if(typeof showToast==='function') showToast('🔀 Cards shuffle ho gaye! Confidence ratings preserve hain ✅','success');
+    if(typeof showToast==='function') showToast('🔀 Cards shuffle ho gaye! Practice karo','success');
     if(typeof tvShowSub==='function') tvShowSub('flashcards', sid, secid, tid);
   } catch(e) { if(typeof showToast==='function') showToast('❌ Shuffle error: '+e.message,'error'); }
 };
