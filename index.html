@@ -6096,6 +6096,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <button class="sc-fstrip-btn" id="scRegenHlBtn" onclick="scRegenNewHighlights()" title="New Highlights → Canvas (sirf nayi wali)" style="background:linear-gradient(135deg,rgba(230,81,0,0.18),rgba(255,152,0,0.18));border-color:rgba(255,152,0,0.5);color:#e65100;font-size:0.75rem;position:relative;">🔄<span id="scRegenHlDot" style="display:none;position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;background:#e65100;"></span></button>
     <!-- Advanced Arrange System Button -->
     <button class="sc-fstrip-btn" id="scAdvArrangeBtn" onclick="scShowAdvArrangePanel()" title="Advanced Arrange — Number-wise boxes arrange karo, column transfer karo" style="background:linear-gradient(135deg,rgba(106,27,154,0.22),rgba(21,101,192,0.18));border-color:rgba(106,27,154,0.45);color:#6a1b9a;font-size:0.72rem;font-weight:900;">⊞</button>
+    <button class="sc-fstrip-btn" id="scChronoArrangeBtn" onclick="scShowChronoArrangePanel()" title="Chronological Arrange — AI se boxes ko date/time sequence mein arrange karo across all slides" style="background:linear-gradient(135deg,rgba(0,105,92,0.22),rgba(21,101,192,0.18));border-color:rgba(0,150,136,0.45);color:#00695c;font-size:0.78rem;font-weight:900;">⏱</button>
     <!-- Undo -->
     <button class="sc-fstrip-btn" id="scFloatUndoBtn" onclick="scUndo&&scUndo()" title="Undo (Ctrl+Z)" style="font-size:0.82rem;opacity:0.5;">↩</button>
     <!-- Redo -->
@@ -43043,6 +43044,485 @@ window._scRestoreLandscape = function() {
 })();
 
 // ══ END ADVANCED ARRANGE SYSTEM ══
+
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     CHRONOLOGICAL ARRANGE SYSTEM — AI-powered date/event sequence arrange
+     ══════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+
+// ══════════════════════════════════════════════════════════════════
+// ⏱ CHRONOLOGICAL ARRANGE SYSTEM
+// Kya karta hai:
+//   1. Saari slides ke saare text boxes ka text collect karta hai
+//   2. Groq AI se unhe chronological order mein sort karwata hai
+//   3. Preview dikhata hai — kaunsa box kahan jayega
+//   4. User confirm kare to boxes ko naye positions par move karta hai
+//      (Slide bhi badal sakti hai — pehle wala event slide 1 mein, baad wala slide 2 mein)
+// ══════════════════════════════════════════════════════════════════
+
+window.scShowChronoArrangePanel = function() {
+  // Already open? Close karo
+  var old = document.getElementById('_scChronoPanel');
+  if(old) { old.remove(); return; }
+
+  // Slides check
+  if(!_sc.slides || _sc.slides.length === 0) {
+    showToast && showToast('Koi slide nahi hai!', 'error'); return;
+  }
+
+  // Saare blocks collect karo (slide index bhi)
+  var allBlocks = [];
+  _sc.slides.forEach(function(slide, si) {
+    (slide.textBlocks || []).forEach(function(b) {
+      var rawText = (b.html || '').replace(/<[^>]+>/g, '').trim();
+      if(rawText.length > 0) {
+        allBlocks.push({ slideIdx: si, block: b, text: rawText });
+      }
+    });
+  });
+
+  if(allBlocks.length === 0) {
+    showToast && showToast('Koi text box nahi hai!', 'error'); return;
+  }
+
+  // ── Overlay build karo ──
+  var overlay = document.createElement('div');
+  overlay.id = '_scChronoPanel';
+  overlay.style.cssText = [
+    'position:absolute;inset:0;z-index:9000;',
+    'background:rgba(5,15,35,0.93);',
+    'display:flex;flex-direction:column;',
+    'border-radius:inherit;overflow:hidden;',
+    'font-family:inherit;'
+  ].join('');
+
+  // Header
+  overlay.innerHTML = [
+    '<div style="display:flex;align-items:center;justify-content:space-between;',
+      'padding:10px 14px;flex-shrink:0;',
+      'background:linear-gradient(135deg,#00695c,#1565c0);',
+      'color:#fff;gap:8px;">',
+      '<div>',
+        '<div style="font-size:0.9rem;font-weight:900;">⏱ Chronological Arrange</div>',
+        '<div style="font-size:0.66rem;opacity:0.8;margin-top:1px;">AI text padh ke boxes ko time/date sequence mein arrange karega</div>',
+      '</div>',
+      '<button id="_scChronoClose" style="background:rgba(255,255,255,0.2);border:none;border-radius:8px;',
+        'padding:4px 10px;color:#fff;cursor:pointer;font-size:0.85rem;font-weight:700;">✕</button>',
+    '</div>',
+
+    // Info strip
+    '<div style="padding:8px 14px;flex-shrink:0;background:rgba(255,255,255,0.04);',
+      'border-bottom:1px solid rgba(255,255,255,0.08);font-size:0.72rem;color:rgba(255,255,255,0.7);',
+      'display:flex;align-items:center;gap:8px;">',
+      '<span style="color:#80cbc4;font-size:0.85rem;">📦</span>',
+      '<span>Kul <b style="color:#80cbc4;">' + allBlocks.length + '</b> boxes, ',
+        '<b style="color:#80cbc4;">' + _sc.slides.length + '</b> slides mein milaye</span>',
+    '</div>',
+
+    // Scope selector
+    '<div id="_scChronoScope" style="padding:8px 14px;flex-shrink:0;display:flex;gap:8px;align-items:center;">',
+      '<span style="font-size:0.72rem;color:rgba(255,255,255,0.7);">Arrange karo:</span>',
+      '<button class="_cScope active" data-scope="all" style="font-size:0.72rem;padding:4px 10px;',
+        'border-radius:8px;border:1.5px solid rgba(128,203,196,0.6);',
+        'background:rgba(0,105,92,0.4);color:#80cbc4;cursor:pointer;font-weight:800;">',
+        '🌐 Saari Slides</button>',
+      '<button class="_cScope" data-scope="cur" style="font-size:0.72rem;padding:4px 10px;',
+        'border-radius:8px;border:1.5px solid rgba(255,255,255,0.15);',
+        'background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6);cursor:pointer;font-weight:700;">',
+        '📄 Sirf Yeh Slide</button>',
+    '</div>',
+
+    // Options
+    '<div style="padding:4px 14px 8px;flex-shrink:0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">',
+      '<label style="display:flex;align-items:center;gap:5px;font-size:0.72rem;color:rgba(255,255,255,0.7);cursor:pointer;">',
+        '<input type="checkbox" id="_scChronoReslide" checked style="accent-color:#80cbc4;">',
+        'Boxes ko nayi slides mein move karo (multi-slide reorder)',
+      '</label>',
+    '</div>',
+
+    // AI Analyze button
+    '<div style="padding:4px 14px 10px;flex-shrink:0;">',
+      '<button id="_scChronoAnalyzeBtn" onclick="scChronoAnalyze()" style="',
+        'width:100%;padding:10px;border:none;border-radius:10px;cursor:pointer;',
+        'background:linear-gradient(135deg,#00897b,#1976d2);',
+        'color:#fff;font-size:0.85rem;font-weight:900;font-family:inherit;',
+        'box-shadow:0 3px 12px rgba(0,137,123,0.4);letter-spacing:0.3px;">',
+        '🔍 AI se Analyze Karo',
+      '</button>',
+    '</div>',
+
+    // Result area (scrollable)
+    '<div id="_scChronoBody" style="flex:1;overflow-y:auto;padding:10px 14px;',
+      'display:flex;flex-direction:column;gap:6px;">',
+      '<div style="text-align:center;padding:30px;color:rgba(255,255,255,0.35);font-size:0.8rem;">',
+        '⏳ Upar "AI se Analyze Karo" button dabao<br>AI text padhega aur chronological order batayega',
+      '</div>',
+    '</div>',
+
+    // Footer
+    '<div id="_scChronoFooter" style="padding:8px 14px;flex-shrink:0;',
+      'border-top:1px solid rgba(255,255,255,0.08);display:none;">',
+      '<button id="_scChronoApplyBtn" onclick="scChronoApply()" style="',
+        'width:100%;padding:9px;border:none;border-radius:10px;cursor:pointer;',
+        'background:linear-gradient(135deg,#2e7d32,#1976d2);',
+        'color:#fff;font-size:0.82rem;font-weight:900;font-family:inherit;">',
+        '✅ Is Order Mein Arrange Karo',
+      '</button>',
+    '</div>'
+  ].join('');
+
+  // Canvas wrap ke andar attach karo
+  var wrap = document.getElementById('scCanvasWrap');
+  if(!wrap) { document.getElementById('studyCanvasPanel').appendChild(overlay); }
+  else { wrap.parentNode.insertBefore(overlay, wrap); }
+
+  // Close button
+  overlay.querySelector('#_scChronoClose').addEventListener('click', function() {
+    overlay.remove();
+  });
+
+  // Scope toggle
+  overlay.querySelectorAll('._cScope').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      overlay.querySelectorAll('._cScope').forEach(function(b) {
+        b.classList.remove('active');
+        b.style.background = 'rgba(255,255,255,0.05)';
+        b.style.color = 'rgba(255,255,255,0.6)';
+        b.style.borderColor = 'rgba(255,255,255,0.15)';
+      });
+      btn.classList.add('active');
+      btn.style.background = 'rgba(0,105,92,0.4)';
+      btn.style.color = '#80cbc4';
+      btn.style.borderColor = 'rgba(128,203,196,0.6)';
+    });
+  });
+};
+
+// ── State for chrono arrange ──
+window._scChronoResult = null; // Sorted order {slideIdx, block, text, newSlideIdx, newRank}
+
+// ── Analyze function — Groq API call ──
+window.scChronoAnalyze = function() {
+  var overlay = document.getElementById('_scChronoPanel');
+  if(!overlay) return;
+
+  var scopeBtn = overlay.querySelector('._cScope.active');
+  var scope = scopeBtn ? scopeBtn.getAttribute('data-scope') : 'all';
+  var reSlide = overlay.querySelector('#_scChronoReslide') ? overlay.querySelector('#_scChronoReslide').checked : true;
+
+  // Blocks gather karo based on scope
+  var sourceBlocks = [];
+  if(scope === 'cur') {
+    var cur = _scCur();
+    if(!cur) { showToast && showToast('Slide nahi mili!', 'error'); return; }
+    (cur.textBlocks || []).forEach(function(b) {
+      var t = (b.html || '').replace(/<[^>]+>/g, '').trim();
+      if(t) sourceBlocks.push({ slideIdx: _sc.curSlide, block: b, text: t });
+    });
+  } else {
+    _sc.slides.forEach(function(slide, si) {
+      (slide.textBlocks || []).forEach(function(b) {
+        var t = (b.html || '').replace(/<[^>]+>/g, '').trim();
+        if(t) sourceBlocks.push({ slideIdx: si, block: b, text: t });
+      });
+    });
+  }
+
+  if(sourceBlocks.length < 2) {
+    showToast && showToast('Kam se kam 2 boxes chahiye!', 'error'); return;
+  }
+
+  // UI ko loading state mein le jao
+  var analyzeBtn = overlay.querySelector('#_scChronoAnalyzeBtn');
+  var body = overlay.querySelector('#_scChronoBody');
+  analyzeBtn.disabled = true;
+  analyzeBtn.textContent = '⏳ AI Analyze kar raha hai...';
+  analyzeBtn.style.opacity = '0.7';
+  body.innerHTML = '<div style="text-align:center;padding:30px;color:rgba(255,255,255,0.5);font-size:0.8rem;">🤖 Boxes ka text AI ko bheja ja raha hai...<br>Thoda wait karo...</div>';
+
+  // Prompt build karo
+  var blockList = sourceBlocks.map(function(item, i) {
+    return 'BOX_' + i + ' [Slide ' + (item.slideIdx + 1) + ']: ' + item.text.substring(0, 200);
+  }).join('\n');
+
+  var slideCount = _sc.slides.length;
+  var prompt = [
+    'Tum ek Indian competitive exam (UPSC/State PCS) study notes ke boxes ko chronological order mein arrange karne mein help kar rahe ho.',
+    '',
+    'Niche diye gaye boxes mein historical events/facts hain. Unhe CHRONOLOGICAL ORDER mein sort karo — yaani jo event pehle hua wo pehle aana chahiye.',
+    '',
+    'Sorting ke liye dekho: years (1857, 1947, etc.), dynasties, BCE/CE, time periods, "pehle"/"baad", ordinal hints (pratham, dwitiya), Indian eras (Vedic, Maurya, Gupta, etc.), kings\' reigns, govt schemes launch dates, etc.',
+    '',
+    'BOXES:',
+    blockList,
+    '',
+    'INSTRUCTIONS:',
+    '1. In boxes ko chronological order mein sort karo (sabse pehle event → sabse baad ka event).',
+    '2. Agar ' + reSlide + ' hai (reSlide=true), to sorted boxes ko ' + slideCount + ' slides mein distribute karo — roughly equal count per slide, par thematic grouping bhi dekho.',
+    '3. Agar koi box ka time clearly pata nahi, use apni best knowledge se estimate karo context se.',
+    '',
+    'RESPOND ONLY in this JSON format — no explanation, no markdown:',
+    '{',
+    '  "sorted": [',
+    '    {"box_id": "BOX_0", "date_hint": "1526 CE", "new_slide": 1, "reason": "Panipat Battle 1526"},',
+    '    ...',
+    '  ],',
+    '  "summary": "Brief: Kya kiya (1 line)"',
+    '}'
+  ].join('\n');
+
+  // Groq API call
+  var GROQ_KEY = (typeof _groqKey !== 'undefined' && _groqKey) || '';
+  if(!GROQ_KEY) {
+    // Try to get from settings
+    try { GROQ_KEY = localStorage.getItem('groqApiKey') || ''; } catch(e){}
+  }
+  if(!GROQ_KEY) {
+    body.innerHTML = '<div style="text-align:center;padding:20px;color:#ef9a9a;font-size:0.8rem;">❌ Groq API Key nahi mili!<br>Settings mein Groq API Key add karo.</div>';
+    analyzeBtn.disabled = false; analyzeBtn.textContent = '🔍 AI se Analyze Karo'; analyzeBtn.style.opacity = '1';
+    return;
+  }
+
+  fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + GROQ_KEY
+    },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 2048,
+      temperature: 0.1,
+      messages: [
+        { role: 'system', content: 'You are a JSON-only responder for Indian history chronological sorting. Return only valid JSON, no markdown, no explanation.' },
+        { role: 'user', content: prompt }
+      ]
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    analyzeBtn.disabled = false; analyzeBtn.textContent = '🔍 AI se Analyze Karo'; analyzeBtn.style.opacity = '1';
+
+    if(!data.choices || !data.choices[0]) {
+      body.innerHTML = '<div style="text-align:center;padding:20px;color:#ef9a9a;">❌ AI response nahi aaya. Dobara try karo.</div>';
+      return;
+    }
+
+    var raw = data.choices[0].message.content || '';
+    // Strip markdown fences if any
+    raw = raw.replace(/```json[\s\S]*?```/g, function(m){ return m.replace(/```json\n?/,'').replace(/\n?```/,''); });
+    raw = raw.replace(/```[\s\S]*?```/g, function(m){ return m.replace(/```\n?/g,''); }).trim();
+
+    var parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch(e) {
+      // Try extract JSON object
+      var match = raw.match(/\{[\s\S]*\}/);
+      if(match) { try { parsed = JSON.parse(match[0]); } catch(e2) { parsed = null; } }
+    }
+
+    if(!parsed || !parsed.sorted) {
+      body.innerHTML = '<div style="text-align:center;padding:20px;color:#ef9a9a;">❌ AI ka response parse nahi hua.<br><pre style="font-size:0.6rem;opacity:0.5;white-space:pre-wrap;">' + raw.substring(0,300) + '</pre></div>';
+      return;
+    }
+
+    // Build result map
+    var result = parsed.sorted.map(function(item, rank) {
+      var idx = parseInt((item.box_id || '').replace('BOX_', ''), 10);
+      if(isNaN(idx) || idx < 0 || idx >= sourceBlocks.length) return null;
+      var src = sourceBlocks[idx];
+      return {
+        originalIdx: idx,
+        slideIdx: src.slideIdx,
+        block: src.block,
+        text: src.text,
+        dateHint: item.date_hint || '?',
+        newSlide: Math.max(1, Math.min(slideCount, parseInt(item.new_slide, 10) || (src.slideIdx + 1))) - 1,
+        rank: rank,
+        reason: item.reason || ''
+      };
+    }).filter(Boolean);
+
+    window._scChronoResult = { result: result, scope: scope, reSlide: reSlide, summary: parsed.summary || '' };
+    _scChronoRenderResult(result, parsed.summary || '', overlay, sourceBlocks.length);
+  })
+  .catch(function(err) {
+    analyzeBtn.disabled = false; analyzeBtn.textContent = '🔍 AI se Analyze Karo'; analyzeBtn.style.opacity = '1';
+    body.innerHTML = '<div style="text-align:center;padding:20px;color:#ef9a9a;">❌ Network error: ' + err.message + '</div>';
+  });
+};
+
+// ── Render result preview ──
+function _scChronoRenderResult(result, summary, overlay, totalBoxes) {
+  var body = overlay.querySelector('#_scChronoBody');
+  var footer = overlay.querySelector('#_scChronoFooter');
+  if(!body) return;
+
+  var html = [];
+
+  if(summary) {
+    html.push('<div style="background:rgba(0,137,123,0.18);border:1px solid rgba(128,203,196,0.3);',
+      'border-radius:8px;padding:8px 10px;font-size:0.72rem;color:rgba(255,255,255,0.8);margin-bottom:6px;">',
+      '🤖 <b style="color:#80cbc4;">AI Summary:</b> ' + summary,
+      '</div>');
+  }
+
+  html.push('<div style="font-size:0.68rem;color:rgba(255,255,255,0.45);margin-bottom:4px;font-weight:700;">',
+    'CHRONOLOGICAL ORDER (Neeche wala arrangement apply hoga) →',
+    '</div>');
+
+  result.forEach(function(item, i) {
+    var slideColor = ['#80cbc4','#90caf9','#ce93d8','#ffcc80','#a5d6a7','#ef9a9a'][item.newSlide % 6];
+    html.push(
+      '<div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);',
+        'border-radius:9px;padding:8px 10px;display:flex;gap:8px;align-items:flex-start;">',
+        // Rank number
+        '<div style="min-width:22px;height:22px;border-radius:50%;',
+          'background:rgba(128,203,196,0.25);border:1.5px solid rgba(128,203,196,0.5);',
+          'display:flex;align-items:center;justify-content:center;',
+          'font-size:0.65rem;font-weight:900;color:#80cbc4;flex-shrink:0;">' + (i+1) + '</div>',
+        '<div style="flex:1;min-width:0;">',
+          '<div style="font-size:0.72rem;color:rgba(255,255,255,0.85);line-height:1.4;',
+            'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + item.text.replace(/"/g,'\'') + '">',
+            item.text.substring(0, 80) + (item.text.length > 80 ? '…' : ''),
+          '</div>',
+          '<div style="font-size:0.63rem;margin-top:3px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">',
+            '<span style="color:#ffb74d;">📅 ' + item.dateHint + '</span>',
+            '<span style="color:rgba(255,255,255,0.4);">Was: Slide ' + (item.slideIdx+1) + '</span>',
+            '<span style="color:' + slideColor + ';font-weight:800;">→ Slide ' + (item.newSlide+1) + '</span>',
+            item.reason ? '<span style="color:rgba(255,255,255,0.35);font-style:italic;">' + item.reason.substring(0,50) + '</span>' : '',
+          '</div>',
+        '</div>',
+      '</div>'
+    );
+  });
+
+  if(result.length < totalBoxes) {
+    html.push('<div style="font-size:0.68rem;color:rgba(255,152,0,0.8);text-align:center;padding:4px;">',
+      '⚠️ ' + (totalBoxes - result.length) + ' boxes AI ne process nahi kiye (unclear context)',
+      '</div>');
+  }
+
+  body.innerHTML = html.join('');
+  if(footer) footer.style.display = 'block';
+}
+
+// ── Apply the chronological arrangement ──
+window.scChronoApply = function() {
+  var res = window._scChronoResult;
+  if(!res || !res.result || res.result.length === 0) {
+    showToast && showToast('Pehle Analyze karo!', 'error'); return;
+  }
+
+  scSnapshot && scSnapshot(); // undo ke liye
+
+  var result = res.result;
+  var reSlide = res.reSlide;
+
+  if(reSlide) {
+    // ── Multi-slide rearrange ──
+    // 1. Sabse pehle sab selected blocks apni current slides se remove karo
+    var removedIds = result.map(function(item) { return item.block.id; });
+    _sc.slides.forEach(function(slide) {
+      slide.textBlocks = (slide.textBlocks || []).filter(function(b) {
+        return removedIds.indexOf(b.id) === -1;
+      });
+    });
+
+    // 2. Target slide mein add karo (sorted order se)
+    // Har slide mein blocks ko column-wise stack karo
+    var perSlide = {}; // newSlide -> [blocks in rank order]
+    result.forEach(function(item) {
+      var si = item.newSlide;
+      if(!perSlide[si]) perSlide[si] = [];
+      perSlide[si].push(item.block);
+    });
+
+    Object.keys(perSlide).forEach(function(siStr) {
+      var si = parseInt(siStr, 10);
+      var slide = _sc.slides[si];
+      if(!slide) return;
+      var cfg = _scGetLayoutConfig ? _scGetLayoutConfig() : { col0: { x: 8, w: 140 }, gap: 10 };
+      var colCfg = cfg.col0 || { x: 8, w: 140 };
+      var gap = cfg.gap || 10;
+
+      // Existing blocks jo already uss slide mein the (unselected wale) — unke neeche daalo
+      var existingMaxY = 8;
+      (slide.textBlocks || []).forEach(function(b) {
+        var el = document.getElementById('scBlock_' + b.id);
+        var h = el ? el.offsetHeight : 50;
+        existingMaxY = Math.max(existingMaxY, (b.y || 0) + h + gap);
+      });
+
+      var nextY = existingMaxY;
+      perSlide[siStr].forEach(function(b) {
+        b.x = colCfg.x;
+        b.w = colCfg.w;
+        b.y = nextY;
+        // Estimate height
+        var el = document.getElementById('scBlock_' + b.id);
+        var h = el ? el.offsetHeight : 50;
+        nextY += h + gap;
+        slide.textBlocks.push(b);
+      });
+    });
+
+  } else {
+    // ── Single slide: just reorder by rank within current slide ──
+    var cur = _scCur();
+    if(!cur) { showToast && showToast('Slide nahi mili!', 'error'); return; }
+
+    var cfg2 = _scGetLayoutConfig ? _scGetLayoutConfig() : { col0: { x: 8, w: 140 }, gap: 10 };
+    var colCfg2 = cfg2.col0 || { x: 8, w: 140 };
+    var gap2 = cfg2.gap || 10;
+    var nextY2 = 8;
+
+    result.forEach(function(item) {
+      item.block.x = colCfg2.x;
+      item.block.w = colCfg2.w;
+      item.block.y = nextY2;
+      var el = document.getElementById('scBlock_' + item.block.id);
+      var h = el ? el.offsetHeight : 50;
+      nextY2 += h + gap2;
+    });
+  }
+
+  // DOM refresh
+  scRenderAll && scRenderAll();
+  _scSyncTextBlocksDOM && _scSyncTextBlocksDOM();
+  _scRenderSlideNav && _scRenderSlideNav();
+  clearTimeout(window._scExpandTimer);
+  window._scExpandTimer = setTimeout(scExpandCanvasForContent, 80);
+
+  // Panel close
+  var panel = document.getElementById('_scChronoPanel');
+  if(panel) panel.remove();
+
+  showToast && showToast('✅ Boxes chronological order mein arrange ho gaye!', 'success');
+  window._scChronoResult = null;
+};
+
+// CSS for chrono panel
+(function(){
+  var st = document.createElement('style');
+  st.textContent = [
+    '#_scChronoPanel * { box-sizing:border-box; }',
+    '#_scChronoBody::-webkit-scrollbar { width:4px; }',
+    '#_scChronoBody::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.15);border-radius:2px; }',
+    '#_scChronoAnalyzeBtn:disabled { cursor:not-allowed; }',
+    '#scChronoArrangeBtn { transition: transform 0.15s; }',
+    '#scChronoArrangeBtn:active { transform: scale(0.88); }'
+  ].join('\n');
+  document.head.appendChild(st);
+})();
+
+// ══ END CHRONOLOGICAL ARRANGE SYSTEM ══
 
 })();
 </script>
