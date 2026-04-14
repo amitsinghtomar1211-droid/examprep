@@ -43204,9 +43204,66 @@ window.scShowChronoArrangePanel = function() {
 };
 
 // ── State for chrono arrange ──
-window._scChronoResult = null; // Sorted order {slideIdx, block, text, newSlideIdx, newRank}
+window._scChronoResult = null;
 
-// ── Analyze function — Groq API call ──
+// ── Helper: Groq key fetch ──
+function _scGetGroqKey() {
+  var k = '';
+  try { k = (typeof S !== 'undefined' && S.apiKey) ? S.apiKey : ''; } catch(e){}
+  if(!k) { try { k = (document.getElementById('apiKey')||{}).value || ''; } catch(e){} }
+  if(!k) { try { k = localStorage.getItem('groqApiKey') || ''; } catch(e){} }
+  return k;
+}
+
+// ── Helper: call Groq with a prompt, returns Promise<string> ──
+function _scGroqCall(key, prompt, maxTokens) {
+  return fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: maxTokens || 1500,
+      temperature: 0.1,
+      messages: [
+        { role: 'system', content: 'You are a JSON-only assistant. Output ONLY a valid JSON array. No markdown, no explanation, no extra text.' },
+        { role: 'user', content: prompt }
+      ]
+    })
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if(!d.choices || !d.choices[0]) throw new Error('No response from AI');
+    return d.choices[0].message.content || '';
+  });
+}
+
+// ── Parse JSON safely — try direct, then extract array/object ──
+function _scSafeParseJSON(raw) {
+  // Strip markdown fences
+  raw = raw.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
+  try { return JSON.parse(raw); } catch(e){}
+  // Try extract array
+  var arrM = raw.match(/\[[\s\S]*\]/);
+  if(arrM) { try { return JSON.parse(arrM[0]); } catch(e){} }
+  // Try extract object
+  var objM = raw.match(/\{[\s\S]*\}/);
+  if(objM) { try { return JSON.parse(objM[0]); } catch(e){} }
+  // Try fix truncated JSON — add closing brackets
+  try {
+    var fixed = raw;
+    // Count unclosed braces/brackets
+    var opens = (fixed.match(/[{[]/g)||[]).length;
+    var closes = (fixed.match(/[}\]]/g)||[]).length;
+    // Remove trailing incomplete entry (last comma or partial object)
+    fixed = fixed.replace(/,\s*\{[^}]*$/, '');
+    fixed = fixed.replace(/,\s*$/, '');
+    var diff = opens - closes;
+    for(var i=0;i<diff;i++) { fixed += opens > closes ? (fixed.lastIndexOf('[') > fixed.lastIndexOf('{') ? ']' : '}') : ''; }
+    // Make sure array is closed
+    if(fixed.trim().startsWith('[') && !fixed.trim().endsWith(']')) fixed = fixed + ']';
+    return JSON.parse(fixed);
+  } catch(e2) { return null; }
+}
+
+// ── Analyze function — chunked Groq API calls ──
 window.scChronoAnalyze = function() {
   var overlay = document.getElementById('_scChronoPanel');
   if(!overlay) return;
@@ -43215,7 +43272,7 @@ window.scChronoAnalyze = function() {
   var scope = scopeBtn ? scopeBtn.getAttribute('data-scope') : 'all';
   var reSlide = overlay.querySelector('#_scChronoReslide') ? overlay.querySelector('#_scChronoReslide').checked : true;
 
-  // Blocks gather karo based on scope
+  // Blocks gather karo
   var sourceBlocks = [];
   if(scope === 'cur') {
     var cur = _scCur();
@@ -43233,128 +43290,135 @@ window.scChronoAnalyze = function() {
     });
   }
 
-  if(sourceBlocks.length < 2) {
-    showToast && showToast('Kam se kam 2 boxes chahiye!', 'error'); return;
-  }
+  if(sourceBlocks.length < 2) { showToast && showToast('Kam se kam 2 boxes chahiye!', 'error'); return; }
 
-  // UI ko loading state mein le jao
-  var analyzeBtn = overlay.querySelector('#_scChronoAnalyzeBtn');
-  var body = overlay.querySelector('#_scChronoBody');
-  analyzeBtn.disabled = true;
-  analyzeBtn.textContent = '⏳ AI Analyze kar raha hai...';
-  analyzeBtn.style.opacity = '0.7';
-  body.innerHTML = '<div style="text-align:center;padding:30px;color:rgba(255,255,255,0.5);font-size:0.8rem;">🤖 Boxes ka text AI ko bheja ja raha hai...<br>Thoda wait karo...</div>';
-
-  // Prompt build karo
-  var blockList = sourceBlocks.map(function(item, i) {
-    return 'BOX_' + i + ' [Slide ' + (item.slideIdx + 1) + ']: ' + item.text.substring(0, 200);
-  }).join('\n');
-
-  var slideCount = _sc.slides.length;
-  var prompt = [
-    'Tum ek Indian competitive exam (UPSC/State PCS) study notes ke boxes ko chronological order mein arrange karne mein help kar rahe ho.',
-    '',
-    'Niche diye gaye boxes mein historical events/facts hain. Unhe CHRONOLOGICAL ORDER mein sort karo — yaani jo event pehle hua wo pehle aana chahiye.',
-    '',
-    'Sorting ke liye dekho: years (1857, 1947, etc.), dynasties, BCE/CE, time periods, "pehle"/"baad", ordinal hints (pratham, dwitiya), Indian eras (Vedic, Maurya, Gupta, etc.), kings\' reigns, govt schemes launch dates, etc.',
-    '',
-    'BOXES:',
-    blockList,
-    '',
-    'INSTRUCTIONS:',
-    '1. In boxes ko chronological order mein sort karo (sabse pehle event → sabse baad ka event).',
-    '2. Agar ' + reSlide + ' hai (reSlide=true), to sorted boxes ko ' + slideCount + ' slides mein distribute karo — roughly equal count per slide, par thematic grouping bhi dekho.',
-    '3. Agar koi box ka time clearly pata nahi, use apni best knowledge se estimate karo context se.',
-    '',
-    'RESPOND ONLY in this JSON format — no explanation, no markdown:',
-    '{',
-    '  "sorted": [',
-    '    {"box_id": "BOX_0", "date_hint": "1526 CE", "new_slide": 1, "reason": "Panipat Battle 1526"},',
-    '    ...',
-    '  ],',
-    '  "summary": "Brief: Kya kiya (1 line)"',
-    '}'
-  ].join('\n');
-
-  // Groq API call — S.apiKey se lo (same as rest of app)
-  var GROQ_KEY = '';
-  try { GROQ_KEY = (typeof S !== 'undefined' && S.apiKey) ? S.apiKey : ''; } catch(e){}
-  if(!GROQ_KEY) { try { GROQ_KEY = (document.getElementById('apiKey')||{}).value || ''; } catch(e){} }
-  if(!GROQ_KEY) { try { GROQ_KEY = localStorage.getItem('groqApiKey') || ''; } catch(e){} }
+  var GROQ_KEY = _scGetGroqKey();
   if(!GROQ_KEY) {
-    body.innerHTML = '<div style="text-align:center;padding:20px;color:#ef9a9a;font-size:0.8rem;">❌ Groq API Key nahi mili!<br>Settings mein Groq API Key add karo.</div>';
-    analyzeBtn.disabled = false; analyzeBtn.textContent = '🔍 AI se Analyze Karo'; analyzeBtn.style.opacity = '1';
+    document.querySelector('#_scChronoBody').innerHTML = '<div style="text-align:center;padding:20px;color:#ef9a9a;font-size:0.8rem;">❌ Groq API Key nahi mili!<br>Settings mein Groq API Key add karo.</div>';
     return;
   }
 
-  fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + GROQ_KEY
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      max_tokens: 2048,
-      temperature: 0.1,
-      messages: [
-        { role: 'system', content: 'You are a JSON-only responder for Indian history chronological sorting. Return only valid JSON, no markdown, no explanation.' },
-        { role: 'user', content: prompt }
-      ]
+  var analyzeBtn = overlay.querySelector('#_scChronoAnalyzeBtn');
+  var body = overlay.querySelector('#_scChronoBody');
+  analyzeBtn.disabled = true;
+  analyzeBtn.style.opacity = '0.7';
+
+  var slideCount = _sc.slides.length;
+
+  // ── CHUNK STRATEGY: max 25 boxes per API call ──
+  var CHUNK_SIZE = 25;
+  var chunks = [];
+  for(var ci = 0; ci < sourceBlocks.length; ci += CHUNK_SIZE) {
+    chunks.push(sourceBlocks.slice(ci, ci + CHUNK_SIZE).map(function(item, li) {
+      var globalIdx = ci + li;
+      return { globalIdx: globalIdx, item: item };
+    }));
+  }
+
+  var allSortedEntries = []; // [{globalIdx, dateHint, score, reason}]
+  var chunksDone = 0;
+
+  function updateProgress() {
+    analyzeBtn.textContent = '⏳ Chunk ' + chunksDone + '/' + chunks.length + ' done...';
+    body.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.6);font-size:0.8rem;">' +
+      '🤖 AI analyze kar raha hai...<br>' +
+      '<div style="margin-top:10px;background:rgba(255,255,255,0.08);border-radius:6px;height:6px;overflow:hidden;">' +
+        '<div style="height:100%;background:#80cbc4;border-radius:6px;width:' + Math.round((chunksDone/chunks.length)*100) + '%;transition:width 0.4s;"></div>' +
+      '</div>' +
+      '<div style="margin-top:6px;font-size:0.7rem;opacity:0.7;">' + chunksDone + ' / ' + chunks.length + ' batches complete</div>' +
+    '</div>';
+  }
+
+  function processChunk(chunkIdx) {
+    if(chunkIdx >= chunks.length) {
+      // Sab chunks done — final sort karo
+      finalizeSorting();
+      return;
+    }
+    updateProgress();
+    var chunk = chunks[chunkIdx];
+    var boxLines = chunk.map(function(entry) {
+      return 'BOX_' + entry.globalIdx + ': ' + entry.item.text.substring(0, 120);
+    }).join('\n');
+
+    var prompt = [
+      'Indian competitive exam study notes. Niche diye boxes ko CHRONOLOGICAL order mein sort karo.',
+      'Assign each box a chronological score (integer, smaller = older/earlier).',
+      'Use: years, BCE/CE, dynasties, scheme launch dates, Indian eras, reign periods.',
+      '',
+      'BOXES:',
+      boxLines,
+      '',
+      'Return ONLY a JSON array, each item: {"id":"BOX_N","score":1234,"hint":"year or era","r":"brief reason"}',
+      'Example: [{"id":"BOX_5","score":1526,"hint":"1526 CE","r":"Panipat"},...]',
+      'NO markdown, NO explanation. Pure JSON array only.'
+    ].join('\n');
+
+    _scGroqCall(GROQ_KEY, prompt, 1200)
+    .then(function(raw) {
+      var parsed = _scSafeParseJSON(raw);
+      if(Array.isArray(parsed)) {
+        parsed.forEach(function(item) {
+          var gIdx = parseInt((item.id || item.box_id || '').replace('BOX_',''), 10);
+          if(!isNaN(gIdx)) {
+            allSortedEntries.push({ globalIdx: gIdx, score: parseFloat(item.score)||0, hint: item.hint||item.date_hint||'?', reason: item.r||item.reason||'' });
+          }
+        });
+      }
+      chunksDone++;
+      processChunk(chunkIdx + 1);
     })
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    analyzeBtn.disabled = false; analyzeBtn.textContent = '🔍 AI se Analyze Karo'; analyzeBtn.style.opacity = '1';
+    .catch(function(err) {
+      // Chunk fail — skip aur aage badho
+      chunksDone++;
+      processChunk(chunkIdx + 1);
+    });
+  }
 
-    if(!data.choices || !data.choices[0]) {
-      body.innerHTML = '<div style="text-align:center;padding:20px;color:#ef9a9a;">❌ AI response nahi aaya. Dobara try karo.</div>';
+  function finalizeSorting() {
+    analyzeBtn.disabled = false;
+    analyzeBtn.textContent = '🔍 AI se Analyze Karo';
+    analyzeBtn.style.opacity = '1';
+
+    if(allSortedEntries.length === 0) {
+      body.innerHTML = '<div style="text-align:center;padding:20px;color:#ef9a9a;">❌ AI koi result nahi de paya. Dobara try karo.</div>';
       return;
     }
 
-    var raw = data.choices[0].message.content || '';
-    // Strip markdown fences if any
-    raw = raw.replace(/```json[\s\S]*?```/g, function(m){ return m.replace(/```json\n?/,'').replace(/\n?```/,''); });
-    raw = raw.replace(/```[\s\S]*?```/g, function(m){ return m.replace(/```\n?/g,''); }).trim();
+    // Score ke hisaab se sort karo
+    allSortedEntries.sort(function(a,b){ return a.score - b.score; });
 
-    var parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch(e) {
-      // Try extract JSON object
-      var match = raw.match(/\{[\s\S]*\}/);
-      if(match) { try { parsed = JSON.parse(match[0]); } catch(e2) { parsed = null; } }
-    }
-
-    if(!parsed || !parsed.sorted) {
-      body.innerHTML = '<div style="text-align:center;padding:20px;color:#ef9a9a;">❌ AI ka response parse nahi hua.<br><pre style="font-size:0.6rem;opacity:0.5;white-space:pre-wrap;">' + raw.substring(0,300) + '</pre></div>';
-      return;
-    }
-
-    // Build result map
-    var result = parsed.sorted.map(function(item, rank) {
-      var idx = parseInt((item.box_id || '').replace('BOX_', ''), 10);
-      if(isNaN(idx) || idx < 0 || idx >= sourceBlocks.length) return null;
-      var src = sourceBlocks[idx];
+    // Result array build karo
+    var perSlide = Math.ceil(sourceBlocks.length / Math.max(1, slideCount));
+    var result = allSortedEntries.map(function(entry, rank) {
+      var src = sourceBlocks[entry.globalIdx];
+      if(!src) return null;
+      var newSlide = reSlide ? Math.min(slideCount - 1, Math.floor(rank / perSlide)) : src.slideIdx;
       return {
-        originalIdx: idx,
+        originalIdx: entry.globalIdx,
         slideIdx: src.slideIdx,
         block: src.block,
         text: src.text,
-        dateHint: item.date_hint || '?',
-        newSlide: Math.max(1, Math.min(slideCount, parseInt(item.new_slide, 10) || (src.slideIdx + 1))) - 1,
+        dateHint: entry.hint,
+        newSlide: newSlide,
         rank: rank,
-        reason: item.reason || ''
+        reason: entry.reason
       };
     }).filter(Boolean);
 
-    window._scChronoResult = { result: result, scope: scope, reSlide: reSlide, summary: parsed.summary || '' };
-    _scChronoRenderResult(result, parsed.summary || '', overlay, sourceBlocks.length);
-  })
-  .catch(function(err) {
-    analyzeBtn.disabled = false; analyzeBtn.textContent = '🔍 AI se Analyze Karo'; analyzeBtn.style.opacity = '1';
-    body.innerHTML = '<div style="text-align:center;padding:20px;color:#ef9a9a;">❌ Network error: ' + err.message + '</div>';
-  });
+    // Missing boxes (jo AI ne skip kiye) — end mein original slide par rakho
+    var processedIdx = allSortedEntries.map(function(e){ return e.globalIdx; });
+    sourceBlocks.forEach(function(item, gi) {
+      if(processedIdx.indexOf(gi) === -1) {
+        result.push({ originalIdx: gi, slideIdx: item.slideIdx, block: item.block, text: item.text, dateHint: '?', newSlide: item.slideIdx, rank: result.length, reason: 'AI ne process nahi kiya' });
+      }
+    });
+
+    window._scChronoResult = { result: result, scope: scope, reSlide: reSlide, summary: allSortedEntries.length + ' boxes chronologically sorted (' + chunks.length + ' AI calls)' };
+    _scChronoRenderResult(result, window._scChronoResult.summary, overlay, sourceBlocks.length);
+  }
+
+  processChunk(0);
 };
 
 // ── Render result preview ──
