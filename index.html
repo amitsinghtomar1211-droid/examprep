@@ -2211,6 +2211,14 @@ body.night-mode .sc-color-dot:hover { border-color: rgba(255,255,255,0.7); }
 .ne-sepia .ne-editable b,.ne-sepia .ne-editable strong{color:#8b5e3c;}
 .ne-sepia .ne-editable td,.ne-sepia .ne-editable th{border-color:#c4a882;}
 .ne-sepia .ne-editable th{background:#e8d5b0;color:#5c3d2e;}
+/* Hotspot pin pulse animation */
+@keyframes ne-pin-pulse {
+  0%,100% { transform: translate(-50%,-100%) scale(1); filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
+  50% { transform: translate(-50%,-100%) scale(1.25); filter: drop-shadow(0 3px 8px rgba(230,81,0,0.8)); }
+}
+.ne-hotspot-pin { transition: opacity 0.2s; }
+.ne-hotspot-pin:hover { opacity: 0.85; }
+
 /* Highlight color picker */
 .hl-color-row{display:flex;gap:5px;align-items:center;}
 .hl-dot{width:18px;height:18px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:border 0.15s;}
@@ -12681,13 +12689,23 @@ function neSetEditMode(on) {
           img.onclick = function(e) { e.preventDefault(); neImageOptions(img); };
         }
       });
-    }, 100);
+      // Edit mode mein hotspot pins render karo
+      area.querySelectorAll('.ne-img-wrap').forEach(function(w){
+        _neHotspotRender(w, true);
+      });
+    }, 150);
   } else {
     area.contentEditable = 'false';
     area.style.cursor = 'text';
     if(btn) { btn.setAttribute('title','Edit / Read'); btn.style.background=''; btn.style.borderColor=''; }
     if(toolbar) toolbar.style.display = 'none';
     neUpdateStatusBar('👁️ Read Mode -- Highlight ya Edit button dabao');
+    // View mode mein hotspot pins activate karo (link clickable)
+    setTimeout(function(){
+      area.querySelectorAll('.ne-img-wrap').forEach(function(w){
+        _neHotspotRender(w, false);
+      });
+    }, 100);
   }
 }
 
@@ -13131,6 +13149,19 @@ function neImageOptions(imgEl) {
     menu.remove();
   }, 'background:rgba(198,40,40,0.08);color:#c62828;border-color:#ef9a9a;');
 
+  // ── Hotspot separator ──
+  var sep3 = document.createElement('div');
+  sep3.style.cssText = 'width:100%;border-top:1px solid #eee;margin:3px 0;';
+  menu.appendChild(sep3);
+
+  // ── Hotspot button ──
+  var _hsArr = JSON.parse((wrap && wrap.getAttribute('data-hotspots')) || '[]');
+  var _hsLabel = _hsArr.length > 0 ? ('📍 Hotspots (' + _hsArr.length + ')') : '📍 Add Hotspot';
+  nb(_hsLabel, 'Image pe clickable link-pin lagao', function(){
+    menu.remove();
+    _neHotspotManager(imgEl, wrap);
+  }, 'background:linear-gradient(135deg,#e65100,#f57c00);color:#fff;border-color:#e65100;font-size:0.75rem;padding:5px 11px;');
+
   // ── Close ──
   nb('✕','Close', function(){ menu.remove(); }, 'background:transparent;border-color:transparent;color:#999;');
 
@@ -13143,7 +13174,247 @@ function neImageOptions(imgEl) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  ADVANCED IMAGE EDITOR — Crop · Resize · Rotate · Draw · Text · Highlight
+//  IMAGE HOTSPOT SYSTEM — Pin lagao, URL attach karo, link open karo
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Wrap ke andar pins render karo (edit ya view mode)
+function _neHotspotRender(wrap, isEditMode) {
+  if(!wrap) return;
+  wrap.style.position = 'relative'; // ensure relative
+  // Purane pins hata do
+  wrap.querySelectorAll('.ne-hotspot-pin').forEach(function(p){ p.remove(); });
+  var hotspots = JSON.parse(wrap.getAttribute('data-hotspots') || '[]');
+  if(!hotspots.length) return;
+
+  hotspots.forEach(function(hs, idx){
+    var pin = document.createElement('div');
+    pin.className = 'ne-hotspot-pin';
+    pin.setAttribute('data-hs-idx', idx);
+    pin.style.cssText = 'position:absolute;left:' + hs.x + '%;top:' + hs.y + '%;'
+      + 'transform:translate(-50%,-100%);cursor:pointer;z-index:10;'
+      + 'font-size:1.5rem;line-height:1;user-select:none;pointer-events:auto;'
+      + 'animation:ne-pin-pulse 2s ease-in-out infinite;';
+    pin.innerHTML = '📍';
+    pin.title = isEditMode
+      ? ('✏️ Edit pin: ' + (hs.label || hs.url))
+      : (hs.label ? hs.label + '\n' + hs.url : hs.url);
+
+    if(isEditMode) {
+      pin.onclick = function(e){ e.stopPropagation(); _neHotspotEditPin(wrap, idx); };
+    } else {
+      pin.onclick = function(e){ e.stopPropagation(); window.open(hs.url, hs.target || '_blank'); };
+    }
+    wrap.appendChild(pin);
+  });
+}
+
+// Hotspot add karne ka flow — crosshair mode
+function _neHotspotManager(imgEl, wrap) {
+  if(!wrap) return;
+  var existing = JSON.parse(wrap.getAttribute('data-hotspots') || '[]');
+
+  // Agar already hotspots hain toh manage dialog dikhao
+  if(existing.length > 0) {
+    _neHotspotListDialog(wrap);
+    return;
+  }
+
+  showToast('📍 Image pe click karo jahan pin lagana hai', 'info');
+  wrap.style.cursor = 'crosshair';
+  // Existing pins temporarily disable karo
+  wrap.querySelectorAll('.ne-hotspot-pin').forEach(function(p){
+    p.style.pointerEvents = 'none'; p.style.opacity = '0.4';
+  });
+
+  function onWrapClick(e) {
+    e.stopPropagation();
+    wrap.style.cursor = '';
+    wrap.removeEventListener('click', onWrapClick);
+    wrap.querySelectorAll('.ne-hotspot-pin').forEach(function(p){
+      p.style.pointerEvents = ''; p.style.opacity = '';
+    });
+    var rect = wrap.getBoundingClientRect();
+    var xPct = parseFloat(((e.clientX - rect.left) / rect.width  * 100).toFixed(1));
+    var yPct = parseFloat(((e.clientY - rect.top)  / rect.height * 100).toFixed(1));
+    _neHotspotAddDialog(wrap, xPct, yPct);
+  }
+  wrap.addEventListener('click', onWrapClick);
+}
+
+// Existing hotspots ki list + "Add New" option
+function _neHotspotListDialog(wrap) {
+  var old = document.getElementById('_neHsListDlg');
+  if(old) old.remove();
+  var hotspots = JSON.parse(wrap.getAttribute('data-hotspots') || '[]');
+
+  var dlg = document.createElement('div');
+  dlg.id = '_neHsListDlg';
+  dlg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
+    + 'z-index:999999;background:#fff;border-radius:16px;padding:20px 22px;'
+    + 'box-shadow:0 8px 40px rgba(0,0,0,0.25);width:min(360px,93vw);font-family:inherit;max-height:80vh;overflow-y:auto;';
+
+  var html = '<div style="font-weight:800;font-size:1rem;color:#e65100;margin-bottom:12px;">📍 Hotspots Manage Karo</div>';
+  hotspots.forEach(function(hs, idx){
+    html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fff8f5;border:1px solid #ffe0c2;border-radius:9px;margin-bottom:7px;">'
+      + '<span style="font-size:1.2rem;">📍</span>'
+      + '<div style="flex:1;min-width:0;">'
+      + '<div style="font-size:0.78rem;font-weight:700;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (hs.label || 'No label') + '</div>'
+      + '<div style="font-size:0.68rem;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + hs.url + '</div>'
+      + '</div>'
+      + '<button onclick="_neHotspotEditPin(document.getElementById(\'_neHsListDlg\').closest(\'body\').querySelector(\'.ne-img-wrap[data-hotspots]\'),'+idx+');document.getElementById(\'_neHsListDlg\').remove();" '
+      + 'style="padding:4px 9px;background:#1565c0;color:#fff;border:none;border-radius:7px;font-size:0.72rem;cursor:pointer;">✏️</button>'
+      + '</div>';
+  });
+  html += '<div style="display:flex;gap:8px;margin-top:10px;">'
+    + '<button id="_neHsAddNew" style="flex:1;padding:9px;background:linear-gradient(135deg,#e65100,#f57c00);color:#fff;border:none;border-radius:9px;font-weight:800;font-size:0.85rem;cursor:pointer;">➕ Naya Pin Add Karo</button>'
+    + '<button id="_neHsListClose" style="padding:9px 14px;background:#f5f5f5;border:1px solid #ddd;border-radius:9px;font-size:0.85rem;cursor:pointer;">✕</button>'
+    + '</div>';
+  dlg.innerHTML = html;
+  document.body.appendChild(dlg);
+
+  document.getElementById('_neHsListClose').onclick = function(){ dlg.remove(); };
+  document.getElementById('_neHsAddNew').onclick = function(){
+    dlg.remove();
+    showToast('📍 Image pe click karo jahan naya pin lagana hai', 'info');
+    wrap.style.cursor = 'crosshair';
+    wrap.querySelectorAll('.ne-hotspot-pin').forEach(function(p){
+      p.style.pointerEvents = 'none'; p.style.opacity = '0.4';
+    });
+    function onWrapClick(e) {
+      e.stopPropagation();
+      wrap.style.cursor = '';
+      wrap.removeEventListener('click', onWrapClick);
+      wrap.querySelectorAll('.ne-hotspot-pin').forEach(function(p){
+        p.style.pointerEvents = ''; p.style.opacity = '';
+      });
+      var rect = wrap.getBoundingClientRect();
+      var xPct = parseFloat(((e.clientX - rect.left) / rect.width  * 100).toFixed(1));
+      var yPct = parseFloat(((e.clientY - rect.top)  / rect.height * 100).toFixed(1));
+      _neHotspotAddDialog(wrap, xPct, yPct);
+    }
+    wrap.addEventListener('click', onWrapClick);
+  };
+}
+
+// Naya pin add dialog
+function _neHotspotAddDialog(wrap, xPct, yPct) {
+  var old = document.getElementById('_neHsDialog');
+  if(old) old.remove();
+
+  var dlg = document.createElement('div');
+  dlg.id = '_neHsDialog';
+  dlg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
+    + 'z-index:999999;background:#fff;border-radius:16px;padding:20px 22px;'
+    + 'box-shadow:0 8px 40px rgba(0,0,0,0.25);width:min(340px,92vw);font-family:inherit;';
+
+  dlg.innerHTML = '<div style="font-weight:800;font-size:1rem;color:#e65100;margin-bottom:14px;">📍 Naya Hotspot Add Karo</div>'
+    + '<div style="font-size:0.75rem;color:#999;margin-bottom:10px;">Position: ' + xPct + '%, ' + yPct + '%</div>'
+    + '<label style="font-size:0.8rem;font-weight:700;color:#333;display:block;margin-bottom:4px;">🔗 URL <span style="color:#c62828;">*</span></label>'
+    + '<input id="_neHsUrl" type="url" placeholder="https://example.com" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:0.85rem;margin-bottom:10px;outline:none;">'
+    + '<label style="font-size:0.8rem;font-weight:700;color:#333;display:block;margin-bottom:4px;">🏷️ Label (optional)</label>'
+    + '<input id="_neHsLabel" type="text" placeholder="e.g. UP Map, Reference" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:0.85rem;margin-bottom:12px;outline:none;">'
+    + '<label style="font-size:0.8rem;font-weight:700;color:#333;display:block;margin-bottom:6px;">🌐 Link kahan khule?</label>'
+    + '<div style="display:flex;gap:8px;margin-bottom:16px;">'
+    + '  <label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;cursor:pointer;font-size:0.8rem;">'
+    + '    <input type="radio" name="_neHsTarget" value="_blank" checked> 🆕 New Tab</label>'
+    + '  <label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;cursor:pointer;font-size:0.8rem;">'
+    + '    <input type="radio" name="_neHsTarget" value="_self"> 🔁 Same Tab</label>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;">'
+    + '  <button id="_neHsSave" style="flex:1;padding:10px;background:linear-gradient(135deg,#e65100,#f57c00);color:#fff;border:none;border-radius:9px;font-weight:800;font-size:0.88rem;cursor:pointer;">✅ Save Pin</button>'
+    + '  <button id="_neHsCancel" style="padding:10px 16px;background:#f5f5f5;border:1px solid #ddd;border-radius:9px;font-size:0.88rem;cursor:pointer;">✕</button>'
+    + '</div>';
+
+  document.body.appendChild(dlg);
+  document.getElementById('_neHsUrl').focus();
+
+  document.getElementById('_neHsCancel').onclick = function(){ dlg.remove(); };
+
+  document.getElementById('_neHsSave').onclick = function(){
+    var url   = document.getElementById('_neHsUrl').value.trim();
+    var label = document.getElementById('_neHsLabel').value.trim();
+    var tgt   = document.querySelector('input[name="_neHsTarget"]:checked');
+    var target = tgt ? tgt.value : '_blank';
+    if(!url){ document.getElementById('_neHsUrl').style.borderColor='#c62828'; document.getElementById('_neHsUrl').focus(); return; }
+    if(!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    var hotspots = JSON.parse(wrap.getAttribute('data-hotspots') || '[]');
+    hotspots.push({ x: xPct, y: yPct, url: url, label: label, target: target });
+    wrap.setAttribute('data-hotspots', JSON.stringify(hotspots));
+    markModified();
+    dlg.remove();
+    var area = document.getElementById('noteEditableArea');
+    _neHotspotRender(wrap, area && area.contentEditable === 'true');
+    showToast('📍 Hotspot save ho gaya!', 'success');
+  };
+}
+
+// Existing pin edit/delete dialog
+function _neHotspotEditPin(wrap, idx) {
+  if(!wrap) return;
+  var hotspots = JSON.parse(wrap.getAttribute('data-hotspots') || '[]');
+  var hs = hotspots[idx];
+  if(!hs) return;
+
+  var old = document.getElementById('_neHsEditDlg');
+  if(old) old.remove();
+
+  var dlg = document.createElement('div');
+  dlg.id = '_neHsEditDlg';
+  dlg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);'
+    + 'z-index:999999;background:#fff;border-radius:16px;padding:20px 22px;'
+    + 'box-shadow:0 8px 40px rgba(0,0,0,0.25);width:min(340px,92vw);font-family:inherit;';
+
+  dlg.innerHTML = '<div style="font-weight:800;font-size:1rem;color:#1565c0;margin-bottom:14px;">✏️ Hotspot Edit Karo</div>'
+    + '<label style="font-size:0.8rem;font-weight:700;color:#333;display:block;margin-bottom:4px;">🔗 URL</label>'
+    + '<input id="_neHsEUrl" type="url" value="' + (hs.url||'').replace(/"/g,'&quot;') + '" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:0.85rem;margin-bottom:10px;outline:none;">'
+    + '<label style="font-size:0.8rem;font-weight:700;color:#333;display:block;margin-bottom:4px;">🏷️ Label</label>'
+    + '<input id="_neHsELabel" type="text" value="' + (hs.label||'').replace(/"/g,'&quot;') + '" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:0.85rem;margin-bottom:12px;outline:none;">'
+    + '<label style="font-size:0.8rem;font-weight:700;color:#333;display:block;margin-bottom:6px;">🌐 Link kahan khule?</label>'
+    + '<div style="display:flex;gap:8px;margin-bottom:16px;">'
+    + '  <label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;cursor:pointer;font-size:0.8rem;">'
+    + '    <input type="radio" name="_neHsETarget" value="_blank"' + (hs.target !== '_self' ? ' checked' : '') + '> 🆕 New Tab</label>'
+    + '  <label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;cursor:pointer;font-size:0.8rem;">'
+    + '    <input type="radio" name="_neHsETarget" value="_self"' + (hs.target === '_self' ? ' checked' : '') + '> 🔁 Same Tab</label>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;">'
+    + '  <button id="_neHsEUpdate" style="flex:1;padding:10px;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border:none;border-radius:9px;font-weight:800;font-size:0.88rem;cursor:pointer;">✅ Update</button>'
+    + '  <button id="_neHsEDelete" style="padding:10px 14px;background:rgba(198,40,40,0.08);color:#c62828;border:1px solid #ef9a9a;border-radius:9px;font-size:0.88rem;cursor:pointer;">🗑 Delete</button>'
+    + '  <button id="_neHsECancel" style="padding:10px 14px;background:#f5f5f5;border:1px solid #ddd;border-radius:9px;font-size:0.88rem;cursor:pointer;">✕</button>'
+    + '</div>';
+
+  document.body.appendChild(dlg);
+
+  document.getElementById('_neHsECancel').onclick = function(){ dlg.remove(); };
+
+  document.getElementById('_neHsEDelete').onclick = function(){
+    if(confirm('Yeh hotspot delete karo?')){
+      hotspots.splice(idx, 1);
+      wrap.setAttribute('data-hotspots', JSON.stringify(hotspots));
+      markModified();
+      var area = document.getElementById('noteEditableArea');
+      _neHotspotRender(wrap, area && area.contentEditable === 'true');
+      showToast('📍 Hotspot delete ho gaya', 'success');
+    }
+    dlg.remove();
+  };
+
+  document.getElementById('_neHsEUpdate').onclick = function(){
+    var url   = document.getElementById('_neHsEUrl').value.trim();
+    var label = document.getElementById('_neHsELabel').value.trim();
+    var tgt   = document.querySelector('input[name="_neHsETarget"]:checked');
+    if(!url){ document.getElementById('_neHsEUrl').style.borderColor='#c62828'; return; }
+    if(!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    hotspots[idx] = { x: hs.x, y: hs.y, url: url, label: label, target: tgt ? tgt.value : '_blank' };
+    wrap.setAttribute('data-hotspots', JSON.stringify(hotspots));
+    markModified();
+    var area = document.getElementById('noteEditableArea');
+    _neHotspotRender(wrap, area && area.contentEditable === 'true');
+    showToast('📍 Hotspot update ho gaya!', 'success');
+    dlg.remove();
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════
 function _neAdvImgEditor(imgEl) {
   var old = document.getElementById('_neAdvImgEditorModal');
