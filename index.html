@@ -24331,14 +24331,28 @@ async function _saveImageToFirebase(imgId, dataUrl) {
   try {
     if(!window._db || !window._currentUser) return;
     var uid = window._currentUser.uid;
-    // Heavy compress for Firebase (max 600px, 0.55 quality — keeps size small)
+    // Step 1: Compress to 500px, quality 0.45 — most images will be ~80-150KB
     return new Promise(function(resolve) {
-      _compressImage(dataUrl, 600, 0.55, function(compressed) {
-        if(!compressed || compressed.length > 600000) { resolve(); return; } // 600KB limit
-        window._db.collection('users').doc(uid).collection('images').doc(imgId).set({
-          data: compressed,
-          savedAt: Date.now()
-        }).then(resolve).catch(function(e){ console.warn('FB img save fail:', e); resolve(); });
+      _compressImage(dataUrl, 500, 0.45, function(compressed) {
+        // Step 2: If still > 700KB, compress further to 300px, quality 0.35
+        if(compressed && compressed.length > 700000) {
+          _compressImage(compressed, 300, 0.35, function(compressed2) {
+            if(!compressed2 || compressed2.length > 900000) {
+              // Still too large — skip cross-device sync (stays in local IDB only)
+              console.warn('Image too large for Firestore after double-compress — local only');
+              resolve(); return;
+            }
+            window._db.collection('users').doc(uid).collection('images').doc(imgId).set({
+              data: compressed2, savedAt: Date.now()
+            }).then(resolve).catch(function(e){ console.warn('FB img save fail:', e); resolve(); });
+          });
+        } else if(!compressed) {
+          resolve();
+        } else {
+          window._db.collection('users').doc(uid).collection('images').doc(imgId).set({
+            data: compressed, savedAt: Date.now()
+          }).then(resolve).catch(function(e){ console.warn('FB img save fail:', e); resolve(); });
+        }
       });
     });
   } catch(e) { console.warn('_saveImageToFirebase error:', e); }
