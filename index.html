@@ -12966,27 +12966,13 @@ function neOpenUrlImageInsert() {
 
     _fetchUrlToDataUrl(url, function(dataUrl) {
       if(dataUrl) {
-        _compressImage(dataUrl, 1200, 0.72, function(compressed) {
-          _saveImageToIDB(compressed, function(imgId) {
-            var displaySrc = imgId ? compressed : url;
-            var refAttr = imgId ? ('data-idbref="' + imgId + '"') : ('data-origurl="' + url + '"');
-            var imgHtml = '<div class="ne-img-wrap" data-align="center" contenteditable="false" style="display:block;text-align:center;margin:8px 0;position:relative;touch-action:manipulation;" draggable="false" onclick="event.stopPropagation();neImageOptions(this.querySelector(\'img\'))" ' + refAttr + '><img src="' + displaySrc + '" style="max-width:100%;border-radius:8px;display:inline-block;" alt="Image" draggable="false"><span class="ne-img-handle" style="position:absolute;bottom:4px;right:4px;background:rgba(21,101,192,0.85);color:#fff;font-size:0.6rem;border-radius:4px;padding:2px 5px;pointer-events:none;">✏️</span></div>';
-            area.focus();
-            var sel = window.getSelection();
-            if(sel && sel.rangeCount > 0 && area.contains(sel.anchorNode)) {
-              document.execCommand('insertHTML', false, imgHtml);
-            } else {
-              area.innerHTML += imgHtml;
-            }
-            markModified();
-            modal.remove();
-            if(imgId) {
-              showToast('✅ Image offline store ho gayi! (IDB mein save)', 'success');
-            } else {
-              showToast('⚠️ IDB store fail — image insert hua (sirf online dikhega)', 'warning');
-            }
-          });
+        // Close URL modal aur compress modal open karo
+        var urlModal = document.getElementById('_neUrlImgModal');
+        if(urlModal) urlModal.remove();
+        _imgCompressOpen(dataUrl, function(finalData, cloudSync) {
+          _neDoActualInsert(finalData, cloudSync);
         });
+        return; // baaki code skip
       } else {
         // Direct insert as online-only fallback
         var imgHtml = '<div class="ne-img-wrap" data-align="center" contenteditable="false" style="display:block;text-align:center;margin:8px 0;position:relative;touch-action:manipulation;" draggable="false" onclick="event.stopPropagation();neImageOptions(this.querySelector(\'img\'))"><img src="' + url + '" data-origurl="' + url + '" style="max-width:100%;border-radius:8px;display:inline-block;" alt="Image" draggable="false"><span class="ne-img-handle" style="position:absolute;bottom:4px;right:4px;background:rgba(21,101,192,0.85);color:#fff;font-size:0.6rem;border-radius:4px;padding:2px 5px;pointer-events:none;">✏️</span></div>';
@@ -13011,34 +12997,29 @@ function neHandleImageInsert(input) {
   var area = document.getElementById('noteEditableArea');
   if(!area) return;
   if(area.contentEditable !== 'true') neSetEditMode(true);
-  area.focus();
 
-  var files = Array.from(input.files);
-  var inserted = 0;
-  showToast('⏳ Image compress ho rahi hai...', 'info');
-  files.forEach(function(file) {
-    var ext = file.name.split('.').pop().toLowerCase();
-    if(!['jpg','jpeg','png','gif','webp','svg'].includes(ext)) return;
+  var files = Array.from(input.files).filter(function(f) {
+    return ['jpg','jpeg','png','gif','webp','svg'].includes(f.name.split('.').pop().toLowerCase());
+  });
+  if(!files.length) return;
+  input.value = '';
+
+  // Multiple files — process one by one via modal
+  var idx = 0;
+  function processNext() {
+    if(idx >= files.length) return;
+    var file = files[idx++];
     var reader = new FileReader();
     reader.onload = function(e) {
-      // Compress before inserting — max 1200px, JPEG 0.72 quality
-      _compressImage(e.target.result, 1200, 0.72, function(compressed) {
-        var imgHtml = '<div class="ne-img-wrap" data-align="center" contenteditable="false" style="display:block;text-align:center;margin:8px 0;position:relative;touch-action:manipulation;" draggable="false" onclick="event.stopPropagation();neImageOptions(this.querySelector(\'img\'))"><img src="' + compressed + '" style="max-width:100%;border-radius:8px;display:inline-block;" alt="' + file.name + '" draggable="false"><span class="ne-img-handle" style="position:absolute;bottom:4px;right:4px;background:rgba(21,101,192,0.85);color:#fff;font-size:0.6rem;border-radius:4px;padding:2px 5px;pointer-events:none;">✏️</span></div>';
-        area.focus();
-        var sel = window.getSelection();
-        if(sel && sel.rangeCount > 0 && area.contains(sel.anchorNode)) {
-          document.execCommand('insertHTML', false, imgHtml);
-        } else {
-          area.innerHTML += imgHtml;
-        }
-        markModified();
-        inserted++;
-        if(inserted === files.length) showToast('✅ ' + inserted + ' image(s) insert ho gayi! (compressed)', 'success');
+      _imgCompressOpen(e.target.result, function(finalData, cloudSync) {
+        _neDoActualInsert(finalData, cloudSync);
+        // Next file (slight delay so modal closes cleanly)
+        if(idx < files.length) setTimeout(processNext, 300);
       });
     };
     reader.readAsDataURL(file);
-  });
-  input.value = '';
+  }
+  processNext();
 }
 
 
@@ -15917,7 +15898,8 @@ function printEditorContent() {
     <h1>${title}</h1>
     <div>${richHTML}</div>
     <script>window.onload=()=>{window.print();window.close();}<\/script>
-  </body></html>`);
+  
+</body></html>`);
   printWin.document.close();
 }
 
@@ -18385,8 +18367,10 @@ function saveDrawingToNotes(){
   closeCreatorPanel();
 }
 function insertImageToNotes(dataUrl){
-  document.execCommand('insertHTML',false,'<div class="ne-img-wrap" data-align="center" contenteditable="false" style="display:block;text-align:center;margin:8px 0;position:relative;touch-action:manipulation;" draggable="false" onclick="event.stopPropagation();neImageOptions(this.querySelector(\'img\'))"><img src="'+dataUrl+'" style="max-width:100%;border-radius:8px;display:inline-block;" alt="Drawing" draggable="false"><span class="ne-img-handle" style="position:absolute;bottom:4px;right:4px;background:rgba(21,101,192,0.85);color:#fff;font-size:0.6rem;border-radius:4px;padding:2px 5px;pointer-events:none;">✏️</span></div>');
-  markModified(); showToast('✅ Drawing insert ho gayi!','success');
+  // Open compress modal — user choose kare
+  _imgCompressOpen(dataUrl, function(finalData, cloudSync) {
+    _neDoActualInsert(finalData, cloudSync);
+  });
 }
 function saveDrawingToFacts(){if(!_dc.canvas)return;openSaveFactModal(null,'[Drawing] '+new Date().toLocaleString());closeCreatorPanel();}
 function downloadDrawing(){if(!_dc.canvas)return;var a=document.createElement('a');a.download='drawing-'+Date.now()+'.png';a.href=_dc.canvas.toDataURL('image/png');a.click();}
@@ -18569,11 +18553,10 @@ function saveDrawingToNotes() {
 }
 
 function insertImageToNotes(dataUrl) {
-  var area = document.getElementById('noteEditableArea');
-  var img = '<img src="' + dataUrl + '" style="max-width:100%;border-radius:8px;margin:8px 0;display:block;" alt="Drawing">';
-  document.execCommand('insertHTML', false, img);
-  markModified();
-  showToast('✅ Drawing notes mein insert ho gayi!', 'success');
+  // Route through compress modal
+  _imgCompressOpen(dataUrl, function(finalData, cloudSync) {
+    _neDoActualInsert(finalData, cloudSync);
+  });
 }
 
 function saveDrawingToFacts() {
@@ -24324,8 +24307,7 @@ function _saveImageToIDB(dataUrl, cb) {
         tx.objectStore('images').put({ id: imgId, data: compressed, ts: Date.now() });
         tx.oncomplete = function() {
           cb(imgId);
-          // Firebase mein bhi save karo (cross-device sync)
-          setTimeout(function() { _saveImageToFirebase(imgId, compressed); }, 100);
+          // Firebase sync ab insert ke time user choice se hoga (_neDoActualInsert)
         };
         tx.onerror = function() { cb(null); };
       } catch(e) { cb(null); }
@@ -34341,7 +34323,7 @@ function neQmBarDelete() {
 // Hook into _neQmDown — long press on node = show action bar
 // Short tap = drag as before, Long press = action bar
 (function() {
-  var _origNeQmDown = _neQmDown;
+  var _origNeQmDown = typeof _neQmDown === 'function' ? _neQmDown : function(){};
   var _longPressTimer = null;
   var _longPressNode  = null;
   var _longPressMoved = false;
@@ -34402,7 +34384,7 @@ function neQmBarDelete() {
   var _lastTapTime = 0;
   var _lastTapId   = null;
 
-  var _orig = window._neQmDown;
+  var _orig = window._neQmDown || (typeof _neQmDown === 'function' ? _neQmDown : function(){});
   window._neQmDown = function(e) {
     if(!e.isPrimary) { _orig && _orig.call(this,e); return; }
     var pt  = _neQmPt(e);
@@ -46636,5 +46618,281 @@ setTimeout(_hookFCAuth, 2000);
   <!-- neTableBar moved inside #neBody above -->
 
   
+
+<!-- ═══════════════════════════════════════════════════
+     IMAGE COMPRESS PREVIEW MODAL
+     ═══════════════════════════════════════════════════ -->
+<div id="_imgCompressModal" style="display:none;position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.72);align-items:flex-end;justify-content:center;padding:0;">
+  <div style="background:#fff;border-radius:20px 20px 0 0;width:100%;max-width:520px;max-height:92vh;overflow-y:auto;padding:18px 16px 28px;box-shadow:0 -4px 32px rgba(0,0,0,0.25);">
+
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-weight:800;font-size:1rem;color:#1a1a1a;">📷 Image Insert Options</div>
+      <button onclick="_imgCompressClose()" style="border:none;background:#f0f0f0;border-radius:50%;width:30px;height:30px;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
+    </div>
+
+    <!-- Preview area -->
+    <div style="display:flex;gap:10px;margin-bottom:14px;">
+      <!-- Original -->
+      <div style="flex:1;text-align:center;">
+        <div style="font-size:0.68rem;font-weight:700;color:#666;margin-bottom:4px;">ORIGINAL</div>
+        <div style="border:1.5px solid #e0e0e0;border-radius:10px;overflow:hidden;background:#f8f8f8;min-height:90px;display:flex;align-items:center;justify-content:center;">
+          <img id="_icm_origImg" style="max-width:100%;max-height:130px;object-fit:contain;display:block;" alt="Original">
+        </div>
+        <div id="_icm_origSize" style="font-size:0.66rem;color:#888;margin-top:3px;"></div>
+      </div>
+      <!-- Compressed preview -->
+      <div style="flex:1;text-align:center;">
+        <div style="font-size:0.68rem;font-weight:700;color:#1565c0;margin-bottom:4px;">PREVIEW</div>
+        <div style="border:1.5px solid #bbdefb;border-radius:10px;overflow:hidden;background:#f3f8ff;min-height:90px;display:flex;align-items:center;justify-content:center;position:relative;">
+          <img id="_icm_prevImg" style="max-width:100%;max-height:130px;object-fit:contain;display:block;" alt="Preview">
+          <div id="_icm_prevSpinner" style="display:none;position:absolute;inset:0;background:rgba(255,255,255,0.8);align-items:center;justify-content:center;font-size:1.2rem;">⏳</div>
+        </div>
+        <div id="_icm_prevSize" style="font-size:0.66rem;color:#1565c0;margin-top:3px;font-weight:700;"></div>
+      </div>
+    </div>
+
+    <!-- Compress toggle -->
+    <div style="display:flex;align-items:center;justify-content:space-between;background:#f5f5f5;border-radius:10px;padding:10px 12px;margin-bottom:12px;">
+      <div>
+        <div style="font-weight:700;font-size:0.85rem;color:#1a1a1a;">Compress Karna Hai?</div>
+        <div style="font-size:0.68rem;color:#888;">OFF = original quality, zyada size</div>
+      </div>
+      <label style="position:relative;display:inline-block;width:46px;height:26px;cursor:pointer;">
+        <input type="checkbox" id="_icm_toggleCompress" onchange="_icmOnToggle()" checked style="opacity:0;width:0;height:0;">
+        <span id="_icm_toggleTrack" style="position:absolute;inset:0;background:#1565c0;border-radius:13px;transition:0.2s;"></span>
+        <span id="_icm_toggleThumb" style="position:absolute;left:3px;top:3px;width:20px;height:20px;background:#fff;border-radius:50%;transition:0.2s;box-shadow:0 1px 4px rgba(0,0,0,0.25);"></span>
+      </label>
+    </div>
+
+    <!-- Compress controls (shown only when compress ON) -->
+    <div id="_icm_controls" style="background:#f0f6ff;border:1.5px solid #bbdefb;border-radius:12px;padding:12px;margin-bottom:14px;">
+
+      <!-- Max size slider -->
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-size:0.75rem;font-weight:700;color:#1565c0;">📐 Max Size</span>
+          <span id="_icm_sizeLabel" style="font-size:0.75rem;font-weight:800;color:#1565c0;background:#dbeafe;padding:2px 8px;border-radius:6px;"></span>
+        </div>
+        <input type="range" id="_icm_sizeRange" min="0" max="4" step="1" value="3"
+          oninput="_icmUpdateLabels();_icmDebouncePreview()"
+          style="width:100%;accent-color:#1565c0;cursor:pointer;">
+        <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:#999;margin-top:1px;">
+          <span>240px</span><span>480px</span><span>720px</span><span>1000px</span><span>1200px</span>
+        </div>
+      </div>
+
+      <!-- Quality slider -->
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-size:0.75rem;font-weight:700;color:#1565c0;">✨ Quality</span>
+          <span id="_icm_qualLabel" style="font-size:0.75rem;font-weight:800;color:#1565c0;background:#dbeafe;padding:2px 8px;border-radius:6px;"></span>
+        </div>
+        <input type="range" id="_icm_qualRange" min="0" max="4" step="1" value="3"
+          oninput="_icmUpdateLabels();_icmDebouncePreview()"
+          style="width:100%;accent-color:#1565c0;cursor:pointer;">
+        <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:#999;margin-top:1px;">
+          <span>Low</span><span>Eco</span><span>Balanced</span><span>Good</span><span>Best</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Cloud sync option -->
+    <div style="display:flex;align-items:center;justify-content:space-between;background:#f5f5f5;border-radius:10px;padding:10px 12px;margin-bottom:16px;">
+      <div>
+        <div style="font-weight:700;font-size:0.85rem;color:#1a1a1a;">☁️ Cloud Sync</div>
+        <div style="font-size:0.68rem;color:#888;">Doosri devices pe bhi milegi</div>
+      </div>
+      <label style="position:relative;display:inline-block;width:46px;height:26px;cursor:pointer;">
+        <input type="checkbox" id="_icm_toggleCloud" checked style="opacity:0;width:0;height:0;">
+        <span id="_icm_cloudTrack" style="position:absolute;inset:0;background:#1565c0;border-radius:13px;transition:0.2s;"></span>
+        <span style="position:absolute;left:3px;top:3px;width:20px;height:20px;background:#fff;border-radius:50%;transition:0.2s;box-shadow:0 1px 4px rgba(0,0,0,0.25);"></span>
+      </label>
+    </div>
+
+    <!-- Insert button -->
+    <button onclick="_icmDoInsert()" style="width:100%;padding:13px;border:none;border-radius:12px;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-weight:800;font-size:0.95rem;cursor:pointer;letter-spacing:0.3px;box-shadow:0 2px 8px rgba(21,101,192,0.3);">
+      ✅ Insert Karo
+    </button>
+
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+// IMAGE COMPRESS MODAL LOGIC
+// ═══════════════════════════════════════════
+var _icm = {
+  originalDataUrl: null,
+  callback: null,
+  debounceTimer: null,
+  SIZE_STEPS: [240, 480, 720, 1000, 1200],
+  QUAL_STEPS: [0.30, 0.50, 0.65, 0.78, 0.90],
+  QUAL_LABELS: ['Low (30%)', 'Eco (50%)', 'Balanced (65%)', 'Good (78%)', 'Best (90%)']
+};
+
+function _imgCompressOpen(dataUrl, callback) {
+  _icm.originalDataUrl = dataUrl;
+  _icm.callback = callback;
+
+  // Show original
+  var origImg = document.getElementById('_icm_origImg');
+  if(origImg) origImg.src = dataUrl;
+
+  // Original size
+  var origKB = Math.round(dataUrl.length * 0.75 / 1024);
+  var origEl = document.getElementById('_icm_origSize');
+  if(origEl) origEl.textContent = origKB + ' KB (original)';
+
+  // Reset controls
+  var toggleCompress = document.getElementById('_icm_toggleCompress');
+  var toggleCloud = document.getElementById('_icm_toggleCloud');
+  var sizeRange = document.getElementById('_icm_sizeRange');
+  var qualRange = document.getElementById('_icm_qualRange');
+  if(toggleCompress) toggleCompress.checked = true;
+  if(toggleCloud) toggleCloud.checked = true;
+  if(sizeRange) sizeRange.value = 3;
+  if(qualRange) qualRange.value = 3;
+
+  _icmUpdateLabels();
+  _icmUpdateToggleUI();
+
+  // Show modal
+  var modal = document.getElementById('_imgCompressModal');
+  if(modal) { modal.style.display = 'flex'; }
+
+  // Initial preview
+  _icmBuildPreview();
+}
+
+function _imgCompressClose() {
+  var modal = document.getElementById('_imgCompressModal');
+  if(modal) modal.style.display = 'none';
+  _icm.originalDataUrl = null;
+  _icm.callback = null;
+}
+
+function _icmOnToggle() {
+  _icmUpdateToggleUI();
+  _icmBuildPreview();
+}
+
+function _icmUpdateToggleUI() {
+  var on = document.getElementById('_icm_toggleCompress').checked;
+  var controls = document.getElementById('_icm_controls');
+  var track = document.getElementById('_icm_toggleTrack');
+  var thumb = document.getElementById('_icm_toggleThumb');
+  if(controls) controls.style.display = on ? 'block' : 'none';
+  if(track) track.style.background = on ? '#1565c0' : '#ccc';
+  if(thumb) thumb.style.left = on ? '23px' : '3px';
+}
+
+function _icmUpdateLabels() {
+  var si = parseInt(document.getElementById('_icm_sizeRange').value);
+  var qi = parseInt(document.getElementById('_icm_qualRange').value);
+  var sLabel = document.getElementById('_icm_sizeLabel');
+  var qLabel = document.getElementById('_icm_qualLabel');
+  if(sLabel) sLabel.textContent = _icm.SIZE_STEPS[si] + 'px';
+  if(qLabel) qLabel.textContent = _icm.QUAL_LABELS[qi];
+}
+
+function _icmDebouncePreview() {
+  clearTimeout(_icm.debounceTimer);
+  _icm.debounceTimer = setTimeout(_icmBuildPreview, 400);
+}
+
+function _icmBuildPreview() {
+  var compress = document.getElementById('_icm_toggleCompress').checked;
+  var prevImg = document.getElementById('_icm_prevImg');
+  var prevSize = document.getElementById('_icm_prevSize');
+  var spinner = document.getElementById('_icm_prevSpinner');
+
+  if(!compress) {
+    // No compress — show original as preview
+    if(prevImg) prevImg.src = _icm.originalDataUrl;
+    var kb = Math.round(_icm.originalDataUrl.length * 0.75 / 1024);
+    if(prevSize) prevSize.textContent = kb + ' KB (no compress)';
+    return;
+  }
+
+  if(spinner) spinner.style.display = 'flex';
+
+  var si = parseInt(document.getElementById('_icm_sizeRange').value);
+  var qi = parseInt(document.getElementById('_icm_qualRange').value);
+  var maxW = _icm.SIZE_STEPS[si];
+  var qual = _icm.QUAL_STEPS[qi];
+
+  _compressImage(_icm.originalDataUrl, maxW, qual, function(compressed) {
+    if(prevImg) prevImg.src = compressed;
+    if(spinner) spinner.style.display = 'none';
+    var kb = Math.round(compressed.length * 0.75 / 1024);
+    var origKb = Math.round(_icm.originalDataUrl.length * 0.75 / 1024);
+    var saved = Math.round((1 - compressed.length / _icm.originalDataUrl.length) * 100);
+    if(prevSize) prevSize.textContent = kb + ' KB (' + (saved > 0 ? '↓'+saved+'% saved' : 'same') + ')';
+    _icm._lastCompressed = compressed;
+  });
+}
+
+function _icmDoInsert() {
+  if(!_icm.callback || !_icm.originalDataUrl) return;
+
+  var compress = document.getElementById('_icm_toggleCompress').checked;
+  var cloudSync = document.getElementById('_icm_toggleCloud').checked;
+  var finalData;
+
+  if(compress && _icm._lastCompressed) {
+    finalData = _icm._lastCompressed;
+  } else {
+    finalData = _icm.originalDataUrl;
+  }
+
+  _imgCompressClose();
+  _icm.callback(finalData, cloudSync);
+}
+
+// ─── Central insert function used by all entry points ───
+function _neDoActualInsert(dataUrl, cloudSync) {
+  var area = document.getElementById('noteEditableArea');
+  if(!area) return;
+  if(area.contentEditable !== 'true') neSetEditMode(true);
+
+  // Save to IDB (and optionally cloud)
+  _saveImageToIDB(dataUrl, function(imgId) {
+    var displaySrc, refAttr;
+    if(imgId) {
+      displaySrc = dataUrl;
+      refAttr = 'data-idbref="' + imgId + '"';
+      // Cloud sync only if user chose it
+      if(cloudSync && _db && _currentUser) {
+        setTimeout(function() { _saveImageToFirebase(imgId, dataUrl); }, 100);
+      }
+    } else {
+      displaySrc = dataUrl;
+      refAttr = '';
+    }
+
+    var imgHtml = '<div class="ne-img-wrap" data-align="center" contenteditable="false" '
+      + 'style="display:block;text-align:center;margin:8px 0;position:relative;touch-action:manipulation;" '
+      + 'draggable="false" ' + refAttr + ' '
+      + 'onclick="event.stopPropagation();neImageOptions(this.querySelector(\'img\'))">'
+      + '<img src="' + displaySrc + '" style="max-width:100%;border-radius:8px;display:inline-block;" alt="Image" draggable="false">'
+      + '<span class="ne-img-handle" style="position:absolute;bottom:4px;right:4px;background:rgba(21,101,192,0.85);color:#fff;font-size:0.6rem;border-radius:4px;padding:2px 5px;pointer-events:none;">✏️</span>'
+      + '</div>';
+
+    area.focus();
+    var sel = window.getSelection();
+    if(sel && sel.rangeCount > 0 && area.contains(sel.anchorNode)) {
+      document.execCommand('insertHTML', false, imgHtml);
+    } else {
+      area.innerHTML += imgHtml;
+    }
+    markModified();
+    showToast('✅ Image insert ho gayi!' + (cloudSync ? ' ☁️' : ''), 'success');
+  });
+}
+</script>
+
+
 </body>
 </html>
