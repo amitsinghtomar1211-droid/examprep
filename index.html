@@ -13487,52 +13487,42 @@ function _neAdvImgEditor(imgEl) {
     var srcImg = new Image();
     srcImg.crossOrigin = 'anonymous';
     srcImg.onload = function(){ _neAdvImgEditorBuild(imgEl, srcImg); };
-    srcImg.onerror = function(){ showToast('Image load nahi ho saki (CORS ya invalid src)', 'error'); };
+    srcImg.onerror = function(){ showToast('Image load nahi ho saki', 'error'); };
     srcImg.src = src;
   }
 
   var rawSrc = imgEl.src || imgEl.getAttribute('src') || '';
-
-  // Case 1: src broken/icon (dusri device pe IDB mein nahi thi) — idbref se load karo
   var wrap = imgEl.closest ? imgEl.closest('.ne-img-wrap') : imgEl.parentElement;
-  var idbRef = (imgEl.getAttribute('data-idbref')) ||
+  var idbRef = imgEl.getAttribute('data-idbref') ||
                (wrap && wrap.getAttribute('data-idbref')) ||
                (wrap && wrap.getAttribute('data-idb-ref'));
-
-  // Case 2: src mein __imgRef__ placeholder hai
   var refMatch = rawSrc.match(/__imgRef__(img_[^_]+(?:_[^_]+)*)__/);
-  var refId = refMatch ? refMatch[1] : null;
-
-  var lookupId = refId || idbRef;
+  var lookupId = (refMatch ? refMatch[1] : null) || idbRef;
 
   if(lookupId) {
-    showToast('⏳ Image load ho rahi hai...', 'info');
-    _getImageFromIDB(lookupId).then(function(localData){
-      if(localData){ _loadEditorWithSrc(localData); return; }
-      // IDB mein nahi — Firebase se fetch karo
-      _getImageFromFirebase(lookupId).then(function(fbData){
-        if(fbData){
-          // IDB mein save karo future ke liye
-          _openImgDB().then(function(db){
+    _getImageFromIDB(lookupId).then(function(localData) {
+      if(localData) { _loadEditorWithSrc(localData); return; }
+      showToast('Cloud se image la rahe hain...', 'info');
+      _getImageFromFirebase(lookupId).then(function(fbData) {
+        if(fbData) {
+          _openImgDB().then(function(db) {
             try {
               var tx = db.transaction('images','readwrite');
               tx.objectStore('images').put({ id: lookupId, data: fbData, ts: Date.now() });
-              tx.oncomplete = function(){ _loadEditorWithSrc(fbData); };
-            } catch(e){ _loadEditorWithSrc(fbData); }
-          }).catch(function(){ _loadEditorWithSrc(fbData); });
+              tx.oncomplete = function() { _loadEditorWithSrc(fbData); };
+            } catch(e) { _loadEditorWithSrc(fbData); }
+          }).catch(function() { _loadEditorWithSrc(fbData); });
         } else {
-          showToast('❌ Image data nahi mili — pehle Cloud Sync karo', 'error');
+          showToast('Image Firebase mein nahi mili - main device se Cloud Sync karo', 'error');
         }
       });
     });
-  } else if(rawSrc && rawSrc.startsWith('data:image')) {
-    // Normal base64 — seedha load karo
+  } else if(rawSrc.startsWith('data:image')) {
     _loadEditorWithSrc(rawSrc);
-  } else if(rawSrc && rawSrc.startsWith('http')) {
-    // Online URL
+  } else if(rawSrc.startsWith('http')) {
     _loadEditorWithSrc(rawSrc);
   } else {
-    showToast('❌ Image src nahi mili — pehle Cloud Sync karo', 'error');
+    showToast('Image nahi mili - main device se Cloud Sync karo', 'error');
   }
 }
 
@@ -24376,31 +24366,42 @@ async function _saveImageToFirebase(imgId, dataUrl) {
   try {
     if(!window._db || !window._currentUser) return;
     var uid = window._currentUser.uid;
-    // Step 1: Compress to 500px, quality 0.45 — most images will be ~80-150KB
     return new Promise(function(resolve) {
-      _compressImage(dataUrl, 500, 0.45, function(compressed) {
-        // Step 2: If still > 700KB, compress further to 300px, quality 0.35
-        if(compressed && compressed.length > 700000) {
-          _compressImage(compressed, 300, 0.35, function(compressed2) {
-            if(!compressed2 || compressed2.length > 900000) {
-              // Still too large — skip cross-device sync (stays in local IDB only)
-              console.warn('Image too large for Firestore after double-compress — local only');
-              resolve(); return;
-            }
-            window._db.collection('users').doc(uid).collection('images').doc(imgId).set({
-              data: compressed2, savedAt: Date.now()
-            }).then(resolve).catch(function(e){ console.warn('FB img save fail:', e); resolve(); });
+      // Step 1: 400px, 0.40
+      _compressImage(dataUrl, 400, 0.40, function(c1) {
+        if(c1 && c1.length <= 600000) { _doFbSave(imgId, uid, c1, resolve); return; }
+        // Step 2: 300px, 0.35
+        _compressImage(dataUrl, 300, 0.35, function(c2) {
+          if(c2 && c2.length <= 600000) { _doFbSave(imgId, uid, c2, resolve); return; }
+          // Step 3: 200px, 0.30
+          _compressImage(dataUrl, 200, 0.30, function(c3) {
+            if(c3 && c3.length <= 600000) { _doFbSave(imgId, uid, c3, resolve); return; }
+            // Step 4: 150px, 0.25 last try
+            _compressImage(dataUrl, 150, 0.25, function(c4) {
+              if(c4 && c4.length <= 600000) {
+                _doFbSave(imgId, uid, c4, resolve);
+              } else {
+                console.warn('Image too large even after max compression');
+                showToast && showToast('Image bahut badi hai - sirf is device par saved', 'warning');
+                resolve();
+              }
+            });
           });
-        } else if(!compressed) {
-          resolve();
-        } else {
-          window._db.collection('users').doc(uid).collection('images').doc(imgId).set({
-            data: compressed, savedAt: Date.now()
-          }).then(resolve).catch(function(e){ console.warn('FB img save fail:', e); resolve(); });
-        }
+        });
       });
     });
   } catch(e) { console.warn('_saveImageToFirebase error:', e); }
+}
+
+function _doFbSave(imgId, uid, data, resolve) {
+  window._db.collection('users').doc(uid).collection('images').doc(imgId).set({
+    data: data, savedAt: Date.now()
+  }).then(function() { resolve(); })
+  .catch(function(e) {
+    console.warn('FB img save fail:', e);
+    showToast && showToast('Image cloud save fail: ' + (e.message||''), 'error');
+    resolve();
+  });
 }
 
 // Firebase se image load karo (IDB mein nahi mili to)
@@ -24541,9 +24542,19 @@ function _restoreImagesFromIDB(html) {
   var promises = refs.map(function(ref) {
     var imgId = ref.replace('__imgRef__', '').replace(/__$/, '');
     return _getImageFromIDB(imgId).then(function(dataUrl) {
-      if(dataUrl) return dataUrl; // IDB mein mili
-      // IDB mein nahi mili — Firebase se try karo (cross-device)
-      return _getImageFromFirebase(imgId);
+      if(dataUrl) return dataUrl;
+      return _getImageFromFirebase(imgId).then(function(fbData) {
+        if(fbData) {
+          // Firebase se mili — IDB mein save karo
+          _openImgDB().then(function(db) {
+            try {
+              var tx = db.transaction('images', 'readwrite');
+              tx.objectStore('images').put({ id: imgId, data: fbData, ts: Date.now() });
+            } catch(e) {}
+          }).catch(function(){});
+        }
+        return fbData;
+      });
     }).then(function(dataUrl) {
       return { ref: ref, dataUrl: dataUrl, imgId: imgId };
     });
@@ -25005,67 +25016,6 @@ async function loadFromFirebase(){
     // quizVault alag collection se load karo (permanent storage)
     _loadQuizVaultFromFirebase();
 
-    // ── Images: Firebase se IDB mein sync karo (cross-device) ──
-    setTimeout(function(){
-      try {
-        var allTopics = [];
-        (S.subjects||[]).forEach(function(sub){
-          sub.sections.forEach(function(sec){
-            sec.topics.forEach(function(t){ allTopics.push(t); });
-          });
-        });
-        var imgFields = ['finalNotesHTML','smartNotesHTML','masterNotesHTML','factsHTML'];
-        allTopics.forEach(function(t){
-          imgFields.forEach(function(k){
-            if(t[k] && t[k].includes('__imgRef__')){
-              var refs = t[k].match(/__imgRef__(img_[^_]+(?:_[^_]+)*)__/g) || [];
-              refs.forEach(function(ref){
-                var imgId = ref.replace('__imgRef__','').replace(/__$/,'');
-                _getImageFromIDB(imgId).then(function(local){
-                  if(!local){
-                    _getImageFromFirebase(imgId).then(function(fbData){
-                      if(fbData){
-                        _openImgDB().then(function(db){
-                          try {
-                            var tx = db.transaction('images','readwrite');
-                            tx.objectStore('images').put({ id: imgId, data: fbData, ts: Date.now() });
-                          } catch(e){}
-                        });
-                      }
-                    });
-                  }
-                });
-              });
-            }
-          });
-          (t.notes||[]).forEach(function(n){
-            ['editorRichHTML','richHTML'].forEach(function(k){
-              if(n[k] && n[k].includes('__imgRef__')){
-                var refs = n[k].match(/__imgRef__(img_[^_]+(?:_[^_]+)*)__/g) || [];
-                refs.forEach(function(ref){
-                  var imgId = ref.replace('__imgRef__','').replace(/__$/,'');
-                  _getImageFromIDB(imgId).then(function(local){
-                    if(!local){
-                      _getImageFromFirebase(imgId).then(function(fbData){
-                        if(fbData){
-                          _openImgDB().then(function(db){
-                            try {
-                              var tx = db.transaction('images','readwrite');
-                              tx.objectStore('images').put({ id: imgId, data: fbData, ts: Date.now() });
-                            } catch(e){}
-                          });
-                        }
-                      });
-                    }
-                  });
-                });
-              }
-            });
-          });
-        });
-      } catch(e){ console.warn('Auto image sync error:', e); }
-    }, 3000); // 3 sec baad start karo taaki main data load ho jaye pehle
-
     // Agar purana format tha to naye format mein re-save karo
     if(!isV2){ setTimeout(function(){ saveToFirebase(); }, 2000); }
 
@@ -25144,76 +25094,10 @@ async function pullFromCloud(){
     S.hlQuizProgress    = meta.hlQuizProgress || S.hlQuizProgress || {};
 
     save(); // localStorage update karo
-
-    // ── UI render ──
     renderExamSwitcher(); renderLibrarySelects(); renderLibraryTree();
     renderExamsList(); updateQuizSelects(); renderStats(); updateModePill();
     updateHistBadge(); updateSavedBadge(); updateVaultBadge(); checkPausedQuiz();
-
-    // quizVault bhi refresh karo
     _loadQuizVaultFromFirebase();
-
-    // ── Images: jo topics mein __imgRef__ hain unhe Firebase se IDB mein save karo ──
-    (function _syncImagesFromCloud() {
-      try {
-        var allTopics = [];
-        (S.subjects||[]).forEach(function(sub){
-          sub.sections.forEach(function(sec){
-            sec.topics.forEach(function(t){ allTopics.push(t); });
-          });
-        });
-        var imgFields = ['finalNotesHTML','smartNotesHTML','masterNotesHTML','factsHTML'];
-        allTopics.forEach(function(t){
-          imgFields.forEach(function(k){
-            if(t[k] && t[k].includes('__imgRef__')){
-              var refs = t[k].match(/__imgRef__(img_[^_]+(?:_[^_]+)*)__/g) || [];
-              refs.forEach(function(ref){
-                var imgId = ref.replace('__imgRef__','').replace(/__$/,'');
-                _getImageFromIDB(imgId).then(function(local){
-                  if(!local){
-                    _getImageFromFirebase(imgId).then(function(fbData){
-                      if(fbData){
-                        _openImgDB().then(function(db){
-                          try {
-                            var tx = db.transaction('images','readwrite');
-                            tx.objectStore('images').put({ id: imgId, data: fbData, ts: Date.now() });
-                          } catch(e){}
-                        });
-                      }
-                    });
-                  }
-                });
-              });
-            }
-          });
-          (t.notes||[]).forEach(function(n){
-            ['editorRichHTML','richHTML'].forEach(function(k){
-              if(n[k] && n[k].includes('__imgRef__')){
-                var refs = n[k].match(/__imgRef__(img_[^_]+(?:_[^_]+)*)__/g) || [];
-                refs.forEach(function(ref){
-                  var imgId = ref.replace('__imgRef__','').replace(/__$/,'');
-                  _getImageFromIDB(imgId).then(function(local){
-                    if(!local){
-                      _getImageFromFirebase(imgId).then(function(fbData){
-                        if(fbData){
-                          _openImgDB().then(function(db){
-                            try {
-                              var tx = db.transaction('images','readwrite');
-                              tx.objectStore('images').put({ id: imgId, data: fbData, ts: Date.now() });
-                            } catch(e){}
-                          });
-                        }
-                      });
-                    }
-                  });
-                });
-              }
-            });
-          });
-        });
-      } catch(e){ console.warn('Image cloud sync error:', e); }
-    })();
-
     showToast('✅ Latest notes aa gaye! Dusri device ke changes sync ho gaye.', 'success');
   } catch(e) {
     console.error('Pull error:', e.message || e);
