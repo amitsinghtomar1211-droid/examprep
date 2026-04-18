@@ -13487,7 +13487,7 @@ function _neAdvImgEditor(imgEl) {
     var srcImg = new Image();
     srcImg.crossOrigin = 'anonymous';
     srcImg.onload = function(){ _neAdvImgEditorBuild(imgEl, srcImg); };
-    srcImg.onerror = function(){ showToast('Image load nahi ho saki', 'error'); };
+    srcImg.onerror = function(){ console.error('[EDITOR] Image load fail, src length:', src.length); showToast('Image load nahi ho saki', 'error'); };
     srcImg.src = src;
   }
 
@@ -13499,9 +13499,11 @@ function _neAdvImgEditor(imgEl) {
   var refMatch = rawSrc.match(/__imgRef__(img_[^_]+(?:_[^_]+)*)__/);
   var lookupId = (refMatch ? refMatch[1] : null) || idbRef;
 
+  console.log('[EDITOR] imgEl.src length:', rawSrc.length, 'lookupId:', lookupId);
+
   if(lookupId) {
     _getImageFromIDB(lookupId).then(function(localData) {
-      if(localData) { _loadEditorWithSrc(localData); return; }
+      if(localData) { console.log('[EDITOR] IDB se mili'); _loadEditorWithSrc(localData); return; }
       showToast('Cloud se image la rahe hain...', 'info');
       _getImageFromFirebase(lookupId).then(function(fbData) {
         if(fbData) {
@@ -13513,15 +13515,16 @@ function _neAdvImgEditor(imgEl) {
             } catch(e) { _loadEditorWithSrc(fbData); }
           }).catch(function() { _loadEditorWithSrc(fbData); });
         } else {
+          console.error('[EDITOR] Image kahi nahi mili, lookupId:', lookupId);
           showToast('Image Firebase mein nahi mili - main device se Cloud Sync karo', 'error');
         }
       });
     });
   } else if(rawSrc.startsWith('data:image')) {
-    _loadEditorWithSrc(rawSrc);
-  } else if(rawSrc.startsWith('http')) {
+    console.log('[EDITOR] Direct base64 src use kar raha hun');
     _loadEditorWithSrc(rawSrc);
   } else {
+    console.error('[EDITOR] Koi valid src nahi mila. rawSrc:', rawSrc.substring(0,100), 'idbRef:', idbRef);
     showToast('Image nahi mili - main device se Cloud Sync karo', 'error');
   }
 }
@@ -24364,25 +24367,32 @@ function _getImageFromIDB(imgId) {
 // Firebase mein image save karo (cross-device sync ke liye)
 async function _saveImageToFirebase(imgId, dataUrl) {
   try {
-    if(!window._db || !window._currentUser) return;
+    if(!window._db || !window._currentUser) {
+      console.warn('[IMG-SYNC] DB ya user nahi mila, save skip');
+      return;
+    }
     var uid = window._currentUser.uid;
+    console.log('[IMG-SYNC] Firebase save start:', imgId, 'original size:', Math.round(dataUrl.length/1024)+'KB');
+
     return new Promise(function(resolve) {
-      // Step 1: 400px, 0.40
       _compressImage(dataUrl, 400, 0.40, function(c1) {
+        console.log('[IMG-SYNC] Step1 (400px,0.40):', Math.round((c1||'').length/1024)+'KB');
         if(c1 && c1.length <= 600000) { _doFbSave(imgId, uid, c1, resolve); return; }
-        // Step 2: 300px, 0.35
+
         _compressImage(dataUrl, 300, 0.35, function(c2) {
+          console.log('[IMG-SYNC] Step2 (300px,0.35):', Math.round((c2||'').length/1024)+'KB');
           if(c2 && c2.length <= 600000) { _doFbSave(imgId, uid, c2, resolve); return; }
-          // Step 3: 200px, 0.30
+
           _compressImage(dataUrl, 200, 0.30, function(c3) {
+            console.log('[IMG-SYNC] Step3 (200px,0.30):', Math.round((c3||'').length/1024)+'KB');
             if(c3 && c3.length <= 600000) { _doFbSave(imgId, uid, c3, resolve); return; }
-            // Step 4: 150px, 0.25 last try
+
             _compressImage(dataUrl, 150, 0.25, function(c4) {
+              console.log('[IMG-SYNC] Step4 (150px,0.25):', Math.round((c4||'').length/1024)+'KB');
               if(c4 && c4.length <= 600000) {
                 _doFbSave(imgId, uid, c4, resolve);
               } else {
-                console.warn('Image too large even after max compression');
-                showToast && showToast('Image bahut badi hai - sirf is device par saved', 'warning');
+                console.error('[IMG-SYNC] FAILED - image still too large after all compression steps. Final size:', Math.round((c4||'').length/1024)+'KB');
                 resolve();
               }
             });
@@ -24390,16 +24400,20 @@ async function _saveImageToFirebase(imgId, dataUrl) {
         });
       });
     });
-  } catch(e) { console.warn('_saveImageToFirebase error:', e); }
+  } catch(e) {
+    console.error('[IMG-SYNC] Exception:', e);
+  }
 }
 
 function _doFbSave(imgId, uid, data, resolve) {
+  console.log('[IMG-SYNC] Saving to Firebase, size:', Math.round(data.length/1024)+'KB');
   window._db.collection('users').doc(uid).collection('images').doc(imgId).set({
     data: data, savedAt: Date.now()
-  }).then(function() { resolve(); })
-  .catch(function(e) {
-    console.warn('FB img save fail:', e);
-    showToast && showToast('Image cloud save fail: ' + (e.message||''), 'error');
+  }).then(function() {
+    console.log('[IMG-SYNC] ✅ Firebase save SUCCESS:', imgId);
+    resolve();
+  }).catch(function(e) {
+    console.error('[IMG-SYNC] ❌ Firebase save FAILED:', imgId, e.code, e.message);
     resolve();
   });
 }
@@ -24407,12 +24421,24 @@ function _doFbSave(imgId, uid, data, resolve) {
 // Firebase se image load karo (IDB mein nahi mili to)
 async function _getImageFromFirebase(imgId) {
   try {
-    if(!window._db || !window._currentUser) return null;
+    if(!window._db || !window._currentUser) {
+      console.warn('[IMG-FETCH] DB ya user nahi mila:', imgId);
+      return null;
+    }
     var uid = window._currentUser.uid;
+    console.log('[IMG-FETCH] Firebase se fetch kar raha hun:', imgId);
     var doc = await window._db.collection('users').doc(uid).collection('images').doc(imgId).get();
-    if(doc.exists && doc.data().data) return doc.data().data;
-  } catch(e) { console.warn('_getImageFromFirebase error:', e); }
-  return null;
+    if(doc.exists && doc.data().data) {
+      console.log('[IMG-FETCH] ✅ Image mili Firebase mein:', imgId, Math.round(doc.data().data.length/1024)+'KB');
+      return doc.data().data;
+    } else {
+      console.warn('[IMG-FETCH] ❌ Image Firebase mein NAHI mili (doc exists:', doc.exists, '):', imgId);
+      return null;
+    }
+  } catch(e) {
+    console.error('[IMG-FETCH] Exception:', imgId, e.code, e.message);
+    return null;
+  }
 }
 
 // Delete image from IndexedDB
@@ -24542,16 +24568,22 @@ function _restoreImagesFromIDB(html) {
   var promises = refs.map(function(ref) {
     var imgId = ref.replace('__imgRef__', '').replace(/__$/, '');
     return _getImageFromIDB(imgId).then(function(dataUrl) {
-      if(dataUrl) return dataUrl;
+      if(dataUrl) {
+        console.log('[IMG-RESTORE] IDB se mili:', imgId);
+        return dataUrl;
+      }
+      console.log('[IMG-RESTORE] IDB mein nahi, Firebase try kar raha hun:', imgId);
       return _getImageFromFirebase(imgId).then(function(fbData) {
         if(fbData) {
-          // Firebase se mili — IDB mein save karo
           _openImgDB().then(function(db) {
             try {
               var tx = db.transaction('images', 'readwrite');
               tx.objectStore('images').put({ id: imgId, data: fbData, ts: Date.now() });
-            } catch(e) {}
-          }).catch(function(){});
+              console.log('[IMG-RESTORE] Firebase se mili, IDB mein save kiya:', imgId);
+            } catch(e) { console.warn('[IMG-RESTORE] IDB save fail:', e); }
+          }).catch(function(e){ console.warn('[IMG-RESTORE] IDB open fail:', e); });
+        } else {
+          console.error('[IMG-RESTORE] ❌ Image kahi nahi mili:', imgId);
         }
         return fbData;
       });
@@ -25093,15 +25125,15 @@ async function pullFromCloud(){
     S.quizFactProgress  = meta.quizFactProgress || S.quizFactProgress || {};
     S.hlQuizProgress    = meta.hlQuizProgress || S.hlQuizProgress || {};
 
-    save(); // localStorage update karo
+    save();
     renderExamSwitcher(); renderLibrarySelects(); renderLibraryTree();
     renderExamsList(); updateQuizSelects(); renderStats(); updateModePill();
     updateHistBadge(); updateSavedBadge(); updateVaultBadge(); checkPausedQuiz();
     _loadQuizVaultFromFirebase();
-    showToast('✅ Latest notes aa gaye! Dusri device ke changes sync ho gaye.', 'success');
+    showToast('✅ Latest notes aa gaye!', 'success');
   } catch(e) {
-    console.error('Pull error:', e.message || e);
-    showToast('❌ Cloud se data nahi aaya: ' + (e.message || 'Unknown error'), 'error');
+    console.error('[PULL] Error:', e.code, e.message, e);
+    showToast('❌ Pull error: ' + (e.message || 'Unknown'), 'error');
   }
 }
 
@@ -25377,12 +25409,7 @@ function _applyTopicUpdate(tid, newTopicData){
           // Editor area mein naya content daal do
           var area = document.getElementById('noteEditableArea');
           if(area && remoteNote.editorRichHTML){
-            var _rHtml = remoteNote.editorRichHTML;
-            if(_rHtml.includes('__imgRef__')){
-              _restoreImagesFromIDB(_rHtml).then(function(restored){ area.innerHTML = restored; });
-            } else {
-              area.innerHTML = _rHtml;
-            }
+            area.innerHTML = remoteNote.editorRichHTML;
           }
           // Highlights state update karo
           _editorState.richHTML    = remoteNote.editorRichHTML || null;
