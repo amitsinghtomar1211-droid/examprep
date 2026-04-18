@@ -13068,175 +13068,204 @@ function _neImgWrapDragEnd(e) {
 function neImageOptions(imgEl) {
   var area = document.getElementById('noteEditableArea');
   if(!area || area.contentEditable !== 'true') return;
+  // Remove old menu
   var old = document.getElementById('_neImgMenu');
   if(old) old.remove();
 
   var wrap = imgEl.closest ? imgEl.closest('.ne-img-wrap') : imgEl.parentElement;
-  var menu = document.createElement('div');
-  menu.id = '_neImgMenu';
-  menu.style.cssText = 'position:fixed;z-index:99999;background:#fff;border:1.5px solid #ddd;'
-    + 'border-radius:12px;padding:8px;box-shadow:0 4px 24px rgba(0,0,0,0.18);'
-    + 'display:flex;gap:5px;align-items:center;flex-wrap:wrap;max-width:360px;';
-  var rect = imgEl.getBoundingClientRect();
-  // Ensure menu stays within viewport
-  var menuH = 200; // estimated menu height
-  var top = rect.bottom + 6;
-  if(top + menuH > window.innerHeight) {
-    top = Math.max(6, rect.top - menuH - 6);
+
+  // ── Bottom sheet toolbar ──
+  var sheet = document.createElement('div');
+  sheet.id = '_neImgMenu';
+  sheet.style.cssText = [
+    'position:fixed;bottom:0;left:0;right:0;z-index:99999;',
+    'background:#fff;border-radius:20px 20px 0 0;',
+    'box-shadow:0 -4px 32px rgba(0,0,0,0.22);',
+    'padding:0 0 env(safe-area-inset-bottom,0) 0;',
+    'user-select:none;-webkit-user-select:none;'
+  ].join('');
+
+  // Drag handle
+  sheet.innerHTML = '<div style="display:flex;justify-content:center;padding:10px 0 4px;">'
+    + '<div style="width:36px;height:4px;border-radius:2px;background:#ddd;"></div></div>'
+    + '<div style="font-size:0.75rem;font-weight:800;color:#1565c0;text-align:center;padding-bottom:8px;letter-spacing:0.5px;">🖼️ IMAGE OPTIONS</div>';
+
+  // Scrollable tool row
+  var row = document.createElement('div');
+  row.style.cssText = [
+    'display:flex;flex-direction:row;gap:6px;',
+    'overflow-x:auto;overflow-y:hidden;',
+    'padding:4px 12px 16px;',
+    '-webkit-overflow-scrolling:touch;',
+    'scrollbar-width:none;'
+  ].join('');
+  // Hide scrollbar
+  var style = document.createElement('style');
+  style.textContent = '#_neImgMenu div::-webkit-scrollbar{display:none}';
+  document.head.appendChild(style);
+
+  // Tool button factory — NO contenteditable focus
+  function tb(icon, label, fn, accent) {
+    var btn = document.createElement('button');
+    btn.style.cssText = [
+      'display:flex;flex-direction:column;align-items:center;justify-content:center;',
+      'min-width:60px;height:64px;border-radius:14px;border:none;cursor:pointer;',
+      'flex-shrink:0;gap:3px;font-size:0.6rem;font-weight:700;',
+      'padding:6px 8px;transition:transform 0.1s,opacity 0.1s;',
+      accent
+        ? 'background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;'
+        : 'background:#f4f6fb;color:#333;'
+    ].join('');
+    btn.innerHTML = '<span style="font-size:1.35rem;line-height:1;">' + icon + '</span>'
+      + '<span>' + label + '</span>';
+    btn.addEventListener('touchstart', function(){ btn.style.transform='scale(0.93)';btn.style.opacity='0.8'; }, {passive:true});
+    btn.addEventListener('touchend', function(){ btn.style.transform='';btn.style.opacity=''; }, {passive:true});
+    btn.addEventListener('pointerdown', function(e){ e.preventDefault(); e.stopPropagation(); });
+    btn.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      fn();
+    });
+    row.appendChild(btn);
+    return btn;
   }
-  var left = Math.max(6, Math.min(rect.left, window.innerWidth - 380));
-  menu.style.top  = Math.max(6, top) + 'px';
-  menu.style.left = left + 'px';
 
-  function nb(label, title, fn, extra) {
-    var b = document.createElement('button');
-    b.innerHTML = label;
-    b.title = title || label;
-    b.style.cssText = 'padding:5px 9px;border:1px solid #ccc;border-radius:7px;background:#f5f5f5;'
-      + 'cursor:pointer;font-size:0.72rem;font-weight:700;color:#333;white-space:nowrap;'
-      + (extra||'');
-    b.onclick = function(ev){ ev.stopPropagation(); fn(); };
-    menu.appendChild(b);
-    return b;
-  }
-
-  // ── Section label ──
-  var lbl = document.createElement('div');
-  lbl.style.cssText = 'width:100%;font-size:0.68rem;font-weight:800;color:#1565c0;'
-    + 'border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:2px;';
-  lbl.textContent = '🖼️ Image Options';
-  menu.appendChild(lbl);
-
-  // ── Size presets ──
-  [['25%','25%'],['50%','50%'],['75%','75%'],['100%','100%']].forEach(function(p){
-    nb(p[0], 'Width '+p[1], function(){ imgEl.style.width=p[1]; imgEl.style.maxWidth='100%'; markModified(); menu.remove(); });
-  });
-  nb('✏️ Custom', 'Custom size', function(){
-    var v=prompt('Width karo (e.g. 300px ya 60%):');
-    if(v){imgEl.style.width=v;imgEl.style.maxWidth='100%';markModified();}
-    menu.remove();
+  // ── 1. Zoom / Fullscreen ──
+  tb('🔍','Zoom', function(){
+    sheet.remove();
+    var ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9999999;background:rgba(0,0,0,0.92);display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+    var zImg = document.createElement('img');
+    zImg.src = imgEl.src;
+    zImg.style.cssText = 'max-width:96vw;max-height:92vh;object-fit:contain;border-radius:10px;box-shadow:0 4px 32px rgba(0,0,0,0.5);touch-action:pinch-zoom;';
+    var closeBtn = document.createElement('div');
+    closeBtn.textContent = '✕';
+    closeBtn.style.cssText = 'position:absolute;top:14px;right:16px;color:#fff;font-size:1.4rem;font-weight:700;cursor:pointer;background:rgba(255,255,255,0.18);border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;';
+    closeBtn.onclick = function(e){ e.stopPropagation(); ov.remove(); };
+    ov.appendChild(zImg); ov.appendChild(closeBtn);
+    ov.onclick = function(){ ov.remove(); };
+    document.body.appendChild(ov);
   });
 
-  // ── Separator ──
-  var sep1 = document.createElement('div');
-  sep1.style.cssText = 'width:100%;border-top:1px solid #eee;margin:3px 0;';
-  menu.appendChild(sep1);
+  // ── 2. Resize / Recompress ──
+  tb('⚙️','Resize', function(){
+    sheet.remove();
+    // Get current src
+    var idbRef = imgEl.getAttribute('data-idbref') || (wrap && wrap.getAttribute('data-idbref'));
+    function openWithData(dataUrl){
+      _imgCompressOpen(dataUrl, function(finalData, cloudSync){
+        // Replace existing image
+        imgEl.src = finalData;
+        if(idbRef) {
+          _saveImageToIDB_withId(idbRef, finalData, function(){
+            if(cloudSync && _db && _currentUser) _saveImageToFirebase(idbRef, finalData);
+          });
+        } else {
+          _saveImageToIDB(finalData, function(newId){
+            if(newId){ imgEl.setAttribute('data-idbref', newId); if(wrap) wrap.setAttribute('data-idbref', newId); }
+            if(cloudSync && _db && _currentUser) _saveImageToFirebase(newId, finalData);
+          });
+        }
+        markModified();
+        showToast('✅ Image updated!', 'success');
+      });
+    }
+    if(idbRef){
+      _getImageFromIDB(idbRef).then(function(d){ openWithData(d || imgEl.src); });
+    } else {
+      openWithData(imgEl.src);
+    }
+  });
 
-  // ── Alignment ──
-  var alignLbl = document.createElement('div');
-  alignLbl.style.cssText = 'width:100%;font-size:0.66rem;color:#888;font-weight:700;';
-  alignLbl.textContent = 'Position / Alignment:';
-  menu.appendChild(alignLbl);
-
-  var alignments = [
-    ['⬅️','Left',  'left',  'float:left;margin:0 12px 8px 0;display:block;'],
-    ['↔️','Center','center','display:block;margin:8px auto;float:none;'],
-    ['➡️','Right', 'right', 'float:right;margin:0 0 8px 12px;display:block;'],
-    ['📐','Inline','inline','display:inline;margin:0 4px;float:none;vertical-align:middle;']
-  ];
-  alignments.forEach(function(a){
-    nb(a[0], a[1], function(){
-      if(wrap){
-        if(a[2]==='left'){wrap.style.cssText='display:block;float:left;margin:0 12px 8px 0;position:relative;cursor:move;';}
-        else if(a[2]==='right'){wrap.style.cssText='display:block;float:right;margin:0 0 8px 12px;position:relative;cursor:move;';}
-        else if(a[2]==='center'){wrap.style.cssText='display:block;text-align:center;margin:8px auto;clear:both;position:relative;cursor:move;';}
-        else {wrap.style.cssText='display:inline-block;vertical-align:middle;margin:0 4px;position:relative;cursor:move;';}
-        wrap.setAttribute('data-align', a[2]);
-      } else {
-        imgEl.style.cssText = a[3] + 'max-width:100%;border-radius:8px;';
-      }
-      markModified(); menu.remove();
+  // ── 3-6. Size presets ──
+  [['25%','¼'],['50%','½'],['75%','¾'],['100%','Full']].forEach(function(p){
+    tb('📐', p[1], function(){
+      imgEl.style.width = p[0]; imgEl.style.maxWidth='100%';
+      markModified(); sheet.remove();
     });
   });
 
-  // ── Separator ──
+  // ── 7. Custom size ──
+  tb('✏️','Custom', function(){
+    var v = prompt('Width (e.g. 300px or 60%):');
+    if(v){ imgEl.style.width=v; imgEl.style.maxWidth='100%'; markModified(); }
+    sheet.remove();
+  });
+
+  // ── Alignment group ──
+  var sepDiv = document.createElement('div');
+  sepDiv.style.cssText = 'min-width:1px;height:64px;background:#eee;flex-shrink:0;margin:0 2px;';
+  row.appendChild(sepDiv);
+
+  [['⬅️','Left','left'],['↔️','Center','center'],['➡️','Right','right'],['📌','Inline','inline']].forEach(function(a){
+    tb(a[0], a[1], function(){
+      if(wrap){
+        if(a[2]==='left')   wrap.style.cssText='display:block;float:left;margin:0 12px 8px 0;position:relative;';
+        if(a[2]==='right')  wrap.style.cssText='display:block;float:right;margin:0 0 8px 12px;position:relative;';
+        if(a[2]==='center') wrap.style.cssText='display:block;text-align:center;margin:8px auto;clear:both;position:relative;';
+        if(a[2]==='inline') wrap.style.cssText='display:inline-block;vertical-align:middle;margin:0 4px;position:relative;';
+        wrap.setAttribute('data-align', a[2]);
+      }
+      markModified(); sheet.remove();
+    });
+  });
+
   var sep2 = document.createElement('div');
-  sep2.style.cssText = 'width:100%;border-top:1px solid #eee;margin:3px 0;';
-  menu.appendChild(sep2);
+  sep2.style.cssText = 'min-width:1px;height:64px;background:#eee;flex-shrink:0;margin:0 2px;';
+  row.appendChild(sep2);
 
   // ── Advanced Edit ──
-  nb('🎨 Advanced Edit', 'Crop / Rotate / Draw / Text', function(){
-    menu.remove();
-    _neAdvImgEditor(imgEl);
-  }, 'background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border-color:#1565c0;font-size:0.75rem;padding:5px 11px;');
+  tb('🎨','Edit', function(){
+    sheet.remove(); _neAdvImgEditor(imgEl);
+  }, true);
 
   // ── Cloud Sync ──
-  nb('☁️ Cloud Sync', 'Image cloud pe upload karo (dusre device ke liye)', function(){
-    menu.remove();
-
-    // Check login
-    if(!_currentUser || !_db) {
-      console.error('[CLOUD-SYNC] User logged in nahi hai ya DB ready nahi');
-      showToast('❌ Pehle login karo!', 'error');
-      return;
-    }
-
+  tb('☁️','Sync', function(){
+    sheet.remove();
+    if(!_currentUser || !_db){ showToast('❌ Pehle login karo!', 'error'); return; }
     var imgSrc = imgEl.src || '';
-    // idbRef dhundo — img tag pe, wrap pe, ya src se
-    var idbRef = imgEl.getAttribute('data-idbref') ||
-                 (wrap && wrap.getAttribute('data-idbref')) ||
-                 (wrap && wrap.getAttribute('data-idb-ref'));
-    var refMatch = imgSrc.match(/__imgRef__(img_[^_]+(?:_[^_]+)*)__/);
-    var lookupId = (refMatch ? refMatch[1] : null) || idbRef;
-
-    console.log('[CLOUD-SYNC] imgSrc length:', imgSrc.length, 'lookupId:', lookupId, 'idbRef:', idbRef);
-
-    if(lookupId) {
-      // IDB se fetch karke Firebase pe save karo
-      showToast('⏳ Image upload ho rahi hai...', 'info');
-      _getImageFromIDB(lookupId).then(function(data) {
-        if(data) {
-          console.log('[CLOUD-SYNC] IDB se mili, Firebase pe save kar raha hun, size:', Math.round(data.length/1024)+'KB');
-          _saveImageToFirebase(lookupId, data).then(function() {
-            showToast('✅ Image cloud pe upload ho gayi!', 'success');
-          });
-        } else {
-          console.error('[CLOUD-SYNC] IDB mein bhi nahi mili, lookupId:', lookupId);
-          showToast('❌ Image data nahi mili IDB mein', 'error');
-        }
+    var idbRef = imgEl.getAttribute('data-idbref') || (wrap && wrap.getAttribute('data-idbref'));
+    if(idbRef){
+      showToast('⏳ Upload ho rahi hai...', 'info');
+      _getImageFromIDB(idbRef).then(function(data){
+        if(data) _saveImageToFirebase(idbRef, data).then(function(){ showToast('✅ Cloud pe upload ho gayi!','success'); });
+        else showToast('❌ Image data nahi mili','error');
       });
-    } else if(imgSrc.startsWith('data:image')) {
-      // Direct base64 src hai - seedha save karo
+    } else if(imgSrc.startsWith('data:image')){
       var imgId = 'img_manual_' + Date.now();
-      console.log('[CLOUD-SYNC] Direct base64, size:', Math.round(imgSrc.length/1024)+'KB');
-      showToast('⏳ Image upload ho rahi hai...', 'info');
-      _saveImageToFirebase(imgId, imgSrc).then(function() {
-        showToast('✅ Image cloud pe upload ho gayi!', 'success');
-      });
+      showToast('⏳ Upload ho rahi hai...', 'info');
+      _saveImageToFirebase(imgId, imgSrc).then(function(){ showToast('✅ Cloud pe upload ho gayi!','success'); });
     } else {
-      console.error('[CLOUD-SYNC] Koi valid source nahi mila. src:', imgSrc.substring(0,80), 'idbRef:', idbRef);
-      showToast('❌ Image source nahi mila — note save karke dobara try karo', 'error');
+      showToast('❌ Image source nahi mila','error');
     }
-  }, 'background:rgba(21,101,192,0.08);color:#1565c0;border-color:#90caf9;font-size:0.72rem;');
+  });
+
+  // ── Hotspot ──
+  var _hsArr = JSON.parse((wrap && wrap.getAttribute('data-hotspots')) || '[]');
+  tb('📍', _hsArr.length ? 'Pins('+_hsArr.length+')' : 'Pin', function(){
+    sheet.remove(); _neHotspotManager(imgEl, wrap);
+  });
 
   // ── Delete ──
-  nb('🗑 Hatao', 'Image hatao', function(){
+  tb('🗑️','Delete', function(){
     if(confirm('Image hatao?')){ (wrap||imgEl).remove(); markModified(); }
-    menu.remove();
-  }, 'background:rgba(198,40,40,0.08);color:#c62828;border-color:#ef9a9a;');
+    sheet.remove();
+  });
 
-  // ── Hotspot separator ──
-  var sep3 = document.createElement('div');
-  sep3.style.cssText = 'width:100%;border-top:1px solid #eee;margin:3px 0;';
-  menu.appendChild(sep3);
+  sheet.appendChild(row);
 
-  // ── Hotspot button ──
-  var _hsArr = JSON.parse((wrap && wrap.getAttribute('data-hotspots')) || '[]');
-  var _hsLabel = _hsArr.length > 0 ? ('📍 Hotspots (' + _hsArr.length + ')') : '📍 Add Hotspot';
-  nb(_hsLabel, 'Image pe clickable link-pin lagao', function(){
-    menu.remove();
-    _neHotspotManager(imgEl, wrap);
-  }, 'background:linear-gradient(135deg,#e65100,#f57c00);color:#fff;border-color:#e65100;font-size:0.75rem;padding:5px 11px;');
+  // Close on outside tap
+  var backdrop = document.createElement('div');
+  backdrop.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.01);';
+  backdrop.onclick = function(){ sheet.remove(); backdrop.remove(); };
+  document.body.appendChild(backdrop);
+  document.body.appendChild(sheet);
 
-  // ── Close ──
-  nb('✕','Close', function(){ menu.remove(); }, 'background:transparent;border-color:transparent;color:#999;');
-
-  document.body.appendChild(menu);
-
-  setTimeout(function(){
-    function _cm(e){ if(!menu.contains(e.target)){ menu.remove(); document.removeEventListener('click',_cm); } }
-    document.addEventListener('click', _cm);
-  },100);
+  // Swipe down to close
+  var startY = 0;
+  sheet.addEventListener('touchstart', function(e){ startY = e.touches[0].clientY; }, {passive:true});
+  sheet.addEventListener('touchend', function(e){
+    if(e.changedTouches[0].clientY - startY > 60){ sheet.remove(); backdrop.remove(); }
+  }, {passive:true});
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -24331,6 +24360,28 @@ function _getImageFromIDB(imgId) {
 
 // ── Firebase Image Sync helpers ──
 // Firebase mein image save karo (cross-device sync ke liye)
+// ── Existing image ko same IDB key se overwrite karo (resize ke liye) ──
+function _saveImageToIDB_withId(imgId, dataUrl, cb) {
+  if(!window._neIDB){ if(cb) cb(false); return; }
+  try {
+    var compress = typeof _compressImage === 'function';
+    function doSave(data){
+      try {
+        var tx = window._neIDB.transaction(['images'],'readwrite');
+        var store = tx.objectStore('images');
+        store.put({ id: imgId, data: data, savedAt: Date.now() });
+        tx.oncomplete = function(){ if(cb) cb(true); };
+        tx.onerror = function(){ if(cb) cb(false); };
+      } catch(e){ if(cb) cb(false); }
+    }
+    if(compress){
+      _compressImage(dataUrl, 1200, 0.82, function(c){ doSave(c || dataUrl); });
+    } else {
+      doSave(dataUrl);
+    }
+  } catch(e){ if(cb) cb(false); }
+}
+
 async function _saveImageToFirebase(imgId, dataUrl) {
   try {
     if(!_db || !_currentUser) {
@@ -46635,17 +46686,17 @@ setTimeout(_hookFCAuth, 2000);
     <div style="display:flex;gap:10px;margin-bottom:14px;">
       <!-- Original -->
       <div style="flex:1;text-align:center;">
-        <div style="font-size:0.68rem;font-weight:700;color:#666;margin-bottom:4px;">ORIGINAL</div>
-        <div style="border:1.5px solid #e0e0e0;border-radius:10px;overflow:hidden;background:#f8f8f8;min-height:90px;display:flex;align-items:center;justify-content:center;">
-          <img id="_icm_origImg" style="max-width:100%;max-height:130px;object-fit:contain;display:block;" alt="Original">
+        <div style="font-size:0.68rem;font-weight:700;color:#666;margin-bottom:4px;">ORIGINAL <span style="font-size:0.6rem;color:#aaa;">(tap = zoom)</span></div>
+        <div style="border:1.5px solid #e0e0e0;border-radius:10px;overflow:hidden;background:#f8f8f8;min-height:90px;display:flex;align-items:center;justify-content:center;cursor:zoom-in;" onclick="_icmZoom('orig')">
+          <img id="_icm_origImg" style="max-width:100%;max-height:130px;object-fit:contain;display:block;pointer-events:none;" alt="Original">
         </div>
         <div id="_icm_origSize" style="font-size:0.66rem;color:#888;margin-top:3px;"></div>
       </div>
       <!-- Compressed preview -->
       <div style="flex:1;text-align:center;">
-        <div style="font-size:0.68rem;font-weight:700;color:#1565c0;margin-bottom:4px;">PREVIEW</div>
-        <div style="border:1.5px solid #bbdefb;border-radius:10px;overflow:hidden;background:#f3f8ff;min-height:90px;display:flex;align-items:center;justify-content:center;position:relative;">
-          <img id="_icm_prevImg" style="max-width:100%;max-height:130px;object-fit:contain;display:block;" alt="Preview">
+        <div style="font-size:0.68rem;font-weight:700;color:#1565c0;margin-bottom:4px;">PREVIEW <span style="font-size:0.6rem;color:#aaa;">(tap = zoom)</span></div>
+        <div style="border:1.5px solid #bbdefb;border-radius:10px;overflow:hidden;background:#f3f8ff;min-height:90px;display:flex;align-items:center;justify-content:center;position:relative;cursor:zoom-in;" onclick="_icmZoom('prev')">
+          <img id="_icm_prevImg" style="max-width:100%;max-height:130px;object-fit:contain;display:block;pointer-events:none;" alt="Preview">
           <div id="_icm_prevSpinner" style="display:none;position:absolute;inset:0;background:rgba(255,255,255,0.8);align-items:center;justify-content:center;font-size:1.2rem;">⏳</div>
         </div>
         <div id="_icm_prevSize" style="font-size:0.66rem;color:#1565c0;margin-top:3px;font-weight:700;"></div>
@@ -46800,6 +46851,31 @@ function _icmUpdateLabels() {
 function _icmDebouncePreview() {
   clearTimeout(_icm.debounceTimer);
   _icm.debounceTimer = setTimeout(_icmBuildPreview, 400);
+}
+
+function _icmZoom(which) {
+  var img = document.getElementById(which === 'orig' ? '_icm_origImg' : '_icm_prevImg');
+  if(!img || !img.src) return;
+  // Fullscreen overlay
+  var ov = document.createElement('div');
+  ov.id = '_icmZoomOv';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:9999999;background:rgba(0,0,0,0.92);display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+  var zImg = document.createElement('img');
+  zImg.src = img.src;
+  zImg.style.cssText = 'max-width:96vw;max-height:92vh;object-fit:contain;border-radius:10px;box-shadow:0 4px 32px rgba(0,0,0,0.5);touch-action:pinch-zoom;';
+  // Label
+  var lbl = document.createElement('div');
+  lbl.textContent = which === 'orig' ? '🔍 Original' : '🔍 Compressed Preview';
+  lbl.style.cssText = 'position:absolute;top:16px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,0.15);color:#fff;font-size:0.8rem;font-weight:700;padding:4px 14px;border-radius:20px;';
+  var closeBtn = document.createElement('div');
+  closeBtn.textContent = '✕';
+  closeBtn.style.cssText = 'position:absolute;top:14px;right:16px;color:#fff;font-size:1.4rem;font-weight:700;cursor:pointer;background:rgba(255,255,255,0.15);border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;';
+  closeBtn.onclick = function(e){ e.stopPropagation(); ov.remove(); };
+  ov.appendChild(lbl);
+  ov.appendChild(zImg);
+  ov.appendChild(closeBtn);
+  ov.onclick = function(){ ov.remove(); };
+  document.body.appendChild(ov);
 }
 
 function _icmBuildPreview() {
