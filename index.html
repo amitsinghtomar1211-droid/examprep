@@ -13483,12 +13483,57 @@ function _neAdvImgEditor(imgEl) {
   var old = document.getElementById('_neAdvImgEditorModal');
   if(old) old.remove();
 
-  // Load image onto offscreen canvas first
-  var srcImg = new Image();
-  srcImg.crossOrigin = 'anonymous';
-  srcImg.onload = function(){ _neAdvImgEditorBuild(imgEl, srcImg); };
-  srcImg.onerror = function(){ showToast('Image load nahi ho saki (CORS ya invalid src)', 'error'); };
-  srcImg.src = imgEl.src || imgEl.getAttribute('src');
+  function _loadEditorWithSrc(src) {
+    var srcImg = new Image();
+    srcImg.crossOrigin = 'anonymous';
+    srcImg.onload = function(){ _neAdvImgEditorBuild(imgEl, srcImg); };
+    srcImg.onerror = function(){ showToast('Image load nahi ho saki (CORS ya invalid src)', 'error'); };
+    srcImg.src = src;
+  }
+
+  var rawSrc = imgEl.src || imgEl.getAttribute('src') || '';
+
+  // Case 1: src broken/icon (dusri device pe IDB mein nahi thi) — idbref se load karo
+  var wrap = imgEl.closest ? imgEl.closest('.ne-img-wrap') : imgEl.parentElement;
+  var idbRef = (imgEl.getAttribute('data-idbref')) ||
+               (wrap && wrap.getAttribute('data-idbref')) ||
+               (wrap && wrap.getAttribute('data-idb-ref'));
+
+  // Case 2: src mein __imgRef__ placeholder hai
+  var refMatch = rawSrc.match(/__imgRef__(img_[^_]+(?:_[^_]+)*)__/);
+  var refId = refMatch ? refMatch[1] : null;
+
+  var lookupId = refId || idbRef;
+
+  if(lookupId) {
+    showToast('⏳ Image load ho rahi hai...', 'info');
+    _getImageFromIDB(lookupId).then(function(localData){
+      if(localData){ _loadEditorWithSrc(localData); return; }
+      // IDB mein nahi — Firebase se fetch karo
+      _getImageFromFirebase(lookupId).then(function(fbData){
+        if(fbData){
+          // IDB mein save karo future ke liye
+          _openImgDB().then(function(db){
+            try {
+              var tx = db.transaction('images','readwrite');
+              tx.objectStore('images').put({ id: lookupId, data: fbData, ts: Date.now() });
+              tx.oncomplete = function(){ _loadEditorWithSrc(fbData); };
+            } catch(e){ _loadEditorWithSrc(fbData); }
+          }).catch(function(){ _loadEditorWithSrc(fbData); });
+        } else {
+          showToast('❌ Image data nahi mili — pehle Cloud Sync karo', 'error');
+        }
+      });
+    });
+  } else if(rawSrc && rawSrc.startsWith('data:image')) {
+    // Normal base64 — seedha load karo
+    _loadEditorWithSrc(rawSrc);
+  } else if(rawSrc && rawSrc.startsWith('http')) {
+    // Online URL
+    _loadEditorWithSrc(rawSrc);
+  } else {
+    showToast('❌ Image src nahi mili — pehle Cloud Sync karo', 'error');
+  }
 }
 
 function _neAdvImgEditorBuild(imgEl, srcImg) {
@@ -24960,6 +25005,67 @@ async function loadFromFirebase(){
     // quizVault alag collection se load karo (permanent storage)
     _loadQuizVaultFromFirebase();
 
+    // ── Images: Firebase se IDB mein sync karo (cross-device) ──
+    setTimeout(function(){
+      try {
+        var allTopics = [];
+        (S.subjects||[]).forEach(function(sub){
+          sub.sections.forEach(function(sec){
+            sec.topics.forEach(function(t){ allTopics.push(t); });
+          });
+        });
+        var imgFields = ['finalNotesHTML','smartNotesHTML','masterNotesHTML','factsHTML'];
+        allTopics.forEach(function(t){
+          imgFields.forEach(function(k){
+            if(t[k] && t[k].includes('__imgRef__')){
+              var refs = t[k].match(/__imgRef__(img_[^_]+(?:_[^_]+)*)__/g) || [];
+              refs.forEach(function(ref){
+                var imgId = ref.replace('__imgRef__','').replace(/__$/,'');
+                _getImageFromIDB(imgId).then(function(local){
+                  if(!local){
+                    _getImageFromFirebase(imgId).then(function(fbData){
+                      if(fbData){
+                        _openImgDB().then(function(db){
+                          try {
+                            var tx = db.transaction('images','readwrite');
+                            tx.objectStore('images').put({ id: imgId, data: fbData, ts: Date.now() });
+                          } catch(e){}
+                        });
+                      }
+                    });
+                  }
+                });
+              });
+            }
+          });
+          (t.notes||[]).forEach(function(n){
+            ['editorRichHTML','richHTML'].forEach(function(k){
+              if(n[k] && n[k].includes('__imgRef__')){
+                var refs = n[k].match(/__imgRef__(img_[^_]+(?:_[^_]+)*)__/g) || [];
+                refs.forEach(function(ref){
+                  var imgId = ref.replace('__imgRef__','').replace(/__$/,'');
+                  _getImageFromIDB(imgId).then(function(local){
+                    if(!local){
+                      _getImageFromFirebase(imgId).then(function(fbData){
+                        if(fbData){
+                          _openImgDB().then(function(db){
+                            try {
+                              var tx = db.transaction('images','readwrite');
+                              tx.objectStore('images').put({ id: imgId, data: fbData, ts: Date.now() });
+                            } catch(e){}
+                          });
+                        }
+                      });
+                    }
+                  });
+                });
+              }
+            });
+          });
+        });
+      } catch(e){ console.warn('Auto image sync error:', e); }
+    }, 3000); // 3 sec baad start karo taaki main data load ho jaye pehle
+
     // Agar purana format tha to naye format mein re-save karo
     if(!isV2){ setTimeout(function(){ saveToFirebase(); }, 2000); }
 
@@ -25387,7 +25493,12 @@ function _applyTopicUpdate(tid, newTopicData){
           // Editor area mein naya content daal do
           var area = document.getElementById('noteEditableArea');
           if(area && remoteNote.editorRichHTML){
-            area.innerHTML = remoteNote.editorRichHTML;
+            var _rHtml = remoteNote.editorRichHTML;
+            if(_rHtml.includes('__imgRef__')){
+              _restoreImagesFromIDB(_rHtml).then(function(restored){ area.innerHTML = restored; });
+            } else {
+              area.innerHTML = _rHtml;
+            }
           }
           // Highlights state update karo
           _editorState.richHTML    = remoteNote.editorRichHTML || null;
