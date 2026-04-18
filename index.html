@@ -25038,13 +25038,80 @@ async function pullFromCloud(){
     S.hlQuizProgress    = meta.hlQuizProgress || S.hlQuizProgress || {};
 
     save(); // localStorage update karo
-    renderSubjects();
+
+    // ── UI render ──
+    renderExamSwitcher(); renderLibrarySelects(); renderLibraryTree();
+    renderExamsList(); updateQuizSelects(); renderStats(); updateModePill();
+    updateHistBadge(); updateSavedBadge(); updateVaultBadge(); checkPausedQuiz();
+
     // quizVault bhi refresh karo
     _loadQuizVaultFromFirebase();
+
+    // ── Images: jo topics mein __imgRef__ hain unhe Firebase se IDB mein save karo ──
+    (function _syncImagesFromCloud() {
+      try {
+        var allTopics = [];
+        (S.subjects||[]).forEach(function(sub){
+          sub.sections.forEach(function(sec){
+            sec.topics.forEach(function(t){ allTopics.push(t); });
+          });
+        });
+        var imgFields = ['finalNotesHTML','smartNotesHTML','masterNotesHTML','factsHTML'];
+        allTopics.forEach(function(t){
+          imgFields.forEach(function(k){
+            if(t[k] && t[k].includes('__imgRef__')){
+              var refs = t[k].match(/__imgRef__(img_[^_]+(?:_[^_]+)*)__/g) || [];
+              refs.forEach(function(ref){
+                var imgId = ref.replace('__imgRef__','').replace(/__$/,'');
+                _getImageFromIDB(imgId).then(function(local){
+                  if(!local){
+                    _getImageFromFirebase(imgId).then(function(fbData){
+                      if(fbData){
+                        _openImgDB().then(function(db){
+                          try {
+                            var tx = db.transaction('images','readwrite');
+                            tx.objectStore('images').put({ id: imgId, data: fbData, ts: Date.now() });
+                          } catch(e){}
+                        });
+                      }
+                    });
+                  }
+                });
+              });
+            }
+          });
+          (t.notes||[]).forEach(function(n){
+            ['editorRichHTML','richHTML'].forEach(function(k){
+              if(n[k] && n[k].includes('__imgRef__')){
+                var refs = n[k].match(/__imgRef__(img_[^_]+(?:_[^_]+)*)__/g) || [];
+                refs.forEach(function(ref){
+                  var imgId = ref.replace('__imgRef__','').replace(/__$/,'');
+                  _getImageFromIDB(imgId).then(function(local){
+                    if(!local){
+                      _getImageFromFirebase(imgId).then(function(fbData){
+                        if(fbData){
+                          _openImgDB().then(function(db){
+                            try {
+                              var tx = db.transaction('images','readwrite');
+                              tx.objectStore('images').put({ id: imgId, data: fbData, ts: Date.now() });
+                            } catch(e){}
+                          });
+                        }
+                      });
+                    }
+                  });
+                });
+              }
+            });
+          });
+        });
+      } catch(e){ console.warn('Image cloud sync error:', e); }
+    })();
+
     showToast('✅ Latest notes aa gaye! Dusri device ke changes sync ho gaye.', 'success');
   } catch(e) {
-    console.error('Pull error:', e);
-    showToast('❌ Cloud se data nahi aaya: ' + e.message, 'error');
+    console.error('Pull error:', e.message || e);
+    showToast('❌ Cloud se data nahi aaya: ' + (e.message || 'Unknown error'), 'error');
   }
 }
 
