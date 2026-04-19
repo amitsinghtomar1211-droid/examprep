@@ -20747,17 +20747,19 @@ async function runQmAiDraw() {
     + 'Use varied x,y coords to spread nodes nicely. Hindi text is OK if topic is in Hindi.';
 
   try {
-    var response = await fetch('https://api.anthropic.com/v1/messages', {
+    if(!S.apiKey) throw new Error('Pehle Settings mein Groq API Key daalo!');
+    var response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.apiKey},
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: S.model || 'meta-llama/llama-4-scout-17b-16e-instruct',
         max_tokens: 1000,
         messages:[{role:'user', content: prompt}]
       })
     });
+    if(!response.ok){var re=await response.json();throw new Error(re.error?.message||'API Error');}
     var data = await response.json();
-    var text = (data.content||[]).map(function(c){return c.text||'';}).join('');
+    var text = data.choices?.[0]?.message?.content || '';
     // Extract JSON
     var jsonMatch = text.match(/\{[\s\S]*\}/);
     if(!jsonMatch) throw new Error('No JSON found');
@@ -23406,13 +23408,15 @@ async function neQmRunAi() {
     + 'Spread nodes nicely. Max 8 nodes. Hindi OK if topic is Hindi.';
 
   try {
-    var resp = await fetch('https://api.anthropic.com/v1/messages', {
+    if(!S.apiKey) throw new Error('Pehle Settings mein Groq API Key daalo!');
+    var resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 800, messages: [{ role:'user', content: prompt }] })
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + S.apiKey },
+      body: JSON.stringify({ model: S.model||'meta-llama/llama-4-scout-17b-16e-instruct', max_tokens: 800, messages: [{ role:'user', content: prompt }] })
     });
+    if(!resp.ok){var re=await resp.json();throw new Error(re.error?.message||'API Error');}
     var data = await resp.json();
-    var text = (data.content||[]).map(function(c){ return c.text||''; }).join('');
+    var text = data.choices?.[0]?.message?.content || '';
     var m = text.match(/\{[\s\S]*\}/);
     if(!m) throw new Error('No JSON');
     var parsed = JSON.parse(m[0]);
@@ -23663,20 +23667,21 @@ async function _srCallApi(base64, w, h) {
     + 'renderAs must be "text" or "shape". For shapes use label: circle|ellipse|rectangle|triangle|arrow|line|star|checkmark\n'
     + 'fontHint: sans|serif|devanagari|math';
 
-  var resp = await fetch('https://api.anthropic.com/v1/messages', {
+  var resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + (S.apiKey || '')
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
       max_tokens: 80,
       messages: [{
         role: 'user',
         content: [
           {
-            type: 'image',
-            source: { type: 'base64', media_type: 'image/png', data: base64 }
+            type: 'image_url',
+            image_url: { url: 'data:image/png;base64,' + base64 }
           },
           { type: 'text', text: prompt }
         ]
@@ -23692,7 +23697,7 @@ async function _srCallApi(base64, w, h) {
   var data = await resp.json();
   if(data.error) throw new Error(data.error.message || 'API error');
 
-  var text = (data.content||[]).map(function(c){ return c.text||''; }).join('');
+  var text = data.choices?.[0]?.message?.content || '';
   // Extract JSON from response (handle markdown code blocks too)
   var m = text.match(/\{[\s\S]*?\}/);
   if(!m) throw new Error('No JSON in response: ' + text.substring(0, 80));
@@ -48233,25 +48238,35 @@ function aeCleanCodeFences(text) {
 
 // ── Anthropic API caller with web_search tool ──────────────────
 async function aeCallAnthropicWithSearch(systemPrompt, userPrompt, maxTokens) {
-  const body = {
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: maxTokens || 8000,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userPrompt }],
-    tools: [{ type: 'web_search_20250305', name: 'web_search' }]
-  };
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
+  if(!S.apiKey) throw new Error('Pehle Settings mein Groq API Key daalo! (gsk_...)');
+  const model = S.model || 'meta-llama/llama-4-scout-17b-16e-instruct';
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ];
+  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${S.apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.7,
+      max_tokens: Math.min(maxTokens || 8000, 8000)
+    })
   });
   if(!r.ok) {
     const e = await r.json();
-    throw new Error(e.error?.message || 'Anthropic API Error: ' + r.status);
+    const errMsg = e.error?.message || 'Groq API Error: ' + r.status;
+    if(errMsg.includes('rate') || errMsg.includes('limit') || errMsg.includes('quota')) {
+      throw new Error('⚠️ Token limit! Settings mein "Llama 4 Scout" select karo — sabse zyada free tokens milenge!');
+    }
+    throw new Error(errMsg);
   }
   const data = await r.json();
-  const textBlocks = (data.content || []).filter(b => b.type === 'text').map(b => b.text);
-  return textBlocks.join('\n');
+  return data.choices?.[0]?.message?.content || '';
 }
 
 // ── Wikipedia Commons image fetcher (free, no key needed) ─────
@@ -48278,6 +48293,7 @@ async function aeFetchRealImages(queries) {
 }
 
 async function aeStartGeneration() {
+  if(!S.apiKey) { showToast('⚠️ Pehle Settings mein Groq API Key daalo! (gsk_...)', 'error'); return; }
   if(_aeState.sources.length === 0) { showToast('Kam se kam ek source select karo!', 'error'); return; }
 
   _aeState.step = 2;
@@ -48596,6 +48612,7 @@ async function aeApplyMerge() {
 }
 
 async function aeRegenerateNotes() {
+  if(!S.apiKey) { showToast('⚠️ Pehle Settings mein Groq API Key daalo! (gsk_...)', 'error'); return; }
   _aeState.enhancedHTML = '';
   _aeState.selectedImages = [];
   document.getElementById('aeLoadingState').style.display = 'flex';
