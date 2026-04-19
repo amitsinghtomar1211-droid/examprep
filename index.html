@@ -4852,7 +4852,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
             <div class="field-group">
               <label class="field-label">📂 Notes Source:</label>
               <select class="inp" id="quizNotesSource">
-                <option value="raw">📄 Raw Notes (Topic ke notes)</option>
+                <option value="raw">📄 Raw Notes (Original notes)</option>
+                <option value="summary">⚡ Summary Notes (AI-generated)</option>
                 <option value="canvas">🎨 Canvas Notes (Slides ke notes)</option>
               </select>
             </div>
@@ -9293,13 +9294,19 @@ function updateQuizSourceVisibility(){
   var tid = document.getElementById('quizTopic').value;
   var srcSel = document.getElementById('quizNotesSource');
   if(!srcSel) return;
+  // options: 0=raw, 1=summary, 2=canvas
   if(tid === 'all') {
-    srcSel.value = 'raw';
+    // Canvas aur Summary require specific topic
+    if(srcSel.value === 'canvas' || srcSel.value === 'summary') srcSel.value = 'raw';
     srcSel.options[1].disabled = true;
-    srcSel.options[1].text = '🎨 Canvas Notes (Topic chunno pehle)';
+    srcSel.options[1].text = '⚡ Summary Notes (Topic chunno pehle)';
+    srcSel.options[2].disabled = true;
+    srcSel.options[2].text = '🎨 Canvas Notes (Topic chunno pehle)';
   } else {
     srcSel.options[1].disabled = false;
-    srcSel.options[1].text = '🎨 Canvas Notes (Slides ke notes)';
+    srcSel.options[1].text = '⚡ Summary Notes (AI-generated)';
+    srcSel.options[2].disabled = false;
+    srcSel.options[2].text = '🎨 Canvas Notes (Slides ke notes)';
   }
   updateHlProgress();
 }
@@ -9532,7 +9539,23 @@ function qfExtractContent(sid, secid, tid, notesSource) {
         });
       });
     });
+  } else if (notesSource === 'summary') {
+    // Sirf summary notes (_isSummaryNote: true)
+    S.subjects.forEach(subj => {
+      if (sid !== 'all' && subj.id != sid) return;
+      subj.sections.forEach(sec => {
+        if (secid !== 'all' && sec.id != secid) return;
+        sec.topics.forEach(t => {
+          if (tid !== 'all' && t.id != tid) return;
+          if (ae && !ae.selectedTopicIds.includes(t.id) && tid === 'all') return;
+          const summaryNotes = (t.notes || []).filter(n => n._isSummaryNote);
+          const src = summaryNotes.map(n => n.content).join('\n\n');
+          if (src) content += src + '\n\n---\n\n';
+        });
+      });
+    });
   } else {
+    // 'raw' — sirf original notes, summary notes exclude
     S.subjects.forEach(subj => {
       if (sid !== 'all' && subj.id != sid) return;
       subj.sections.forEach(sec => {
@@ -9542,7 +9565,7 @@ function qfExtractContent(sid, secid, tid, notesSource) {
           if (ae && !ae.selectedTopicIds.includes(t.id) && tid === 'all') return;
           const src = t.finalNotes
             ? t.finalNotes.replace(/%%NEW%%|%%HIGHLIGHT%%|%%DATE%%.*?%%ENDNEW%%|%%ENDHIGHLIGHT%%/g, '')
-            : t.notes.map(n => n.content).join('\n\n');
+            : (t.notes || []).filter(n => !n._isSummaryNote).map(n => n.content).join('\n\n');
           if (src) content += src + '\n\n---\n\n';
         });
       });
@@ -10105,6 +10128,25 @@ async function startQuizActual(){
       return;
     }
     content=canvasText; label=label+' (Canvas)';
+  } else if(notesSource==='summary'&&tid!=='all'){
+    // Sirf summary notes se content lo
+    S.subjects.forEach(subj=>{
+      subj.sections.forEach(sec=>{
+        sec.topics.forEach(t=>{
+          if(t.id!=tid)return;
+          label=t.name;
+          const sumNotes=(t.notes||[]).filter(n=>n._isSummaryNote);
+          if(sumNotes.length>0){
+            content+=sumNotes.map(n=>n.content).join('\n\n');
+          }
+        });
+      });
+    });
+    if(!content||content.trim().length<30){
+      showToast('⚠️ Is topic mein koi Summary Note nahi hai! Pehle Notes Editor mein Summary banao.','error');
+      return;
+    }
+    content=content; label=label+' (Summary)';
   } else {
     S.subjects.forEach(subj=>{
       if(sid!=='all'&&subj.id!=sid)return;
@@ -10142,10 +10184,10 @@ async function startQuizActual(){
               return;
             }
           }
-          // Fallback: raw notes
+          // Fallback: raw notes only (summary notes exclude)
           const src=t.finalNotes
             ?t.finalNotes.replace(/%%NEW%%|%%HIGHLIGHT%%|%%DATE%%.*?%%ENDNEW%%|%%ENDHIGHLIGHT%%/g,'')
-            :t.notes.map(n=>n.content).join('\n\n');
+            :(t.notes||[]).filter(n=>!n._isSummaryNote).map(n=>n.content).join('\n\n');
           if(src)content+=`### ${subj.name} > ${sec.name} > ${t.name}\n${src}\n\n---\n\n`;
         });
       });
@@ -10157,7 +10199,7 @@ async function startQuizActual(){
   const _contentLimit=_quizModel.includes('8b')?4000:14000;
   if(content.length>_contentLimit)content=content.substring(0,_contentLimit);
 
-  if(notesSource!=='canvas'){
+  if(notesSource!=='canvas'&&notesSource!=='summary'){
     label=tid!=='all'
       ?document.getElementById('quizTopic').options[document.getElementById('quizTopic').selectedIndex].text
       :sid!=='all'
