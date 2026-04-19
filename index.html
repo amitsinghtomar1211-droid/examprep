@@ -12856,125 +12856,163 @@ function _neOpenZoomViewer(imgSrc) {
     if(e.touches.length < 2) _vpinchDist = 0;
   }, {passive:true});
 
-  // Mouse drag pan
-  modal.addEventListener('mousedown', function(e) {
-    if(e.target === modal.querySelector('#_nzvClose')) return;
-    _isPanning = true;
-    _panStartX = e.clientX; _panStartY = e.clientY;
-    _panOriginX = _vx; _panOriginY = _vy;
-    modal.style.cursor = 'grabbing';
-  });
-  window.addEventListener('mousemove', function(e) {
-    if(!_isPanning) return;
-    var c = clampPan(_vz, _panOriginX + e.clientX - _panStartX, _panOriginY + e.clientY - _panStartY);
-    _vx = c.x; _vy = c.y;
-    applyTransform();
-  });
-  window.addEventListener('mouseup', function() {
-    _isPanning = false;
-    modal.style.cursor = 'grab';
-  });
+  // Mouse drag pan — with proper cleanup on close
+    var _mmFn = function(e) {
+      if(!_isPanning) return;
+      var c = clampPan(_vz, _panOriginX + e.clientX - _panStartX, _panOriginY + e.clientY - _panStartY);
+      _vx = c.x; _vy = c.y;
+      applyTransform();
+    };
+    var _muFn = function() {
+      _isPanning = false;
+      if(modal.parentNode) modal.style.cursor = 'grab';
+    };
+    modal.addEventListener('mousedown', function(e) {
+      var _cb = modal.querySelector('#_nzvClose');
+      if(_cb && (_cb === e.target || _cb.contains(e.target))) return;
+      _isPanning = true;
+      _panStartX = e.clientX; _panStartY = e.clientY;
+      _panOriginX = _vx; _panOriginY = _vy;
+      modal.style.cursor = 'grabbing';
+    });
+    window.addEventListener('mousemove', _mmFn);
+    window.addEventListener('mouseup', _muFn);
 
-  // Wheel zoom
-  modal.addEventListener('wheel', function(e) {
-    e.preventDefault();
-    var factor = e.deltaY < 0 ? 1.15 : 0.87;
-    zoomAt(_vz * factor, e.clientX - window.innerWidth/2, e.clientY - window.innerHeight/2);
-  }, {passive:false});
+    // Wheel zoom
+    modal.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      var factor = e.deltaY < 0 ? 1.15 : 0.87;
+      zoomAt(_vz * factor, e.clientX - window.innerWidth/2, e.clientY - window.innerHeight/2);
+    }, {passive:false});
 
-  // Double tap toggle zoom
-  var _lastTap2 = 0;
-  modal.addEventListener('touchend', function(e) {
-    if(e.changedTouches.length === 1 && e.touches.length === 0) {
-      var now = Date.now();
-      if(now - _lastTap2 < 300) {
-        var t = e.changedTouches[0];
-        var tx = t.clientX - window.innerWidth/2;
-        var ty = t.clientY - window.innerHeight/2;
-        if(_vz > 1.5) { _vz=1; _vx=0; _vy=0; applyTransform(); }
-        else { zoomAt(Math.min(_vz*2.5, 5), tx, ty); }
-      }
-      _lastTap2 = now;
-    }
-  }, {passive:true});
-
-  // Close button & Escape
-  modal.querySelector('#_nzvClose').onclick = function(e) { e.stopPropagation(); modal.remove(); };
-  var _escFn = function(e) { if(e.key==='Escape') modal.remove(); };
-  document.addEventListener('keydown', _escFn);
-  modal.addEventListener('remove', function() { document.removeEventListener('keydown', _escFn); });
-  modal.style.cursor = 'grab';
-
-  document.body.appendChild(modal);
-}
-
-function neSetEditMode(on) {
-  const area = document.getElementById('noteEditableArea');
-  const btn = document.getElementById('editToggleBtn');
-  const toolbar = document.getElementById('formatToolbar');
-
-  if(on) {
-    area.contentEditable = 'true';
-    area.style.cursor = 'text';
-    if(btn) { btn.setAttribute('title','Edit ON ✅'); btn.style.background='rgba(21,101,192,0.12)'; btn.style.borderColor='#1565c0'; }
-    if(toolbar) toolbar.style.display = 'flex';
-    neUpdateStatusBar('✏️ Edit Mode -- likhna shuru karo');
-    area.focus();
-    _undoStack = [];
-    _redoStack = [];
-    // Attach click handlers to existing images for resize/remove options
-    setTimeout(function() {
-      if(area) area.querySelectorAll('img').forEach(function(img) {
-        if(!img.getAttribute('data-ne-img-bound')) {
-          img.setAttribute('data-ne-img-bound','1');
-          img.style.cursor = 'pointer';
-          img.title = 'Tap to resize / remove';
-          img.onclick = function(e) {
-            e.preventDefault();
-            e.stopPropagation(); // stop wrap onclick from also firing
-            neImageOptions(img);
-          };
+    // Double tap toggle zoom — skip if touching close button
+    var _lastTap2 = 0;
+    modal.addEventListener('touchend', function(e) {
+      var _cb = modal.querySelector('#_nzvClose');
+      if(_cb && e.target && (_cb === e.target || _cb.contains(e.target))) return;
+      if(e.changedTouches.length === 1 && e.touches.length === 0) {
+        var now = Date.now();
+        if(now - _lastTap2 < 300) {
+          var t = e.changedTouches[0];
+          var tx = t.clientX - window.innerWidth/2;
+          var ty = t.clientY - window.innerHeight/2;
+          if(_vz > 1.5) { _vz=1; _vx=0; _vy=0; applyTransform(); }
+          else { zoomAt(Math.min(_vz*2.5, 5), tx, ty); }
         }
-      });
-      // Edit mode mein hotspot pins render karo
-      area.querySelectorAll('.ne-img-wrap').forEach(function(w){
-        _neHotspotRender(w, true);
-      });
-    }, 150);
-  } else {
-    area.contentEditable = 'false';
-    area.style.cursor = 'text';
-    if(btn) { btn.setAttribute('title','Edit / Read'); btn.style.background=''; btn.style.borderColor=''; }
-    if(toolbar) toolbar.style.display = 'none';
-    neUpdateStatusBar('👁️ Read Mode -- Highlight ya Edit button dabao');
-    // View mode mein hotspot pins activate karo + image tap = zoom viewer
-    setTimeout(function(){
-      area.querySelectorAll('.ne-img-wrap').forEach(function(w){
-        _neHotspotRender(w, false);
-        // Triple tap = fullscreen zoom viewer
-        w._imgTapCount = 0;
-        w._imgTapTimer = null;
-        w.style.cursor = 'zoom-in';
-        w.onclick = function(e){
-          e.stopPropagation();
-          w._imgTapCount = (w._imgTapCount||0)+1;
-          clearTimeout(w._imgTapTimer);
-          w._imgTapTimer = setTimeout(function(){
-            var n = w._imgTapCount; w._imgTapCount = 0;
-            var img = w.querySelector('img');
-            if(!img) return;
-            if(n >= 3){
-              var src = img.src && img.src.startsWith('data:image') ? img.src : (img.getAttribute('data-origurl') || img.src);
-              _neOpenZoomViewer(src);
-            }
-            // single/double tap - hotspot handling only, no image options in read mode
-          }, 280);
-        };
-      });
-    }, 100);
-  }
-}
+        _lastTap2 = now;
+      }
+    }, {passive:true});
 
+    // Cleanup + close function
+    function _closeZoomViewer() {
+      if(!modal.parentNode) return;
+      window.removeEventListener('mousemove', _mmFn);
+      window.removeEventListener('mouseup', _muFn);
+      document.removeEventListener('keydown', _escFn);
+      modal.remove();
+    }
+
+    // Close button — both click (desktop) and touchend (mobile)
+    // On mobile, touchstart uses preventDefault so click may not synthesize — use touchend
+    var _nzvCloseBtn = modal.querySelector('#_nzvClose');
+    _nzvCloseBtn.onclick = function(e) { e.stopPropagation(); _closeZoomViewer(); };
+    _nzvCloseBtn.addEventListener('touchend', function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      _closeZoomViewer();
+    }, {passive:false});
+
+    // Escape key
+    var _escFn = function(e) { if(e.key==='Escape') _closeZoomViewer(); };
+    document.addEventListener('keydown', _escFn);
+
+    modal.style.cursor = 'grab';
+    document.body.appendChild(modal);
+  }
+  
+function neSetEditMode(on) {
+    const area = document.getElementById('noteEditableArea');
+    const btn = document.getElementById('editToggleBtn');
+    const toolbar = document.getElementById('formatToolbar');
+
+    if(on) {
+      area.contentEditable = 'true';
+      area.style.cursor = 'text';
+      if(btn) { btn.setAttribute('title','Edit ON ✅'); btn.style.background='rgba(21,101,192,0.12)'; btn.style.borderColor='#1565c0'; }
+      if(toolbar) toolbar.style.display = 'flex';
+      neUpdateStatusBar('✏️ Edit Mode -- likhna shuru karo');
+      area.focus();
+      _undoStack = [];
+      _redoStack = [];
+      // Reset ALL image wraps to edit-mode handler (fixes tools not showing on re-entry after read mode)
+      setTimeout(function() {
+        if(area) area.querySelectorAll('.ne-img-wrap').forEach(function(w) {
+          w.style.cursor = 'pointer';
+          w._imgTapCount = 0;
+          clearTimeout(w._imgTapTimer);
+          // Always re-bind wrap onclick for edit mode (overrides any read-mode handler)
+          w.onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var imgEl = w.querySelector('img');
+            if(imgEl) neImageOptions(imgEl);
+          };
+          // Also enable pointer events on img so direct taps work
+          var imgEl = w.querySelector('img');
+          if(imgEl) {
+            imgEl.style.pointerEvents = 'auto';
+            imgEl.style.cursor = 'pointer';
+            imgEl.title = 'Tap to edit image';
+            imgEl.setAttribute('data-ne-img-bound','1');
+            imgEl.onclick = function(e) {
+              e.preventDefault();
+              e.stopPropagation();
+              neImageOptions(imgEl);
+            };
+          }
+        });
+        // Edit mode mein hotspot pins render karo
+        area.querySelectorAll('.ne-img-wrap').forEach(function(w){
+          _neHotspotRender(w, true);
+        });
+      }, 150);
+    } else {
+      area.contentEditable = 'false';
+      area.style.cursor = 'text';
+      if(btn) { btn.setAttribute('title','Edit / Read'); btn.style.background=''; btn.style.borderColor=''; }
+      if(toolbar) toolbar.style.display = 'none';
+      neUpdateStatusBar('👁️ Read Mode -- Highlight ya Edit button dabao');
+      // View mode mein hotspot pins activate karo + image tap = zoom viewer (triple tap)
+      setTimeout(function(){
+        area.querySelectorAll('.ne-img-wrap').forEach(function(w){
+          _neHotspotRender(w, false);
+          // Reset img to non-interactive in read mode
+          var imgEl = w.querySelector('img');
+          if(imgEl) { imgEl.style.pointerEvents = 'none'; imgEl.style.cursor = ''; imgEl.onclick = null; }
+          // Triple tap = fullscreen zoom viewer
+          w._imgTapCount = 0;
+          w._imgTapTimer = null;
+          w.style.cursor = 'zoom-in';
+          w.onclick = function(e){
+            e.stopPropagation();
+            w._imgTapCount = (w._imgTapCount||0)+1;
+            clearTimeout(w._imgTapTimer);
+            w._imgTapTimer = setTimeout(function(){
+              var n = w._imgTapCount; w._imgTapCount = 0;
+              var img = w.querySelector('img');
+              if(!img) return;
+              if(n >= 3){
+                var src = img.src && img.src.startsWith('data:image') ? img.src : (img.getAttribute('data-origurl') || img.src);
+                _neOpenZoomViewer(src);
+              }
+              // single/double tap - hotspot handling only, no image options in read mode
+            }, 280);
+          };
+        });
+      }, 100);
+    }
+  }
+  
 function neToggleEdit() {
   const area = document.getElementById('noteEditableArea');
   const isEditing = area.contentEditable === 'true';
