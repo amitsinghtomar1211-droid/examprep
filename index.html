@@ -47835,11 +47835,11 @@ function _neDoActualInsert(dataUrl, cloudSync) {
 .ae-merge-opt-text strong { display:block;font-size:0.8rem;margin-bottom:2px;font-weight:800; }
 
 /* ── Image Suggestion Cards ── */
-.ae-img-suggestions { display:flex;flex-direction:column;gap:7px; }
+.ae-img-suggestions { display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:9px; }
 .ae-img-card {
-  border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;
-  background:var(--surface);display:flex;align-items:center;gap:10px;cursor:pointer;
-  transition:all 0.15s;-webkit-tap-highlight-color:transparent;
+  border:1.5px solid var(--border);border-radius:10px;
+  background:var(--surface);display:flex;flex-direction:column;cursor:pointer;
+  transition:all 0.15s;-webkit-tap-highlight-color:transparent;overflow:hidden;
 }
 .ae-img-card.sel { border-color:#2e7d32;background:rgba(46,125,50,0.05); }
 .ae-img-card-icon { font-size:1.4rem;flex-shrink:0; }
@@ -47986,7 +47986,7 @@ body.night-mode .ae-btn-primary { box-shadow:0 4px 14px rgba(106,27,154,0.2); }
         <div id="aeLoadingState" class="ae-loading">
           <div class="ae-spinner"></div>
           <div class="ae-loading-step-indicator" id="aeLoadingStepText">📡 AI se connect ho raha hai...</div>
-          <div class="ae-loading-text">Yeh thoda time le sakta hai. AI aapke notes ko<br>multiple sources se enhance kar raha hai...</div>
+          <div class="ae-loading-text">Web search chal raha hai — real data aa raha hai.<br>30-90 seconds lag sakte hain. Please wait... ☕</div>
           <div style="width:100%;max-width:280px;">
             <div class="ae-progress-strip"><div class="ae-progress-fill" id="aeProgressFill"></div></div>
           </div>
@@ -48093,6 +48093,7 @@ var _aeState = {
   enhancedHTML: '',
   selectedImages: [],
   imageSuggestions: [],
+  realImages: [],
   generating: false,
   progress: 0
 };
@@ -48222,9 +48223,62 @@ function aeMainAction() {
 }
 
 // ── Generation ──────────────────────────────
+// Safe code fence cleaner (avoids regex literal newline issues)
+function aeCleanCodeFences(text) {
+  // Remove ```html ... ``` blocks
+  text = text.split('```html').join('');
+  text = text.split('```').join('');
+  return text.trim();
+}
+
+// ── Anthropic API caller with web_search tool ──────────────────
+async function aeCallAnthropicWithSearch(systemPrompt, userPrompt, maxTokens) {
+  const body = {
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: maxTokens || 8000,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }],
+    tools: [{ type: 'web_search_20250305', name: 'web_search' }]
+  };
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if(!r.ok) {
+    const e = await r.json();
+    throw new Error(e.error?.message || 'Anthropic API Error: ' + r.status);
+  }
+  const data = await r.json();
+  const textBlocks = (data.content || []).filter(b => b.type === 'text').map(b => b.text);
+  return textBlocks.join('\n');
+}
+
+// ── Wikipedia Commons image fetcher (free, no key needed) ─────
+async function aeFetchRealImages(queries) {
+  var results = [];
+  for(var q of queries.slice(0, 5)) {
+    try {
+      var encoded = encodeURIComponent(q);
+      var url = 'https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=' + encoded + '&srnamespace=6&srlimit=3&format=json&origin=*';
+      var r = await fetch(url);
+      var d = await r.json();
+      if(d.query && d.query.search && d.query.search.length > 0) {
+        for(var item of d.query.search.slice(0, 2)) {
+          var title = item.title.replace('File:', '');
+          var imgUrl = 'https://commons.wikimedia.org/wiki/Special:FilePath/' + encodeURIComponent(title) + '?width=400';
+          results.push({ query: q, url: imgUrl, title: title, source: 'Wikipedia Commons' });
+          if(results.length >= 6) break;
+        }
+      }
+    } catch(e) { /* skip */ }
+    if(results.length >= 6) break;
+  }
+  return results;
+}
+
 async function aeStartGeneration() {
-  if(!S.apiKey){showToast('API Key nahi hai!','error');return;}
-  if(_aeState.sources.length===0){showToast('Kam se kam ek source select karo!','error');return;}
+  if(_aeState.sources.length === 0) { showToast('Kam se kam ek source select karo!', 'error'); return; }
 
   _aeState.step = 2;
   _aeState.generating = true;
@@ -48233,129 +48287,110 @@ async function aeStartGeneration() {
   _aeState.addImages = document.getElementById('aeAddImages').checked;
   aeUpdateUI();
 
-  // Show loading
-  document.getElementById('aeLoadingState').style.display='flex';
-  document.getElementById('aePreviewResult').style.display='none';
-
-  aeSetProgress(10,'📡 AI se connect ho raha hai...');
+  document.getElementById('aeLoadingState').style.display = 'flex';
+  document.getElementById('aePreviewResult').style.display = 'none';
+  aeSetProgress(5, '📡 AI se connect ho raha hai...');
 
   try {
-    // Get current note content
     var area = document.getElementById('noteEditableArea');
-    var noteHTML = area ? area.innerHTML : '';
-    var noteText = area ? (area.innerText||area.textContent||'') : '';
-    var noteName = document.getElementById('notesEditorTitle')?.textContent || 'Notes';
+    var noteText = area ? (area.innerText || area.textContent || '').trim() : '';
+    var noteName = (document.getElementById('notesEditorTitle')?.textContent || 'Notes').replace('📄 ', '');
 
-    // Build topic/subject context
-    var ctx = '';
-    if(_editorState.sid!=null && _editorState.tid!=null) {
-      var t = getTop(_editorState.sid,_editorState.secid,_editorState.tid);
-      var sub = S.subjects.find(s=>s.id===_editorState.sid);
-      if(sub) ctx += 'Subject: ' + sub.name + '. ';
-      if(t) ctx += 'Topic: ' + t.name + '. ';
+    var subjectName = '', topicName = '';
+    if(_editorState.sid != null && _editorState.tid != null) {
+      var t = getTop(_editorState.sid, _editorState.secid, _editorState.tid);
+      var sub = S.subjects.find(s => s.id === _editorState.sid);
+      if(sub) subjectName = sub.name;
+      if(t) topicName = t.name;
     }
-
-    aeSetProgress(25,'🧠 Notes analyze ho rahi hain...');
+    var topicContext = [subjectName, topicName].filter(Boolean).join(' — ') || noteName;
 
     var sourcesMap = {
-      pyq: 'Previous Year Exam Questions (PYQ)',
-      ncert: 'NCERT Books',
-      standard: 'Standard reference books (Laxmikanth, Spectrum, etc.)',
-      current: 'Current Affairs 2023-2025',
-      youtube: 'Popular educational YouTube channels like Khan Sir, Vivek Singh',
-      facts: 'Important Exam Facts and Mnemonics'
+      pyq: 'Previous Year Questions (PYQ) from UPSC, SSC, State PSC, UP Lekhpal, UPSSSC exams',
+      ncert: 'NCERT textbooks (Class 6-12)',
+      standard: 'Standard books: Laxmikanth (Polity), Spectrum (History), Bipin Chandra, Shankar IAS (Environment), Ramesh Singh (Economy)',
+      current: 'Current Affairs 2023-2025 from PIB, The Hindu, Indian Express',
+      youtube: 'Concepts explained by top educators: Khan Sir, Vivek Singh, Unacademy, Study IQ',
+      facts: 'High-yield exam facts, mnemonics, and one-liners for quick revision'
     };
-    var sourcesList = _aeState.sources.map(s=>sourcesMap[s]||s).join(', ');
+    var sourcesList = _aeState.sources.map(s => '- ' + (sourcesMap[s] || s)).join('\n');
 
-    var modeInstructions = {
-      comprehensive: 'Comprehensive enhancement: add missing facts, improve existing points, add examples, add exam-important data, structure properly with headings/subheadings, add a "Key Facts for Exam" section at end.',
-      quick: 'Quick boost: add only the most important missing facts and highlight exam-critical points. Keep it concise.',
-      exam: 'Exam-focused: restructure for maximum exam usefulness. Add expected questions at bottom, important dates/numbers, and mark high-probability topics.',
-      concept: 'Concept deepening: add explanations, analogies, diagrams (as text description), cause-effect relationships, and conceptual clarity.'
+    var modeMap = {
+      comprehensive: 'Do ALL: add missing facts, PYQ with answers, important dates/figures/acts/schemes, comparison tables, one-liner facts section, PYQ questions section. Make it 3x more detailed.',
+      quick: 'Add TOP 10 most critical missing exam facts + 5 PYQ questions. Keep it focused.',
+      exam: 'EXAM FOCUS: restructure for max marks. Add all PYQ (last 10 years), expected questions, important numbers/dates/articles to memorize, common traps.',
+      concept: 'CONCEPT MODE: explain WHY and HOW, real examples, analogies, cause-effect, comparisons with related concepts, flowcharts as text.'
     };
-    var modeInstr = modeInstructions[_aeState.mode] || modeInstructions.comprehensive;
+    var modeInstr = modeMap[_aeState.mode] || modeMap.comprehensive;
 
-    var langInstr = _aeState.lang==='hindi' ? 'Respond ENTIRELY in Hindi (Devanagari script). Technical terms can be in English/brackets.' :
-                    _aeState.lang==='hinglish' ? 'Respond in Hinglish (Hindi-English mix). Easy to understand.' :
-                    'Respond in clear English.';
+    var langInstr = _aeState.lang === 'hindi'
+      ? 'Write ENTIRELY in Hindi (Devanagari). English terms allowed in brackets.'
+      : _aeState.lang === 'hinglish'
+      ? 'Write in Hinglish — Hindi headings, easy mixed explanation.'
+      : 'Write in clear English.';
 
-    var customPart = _aeState.customInp ? '\n\nUser Special Instruction: ' + _aeState.customInp : '';
+    var customPart = _aeState.customInp ? '\nUSER INSTRUCTION (highest priority): ' + _aeState.customInp : '';
 
-    var imageInstr = _aeState.addImages ? '\n\nAt the end, add a section called "## 🖼️ Suggested Images" and list 3-5 image search queries as: IMAGE[query text here] format. These will be used to find relevant educational images.' : '';
+    var imageSearchInstr = _aeState.addImages
+      ? '\n\nAt the end, list 4-5 specific image queries as: IMGSEARCH[your query here] (one per line). Choose queries that would find educational diagrams, maps, or charts for this topic.'
+      : '';
 
-    var prompt = `You are an expert Indian competitive exam content enhancer. Your task is to significantly enhance and improve the following notes.
+    var systemPrompt = 'You are an expert Indian competitive exam content creator. You have deep knowledge of UPSC, SSC, State PSC, UPSSSC, UP Lekhpal exams.\n\nYour job: Enhance student notes using web_search to find REAL, CURRENT, VERIFIED data. Rules:\n1. Use web_search MULTIPLE TIMES — search for "[topic] PYQ", "[topic] UPSC notes", "[topic] important facts", "[topic] NCERT", "[topic] scheme 2024"\n2. Add information that is NOT in the original notes\n3. Add actual PYQ questions with answers from recent exams\n4. The result must be FAR more comprehensive than the original\n5. ' + langInstr + '\n\nOutput ONLY clean HTML — no markdown, no code fences.';
 
-${ctx}
-**Note Name:** ${noteName}
+    var userPrompt = 'TOPIC: ' + topicContext + '\nEXAM: Indian competitive exams (UPSC, State PSC, UP Lekhpal, SSC)\n\nSTUDENT EXISTING NOTES (ADD TO THESE — do not just repeat):\n---\n' + noteText.substring(0, 2000) + '\n---\n\nSOURCES:\n' + sourcesList + '\n\nMODE: ' + modeInstr + customPart + imageSearchInstr + '\n\nNow search the web and create comprehensive, exam-ready enhanced HTML notes. Use these HTML styles:\n• <h2 style="color:#1565c0;border-bottom:2px solid #1565c0;padding-bottom:4px;margin-top:20px;"> for sections\n• <h3 style="color:#e65100;margin-top:14px;"> for subsections\n• <ul style="padding-left:20px;"><li style="margin-bottom:5px;"> for lists\n• <table border="1" style="width:100%;border-collapse:collapse;font-size:0.85em;"> for tables\n• <div style="background:#fff8e1;border-left:4px solid #f9a825;padding:12px;margin:12px 0;border-radius:6px;"> for exam facts\n• <div style="background:#e8f5e9;border-left:4px solid #43a047;padding:12px;margin:12px 0;border-radius:6px;"> for PYQ section\n• <div style="background:#fce4ec;border-left:4px solid #e91e63;padding:12px;margin:12px 0;border-radius:6px;"> for alerts\n• <mark style="background:#fff176;padding:1px 4px;border-radius:3px;"> for key terms';
 
-**Original Notes Content:**
-${noteText.substring(0, 3000)}
+    aeSetProgress(15, '🔍 Web se data search ho raha hai... (30-60 sec lag sakte hain)');
 
-**Enhancement Sources to use:** ${sourcesList}
+    var enhanced = await aeCallAnthropicWithSearch(systemPrompt, userPrompt, 8000);
 
-**Enhancement Mode:** ${modeInstr}
+    aeSetProgress(65, '✍️ Content process ho raha hai...');
 
-**Language:** ${langInstr}
-
-${customPart}
-
-**Output Format Rules:**
-- Output clean HTML that can be directly inserted into a contenteditable div
-- Use <h2> for main headings, <h3> for subheadings
-- Use <ul><li> for bullet points
-- Use <strong> for important terms
-- Use <table border="1" style="width:100%;border-collapse:collapse;"> for tables when needed
-- Add a colored box for "परीक्षा में पूछे जाने वाले महत्वपूर्ण तथ्य" (Important Exam Facts) using: <div style="background:#fff8e1;border-left:4px solid #f9a825;padding:10px;margin:10px 0;border-radius:6px;">
-- Add exam questions section using: <div style="background:#e8f5e9;border-left:4px solid #43a047;padding:10px;margin:10px 0;border-radius:6px;">
-- For very important points use: <mark style="background:#fff176;">text here</mark>
-- Keep overall size under 1MB by being comprehensive but not unnecessarily verbose
-${imageInstr}
-
-Now provide the significantly enhanced, exam-ready HTML notes:`;
-
-    aeSetProgress(40,'📚 Sources se data fetch ho raha hai...');
-
-    var enhanced = await callGroq(prompt, 7000);
-
-    aeSetProgress(70,'✍️ Content format ho raha hai...');
-
-    // Parse image suggestions if any
-    var imgSuggestions = [];
-    var imgMatches = enhanced.match(/IMAGE\[([^\]]+)\]/g);
+    // Extract image queries
+    var imgQueries = [];
+    var imgMatches = enhanced.match(/IMGSEARCH\[([^\]]+)\]/g);
     if(imgMatches) {
-      imgSuggestions = imgMatches.map(m=>m.replace(/IMAGE\[|\]/g,'').trim());
-      // Remove IMAGE[] tags from HTML
-      enhanced = enhanced.replace(/IMAGE\[[^\]]+\]/g,'');
+      imgQueries = imgMatches.map(m => m.replace(/IMGSEARCH\[|\]/g, '').trim());
+      enhanced = enhanced.replace(/IMGSEARCH\[[^\]]+\]/g, '');
     }
 
-    // Clean up code fences
-    enhanced = enhanced.replace(/```html\n?/gi,'').replace(/```\n?/g,'').trim();
+    // Clean any stray code fences
+    enhanced = enhanced.replace(/```html\n?/gi, '').replace(/```\n?/g, '').trim();
+    if(!enhanced.startsWith('<') && enhanced.includes('<h')) {
+      enhanced = enhanced.substring(enhanced.indexOf('<h'));
+    }
 
     _aeState.enhancedHTML = enhanced;
-    _aeState.imageSuggestions = imgSuggestions;
+    _aeState.imageSuggestions = imgQueries;
 
-    aeSetProgress(90,'🖼️ Images prepare ho rahi hain...');
+    aeSetProgress(80, '🖼️ Images dhundh raha hai...');
 
-    // Show preview
-    document.getElementById('aeLoadingState').style.display='none';
-    document.getElementById('aePreviewResult').style.display='flex';
+    // Fetch real images
+    var realImages = [];
+    if(_aeState.addImages && imgQueries.length > 0) {
+      realImages = await aeFetchRealImages(imgQueries);
+    }
+    _aeState.realImages = realImages;
+
+    aeSetProgress(100, '✅ Notes ready hain!');
+
+    document.getElementById('aeLoadingState').style.display = 'none';
+    document.getElementById('aePreviewResult').style.display = 'flex';
     document.getElementById('aePreviewContent').innerHTML = enhanced;
 
-    // Show image suggestions
-    if(imgSuggestions.length>0 && _aeState.addImages) {
-      aeShowImageSuggestions(imgSuggestions);
+    if(_aeState.addImages) {
+      aeShowRealImagePreviews(imgQueries, realImages);
     }
 
-    aeSetProgress(100,'✅ Complete!');
     _aeState.generating = false;
     aeUpdateUI();
 
   } catch(err) {
     _aeState.generating = false;
-    document.getElementById('aeLoadingState').style.display='none';
+    document.getElementById('aeLoadingState').style.display = 'none';
     _aeState.step = 1;
     aeUpdateUI();
-    showToast('Error: ' + err.message, 'error');
+    showToast('Error: ' + (err.message || 'Unknown'), 'error');
+    console.error('AE Error:', err);
   }
 }
 
@@ -48367,150 +48402,258 @@ function aeSetProgress(pct, txt) {
   if(stepTxt) stepTxt.textContent = txt;
 }
 
-function aeShowImageSuggestions(queries) {
+function aeShowRealImagePreviews(queries, realImages) {
   var sec = document.getElementById('aeImageSuggestionsSection');
   var list = document.getElementById('aeImageSuggestions');
-  if(!sec||!list) return;
-  sec.style.display='block';
-  list.innerHTML = queries.map(function(q,i){
-    return `<div class="ae-img-card" data-query="${q}" onclick="aeToggleImage(this)">
-      <div class="ae-img-card-icon">🖼️</div>
-      <div class="ae-img-card-info">
-        <div class="ae-img-card-title">${q}</div>
-        <div class="ae-img-card-sub">Tap to select for insertion</div>
-      </div>
-      <div class="ae-img-card-check">✓</div>
-    </div>`;
-  }).join('');
+  if(!sec || !list) return;
+  if(queries.length === 0 && realImages.length === 0) { sec.style.display='none'; return; }
+  sec.style.display = 'block';
+  list.innerHTML = '';
+
+  var usedQueries = new Set();
+
+  // Real image cards using DOM API (avoids nested quote issues)
+  realImages.forEach(function(img) {
+    usedQueries.add(img.query);
+    var listEl = list; // reference for the closure below
+    var safeQuery = img.query;
+    var cardEl = document.createElement('div');
+    cardEl.className = 'ae-img-card';
+    cardEl.dataset.query = img.query;
+    cardEl.dataset.imgurl = img.url;
+    cardEl.style.cssText = 'flex-direction:column;align-items:flex-start;padding:0;overflow:hidden;';
+    cardEl.onclick = function(){ aeToggleImage(this); };
+
+    var imgWrap = document.createElement('div');
+    imgWrap.style.cssText = 'width:100%;height:130px;overflow:hidden;background:#f0f0f0;display:flex;align-items:center;justify-content:center;position:relative;';
+
+    var imgEl = document.createElement('img');
+    imgEl.src = img.url;
+    imgEl.alt = safeQuery;
+    imgEl.loading = 'lazy';
+    imgEl.style.cssText = 'max-width:100%;max-height:130px;object-fit:contain;';
+    imgEl.onerror = function() {
+      this.parentElement.innerHTML = '<div style="padding:12px;text-align:center;color:#999;font-size:0.68rem;">🖼️ Load nahi hui<br>' + safeQuery + '</div>';
+    };
+
+    var checkDiv = document.createElement('div');
+    checkDiv.className = 'ae-img-card-check';
+    checkDiv.style.cssText = 'position:absolute;top:6px;right:6px;background:#2e7d32;color:#fff;border-radius:50%;width:22px;height:22px;display:none;align-items:center;justify-content:center;font-size:0.8rem;';
+    checkDiv.textContent = '✓';
+
+    imgWrap.appendChild(imgEl);
+    imgWrap.appendChild(checkDiv);
+
+    var infoDiv = document.createElement('div');
+    infoDiv.style.cssText = 'padding:6px 8px;width:100%;box-sizing:border-box;';
+    var titleD = document.createElement('div');
+    titleD.className = 'ae-img-card-title';
+    titleD.style.fontSize = '0.7rem';
+    titleD.textContent = safeQuery;
+    var subD = document.createElement('div');
+    subD.className = 'ae-img-card-sub';
+    subD.style.cssText = 'font-size:0.6rem;color:#999;';
+    subD.textContent = img.source;
+    infoDiv.appendChild(titleD);
+    infoDiv.appendChild(subD);
+
+    cardEl.appendChild(imgWrap);
+    cardEl.appendChild(infoDiv);
+    list.appendChild(cardEl);
+  });
+
+  // Fallback text-only cards for queries without real images
+  queries.forEach(function(q) {
+    if(usedQueries.has(q)) return;
+    var cardEl = document.createElement('div');
+    cardEl.className = 'ae-img-card';
+    cardEl.dataset.query = q;
+    cardEl.dataset.imgurl = '';
+    cardEl.style.cssText = 'flex-direction:row;align-items:center;gap:8px;padding:9px 11px;';
+    cardEl.onclick = function(){ aeToggleImage(this); };
+    cardEl.innerHTML = '<div style="font-size:1.2rem;flex-shrink:0;">🔍</div><div style="flex:1;min-width:0;"><div class="ae-img-card-title">' + q + '</div><div class="ae-img-card-sub">Manually search kar sakte ho</div></div><div class="ae-img-card-check" style="font-size:1rem;color:#2e7d32;display:none;">✓</div>';
+    list.appendChild(cardEl);
+  });
+
+  if(list.children.length === 0) {
+    list.innerHTML = '<div style="padding:10px;color:var(--text2);font-size:0.78rem;">Koi image nahi mili. Manual insert karo.</div>';
+  }
+}
+
+// Kept for compatibility
+function aeShowImageSuggestions(queries) {
+  aeShowRealImagePreviews(queries, []);
 }
 
 function aeToggleImage(el) {
   el.classList.toggle('sel');
+  // Toggle checkmark for card-style images
+  var check = el.querySelector('.ae-img-card-check');
+  if(check) check.style.display = el.classList.contains('sel') ? 'flex' : 'none';
+
   var q = el.dataset.query;
-  if(el.classList.contains('sel')){
-    if(!_aeState.selectedImages.includes(q)) _aeState.selectedImages.push(q);
+  var imgUrl = el.dataset.imgurl || '';
+  if(el.classList.contains('sel')) {
+    if(!_aeState.selectedImages.find(x => x.query === q)) {
+      _aeState.selectedImages.push({ query: q, url: imgUrl });
+    }
   } else {
-    _aeState.selectedImages = _aeState.selectedImages.filter(x=>x!==q);
+    _aeState.selectedImages = _aeState.selectedImages.filter(x => x.query !== q);
   }
 }
 
 function aeMoveToMerge() {
   _aeState.step = 3;
   aeUpdateUI();
-  // Show selected images in final section
   var finalSec = document.getElementById('aeFinalImagesSection');
   var finalList = document.getElementById('aeFinalImagesList');
-  if(_aeState.selectedImages.length>0) {
-    finalSec.style.display='block';
-    finalList.innerHTML = _aeState.selectedImages.map(function(q){
-      return `<div style="background:rgba(46,125,50,0.08);border:1.5px solid #a5d6a7;border-radius:8px;padding:5px 10px;font-size:0.72rem;color:#2e7d32;font-weight:700;">🖼️ ${q}</div>`;
+  if(_aeState.selectedImages.length > 0) {
+    finalSec.style.display = 'block';
+    finalList.innerHTML = _aeState.selectedImages.map(function(img) {
+      var displayUrl = img.url || '';
+      var preview = displayUrl
+        ? `<img src="${displayUrl}" style="height:60px;border-radius:6px;object-fit:contain;background:#f0f0f0;" onerror="this.style.display='none'">`
+        : '🖼️';
+      return `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px;background:rgba(46,125,50,0.07);border:1.5px solid #a5d6a7;border-radius:8px;min-width:80px;max-width:100px;text-align:center;">
+        ${preview}
+        <div style="font-size:0.6rem;color:#2e7d32;word-break:break-word;">${img.query}</div>
+      </div>`;
     }).join('');
   } else {
-    finalSec.style.display='none';
+    finalSec.style.display = 'none';
   }
 }
 
 async function aeApplyMerge() {
   var area = document.getElementById('noteEditableArea');
-  if(!area){showToast('Notes editor nahi mila!','error');return;}
+  if(!area) { showToast('Notes editor nahi mila!', 'error'); return; }
 
   var enhanced = _aeState.enhancedHTML;
   var mergeType = _aeState.mergeType;
   var original = area.innerHTML;
 
+  // Build images HTML to append at end of content
+  var imagesHTML = '';
+  if(_aeState.selectedImages && _aeState.selectedImages.length > 0) {
+    imagesHTML = '<div style="margin-top:20px;"><h3 style="color:#1565c0;border-bottom:2px solid #e0e0e0;padding-bottom:6px;">🖼️ Relevant Images</h3><div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;">';
+    _aeState.selectedImages.forEach(function(img) {
+      if(img.url) {
+        imagesHTML += `<div style="display:inline-block;text-align:center;max-width:200px;">
+          <img src="${img.url}" alt="${img.query}" style="max-width:100%;border-radius:8px;border:1.5px solid #e0e0e0;display:block;" onerror="this.src='';this.alt='Image not available'">
+          <div style="font-size:0.68rem;color:#666;margin-top:4px;">${img.query}</div>
+        </div>`;
+      }
+    });
+    imagesHTML += '</div></div>';
+  }
+
+  var divider = '<hr style="border:none;border-top:2px solid #e0e0e0;margin:20px 0;">';
+  var enhanceTag = '<div style="background:rgba(106,27,154,0.05);border-left:3px solid #6a1b9a;padding:8px 12px;margin-bottom:12px;border-radius:0 8px 8px 0;display:flex;align-items:center;gap:6px;"><span style="font-size:0.9rem;">✨</span><strong style="color:#6a1b9a;font-size:0.76rem;">AI Enhanced Content — Web-researched & Exam-ready</strong></div>';
+
   try {
     if(mergeType === 'replace') {
-      area.innerHTML = enhanced;
+      area.innerHTML = enhanced + imagesHTML;
     } else if(mergeType === 'append') {
-      area.innerHTML = original + '<hr style="border:none;border-top:2px solid #e0e0e0;margin:20px 0;"><div style="background:rgba(106,27,154,0.05);border-left:3px solid #6a1b9a;padding:10px;margin-bottom:8px;border-radius:0 8px 8px 0;"><strong style="color:#6a1b9a;font-size:0.78rem;">✨ AI Enhanced Content</strong></div>' + enhanced;
+      area.innerHTML = original + divider + enhanceTag + enhanced + imagesHTML;
     } else if(mergeType === 'prepend') {
-      area.innerHTML = '<div style="background:rgba(106,27,154,0.05);border-left:3px solid #6a1b9a;padding:10px;margin-bottom:8px;border-radius:0 8px 8px 0;"><strong style="color:#6a1b9a;font-size:0.78rem;">✨ AI Enhanced Content</strong></div>' + enhanced + '<hr style="border:none;border-top:2px solid #e0e0e0;margin:20px 0;">' + original;
+      area.innerHTML = enhanceTag + enhanced + imagesHTML + divider + original;
     } else if(mergeType === 'new') {
-      // Create new note in same topic
-      var sid=_editorState.sid, secid=_editorState.secid, tid=_editorState.tid;
-      if(sid!=null && tid!=null) {
-        var t = getTop(sid,secid,tid);
+      var sid = _editorState.sid, secid = _editorState.secid, tid = _editorState.tid;
+      if(sid != null && tid != null) {
+        var t = getTop(sid, secid, tid);
         if(t) {
+          var baseName = t.notes[_editorState.noteIdx]?.name || 'Note';
           var newNote = {
             id: Date.now(),
-            name: (t.notes[_editorState.noteIdx]?.name||'Note') + ' — AI Enhanced',
-            content: enhanced,
+            name: baseName + ' — AI Enhanced',
+            content: enhanceTag + enhanced + imagesHTML,
             addedAt: new Date().toLocaleDateString('hi-IN'),
-            wordCount: enhanced.replace(/<[^>]*>/g,'').split(/\s+/).length
+            wordCount: (enhanced + imagesHTML).replace(/<[^>]*>/g, '').split(/\s+/).filter(Boolean).length
           };
           t.notes.push(newNote);
           save();
           closeAiEnhancePanel();
-          showToast('✅ Naya AI enhanced note ban gaya!','success');
+          showToast('✅ Naya AI enhanced note ban gaya! Topic mein dekho.', 'success');
           return;
         }
       }
+      showToast('Topic nahi mila — replace mode use ho raha hai', 'error');
+      area.innerHTML = enhanced + imagesHTML;
     }
 
-    // Mark editor as modified
+    // Mark as modified
     _editorState.modified = true;
-    var ud = document.getElementById('unsavedDot');
-    if(ud) ud.style.display='';
-    var ud2 = document.getElementById('unsavedDot2');
-    if(ud2) ud2.style.display='';
-    var snb = document.getElementById('saveNoteBtn');
-    if(snb) snb.style.display='';
+    var ud = document.getElementById('unsavedDot'); if(ud) ud.style.display = '';
+    var ud2 = document.getElementById('unsavedDot2'); if(ud2) ud2.style.display = '';
+    var snb = document.getElementById('saveNoteBtn'); if(snb) snb.style.display = '';
 
     closeAiEnhancePanel();
-    showToast('✅ Notes enhanced ho gaye! Save karna mat bhoolna 💾','success');
+    showToast('✅ Notes enhanced ho gaye! 💾 Save karna mat bhoolna', 'success');
 
   } catch(err) {
-    showToast('Merge mein error: ' + err.message,'error');
+    showToast('Merge error: ' + err.message, 'error');
   }
 }
 
 async function aeRegenerateNotes() {
   _aeState.enhancedHTML = '';
-  document.getElementById('aeLoadingState').style.display='flex';
-  document.getElementById('aePreviewResult').style.display='none';
-  aeUpdateUI();
-  // Re-run generation
-  _aeState.step = 1;
-  _aeState.step = 2;
-  _aeState.generating = true;
-  aeUpdateUI();
+  _aeState.selectedImages = [];
+  document.getElementById('aeLoadingState').style.display = 'flex';
+  document.getElementById('aePreviewResult').style.display = 'none';
+  aeSetProgress(5, '🔄 Regenerating with fresh web search...');
 
   try {
     var area = document.getElementById('noteEditableArea');
-    var noteText = area ? (area.innerText||area.textContent||'') : '';
-    var noteName = document.getElementById('notesEditorTitle')?.textContent || 'Notes';
-    var ctx='';
-    if(_editorState.sid!=null && _editorState.tid!=null){
-      var t=getTop(_editorState.sid,_editorState.secid,_editorState.tid);
-      var sub=S.subjects.find(s=>s.id===_editorState.sid);
-      if(sub)ctx+='Subject: '+sub.name+'. ';
-      if(t)ctx+='Topic: '+t.name+'. ';
+    var noteText = area ? (area.innerText || area.textContent || '').trim() : '';
+    var noteName = (document.getElementById('notesEditorTitle')?.textContent || 'Notes').replace('📄 ', '');
+    var subjectName = '', topicName = '';
+    if(_editorState.sid != null && _editorState.tid != null) {
+      var t = getTop(_editorState.sid, _editorState.secid, _editorState.tid);
+      var sub = S.subjects.find(s => s.id === _editorState.sid);
+      if(sub) subjectName = sub.name;
+      if(t) topicName = t.name;
     }
-    var sourcesMap={pyq:'PYQ',ncert:'NCERT',standard:'Standard Books',current:'Current Affairs',youtube:'YouTube',facts:'Exam Facts'};
-    var sourcesList=_aeState.sources.map(s=>sourcesMap[s]||s).join(', ');
-    var langInstr=_aeState.lang==='hindi'?'Hindi mein':'English mein';
-    var prompt=`Re-enhance these notes from a DIFFERENT angle. ${ctx}Note: ${noteName}. Content: ${noteText.substring(0,2500)}. Sources: ${sourcesList}. Mode: ${_aeState.mode}. Language: ${langInstr}. ${_aeState.customInp}. Give improved HTML notes with exam facts. Keep fresh perspective from previous generation.`;
-    aeSetProgress(30,'🔄 Regenerating...');
-    var enhanced = await callGroq(prompt, 7000);
-    enhanced = enhanced.replace(/```html\n?/gi,'').replace(/```\n?/g,'').trim();
-    var imgMatches = enhanced.match(/IMAGE\[([^\]]+)\]/g);
-    if(imgMatches){
-      _aeState.imageSuggestions=imgMatches.map(m=>m.replace(/IMAGE\[|\]/g,'').trim());
-      enhanced=enhanced.replace(/IMAGE\[[^\]]+\]/g,'');
+    var topicContext = [subjectName, topicName].filter(Boolean).join(' — ') || noteName;
+    var langInstr = _aeState.lang === 'hindi' ? 'Write entirely in Hindi.' : _aeState.lang === 'hinglish' ? 'Write in Hinglish.' : 'Write in English.';
+    var customPart = _aeState.customInp ? ' User instruction: ' + _aeState.customInp + '.' : '';
+
+    aeSetProgress(20, '🔍 Fresh web search ho raha hai...');
+
+    var systemPrompt = 'You are an expert Indian competitive exam notes creator. Use web_search to find comprehensive, exam-focused information. ' + langInstr + ' Output ONLY clean HTML.';
+    var userPrompt = 'Topic: ' + topicContext + '. Mode: ' + _aeState.mode + '.' + customPart + ' Existing notes (brief): ' + noteText.substring(0, 1000) + '. Search the web and create a DIFFERENT, FRESH, comprehensive enhanced version with new facts, PYQ, important dates, tables. Use HTML formatting with colored boxes for exam facts and PYQ sections. Also list image queries as IMGSEARCH[query] at the end.';
+
+    var enhanced = await aeCallAnthropicWithSearch(systemPrompt, userPrompt, 7000);
+
+    var imgQueries = [];
+    var imgMatches = enhanced.match(/IMGSEARCH\[([^\]]+)\]/g);
+    if(imgMatches) {
+      imgQueries = imgMatches.map(m => m.replace(/IMGSEARCH\[|\]/g, '').trim());
+      enhanced = enhanced.replace(/IMGSEARCH\[[^\]]+\]/g, '');
     }
-    _aeState.enhancedHTML=enhanced;
-    aeSetProgress(100,'✅ Done!');
-    document.getElementById('aeLoadingState').style.display='none';
-    document.getElementById('aePreviewResult').style.display='flex';
-    document.getElementById('aePreviewContent').innerHTML=enhanced;
-    if(_aeState.imageSuggestions.length>0) aeShowImageSuggestions(_aeState.imageSuggestions);
-    _aeState.generating=false;
+    enhanced = aeCleanCodeFences(enhanced);
+
+    _aeState.enhancedHTML = enhanced;
+    _aeState.imageSuggestions = imgQueries;
+
+    aeSetProgress(85, '🖼️ Images fetch ho rahi hain...');
+    var realImages = [];
+    if(_aeState.addImages && imgQueries.length > 0) {
+      realImages = await aeFetchRealImages(imgQueries);
+    }
+    _aeState.realImages = realImages;
+
+    aeSetProgress(100, '✅ Fresh notes ready!');
+    document.getElementById('aeLoadingState').style.display = 'none';
+    document.getElementById('aePreviewResult').style.display = 'flex';
+    document.getElementById('aePreviewContent').innerHTML = enhanced;
+    if(_aeState.addImages) aeShowRealImagePreviews(imgQueries, realImages);
+    _aeState.generating = false;
     aeUpdateUI();
-  } catch(err){
-    _aeState.generating=false;
-    showToast('Regenerate error: '+err.message,'error');
-    document.getElementById('aeLoadingState').style.display='none';
-    document.getElementById('aePreviewResult').style.display='flex';
+  } catch(err) {
+    _aeState.generating = false;
+    showToast('Regenerate error: ' + (err.message || 'Unknown'), 'error');
+    document.getElementById('aeLoadingState').style.display = 'none';
+    document.getElementById('aePreviewResult').style.display = 'flex';
   }
 }
 
