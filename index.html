@@ -5659,7 +5659,6 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
       </div>
       <button id="hlToggleBtn"  onclick="toggleHlMode()"    style="display:none;">🖊️</button>
       <button id="hlEraserBtn"  onclick="toggleEraserMode()" style="display:none;">🧹</button>
-      <button id="neImgRefreshBtn" onclick="neRefreshImages()" title="Images reload karo (agar dikhe na to)" style="width:34px;height:34px;border-radius:9px;border:1.5px solid var(--border);background:var(--surface);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;font-size:1rem;" title="Refresh Images">🔄</button>
       <div class="notes-editor-toolbar" id="formatToolbar"  style="display:none;"></div>
     </div>
 
@@ -12857,192 +12856,168 @@ function _neOpenZoomViewer(imgSrc) {
     if(e.touches.length < 2) _vpinchDist = 0;
   }, {passive:true});
 
-  // Mouse drag pan
-  modal.addEventListener('mousedown', function(e) {
-    if(e.target === modal.querySelector('#_nzvClose')) return;
-    _isPanning = true;
-    _panStartX = e.clientX; _panStartY = e.clientY;
-    _panOriginX = _vx; _panOriginY = _vy;
-    modal.style.cursor = 'grabbing';
-  });
-  window.addEventListener('mousemove', function(e) {
-    if(!_isPanning) return;
-    var c = clampPan(_vz, _panOriginX + e.clientX - _panStartX, _panOriginY + e.clientY - _panStartY);
-    _vx = c.x; _vy = c.y;
-    applyTransform();
-  });
-  window.addEventListener('mouseup', function() {
-    _isPanning = false;
-    modal.style.cursor = 'grab';
-  });
+  // Mouse drag pan — with proper cleanup on close
+    var _mmFn = function(e) {
+      if(!_isPanning) return;
+      var c = clampPan(_vz, _panOriginX + e.clientX - _panStartX, _panOriginY + e.clientY - _panStartY);
+      _vx = c.x; _vy = c.y;
+      applyTransform();
+    };
+    var _muFn = function() {
+      _isPanning = false;
+      if(modal.parentNode) modal.style.cursor = 'grab';
+    };
+    modal.addEventListener('mousedown', function(e) {
+      var _cb = modal.querySelector('#_nzvClose');
+      if(_cb && (_cb === e.target || _cb.contains(e.target))) return;
+      _isPanning = true;
+      _panStartX = e.clientX; _panStartY = e.clientY;
+      _panOriginX = _vx; _panOriginY = _vy;
+      modal.style.cursor = 'grabbing';
+    });
+    window.addEventListener('mousemove', _mmFn);
+    window.addEventListener('mouseup', _muFn);
 
-  // Wheel zoom
-  modal.addEventListener('wheel', function(e) {
-    e.preventDefault();
-    var factor = e.deltaY < 0 ? 1.15 : 0.87;
-    zoomAt(_vz * factor, e.clientX - window.innerWidth/2, e.clientY - window.innerHeight/2);
-  }, {passive:false});
+    // Wheel zoom
+    modal.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      var factor = e.deltaY < 0 ? 1.15 : 0.87;
+      zoomAt(_vz * factor, e.clientX - window.innerWidth/2, e.clientY - window.innerHeight/2);
+    }, {passive:false});
 
-  // Double tap toggle zoom
-  var _lastTap2 = 0;
-  modal.addEventListener('touchend', function(e) {
-    if(e.changedTouches.length === 1 && e.touches.length === 0) {
-      var now = Date.now();
-      if(now - _lastTap2 < 300) {
-        var t = e.changedTouches[0];
-        var tx = t.clientX - window.innerWidth/2;
-        var ty = t.clientY - window.innerHeight/2;
-        if(_vz > 1.5) { _vz=1; _vx=0; _vy=0; applyTransform(); }
-        else { zoomAt(Math.min(_vz*2.5, 5), tx, ty); }
-      }
-      _lastTap2 = now;
-    }
-  }, {passive:true});
-
-  // Close button & Escape
-  modal.querySelector('#_nzvClose').onclick = function(e) { e.stopPropagation(); modal.remove(); };
-  var _escFn = function(e) { if(e.key==='Escape') modal.remove(); };
-  document.addEventListener('keydown', _escFn);
-  modal.addEventListener('remove', function() { document.removeEventListener('keydown', _escFn); });
-  modal.style.cursor = 'grab';
-
-  document.body.appendChild(modal);
-}
-
-function neSetEditMode(on) {
-  const area = document.getElementById('noteEditableArea');
-  const btn = document.getElementById('editToggleBtn');
-  const toolbar = document.getElementById('formatToolbar');
-
-  if(on) {
-    area.contentEditable = 'true';
-    area.style.cursor = 'text';
-    if(btn) { btn.setAttribute('title','Edit ON ✅'); btn.style.background='rgba(21,101,192,0.12)'; btn.style.borderColor='#1565c0'; }
-    if(toolbar) toolbar.style.display = 'flex';
-    neUpdateStatusBar('✏️ Edit Mode -- likhna shuru karo');
-    area.focus();
-    _undoStack = [];
-    _redoStack = [];
-    // Attach click handlers to existing images for resize/remove options
-    setTimeout(function() {
-      if(area) area.querySelectorAll('img').forEach(function(img) {
-        if(!img.getAttribute('data-ne-img-bound')) {
-          img.setAttribute('data-ne-img-bound','1');
-          img.style.cursor = 'pointer';
-          img.title = 'Tap to resize / remove';
-          img.onclick = function(e) {
-            e.preventDefault();
-            e.stopPropagation(); // stop wrap onclick from also firing
-            neImageOptions(img);
-          };
+    // Double tap toggle zoom — skip if touching close button
+    var _lastTap2 = 0;
+    modal.addEventListener('touchend', function(e) {
+      var _cb = modal.querySelector('#_nzvClose');
+      if(_cb && e.target && (_cb === e.target || _cb.contains(e.target))) return;
+      if(e.changedTouches.length === 1 && e.touches.length === 0) {
+        var now = Date.now();
+        if(now - _lastTap2 < 300) {
+          var t = e.changedTouches[0];
+          var tx = t.clientX - window.innerWidth/2;
+          var ty = t.clientY - window.innerHeight/2;
+          if(_vz > 1.5) { _vz=1; _vx=0; _vy=0; applyTransform(); }
+          else { zoomAt(Math.min(_vz*2.5, 5), tx, ty); }
         }
-      });
-      // Edit mode mein hotspot pins render karo
-      area.querySelectorAll('.ne-img-wrap').forEach(function(w){
-        _neHotspotRender(w, true);
-      });
-    }, 150);
-  } else {
-    area.contentEditable = 'false';
-    area.style.cursor = 'text';
-    if(btn) { btn.setAttribute('title','Edit / Read'); btn.style.background=''; btn.style.borderColor=''; }
-    if(toolbar) toolbar.style.display = 'none';
-    neUpdateStatusBar('👁️ Read Mode -- Highlight ya Edit button dabao');
-    // View mode mein hotspot pins activate karo + image tap = zoom viewer
-    setTimeout(function(){
-      area.querySelectorAll('.ne-img-wrap').forEach(function(w){
-        _neHotspotRender(w, false);
-        // Triple tap = fullscreen zoom viewer
-        w._imgTapCount = 0;
-        w._imgTapTimer = null;
-        w.style.cursor = 'zoom-in';
-        w.onclick = function(e){
-          e.stopPropagation();
-          w._imgTapCount = (w._imgTapCount||0)+1;
-          clearTimeout(w._imgTapTimer);
-          w._imgTapTimer = setTimeout(function(){
-            var n = w._imgTapCount; w._imgTapCount = 0;
-            var img = w.querySelector('img');
-            if(!img) return;
-            if(n >= 3){
-              var src = img.src && img.src.startsWith('data:image') ? img.src : (img.getAttribute('data-origurl') || img.src);
-              _neOpenZoomViewer(src);
-            }
-            // single/double tap - hotspot handling only, no image options in read mode
-          }, 280);
-        };
-      });
-    }, 100);
-  }
-}
+        _lastTap2 = now;
+      }
+    }, {passive:true});
 
+    // Cleanup + close function
+    function _closeZoomViewer() {
+      if(!modal.parentNode) return;
+      window.removeEventListener('mousemove', _mmFn);
+      window.removeEventListener('mouseup', _muFn);
+      document.removeEventListener('keydown', _escFn);
+      modal.remove();
+    }
+
+    // Close button — both click (desktop) and touchend (mobile)
+    // On mobile, touchstart uses preventDefault so click may not synthesize — use touchend
+    var _nzvCloseBtn = modal.querySelector('#_nzvClose');
+    _nzvCloseBtn.onclick = function(e) { e.stopPropagation(); _closeZoomViewer(); };
+    _nzvCloseBtn.addEventListener('touchend', function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      _closeZoomViewer();
+    }, {passive:false});
+
+    // Escape key
+    var _escFn = function(e) { if(e.key==='Escape') _closeZoomViewer(); };
+    document.addEventListener('keydown', _escFn);
+
+    modal.style.cursor = 'grab';
+    document.body.appendChild(modal);
+  }
+  
+function neSetEditMode(on) {
+    const area = document.getElementById('noteEditableArea');
+    const btn = document.getElementById('editToggleBtn');
+    const toolbar = document.getElementById('formatToolbar');
+
+    if(on) {
+      area.contentEditable = 'true';
+      area.style.cursor = 'text';
+      if(btn) { btn.setAttribute('title','Edit ON ✅'); btn.style.background='rgba(21,101,192,0.12)'; btn.style.borderColor='#1565c0'; }
+      if(toolbar) toolbar.style.display = 'flex';
+      neUpdateStatusBar('✏️ Edit Mode -- likhna shuru karo');
+      area.focus();
+      _undoStack = [];
+      _redoStack = [];
+      // Reset ALL image wraps to edit-mode handler (fixes tools not showing on re-entry after read mode)
+      setTimeout(function() {
+        if(area) area.querySelectorAll('.ne-img-wrap').forEach(function(w) {
+          w.style.cursor = 'pointer';
+          w._imgTapCount = 0;
+          clearTimeout(w._imgTapTimer);
+          // Always re-bind wrap onclick for edit mode (overrides any read-mode handler)
+          w.onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var imgEl = w.querySelector('img');
+            if(imgEl) neImageOptions(imgEl);
+          };
+          // Also enable pointer events on img so direct taps work
+          var imgEl = w.querySelector('img');
+          if(imgEl) {
+            imgEl.style.pointerEvents = 'auto';
+            imgEl.style.cursor = 'pointer';
+            imgEl.title = 'Tap to edit image';
+            imgEl.setAttribute('data-ne-img-bound','1');
+            imgEl.onclick = function(e) {
+              e.preventDefault();
+              e.stopPropagation();
+              neImageOptions(imgEl);
+            };
+          }
+        });
+        // Edit mode mein hotspot pins render karo
+        area.querySelectorAll('.ne-img-wrap').forEach(function(w){
+          _neHotspotRender(w, true);
+        });
+      }, 150);
+    } else {
+      area.contentEditable = 'false';
+      area.style.cursor = 'text';
+      if(btn) { btn.setAttribute('title','Edit / Read'); btn.style.background=''; btn.style.borderColor=''; }
+      if(toolbar) toolbar.style.display = 'none';
+      neUpdateStatusBar('👁️ Read Mode -- Highlight ya Edit button dabao');
+      // View mode mein hotspot pins activate karo + image tap = zoom viewer (triple tap)
+      setTimeout(function(){
+        area.querySelectorAll('.ne-img-wrap').forEach(function(w){
+          _neHotspotRender(w, false);
+          // Reset img to non-interactive in read mode
+          var imgEl = w.querySelector('img');
+          if(imgEl) { imgEl.style.pointerEvents = 'none'; imgEl.style.cursor = ''; imgEl.onclick = null; }
+          // Triple tap = fullscreen zoom viewer
+          w._imgTapCount = 0;
+          w._imgTapTimer = null;
+          w.style.cursor = 'zoom-in';
+          w.onclick = function(e){
+            e.stopPropagation();
+            w._imgTapCount = (w._imgTapCount||0)+1;
+            clearTimeout(w._imgTapTimer);
+            w._imgTapTimer = setTimeout(function(){
+              var n = w._imgTapCount; w._imgTapCount = 0;
+              var img = w.querySelector('img');
+              if(!img) return;
+              if(n >= 3){
+                var src = img.src && img.src.startsWith('data:image') ? img.src : (img.getAttribute('data-origurl') || img.src);
+                _neOpenZoomViewer(src);
+              }
+              // single/double tap - hotspot handling only, no image options in read mode
+            }, 280);
+          };
+        });
+      }, 100);
+    }
+  }
+  
 function neToggleEdit() {
   const area = document.getElementById('noteEditableArea');
   const isEditing = area.contentEditable === 'true';
   neSetEditMode(!isEditing);
 }
-
-  // Refresh images in notes editor (agar images broken/invisible dikhe to)
-  function neRefreshImages() {
-    var area = document.getElementById('noteEditableArea');
-    if(!area) { showToast('Notes editor nahi mila', 'error'); return; }
-    var imgs = area.querySelectorAll('img[data-idbref]');
-    if(!imgs.length) {
-      showToast('Koi IDB image nahi mili', 'info');
-      return;
-    }
-    var refreshBtn = document.getElementById('neImgRefreshBtn');
-    if(refreshBtn) { refreshBtn.textContent = '⏳'; refreshBtn.disabled = true; }
-    var count = 0, done = 0;
-    imgs.forEach(function(img) {
-      var idbRef = img.getAttribute('data-idbref');
-      if(!idbRef) return;
-      count++;
-      img.style.opacity = '0.5';
-      img.style.filter = 'blur(2px)';
-      _getImageFromIDB(idbRef).then(function(data) {
-        if(data) {
-          img.src = data;
-          img.style.opacity = '1';
-          img.style.filter = '';
-        } else if(typeof _getImageFromFirebase === 'function') {
-          _getImageFromFirebase(idbRef).then(function(fbData) {
-            if(fbData) {
-              img.src = fbData;
-              img.style.opacity = '1';
-              img.style.filter = '';
-              // Save to IDB for next time
-              _openImgDB && _openImgDB().then(function(db) {
-                try {
-                  var tx = db.transaction('images','readwrite');
-                  tx.objectStore('images').put({id:idbRef, data:fbData, ts:Date.now()});
-                } catch(e) {}
-              });
-            } else {
-              img.style.opacity = '0.3';
-              img.alt = 'Image not found';
-            }
-            done++;
-            if(done >= count) _neRefreshDone(refreshBtn, done);
-          }).catch(function() { done++; if(done >= count) _neRefreshDone(refreshBtn, done); });
-        } else {
-          img.style.opacity = '0.3';
-          done++;
-          if(done >= count) _neRefreshDone(refreshBtn, done);
-        }
-      }).catch(function() {
-        done++;
-        if(done >= count) _neRefreshDone(refreshBtn, done);
-      });
-    });
-    if(count === 0) _neRefreshDone(refreshBtn, 0);
-  }
-  function _neRefreshDone(btn, count) {
-    if(btn) { btn.textContent = '🔄'; btn.disabled = false; }
-    showToast('✅ ' + count + ' image' + (count !== 1 ? 's' : '') + ' refresh ho gayi!', 'success');
-  }
-
-  
 
 // Get plain text from editable area
 function neGetPlainText() {
@@ -13368,9 +13343,8 @@ function neImageOptions(imgEl) {
   var wrap = imgEl.closest ? imgEl.closest('.ne-img-wrap') : imgEl.parentElement;
   var isEditMode = area && area.contentEditable === 'true';
 
-  // ── CURSOR SAVE: prevent cursor jumping when clicking contenteditable=false block ──
+  // ── CURSOR SAVE: prevent cursor jumping to top when clicking contenteditable=false block ──
   var _savedRange = null;
-  var _savedScrollTop = 0;
   if(isEditMode) {
     try {
       var sel = window.getSelection();
@@ -13378,18 +13352,13 @@ function neImageOptions(imgEl) {
         _savedRange = sel.getRangeAt(0).cloneRange();
       }
     } catch(e) {}
-    var _neBodyEl = document.getElementById('neBody');
-    if(_neBodyEl) _savedScrollTop = _neBodyEl.scrollTop;
   }
   function _restoreCursor() {
     if(!_savedRange || !isEditMode) return;
     try {
-      var neBody = document.getElementById('neBody');
-      var savedST = neBody ? neBody.scrollTop : 0;
-      area.focus({ preventScroll: true });
+      area.focus();
       var sel2 = window.getSelection();
       if(sel2) { sel2.removeAllRanges(); sel2.addRange(_savedRange); }
-      if(neBody) requestAnimationFrame(function(){ neBody.scrollTop = savedST; });
     } catch(e) {}
   }
 
@@ -13701,14 +13670,6 @@ function neImageOptions(imgEl) {
   tb.appendChild(toggleBtn);
   tb.appendChild(panel);
   document.body.appendChild(tb);
-
-  // Restore editor scroll immediately to prevent jump when toolbar appears
-  if(isEditMode && _savedScrollTop) {
-    requestAnimationFrame(function() {
-      var _nb = document.getElementById('neBody');
-      if(_nb) _nb.scrollTop = _savedScrollTop;
-    });
-  }
 
   // Highlight selected image
   var prevOutline = imgEl.style.outline;
@@ -14206,12 +14167,12 @@ function _neAdvImgEditorBuild(imgEl, srcImg) {
   canvasWrap.id = '_aeCanvasWrap';
   canvasWrap.style.cssText = 'flex:1;overflow:auto;position:relative;'
     + 'background:repeating-conic-gradient(#333 0% 25%,#2a2a2a 0% 50%) 0 0/20px 20px;'
-    + 'touch-action:none;';
+    + 'touch-action:pan-x pan-y;';
 
-  // Canvas inner wrapper - large padding so canvas can scroll in all 4 directions
+  // Canvas inner wrapper (for panning)
   var canvasInner = document.createElement('div');
-  canvasInner.style.cssText = 'display:inline-block;box-sizing:border-box;';
-  // Padding will be set after fitZoom - allows scroll in all directions
+  canvasInner.style.cssText = 'display:inline-block;min-width:100%;min-height:100%;'
+    + 'display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;';
 
   var canvas = document.createElement('canvas');
   canvas.id = '_aeCanvas';
@@ -14289,55 +14250,32 @@ function _neAdvImgEditorBuild(imgEl, srcImg) {
   }
 
   function _fitZoom() {
-      var maxW = (canvasWrap.clientWidth  || window.innerWidth)  - 48;
-      var maxH = (canvasWrap.clientHeight || window.innerHeight) - 48;
-      if(maxW < 100) maxW = window.innerWidth - 48;
-      if(maxH < 100) maxH = window.innerHeight - 200;
-      var zw = maxW / W;
-      var zh = maxH / H;
-      _setZoom(Math.min(zw, zh, 2));
-      // Center the canvas in the scroll area (so user can scroll left/right/up/down)
-      requestAnimationFrame(function() {
-        var displayW = Math.round(W * _zoom);
-        var displayH = Math.round(H * _zoom);
-        var pad = Math.max(300, Math.round(Math.max(canvasWrap.clientWidth, canvasWrap.clientHeight)));
-        canvasWrap.scrollLeft = pad + displayW/2 - canvasWrap.clientWidth/2;
-        canvasWrap.scrollTop  = pad + displayH/2 - canvasWrap.clientHeight/2;
-      });
-    }
-  
+    var maxW = (canvasWrap.clientWidth  || window.innerWidth)  - 48;
+    var maxH = (canvasWrap.clientHeight || window.innerHeight) - 48;
+    if(maxW < 100) maxW = window.innerWidth - 48;
+    if(maxH < 100) maxH = window.innerHeight - 200;
+    var zw = maxW / W;
+    var zh = maxH / H;
+    _setZoom(Math.min(zw, zh, 2));
+  }
+
   function _setZoom(z, originX, originY) {
-      var oldZoom = _zoom;
-      _zoom = Math.max(0.08, Math.min(10, z));
-      var displayW = Math.round(W * _zoom);
-      var displayH = Math.round(H * _zoom);
-      // Compute generous padding so canvas has room to scroll left/right/up/down
-      var wrapW = canvasWrap.clientWidth  || window.innerWidth;
-      var wrapH = canvasWrap.clientHeight || (window.innerHeight - 200);
-      var pad = Math.max(300, Math.round(Math.max(wrapW, wrapH)));
-      var totalW = displayW + pad * 2;
-      var totalH = displayH + pad * 2;
-      canvasInner.style.width    = totalW + 'px';
-      canvasInner.style.height   = totalH + 'px';
-      canvasInner.style.position = 'relative';
-      canvas.style.position   = 'absolute';
-      canvas.style.left       = pad + 'px';
-      canvas.style.top        = pad + 'px';
-      canvas.style.width      = displayW + 'px';
-      canvas.style.height     = displayH + 'px';
-      cropCanvas.style.position = 'absolute';
-      cropCanvas.style.left   = pad + 'px';
-      cropCanvas.style.top    = pad + 'px';
-      cropCanvas.style.width  = displayW + 'px';
-      cropCanvas.style.height = displayH + 'px';
-      // Keep originX,originY in place after zoom
-      if(originX !== undefined && originY !== undefined) {
-        var ratio = _zoom / oldZoom;
-        canvasWrap.scrollLeft = originX * ratio - (originX - canvasWrap.scrollLeft);
-        canvasWrap.scrollTop  = originY * ratio - (originY - canvasWrap.scrollTop);
-      }
+    var oldZoom = _zoom;
+    _zoom = Math.max(0.08, Math.min(10, z));
+    var displayW = Math.round(W * _zoom);
+    var displayH = Math.round(H * _zoom);
+    canvas.style.width  = displayW + 'px';
+    canvas.style.height = displayH + 'px';
+    cropCanvas.style.width  = displayW + 'px';
+    cropCanvas.style.height = displayH + 'px';
+    // Scroll to keep originX,originY in place after zoom
+    if(originX !== undefined && originY !== undefined) {
+      var ratio = _zoom / oldZoom;
+      canvasWrap.scrollLeft = originX * ratio - (originX - canvasWrap.scrollLeft);
+      canvasWrap.scrollTop  = originY * ratio - (originY - canvasWrap.scrollTop);
     }
-  
+  }
+
   function _rotate(deg) {
     _rot = ((_rot + deg) % 360 + 360) % 360;
     var rad = deg * Math.PI / 180;
@@ -14627,59 +14565,56 @@ function _neAdvImgEditorBuild(imgEl, srcImg) {
   var _pinchPanMode = false; // true when 2 fingers are close together (pan, not zoom)
 
   canvasWrap.addEventListener('touchstart', function(e){
-      if(e.touches.length === 2){
-        _pinchActive = true;
-        _isDrawing = false;
-        _isPanDragging = false;
-        var t0 = e.touches[0], t1 = e.touches[1];
-        var dx = t0.clientX - t1.clientX;
-        var dy = t0.clientY - t1.clientY;
-        _pinchDist = Math.hypot(dx, dy);
-        _pinchMidX = (t0.clientX + t1.clientX) / 2;
-        _pinchMidY = (t0.clientY + t1.clientY) / 2;
-        _pinchScrollX = canvasWrap.scrollLeft;
-        _pinchScrollY = canvasWrap.scrollTop;
-        e.preventDefault();
-      } else if(e.touches.length === 1 && _curTool === 'select') {
-        // 1-finger pan (select tool on canvasWrap background)
-        e.preventDefault();
-      }
-    },{passive:false});
+    if(e.touches.length === 2){
+      _pinchActive = true;
+      _isDrawing = false;
+      _isPanDragging = false;
+      var t0 = e.touches[0], t1 = e.touches[1];
+      var dx = t0.clientX - t1.clientX;
+      var dy = t0.clientY - t1.clientY;
+      _pinchDist = Math.hypot(dx, dy);
+      _pinchMidX = (t0.clientX + t1.clientX) / 2;
+      _pinchMidY = (t0.clientY + t1.clientY) / 2;
+      _pinchScrollX = canvasWrap.scrollLeft;
+      _pinchScrollY = canvasWrap.scrollTop;
+      e.preventDefault();
+    }
+  },{passive:false});
 
-    canvasWrap.addEventListener('touchmove', function(e){
-      if(_pinchActive && e.touches.length === 2){
-        e.preventDefault();
-        var t0 = e.touches[0], t1 = e.touches[1];
-        var d = Math.hypot(t0.clientX-t1.clientX, t0.clientY-t1.clientY);
-        var midX = (t0.clientX + t1.clientX) / 2;
-        var midY = (t0.clientY + t1.clientY) / 2;
-        var wrapRect = canvasWrap.getBoundingClientRect();
+  canvasWrap.addEventListener('touchmove', function(e){
+    if(_pinchActive && e.touches.length === 2){
+      e.preventDefault();
+      var t0 = e.touches[0], t1 = e.touches[1];
+      var d = Math.hypot(t0.clientX-t1.clientX, t0.clientY-t1.clientY);
+      var midX = (t0.clientX + t1.clientX) / 2;
+      var midY = (t0.clientY + t1.clientY) / 2;
+      var wrapRect = canvasWrap.getBoundingClientRect();
 
-        if(_pinchDist > 0) {
-          // Zoom centered on pinch midpoint
-          var focusX = midX - wrapRect.left + canvasWrap.scrollLeft;
-          var focusY = midY - wrapRect.top  + canvasWrap.scrollTop;
-          _setZoom(_zoom * (d / _pinchDist), focusX, focusY);
-          _updateResizeInputs();
-        }
-        // 2-finger pan simultaneously
-        if(_pinchMidX && _pinchMidY) {
-          canvasWrap.scrollLeft -= midX - _pinchMidX;
-          canvasWrap.scrollTop  -= midY - _pinchMidY;
-        }
-        _pinchDist = d;
-        _pinchMidX = midX; _pinchMidY = midY;
-        _pinchScrollX = canvasWrap.scrollLeft;
-        _pinchScrollY = canvasWrap.scrollTop;
+      if(_pinchDist > 0) {
+        // Zoom centered on pinch midpoint
+        var focusX = midX - wrapRect.left + canvasWrap.scrollLeft;
+        var focusY = midY - wrapRect.top  + canvasWrap.scrollTop;
+        _setZoom(_zoom * (d / _pinchDist), focusX, focusY);
+        _updateResizeInputs();
       }
-    },{passive:false});
+      // 2-finger pan simultaneously
+      if(_pinchMidX && _pinchMidY) {
+        canvasWrap.scrollLeft -= midX - _pinchMidX;
+        canvasWrap.scrollTop  -= midY - _pinchMidY;
+      }
+      _pinchDist = d;
+      _pinchMidX = midX; _pinchMidY = midY;
+      _pinchScrollX = canvasWrap.scrollLeft;
+      _pinchScrollY = canvasWrap.scrollTop;
+    }
+  },{passive:false});
 
-    canvasWrap.addEventListener('touchend', function(e){
-      if(e.touches.length < 2) {
-        _pinchActive = false;
-        _pinchDist = 0;
-      }
-    },{passive:true});
+  canvasWrap.addEventListener('touchend', function(e){
+    if(e.touches.length < 2) {
+      _pinchActive = false;
+      _pinchDist = 0;
+    }
+  },{passive:true});
 
   // Mouse wheel zoom - always, centered on cursor
   canvasWrap.addEventListener('wheel', function(e){
