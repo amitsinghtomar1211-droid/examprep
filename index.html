@@ -13314,7 +13314,7 @@ function neImageOptions(imgEl) {
   style.textContent = '#_neImgMenu div::-webkit-scrollbar{display:none}';
   document.head.appendChild(style);
 
-  // Tool button factory — NO contenteditable focus
+  // Tool button factory
   function tb(icon, label, fn, accent) {
     var btn = document.createElement('button');
     btn.style.cssText = [
@@ -13322,18 +13322,28 @@ function neImageOptions(imgEl) {
       'min-width:60px;height:64px;border-radius:14px;border:none;cursor:pointer;',
       'flex-shrink:0;gap:3px;font-size:0.6rem;font-weight:700;',
       'padding:6px 8px;transition:transform 0.1s,opacity 0.1s;',
+      '-webkit-tap-highlight-color:transparent;',
       accent
         ? 'background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;'
         : 'background:#f4f6fb;color:#333;'
     ].join('');
     btn.innerHTML = '<span style="font-size:1.35rem;line-height:1;">' + icon + '</span>'
       + '<span>' + label + '</span>';
-    btn.addEventListener('touchstart', function(){ btn.style.transform='scale(0.93)';btn.style.opacity='0.8'; }, {passive:true});
-    btn.addEventListener('touchend', function(){ btn.style.transform='';btn.style.opacity=''; }, {passive:true});
-    btn.addEventListener('pointerdown', function(e){ e.preventDefault(); e.stopPropagation(); });
+    var _touched = false;
+    btn.addEventListener('touchstart', function(e){
+      e.stopPropagation();
+      _touched = true;
+      btn.style.transform='scale(0.93)'; btn.style.opacity='0.8';
+    }, {passive:true});
+    btn.addEventListener('touchend', function(e){
+      e.stopPropagation();
+      btn.style.transform=''; btn.style.opacity='';
+      if(_touched){ _touched=false; fn(); }
+    }, {passive:true});
+    btn.addEventListener('touchcancel', function(){ _touched=false; btn.style.transform=''; btn.style.opacity=''; }, {passive:true});
     btn.addEventListener('click', function(e){
       e.preventDefault(); e.stopPropagation();
-      fn();
+      if(!_touched) fn(); // desktop fallback only
     });
     row.appendChild(btn);
     return btn;
@@ -13467,9 +13477,10 @@ function neImageOptions(imgEl) {
   var backdrop = document.createElement('div');
   backdrop.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.01);';
   backdrop.onclick = function(){ sheet.remove(); backdrop.remove(); };
-  // Prevent any focus/cursor jump when sheet is shown
-  sheet.addEventListener('mousedown', function(e){ e.preventDefault(); });
-  sheet.addEventListener('touchstart', function(e){ e.stopPropagation(); }, {passive:true});
+  // Prevent cursor jump - only on sheet background, not buttons
+  sheet.addEventListener('mousedown', function(e){
+    if(e.target === sheet || e.target.closest('[data-sheet-bg]')) e.preventDefault();
+  });
   document.body.appendChild(backdrop);
   document.body.appendChild(sheet);
 
