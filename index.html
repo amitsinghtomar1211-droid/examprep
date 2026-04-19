@@ -1561,6 +1561,23 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
   to   { opacity:1; transform:translateY(0)   translateX(-50%); }
 }
 
+/* ── Image Floating Toolbar ── */
+#_neImgFloatBar {
+  user-select: none;
+  -webkit-user-select: none;
+}
+#_neImgBarPanel::-webkit-scrollbar { width: 3px; }
+#_neImgBarPanel::-webkit-scrollbar-thumb { background: rgba(21,101,192,0.4); border-radius: 4px; }
+#_neImgBarPanel { scrollbar-width: thin; scrollbar-color: rgba(21,101,192,0.4) transparent; }
+#_neImgBarToggle:hover { background: rgba(21,101,192,1) !important; transform: scale(1.08); }
+#_neImgBarToggle:active { transform: scale(0.95); }
+
+/* ── Image selected highlight pulse ── */
+@keyframes ne-img-select-pulse {
+  0%,100% { outline-color: rgba(21,101,192,0.9); }
+  50%      { outline-color: rgba(21,101,192,0.4); }
+}
+
 /* Drag highlight on noteEditableArea when canvas is open */
 #noteEditableArea.ne-drag-ready {
   cursor: grab !important;
@@ -7385,6 +7402,10 @@ function noteAddImgInsert(input) {
         } else {
           editor.innerHTML += imgHtml;
         }
+        setTimeout(function() {
+          var ins = editor.querySelector('.ne-img-wrap:last-of-type');
+          if(ins) ins.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        }, 80);
         done++;
         if(done === files.length && statusEl) {
           statusEl.textContent = '✅ ' + done + ' image(s) insert ho gayi! (compressed)';
@@ -13277,63 +13298,155 @@ function _neImgWrapDragEnd(e) {
 // Tap on inserted image — show options (resize, position, edit, remove)
 function neImageOptions(imgEl) {
   var area = document.getElementById('noteEditableArea');
-  var old = document.getElementById('_neImgMenu');
-  if(old) old.remove();
-
   var wrap = imgEl.closest ? imgEl.closest('.ne-img-wrap') : imgEl.parentElement;
   var isEditMode = area && area.contentEditable === 'true';
 
-  var menu = document.createElement('div');
-  menu.id = '_neImgMenu';
-  menu.style.cssText = 'position:fixed;z-index:99999;background:#fff;border:1.5px solid #ddd;'
-    + 'border-radius:14px;padding:8px;box-shadow:0 4px 28px rgba(0,0,0,0.22);'
-    + 'display:flex;gap:5px;align-items:center;flex-wrap:wrap;max-width:92vw;width:340px;'
-    + 'touch-action:none;';
+  // Remove any existing toolbar
+  var oldTb = document.getElementById('_neImgFloatBar');
+  if(oldTb) { oldTb.remove(); return; }
 
-  // Position below image, stay in viewport
-  var rect = imgEl.getBoundingClientRect();
-  var menuH = 220;
-  var top = rect.bottom + 8;
-  if(top + menuH > window.innerHeight) top = Math.max(8, rect.top - menuH - 8);
-  var left = Math.max(8, Math.min(rect.left, window.innerWidth - 348));
-  menu.style.top  = top + 'px';
-  menu.style.left = left + 'px';
+  // ── Build the right-side vertical floating toolbar ──
+  var tb = document.createElement('div');
+  tb.id = '_neImgFloatBar';
+  tb.setAttribute('data-collapsed', '0');
 
-  // Button factory - onclick based (works on all Android/iOS)
-  function nb(label, title, fn, extra) {
-    var b = document.createElement('button');
-    b.innerHTML = label;
-    b.title = title || label;
-    b.style.cssText = 'padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#f5f5f5;'
-      + 'cursor:pointer;font-size:0.72rem;font-weight:700;color:#333;white-space:nowrap;'
-      + '-webkit-tap-highlight-color:transparent;touch-action:manipulation;'
-      + (extra || '');
-    b.onclick = function(ev) { ev.stopPropagation(); ev.preventDefault(); fn(); };
-    menu.appendChild(b);
-    return b;
+  // Toolbar container style — right edge, vertically centered in viewport
+  tb.style.cssText = [
+    'position:fixed',
+    'right:0',
+    'top:50%',
+    'transform:translateY(-50%)',
+    'z-index:999999',
+    'display:flex',
+    'flex-direction:column',
+    'align-items:flex-end',
+    'gap:0',
+    'pointer-events:none'
+  ].join(';');
+
+  // Keep reference to current image
+  tb._imgEl = imgEl;
+  tb._wrap  = wrap;
+
+  // ── Toggle pill (always visible) ──
+  var toggleBtn = document.createElement('button');
+  toggleBtn.id = '_neImgBarToggle';
+  toggleBtn.innerHTML = '✏️';
+  toggleBtn.title = 'Image Tools show/hide';
+  toggleBtn.style.cssText = [
+    'width:38px',
+    'height:38px',
+    'border-radius:50% 0 0 50%',
+    'background:rgba(21,101,192,0.82)',
+    'color:#fff',
+    'border:none',
+    'font-size:1rem',
+    'cursor:pointer',
+    'display:flex',
+    'align-items:center',
+    'justify-content:center',
+    'box-shadow:-2px 2px 10px rgba(0,0,0,0.28)',
+    'pointer-events:auto',
+    'transition:background 0.2s',
+    '-webkit-tap-highlight-color:transparent',
+    'flex-shrink:0',
+    'margin-bottom:2px'
+  ].join(';');
+
+  // ── Items panel ──
+  var panel = document.createElement('div');
+  panel.id = '_neImgBarPanel';
+  panel.style.cssText = [
+    'display:flex',
+    'flex-direction:column',
+    'align-items:flex-end',
+    'gap:4px',
+    'overflow-y:auto',
+    'max-height:80vh',
+    'padding:6px 0 6px 0',
+    'pointer-events:auto',
+    'transition:opacity 0.22s,transform 0.22s',
+    'opacity:1',
+    'transform:translateX(0)'
+  ].join(';');
+
+  // Button factory — icon + label pill, slides from right
+  function makeBtn(icon, label, title, fn, danger) {
+    var row = document.createElement('div');
+    row.style.cssText = [
+      'display:flex',
+      'align-items:center',
+      'gap:0',
+      'justify-content:flex-end',
+      'width:100%'
+    ].join(';');
+
+    var lbl = document.createElement('span');
+    lbl.textContent = label;
+    lbl.style.cssText = [
+      'font-size:0.67rem',
+      'font-weight:700',
+      'color:#fff',
+      'background:' + (danger ? 'rgba(198,40,40,0.78)' : 'rgba(21,101,192,0.78)'),
+      'padding:3px 9px 3px 10px',
+      'border-radius:20px 0 0 20px',
+      'white-space:nowrap',
+      'letter-spacing:0.02em',
+      'line-height:30px',
+      'height:30px',
+      'display:inline-flex',
+      'align-items:center',
+      'pointer-events:none'
+    ].join(';');
+
+    var btn = document.createElement('button');
+    btn.innerHTML = icon;
+    btn.title = title || label;
+    btn.style.cssText = [
+      'width:34px',
+      'height:34px',
+      'border-radius:50% 0 0 50%',
+      'background:' + (danger ? 'rgba(198,40,40,0.82)' : 'rgba(21,101,192,0.82)'),
+      'color:#fff',
+      'border:none',
+      'font-size:1rem',
+      'cursor:pointer',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'box-shadow:-2px 1px 8px rgba(0,0,0,0.22)',
+      '-webkit-tap-highlight-color:transparent',
+      'flex-shrink:0',
+      'touch-action:manipulation'
+    ].join(';');
+
+    btn.onmouseenter = function() { lbl.style.display = 'inline-flex'; };
+    btn.onmouseleave = function() { lbl.style.display = 'none'; };
+    lbl.style.display = 'none'; // hidden by default, show on hover
+
+    btn.onclick = function(ev) {
+      ev.stopPropagation();
+      ev.preventDefault();
+      fn();
+    };
+
+    row.appendChild(lbl);
+    row.appendChild(btn);
+    panel.appendChild(row);
+    return btn;
   }
 
-  // ── Header ──
-  var lbl = document.createElement('div');
-  lbl.style.cssText = 'width:100%;font-size:0.68rem;font-weight:800;color:#1565c0;'
-    + 'border-bottom:1px solid #eee;padding-bottom:4px;margin-bottom:2px;'
-    + 'display:flex;align-items:center;justify-content:space-between;';
-  lbl.innerHTML = '<span>🖼️ Image Options</span>'
-    + '<span style="font-size:0.6rem;color:#aaa;font-weight:400;">'
-    + (isEditMode ? 'Edit Mode' : 'Read Mode') + '</span>';
-  menu.appendChild(lbl);
-
-  // ── NEW: Zoom / Fullscreen ──
-  nb('🔍 Zoom', 'Fullscreen mein dekho', function() {
-    menu.remove();
-    var src = imgEl.src && imgEl.src.startsWith('data:image') ? imgEl.src
+  // ── ZOOM ──
+  makeBtn('🔍', 'Zoom', 'Fullscreen mein dekho', function() {
+    tb.remove();
+    var src = imgEl.src && imgEl.src.startsWith('data:') ? imgEl.src
       : (imgEl.getAttribute('data-origurl') || imgEl.src);
     _neOpenZoomViewer(src);
-  }, 'background:rgba(21,101,192,0.08);color:#1565c0;border-color:#90caf9;');
+  });
 
-  // ── NEW: Resize / Recompress ──
-  nb('⚙️ Resize', 'Compress ya resize karo', function() {
-    menu.remove();
+  // ── RESIZE / COMPRESS ──
+  makeBtn('⚙️', 'Resize', 'Compress ya resize karo', function() {
+    tb.remove();
     var idbRef = imgEl.getAttribute('data-idbref') || (wrap && wrap.getAttribute('data-idbref'));
     function openWithData(dataUrl) {
       _imgCompressOpen(dataUrl, function(finalData, cloudSync) {
@@ -13354,67 +13467,84 @@ function neImageOptions(imgEl) {
     }
     if(idbRef) {
       _getImageFromIDB(idbRef).then(function(d) { openWithData(d || imgEl.src); });
-    } else {
-      openWithData(imgEl.src);
-    }
+    } else { openWithData(imgEl.src); }
   });
 
-  // ── Size presets (edit mode only) ──
   if(isEditMode) {
-    var sizeLbl = document.createElement('div');
-    sizeLbl.style.cssText = 'width:100%;font-size:0.62rem;color:#888;font-weight:700;margin-top:2px;';
-    sizeLbl.textContent = 'Size:';
-    menu.appendChild(sizeLbl);
-
-    [['25%','25%'],['50%','50%'],['75%','75%'],['100%','100%']].forEach(function(p) {
-      nb(p[0], 'Width ' + p[1], function() {
-        imgEl.style.width = p[1]; imgEl.style.maxWidth = '100%';
-        markModified(); menu.remove();
+    // ── SIZE PRESETS submenu trigger ──
+    makeBtn('📐', 'Size', 'Width preset set karo', function() {
+      var old2 = document.getElementById('_neImgSizeMenu');
+      if(old2) { old2.remove(); return; }
+      var sm = document.createElement('div');
+      sm.id = '_neImgSizeMenu';
+      sm.style.cssText = [
+        'position:fixed','right:42px','top:50%','transform:translateY(-50%)',
+        'z-index:9999999','background:#fff','border:1.5px solid #90caf9',
+        'border-radius:12px','padding:8px 10px','box-shadow:0 4px 20px rgba(0,0,0,0.22)',
+        'display:flex','flex-direction:column','gap:6px','min-width:130px'
+      ].join(';');
+      [['25%','25%'],['50%','50%'],['75%','75%'],['100%','100%']].forEach(function(p) {
+        var b = document.createElement('button');
+        b.textContent = 'Width ' + p[0];
+        b.style.cssText = 'padding:6px 12px;border:1px solid #ccc;border-radius:8px;background:#f5f5f5;cursor:pointer;font-size:0.75rem;font-weight:700;text-align:left;';
+        b.onclick = function() { imgEl.style.width = p[1]; imgEl.style.maxWidth='100%'; markModified(); sm.remove(); tb.remove(); };
+        sm.appendChild(b);
       });
+      var cb = document.createElement('button');
+      cb.textContent = '✏️ Custom';
+      cb.style.cssText = 'padding:6px 12px;border:1px solid #1565c0;border-radius:8px;background:rgba(21,101,192,0.08);cursor:pointer;font-size:0.75rem;font-weight:700;color:#1565c0;text-align:left;';
+      cb.onclick = function() { var v=prompt('Width (e.g. 300px ya 60%):'); if(v){imgEl.style.width=v;imgEl.style.maxWidth='100%';markModified();} sm.remove(); tb.remove(); };
+      sm.appendChild(cb);
+      document.body.appendChild(sm);
+      setTimeout(function() {
+        function _cls(e) { if(!sm.contains(e.target)) { sm.remove(); document.removeEventListener('click',_cls); } }
+        document.addEventListener('click', _cls);
+      }, 100);
     });
-    nb('✏️ Custom', 'Custom size', function() {
-      var v = prompt('Width (e.g. 300px or 60%):');
-      if(v) { imgEl.style.width = v; imgEl.style.maxWidth = '100%'; markModified(); }
-      menu.remove();
-    });
 
-    // ── Separator ──
-    var sep1 = document.createElement('div');
-    sep1.style.cssText = 'width:100%;border-top:1px solid #eee;margin:3px 0;';
-    menu.appendChild(sep1);
-
-    // ── Alignment ──
-    var alignLbl = document.createElement('div');
-    alignLbl.style.cssText = 'width:100%;font-size:0.62rem;color:#888;font-weight:700;';
-    alignLbl.textContent = 'Alignment:';
-    menu.appendChild(alignLbl);
-
-    [
-      ['⬅️', 'Left',   'left',   'display:block;float:left;margin:0 12px 8px 0;position:relative;cursor:move;'],
-      ['↔️', 'Center', 'center', 'display:block;text-align:center;margin:8px auto;clear:both;position:relative;cursor:move;'],
-      ['➡️', 'Right',  'right',  'display:block;float:right;margin:0 0 8px 12px;position:relative;cursor:move;'],
-      ['📐', 'Inline', 'inline', 'display:inline-block;vertical-align:middle;margin:0 4px;position:relative;cursor:move;']
-    ].forEach(function(a) {
-      nb(a[0], a[1], function() {
-        if(wrap) { wrap.style.cssText = a[3]; wrap.setAttribute('data-align', a[2]); }
-        else { imgEl.style.cssText = 'max-width:100%;border-radius:8px;float:' + (a[2]==='inline'?'none':a[2]) + ';'; }
-        markModified(); menu.remove();
+    // ── ALIGN ──
+    makeBtn('↔️', 'Align', 'Alignment set karo', function() {
+      var old3 = document.getElementById('_neImgAlignMenu');
+      if(old3) { old3.remove(); return; }
+      var am = document.createElement('div');
+      am.id = '_neImgAlignMenu';
+      am.style.cssText = [
+        'position:fixed','right:42px','top:50%','transform:translateY(-50%)',
+        'z-index:9999999','background:#fff','border:1.5px solid #90caf9',
+        'border-radius:12px','padding:8px 10px','box-shadow:0 4px 20px rgba(0,0,0,0.22)',
+        'display:flex','flex-direction:column','gap:6px','min-width:140px'
+      ].join(';');
+      [
+        ['⬅️ Left',   'left',   'display:block;float:left;margin:0 12px 8px 0;position:relative;cursor:move;'],
+        ['↔️ Center', 'center', 'display:block;text-align:center;margin:8px auto;clear:both;position:relative;cursor:move;'],
+        ['➡️ Right',  'right',  'display:block;float:right;margin:0 0 8px 12px;position:relative;cursor:move;'],
+        ['📐 Inline', 'inline', 'display:inline-block;vertical-align:middle;margin:0 4px;position:relative;cursor:move;']
+      ].forEach(function(a) {
+        var b = document.createElement('button');
+        b.textContent = a[0];
+        b.style.cssText = 'padding:7px 12px;border:1px solid #ccc;border-radius:8px;background:#f5f5f5;cursor:pointer;font-size:0.8rem;font-weight:700;text-align:left;';
+        b.onclick = function() {
+          if(wrap) { wrap.style.cssText = a[2]; wrap.setAttribute('data-align', a[1]); }
+          else { imgEl.style.cssText = 'max-width:100%;border-radius:8px;float:'+(a[1]==='inline'?'none':a[1])+';'; }
+          markModified(); am.remove(); tb.remove();
+        };
+        am.appendChild(b);
       });
+      document.body.appendChild(am);
+      setTimeout(function() {
+        function _cla(e) { if(!am.contains(e.target)) { am.remove(); document.removeEventListener('click',_cla); } }
+        document.addEventListener('click', _cla);
+      }, 100);
     });
 
-    // ── Separator ──
-    var sep2 = document.createElement('div');
-    sep2.style.cssText = 'width:100%;border-top:1px solid #eee;margin:3px 0;';
-    menu.appendChild(sep2);
+    // ── ADVANCED EDIT ──
+    makeBtn('🎨', 'Edit', 'Crop / Rotate / Draw / Text', function() {
+      tb.remove(); _neAdvImgEditor(imgEl);
+    });
 
-    // ── Advanced Edit ──
-    nb('🎨 Advanced Edit', 'Crop / Rotate / Draw / Text', function() {
-      menu.remove(); _neAdvImgEditor(imgEl);
-    }, 'background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border-color:#1565c0;font-size:0.75rem;padding:5px 11px;');
-
-    // ── Cloud Sync ──
-    nb('☁️ Cloud Sync', 'Image cloud pe upload karo', function() {
-      menu.remove();
+    // ── CLOUD SYNC ──
+    makeBtn('☁️', 'Cloud', 'Cloud pe upload karo', function() {
+      tb.remove();
       if(!_currentUser || !_db) { showToast('❌ Pehle login karo!', 'error'); return; }
       var imgSrc = imgEl.src || '';
       var idbRef = imgEl.getAttribute('data-idbref') || (wrap && wrap.getAttribute('data-idbref'));
@@ -13423,45 +13553,80 @@ function neImageOptions(imgEl) {
         showToast('⏳ Image upload ho rahi hai...', 'info');
         _getImageFromIDB(lookupId).then(function(data) {
           if(data) _saveImageToFirebase(lookupId, data).then(function() { showToast('✅ Cloud pe upload ho gayi!', 'success'); });
-          else showToast('❌ Image data nahi mili IDB mein', 'error');
+          else showToast('❌ Image data nahi mili', 'error');
         });
       } else if(imgSrc.startsWith('data:image')) {
         showToast('⏳ Image upload ho rahi hai...', 'info');
-        _saveImageToFirebase('img_manual_' + Date.now(), imgSrc).then(function() { showToast('✅ Cloud pe upload ho gayi!', 'success'); });
-      } else {
-        showToast('❌ Image source nahi mila', 'error');
-      }
-    }, 'background:rgba(21,101,192,0.08);color:#1565c0;border-color:#90caf9;font-size:0.72rem;');
+        _saveImageToFirebase('img_manual_'+Date.now(), imgSrc).then(function() { showToast('✅ Cloud pe upload ho gayi!', 'success'); });
+      } else { showToast('❌ Image source nahi mila', 'error'); }
+    });
 
-    // ── Delete ──
-    nb('🗑 Hatao', 'Image hatao', function() {
+    // ── HOTSPOT ──
+    makeBtn('📍', 'Hotspot', 'Clickable pin lagao', function() {
+      tb.remove();
+      var _hsArr = JSON.parse((wrap && wrap.getAttribute('data-hotspots')) || '[]');
+      _neHotspotManager(imgEl, wrap);
+    });
+
+    // ── DELETE ──
+    makeBtn('🗑️', 'Delete', 'Image hatao', function() {
       if(confirm('Image hatao?')) { (wrap || imgEl).remove(); markModified(); }
-      menu.remove();
-    }, 'background:rgba(198,40,40,0.08);color:#c62828;border-color:#ef9a9a;');
-
-    // ── Hotspot ──
-    var sep3 = document.createElement('div');
-    sep3.style.cssText = 'width:100%;border-top:1px solid #eee;margin:3px 0;';
-    menu.appendChild(sep3);
-
-    var _hsArr = JSON.parse((wrap && wrap.getAttribute('data-hotspots')) || '[]');
-    nb(_hsArr.length > 0 ? ('📍 Hotspots (' + _hsArr.length + ')') : '📍 Add Hotspot',
-      'Clickable pin lagao', function() {
-        menu.remove(); _neHotspotManager(imgEl, wrap);
-      }, 'background:linear-gradient(135deg,#e65100,#f57c00);color:#fff;border-color:#e65100;font-size:0.75rem;padding:5px 11px;');
+      tb.remove();
+    }, null, true);
   }
 
-  // ── Close ──
-  nb('✕', 'Close', function() { menu.remove(); }, 'background:transparent;border-color:transparent;color:#999;');
+  // ── Toggle logic ──
+  toggleBtn.onclick = function(ev) {
+    ev.stopPropagation();
+    var collapsed = tb.getAttribute('data-collapsed') === '1';
+    if(collapsed) {
+      panel.style.opacity = '1';
+      panel.style.transform = 'translateX(0)';
+      panel.style.pointerEvents = 'auto';
+      tb.setAttribute('data-collapsed', '0');
+      toggleBtn.innerHTML = '✕';
+      toggleBtn.title = 'Tools band karo';
+    } else {
+      panel.style.opacity = '0';
+      panel.style.transform = 'translateX(60px)';
+      panel.style.pointerEvents = 'none';
+      tb.setAttribute('data-collapsed', '1');
+      toggleBtn.innerHTML = '✏️';
+      toggleBtn.title = 'Image Tools kholo';
+    }
+  };
 
-  document.body.appendChild(menu);
+  tb.appendChild(toggleBtn);
+  tb.appendChild(panel);
+  document.body.appendChild(tb);
 
-  // Close on outside click
+  // Highlight selected image
+  var prevOutline = imgEl.style.outline;
+  imgEl.style.outline = '2.5px solid #1565c0';
+  imgEl.style.borderRadius = '8px';
+
+  // Close on outside click/touch
   setTimeout(function() {
-    function _cm(e) { if(!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', _cm); document.removeEventListener('touchend', _cm); } }
+    function _cm(e) {
+      var bar = document.getElementById('_neImgFloatBar');
+      var szm = document.getElementById('_neImgSizeMenu');
+      var alm = document.getElementById('_neImgAlignMenu');
+      if(!bar) return;
+      var inBar = bar.contains(e.target);
+      var inSz  = szm && szm.contains(e.target);
+      var inAl  = alm && alm.contains(e.target);
+      if(!inBar && !inSz && !inAl && e.target !== imgEl && !(wrap && wrap.contains(e.target))) {
+        imgEl.style.outline = prevOutline || '';
+        bar.remove();
+        if(szm) szm.remove();
+        if(alm) alm.remove();
+        document.removeEventListener('click', _cm);
+        document.removeEventListener('touchend', _cm);
+      }
+    }
     document.addEventListener('click', _cm);
     document.addEventListener('touchend', _cm);
-  }, 150);
+  }, 200);
 }
 
 
@@ -47316,9 +47481,26 @@ function _neDoActualInsert(dataUrl, cloudSync) {
     area.focus();
     var sel = window.getSelection();
     if(sel && sel.rangeCount > 0 && area.contains(sel.anchorNode)) {
+      // Save scroll position before insert
+      var editorParent = area.closest ? area.closest('.notes-editor-body, .ne-scroll, [class*="editor"]') : null;
+      var scrollEl = editorParent || area.parentElement;
+      var savedScrollTop = scrollEl ? scrollEl.scrollTop : window.pageYOffset;
       document.execCommand('insertHTML', false, imgHtml);
+      // Restore scroll and scroll inserted image into view smoothly
+      setTimeout(function() {
+        var inserted = area.querySelector('.ne-img-wrap:last-of-type');
+        if(inserted) {
+          inserted.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        } else if(scrollEl) {
+          scrollEl.scrollTop = savedScrollTop;
+        }
+      }, 80);
     } else {
       area.innerHTML += imgHtml;
+      setTimeout(function() {
+        var inserted = area.querySelector('.ne-img-wrap:last-of-type');
+        if(inserted) inserted.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      }, 80);
     }
     markModified();
     showToast('✅ Image insert ho gayi!' + (cloudSync ? ' ☁️' : ''), 'success');
