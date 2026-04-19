@@ -5025,6 +5025,15 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
             <button class="btn btn-primary btn-sm" onclick="saveApiKey2()">Save</button>
           </div>
         </div>
+        <!-- Serper API Key -->
+        <div class="field-group" style="margin-top:10px;">
+          <label class="field-label">🔍 Serper API Key — Real Web Search (serper.dev — Free 2500/month):</label>
+          <div style="display:flex;gap:7px;">
+            <input type="password" class="inp" id="serperKey2" placeholder="serper key..." style="flex:1;" />
+            <button class="btn btn-primary btn-sm" onclick="saveSerperKey()">Save</button>
+          </div>
+          <div style="font-size:0.7rem;color:#2e7d32;margin-top:4px;">✅ Serper key se AI Notes Generator real books, PYQ sites, NCERT, YouTube se asli data laayega!</div>
+        </div>
         <div class="field-group">
           <label class="field-label">🤖 AI Model Select Karo:</label>
           <select class="inp" id="modelSelect" onchange="saveModel()">
@@ -6873,6 +6882,7 @@ function _esc(s){ return (s||'').replace(/'/g,'\\x27').replace(/"/g,'\\x22'); }
 
 let S={
   apiKey:'',
+  serperKey:'',
   model:'meta-llama/llama-4-scout-17b-16e-instruct',
   subjects:[],
   exams:[],
@@ -6902,7 +6912,7 @@ function save(){try{localStorage.setItem('epp5',JSON.stringify(S));}catch(e){}}
 function load(){
   try{
     const d=JSON.parse(localStorage.getItem('epp5')||'{}');
-    S.apiKey=d.apiKey||''; S.subjects=d.subjects||[]; S.exams=d.exams||[];
+    S.apiKey=d.apiKey||''; S.serperKey=d.serperKey||''; S.subjects=d.subjects||[]; S.exams=d.exams||[];
     S.activeExamId=d.activeExamId||''; S.quizHistory=d.quizHistory||[];
     S.model=d.model||'meta-llama/llama-4-scout-17b-16e-instruct';
     S.stats=d.stats||{total:0,correct:0,wrong:0,topicStats:{}};
@@ -6962,6 +6972,10 @@ function init(){
     document.getElementById('apiKey').value=S.apiKey;
     document.getElementById('apiKey2').value=S.apiKey;
     document.getElementById('apiDot').className='api-dot ok';
+  }
+  if(S.serperKey){
+    var sk=document.getElementById('serperKey2');
+    if(sk) sk.value=S.serperKey;
   }
   const ms=document.getElementById('modelSelect');
   if(ms) ms.value=S.model||'meta-llama/llama-4-scout-17b-16e-instruct';
@@ -7062,6 +7076,12 @@ function saveApiKey2(){
   document.getElementById('apiDot').className='api-dot ok';
   showApiStatus('✅ Saved!','saved');
   showToast('API Key saved! ✅','success');
+}
+function saveSerperKey(){
+  const k=document.getElementById('serperKey2').value.trim();
+  if(!k){showToast('Serper key daalo!','error');return;}
+  S.serperKey=k; save();
+  showToast('🔍 Serper Key saved! Ab AI real web se data laayega! ✅','success');
 }
 function showApiStatus(m,t){document.getElementById('apiStatus').innerHTML=`<span style="font-size:0.76rem;padding:3px 9px;border-radius:20px;display:inline-block;background:${t==='saved'?'rgba(46,125,50,0.1)':'rgba(198,40,40,0.1)'};color:${t==='saved'?'var(--green)':'var(--red)'};">${m}</span>`;}
 
@@ -48437,24 +48457,109 @@ function aeCleanCodeFences(text) {
   return text.trim();
 }
 
-// ── Anthropic API caller with web_search tool ──────────────────
-async function aeCallAnthropicWithSearch(systemPrompt, userPrompt, maxTokens) {
+// ══════════════════════════════════════════════════════
+// REAL WEB SEARCH via Serper API
+// ══════════════════════════════════════════════════════
+async function aeSerperSearch(query) {
+  if(!S.serperKey) return null;
+  try {
+    var r = await fetch('https://google.serper.dev/search', {
+      method: 'POST',
+      headers: { 'X-API-KEY': S.serperKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: query, num: 8, hl: 'hi', gl: 'in' })
+    });
+    if(!r.ok) return null;
+    var d = await r.json();
+    var results = [];
+    if(d.organic) {
+      d.organic.slice(0,6).forEach(function(item) {
+        results.push({
+          title: item.title || '',
+          snippet: item.snippet || '',
+          link: item.link || ''
+        });
+      });
+    }
+    if(d.answerBox) results.unshift({ title:'Answer', snippet: d.answerBox.answer||d.answerBox.snippet||'', link:'' });
+    if(d.knowledgeGraph) results.unshift({ title: d.knowledgeGraph.title||'', snippet: d.knowledgeGraph.description||'', link:'' });
+    return results;
+  } catch(e) { return null; }
+}
+
+// ══════════════════════════════════════════════════════
+// MULTI-QUERY SEARCH — 8 different angles
+// ══════════════════════════════════════════════════════
+async function aeDoMultiSearch(examName, subject, topic, examStage) {
+  var queries = [
+    topic + ' ' + examName + ' previous year questions PYQ',
+    topic + ' NCERT notes important points',
+    topic + ' ' + subject + ' standard book notes exam',
+    topic + ' government scheme act amendment 2024 2025',
+    topic + ' current affairs 2024 2025 India',
+    topic + ' important facts dates figures for competitive exam',
+    topic + ' ' + examName + ' ' + examStage + ' expected questions',
+    topic + ' tricks mnemonics memory easy remember'
+  ];
+
+  var allResults = {};
+  var labels = ['pyq','ncert','books','schemes','current','facts','expected','tricks'];
+
+  aeSetProgress(18, '🔍 Search 1/8 — PYQ dhundh raha hai...');
+  for(var i=0; i<queries.length; i++) {
+    aeSetProgress(18 + i*6, '🔍 Search ' + (i+1) + '/8 — ' + labels[i] + ' data aa raha hai...');
+    var res = await aeSerperSearch(queries[i]);
+    if(res && res.length > 0) {
+      allResults[labels[i]] = res;
+    }
+    // Small delay to avoid rate limit
+    await new Promise(function(r){ setTimeout(r, 200); });
+  }
+  return allResults;
+}
+
+// ══════════════════════════════════════════════════════
+// FORMAT SEARCH RESULTS for Groq prompt
+// ══════════════════════════════════════════════════════
+function aeFormatSearchResults(results) {
+  var text = '';
+  var sectionNames = {
+    pyq: '📝 Previous Year Questions Data',
+    ncert: '📖 NCERT Notes Data',
+    books: '📕 Standard Books Data',
+    schemes: '🏛️ Govt Schemes/Acts Data',
+    current: '📰 Current Affairs 2024-25',
+    facts: '💡 Important Facts & Figures',
+    expected: '🔮 Expected Questions Data',
+    tricks: '🧠 Memory Tricks Data'
+  };
+  Object.keys(results).forEach(function(key) {
+    var items = results[key];
+    if(!items || items.length === 0) return;
+    text += '\n\n═══ ' + (sectionNames[key]||key.toUpperCase()) + ' ═══\n';
+    items.forEach(function(item, idx) {
+      if(item.title) text += '• [' + item.title + ']\n';
+      if(item.snippet) text += '  ' + item.snippet + '\n';
+    });
+  });
+  return text.trim();
+}
+
+// ══════════════════════════════════════════════════════
+// GROQ API CALLER
+// ══════════════════════════════════════════════════════
+async function aeCallGroq(systemPrompt, userPrompt, maxTokens) {
   if(!S.apiKey) throw new Error('Pehle Settings mein Groq API Key daalo! (gsk_...)');
   const model = S.model || 'meta-llama/llama-4-scout-17b-16e-instruct';
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userPrompt }
-  ];
   const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${S.apiKey}`
-    },
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + S.apiKey },
     body: JSON.stringify({
-      model,
-      messages,
-      temperature: 0.7,
+      model: model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.4,
       max_tokens: Math.min(maxTokens || 8000, 8000)
     })
   });
@@ -48462,12 +48567,17 @@ async function aeCallAnthropicWithSearch(systemPrompt, userPrompt, maxTokens) {
     const e = await r.json();
     const errMsg = e.error?.message || 'Groq API Error: ' + r.status;
     if(errMsg.includes('rate') || errMsg.includes('limit') || errMsg.includes('quota')) {
-      throw new Error('⚠️ Token limit! Settings mein "Llama 4 Scout" select karo — sabse zyada free tokens milenge!');
+      throw new Error('⚠️ Token limit! Settings mein "Llama 4 Scout" select karo — sabse zyada free tokens!');
     }
     throw new Error(errMsg);
   }
   const data = await r.json();
   return data.choices?.[0]?.message?.content || '';
+}
+
+// Legacy wrapper (used by other parts of app)
+async function aeCallAnthropicWithSearch(systemPrompt, userPrompt, maxTokens) {
+  return await aeCallGroq(systemPrompt, userPrompt, maxTokens);
 }
 
 // ── Wikipedia Commons image fetcher (free, no key needed) ─────
@@ -48720,9 +48830,44 @@ Your notes MUST include ALL of these sections (as applicable):
 Now create the WORLD'S BEST notes for this topic. Be thorough, be accurate, be comprehensive. A student's selection depends on your notes. Give your absolute best.
 ${imageSearchInstr}`;
 
-    aeSetProgress(12, '🔍 Deep research ho raha hai — books, PYQ, current affairs...');
+    aeSetProgress(10, '🌐 Serper se real web search shuru...');
 
-    var enhanced = await aeCallAnthropicWithSearch(systemPrompt, userPrompt, 8000);
+    // ── REAL WEB SEARCH (if Serper key available) ──
+    var webSearchData = '';
+    var searchNote = '';
+    if(S.serperKey) {
+      try {
+        var searchResults = await aeDoMultiSearch(
+          _aeState.examName, subjectName, topicName || topicContext, _aeState.examStage
+        );
+        webSearchData = aeFormatSearchResults(searchResults);
+        var totalResults = Object.values(searchResults).reduce(function(a,b){ return a+(b?b.length:0); }, 0);
+        searchNote = '\n\n✅ REAL WEB SEARCH COMPLETE: ' + totalResults + ' results mili hain. Inhi results ka use karo notes banane mein — apne aap kuch mat banao.';
+        aeSetProgress(62, '✅ Web data mil gaya! Ab notes ban rahe hain...');
+      } catch(searchErr) {
+        webSearchData = '';
+        searchNote = '\n\n⚠️ Web search fail hua — apni best knowledge se notes banao.';
+        aeSetProgress(62, '⚠️ Search failed, AI knowledge se notes ban rahe hain...');
+      }
+    } else {
+      searchNote = '\n\n⚠️ Serper API key nahi hai — Settings mein add karo real web data ke liye.';
+      aeSetProgress(62, '📝 AI knowledge se notes ban rahe hain...');
+    }
+
+    // Inject real web data into userPrompt
+    var finalUserPrompt = userPrompt;
+    if(webSearchData) {
+      finalUserPrompt += '\n\n' +
+        '╔══════════════════════════════════════════════╗\n' +
+        '║   📡 REAL WEB SEARCH RESULTS — USE THIS DATA  ║\n' +
+        '╚══════════════════════════════════════════════╝\n' +
+        'STRICT RULE: Notes mein SIRF neeche diye gaye real web search results ka data use karo.\n' +
+        'User ke purane notes se copy MAT karo. Neeche diya gaya DATA hi tumhara source hai.\n' +
+        'Is data ko analyze karo, organize karo, aur exam-ready HTML notes banao.\n\n' +
+        webSearchData + searchNote;
+    }
+
+    var enhanced = await aeCallGroq(systemPrompt, finalUserPrompt, 8000);
 
     aeSetProgress(65, '✍️ PYQ, schemes, current affairs organize ho rahe hain...');
 
@@ -49000,12 +49145,24 @@ async function aeRegenerateNotes() {
     var langInstr = _aeState.lang === 'hindi' ? 'Write entirely in Hindi.' : _aeState.lang === 'hinglish' ? 'Write in Hinglish.' : 'Write in English.';
     var customPart = _aeState.customInp ? ' User instruction: ' + _aeState.customInp + '.' : '';
 
-    aeSetProgress(20, '🔍 Fresh web search ho raha hai...');
+    aeSetProgress(18, '🌐 Fresh real web search ho raha hai...');
 
-    var systemPrompt = `You are the WORLD'S BEST TEACHER for Indian competitive exams (${_aeState.examName || 'UPSC/SSC/State PSC'}). Create FRESH, DIFFERENT, even more comprehensive notes than before. Use all your knowledge to add new angles, new PYQ, new current affairs. ${langInstr} Output ONLY clean HTML — no markdown, no code fences.`;
-    var userPrompt = 'EXAM: ' + (_aeState.examName || 'Indian competitive exams') + ' | STAGE: ' + (_aeState.examStage||'Prelims') + ' | TOPIC: ' + topicContext + '. MODE: ' + _aeState.mode + '.' + customPart + ' EXISTING NOTES (brief): ' + noteText.substring(0, 1000) + '. Create a COMPLETELY DIFFERENT, FRESH version with new facts, new PYQ from last 10 years, latest government schemes, current affairs 2024-2025, important dates/numbers. Include: (1) All PYQ with answers, (2) Comparison tables, (3) Mind map in HTML, (4) Memory tricks, (5) Expected questions for ' + (_aeState.examYear||'2025') + '. Also list image queries as IMGSEARCH[query] at the end.';
+    var systemPrompt = `You are the WORLD'S BEST TEACHER for Indian competitive exams (${_aeState.examName || 'UPSC/SSC/State PSC'}). Create FRESH, DIFFERENT, even more comprehensive notes than before. Use the PROVIDED WEB SEARCH DATA ONLY — do not copy user notes. ${langInstr} Output ONLY clean HTML — no markdown, no code fences.`;
+    var userPrompt = 'EXAM: ' + (_aeState.examName || 'Indian competitive exams') + ' | STAGE: ' + (_aeState.examStage||'Prelims') + ' | TOPIC: ' + topicContext + '. MODE: ' + _aeState.mode + '.' + customPart + ' Create a COMPLETELY DIFFERENT, FRESH version with new PYQ, schemes, current affairs 2024-2025. Include: (1) All PYQ with answers, (2) Comparison tables, (3) Mind map HTML, (4) Memory tricks, (5) Expected questions for ' + (_aeState.examYear||'2025') + '. IMGSEARCH[query] at end.';
 
-    var enhanced = await aeCallAnthropicWithSearch(systemPrompt, userPrompt, 7000);
+    // Real web search for regenerate
+    var regenWebData = '';
+    if(S.serperKey) {
+      try {
+        var regenResults = await aeDoMultiSearch(_aeState.examName, subjectName, topicName||topicContext, _aeState.examStage||'prelims');
+        regenWebData = aeFormatSearchResults(regenResults);
+      } catch(e) {}
+    }
+    if(regenWebData) {
+      userPrompt += '\n\n╔══ REAL WEB DATA — SIRF INHI SE NOTES BANAO ══╗\n' + regenWebData + '\n╚════════════════════════════════════════════╝';
+    }
+
+    var enhanced = await aeCallGroq(systemPrompt, userPrompt, 7000);
 
     var imgQueries = [];
     var imgMatches = enhanced.match(/IMGSEARCH\[([^\]]+)\]/g);
