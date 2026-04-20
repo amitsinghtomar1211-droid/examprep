@@ -4693,6 +4693,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
                 <button type="button" onclick="clearNoteRichEditor()" title="Sab saaf karo" style="padding:3px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);cursor:pointer;font-size:0.78rem;color:var(--red);">🗑 Clear</button>
                 <button type="button" onclick="document.getElementById('noteAddImgInput').click()" title="📷 Image insert karo" style="padding:3px 8px;border:1px solid rgba(0,121,107,0.4);border-radius:5px;background:rgba(0,121,107,0.08);cursor:pointer;font-size:0.78rem;color:#00695c;">📷 Image</button>
                 <input type="file" id="noteAddImgInput" accept=".jpg,.jpeg,.png,.gif,.webp,.svg" multiple style="display:none;" onchange="noteAddImgInsert(this)">
+                <button type="button" onclick="openAiTextEnhancer()" title="Plain text ko rich HTML mein convert karo — AI se!" style="padding:3px 8px;border:1.5px solid rgba(106,27,154,0.45);border-radius:5px;background:linear-gradient(135deg,rgba(106,27,154,0.12),rgba(21,101,192,0.10));cursor:pointer;font-size:0.78rem;color:#6a1b9a;font-weight:700;display:flex;align-items:center;gap:3px;">🪄 AI Enhance</button>
               </div>
               <div id="noteRichEditor" contenteditable="true"
                 style="min-height:140px;max-height:320px;overflow-y:auto;border:1.5px solid var(--border);border-radius:0 0 10px 10px;padding:10px 12px;background:var(--surface);font-size:0.85rem;line-height:1.75;color:var(--text);outline:none;font-family:inherit;word-break:break-word;"
@@ -7328,6 +7329,169 @@ function clearNoteRichEditor() {
     document.getElementById('noteFileStatus').style.display = 'none';
   }
 }
+
+// ============================================================
+// 🪄 AI TEXT ENHANCER — Plain text → Rich HTML Notes
+// ============================================================
+var _aiEnhancerGeneratedHTML = '';
+
+function openAiTextEnhancer() {
+  if(!S.apiKey) { showToast('Pehle Groq API Key daalo (Settings mein)!', 'error'); return; }
+  var overlay = document.getElementById('aiTextEnhancerOverlay');
+  var modal = document.getElementById('aiTextEnhancerModal');
+  overlay.style.display = 'flex';
+  setTimeout(function() { modal.style.transform = 'translateY(0)'; }, 10);
+  // Reset state
+  _aiEnhancerGeneratedHTML = '';
+  document.getElementById('aiEnhancerStatus').style.display = 'none';
+  document.getElementById('aiEnhancerPreview').style.display = 'none';
+  document.getElementById('aiEnhancerInsertBtn').style.display = 'none';
+  document.getElementById('aiEnhancerRunBtn').style.display = 'flex';
+  // If editor already has plain text (no HTML tags), pre-fill it
+  var editor = document.getElementById('noteRichEditor');
+  if(editor) {
+    var existing = editor.innerText || editor.textContent || '';
+    var existingHtml = editor.innerHTML || '';
+    var isRich = existingHtml.includes('<') && (existingHtml.includes('<b>') || existingHtml.includes('<table') || existingHtml.includes('<h') || existingHtml.includes('<ul') || existingHtml.includes('<span style'));
+    if(existing.trim().length > 10 && !isRich) {
+      document.getElementById('aiEnhancerInput').value = existing.trim();
+    }
+  }
+}
+
+function closeAiTextEnhancer() {
+  var modal = document.getElementById('aiTextEnhancerModal');
+  var overlay = document.getElementById('aiTextEnhancerOverlay');
+  modal.style.transform = 'translateY(100%)';
+  setTimeout(function() { overlay.style.display = 'none'; }, 300);
+}
+
+async function runAiTextEnhancer() {
+  var inputText = document.getElementById('aiEnhancerInput').value.trim();
+  if(!inputText || inputText.length < 10) { showToast('Pehle text paste karo!', 'error'); return; }
+  if(!S.apiKey) { showToast('API Key nahi hai!', 'error'); return; }
+
+  var style = document.querySelector('input[name="aiEnhStyle"]:checked');
+  var styleVal = style ? style.value : 'study';
+
+  var stylePrompts = {
+    study: 'Create beautifully formatted study notes with: colored headings (h2/h3 with inline style colors like #1565c0 for h2, #e65100 for h3), bullet points in <ul><li> tags, important terms/dates in <strong> tags, key facts highlighted with <mark style="background:#fff9c4;padding:1px 4px;border-radius:3px"> tags, and proper paragraphs. Use tables where comparison data exists.',
+    table: 'Convert this into structured HTML tables where possible. Use <table style="width:100%;border-collapse:collapse;border:1px solid #bdd5ea;border-radius:8px;overflow:hidden"> with <th style="background:#1565c0;color:#fff;padding:8px 10px;text-align:left"> and <td style="padding:7px 10px;border-bottom:1px solid #eaf4fb"> tags. Group related information into different tables with clear headings.',
+    qa: 'Convert this into a Q&A format using: <div style="margin-bottom:14px"><p style="font-weight:700;color:#1565c0;margin:0 0 4px">❓ Question?</p><p style="margin:0;padding:8px 12px;background:#eaf4fb;border-left:3px solid #1565c0;border-radius:0 8px 8px 0">✅ Answer here</p></div> pattern. Extract logical questions from the content.',
+    timeline: 'Convert this into a vertical timeline using: <div style="border-left:3px solid #1565c0;padding-left:16px;margin:8px 0"><div style="margin-bottom:16px;position:relative"><span style="background:#1565c0;color:#fff;padding:2px 10px;border-radius:12px;font-size:0.78rem;font-weight:700;margin-bottom:6px;display:inline-block">DATE/PERIOD</span><p style="margin:4px 0 0;font-size:0.85rem;line-height:1.7">Event description</p></div></div> for chronological events.'
+  };
+
+  var systemPrompt = `You are an expert notes formatter for Indian competitive exam students. Your job is to convert plain text notes into rich, beautifully formatted HTML that will be displayed in a contenteditable div.
+
+CRITICAL RULES:
+1. NEVER skip, summarize or omit ANY point from the original text — every single fact must be preserved
+2. Only output the HTML content — no markdown, no code fences, no explanation
+3. Use only inline styles (no external CSS classes)
+4. The HTML must be safe for innerHTML insertion (no script tags)
+5. Make it visually rich and study-friendly with colors, spacing, and structure
+6. Support both Hindi and English text properly
+
+FORMATTING TO USE:
+${stylePrompts[styleVal]}
+
+General rules for ALL styles:
+- Wrap the whole content in a <div style="font-family:'Noto Sans Devanagari',sans-serif;line-height:1.8;color:#0d1b2a;">
+- Give proper spacing between sections: margin-bottom:12px on block elements
+- Use <hr style="border:none;border-top:1.5px solid #bdd5ea;margin:12px 0"> between major sections
+- Numbers/dates should be in <strong style="color:#e65100"> tags
+- EVERY SINGLE POINT from input must appear in output — data loss is not acceptable`;
+
+  var userPrompt = `Convert the following plain text notes into rich HTML. Remember: include EVERY point without exception.\n\n---\n${inputText}\n---`;
+
+  var statusEl = document.getElementById('aiEnhancerStatus');
+  var runBtn = document.getElementById('aiEnhancerRunBtn');
+  var previewDiv = document.getElementById('aiEnhancerPreview');
+  var previewContent = document.getElementById('aiEnhancerPreviewContent');
+  var insertBtn = document.getElementById('aiEnhancerInsertBtn');
+
+  statusEl.style.display = 'block';
+  statusEl.style.background = 'rgba(21,101,192,0.08)';
+  statusEl.style.color = 'var(--accent)';
+  statusEl.style.borderColor = 'rgba(21,101,192,0.2)';
+  statusEl.textContent = '⏳ AI aapke notes enhance kar raha hai... thoda wait karo...';
+  runBtn.disabled = true;
+  runBtn.textContent = '⏳ Processing...';
+  previewDiv.style.display = 'none';
+  insertBtn.style.display = 'none';
+  _aiEnhancerGeneratedHTML = '';
+
+  try {
+    var model = (S.selectedModel && S.selectedModel.length > 2) ? S.selectedModel : 'llama-3.3-70b-versatile';
+    var resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + S.apiKey },
+      body: JSON.stringify({
+        model: model,
+        max_tokens: 4096,
+        temperature: 0.3,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ]
+      })
+    });
+    if(!resp.ok) {
+      var errData = await resp.json().catch(function(){return{};});
+      throw new Error(errData.error && errData.error.message ? errData.error.message : 'API error: ' + resp.status);
+    }
+    var data = await resp.json();
+    var rawHtml = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : '';
+    // Strip markdown code fences if AI wraps it
+    rawHtml = rawHtml.replace(/^```html?\s*/i, '').replace(/```\s*$/i, '').trim();
+    // Remove any script tags for safety
+    rawHtml = rawHtml.replace(/<script[\s\S]*?<\/script>/gi, '');
+
+    if(!rawHtml || rawHtml.length < 20) throw new Error('AI ne kuch generate nahi kiya. Dobara try karo.');
+
+    _aiEnhancerGeneratedHTML = rawHtml;
+    previewContent.innerHTML = rawHtml;
+    previewDiv.style.display = 'block';
+    insertBtn.style.display = 'flex';
+    runBtn.style.display = 'none';
+
+    statusEl.style.background = 'rgba(46,125,50,0.08)';
+    statusEl.style.color = '#2e7d32';
+    statusEl.style.borderColor = 'rgba(46,125,50,0.25)';
+    statusEl.textContent = '✅ Rich HTML taiyaar! Preview dekho aur "Editor mein Daalo" dabao.';
+  } catch(err) {
+    statusEl.style.background = 'rgba(198,40,40,0.08)';
+    statusEl.style.color = 'var(--red)';
+    statusEl.style.borderColor = 'rgba(198,40,40,0.2)';
+    statusEl.textContent = '❌ Error: ' + (err.message || 'Kuch galat hua. Dobara try karo.');
+    runBtn.disabled = false;
+    runBtn.textContent = '🪄 Enhance Karo';
+    runBtn.style.display = 'flex';
+  }
+}
+
+function aiEnhancerInsertToEditor() {
+  if(!_aiEnhancerGeneratedHTML) { showToast('Pehle enhance karo!', 'error'); return; }
+  var editor = document.getElementById('noteRichEditor');
+  if(!editor) { showToast('Editor nahi mila!', 'error'); return; }
+  // Append to existing content or replace if editor is empty/plain-text only
+  var existingHtml = editor.innerHTML || '';
+  var existingText = editor.innerText || editor.textContent || '';
+  var isPlainOnly = existingText.trim().length > 0 && !existingHtml.includes('<b>') && !existingHtml.includes('<table') && !existingHtml.includes('<h2') && !existingHtml.includes('<ul');
+  if(!existingText.trim() || isPlainOnly) {
+    editor.innerHTML = _aiEnhancerGeneratedHTML;
+  } else {
+    editor.innerHTML = existingHtml + '<hr style="border:none;border-top:1.5px solid #bdd5ea;margin:12px 0">' + _aiEnhancerGeneratedHTML;
+  }
+  closeAiTextEnhancer();
+  showToast('✅ Rich notes editor mein add ho gaye! 🎉', 'success');
+  // Scroll editor to top
+  editor.scrollTop = 0;
+}
+// ============================================================
+// END AI TEXT ENHANCER
+// ============================================================
+
+
 function handleNoteRichPaste(e) {
   // Allow native paste — browser preserves formatting from Word/web
   // We just stop any extra processing
@@ -49728,5 +49892,73 @@ document.addEventListener('ne_editor_closed', function() {
    the neCheckAndAddRegenBtn + MutationObserver chain above. */
 
 </script>
+
+<!-- ====== AI TEXT ENHANCER MODAL ====== -->
+<div id="aiTextEnhancerOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.62);z-index:9999;align-items:flex-end;justify-content:center;padding:0;">
+  <div id="aiTextEnhancerModal" style="background:var(--surface);width:100%;max-width:640px;max-height:92vh;border-radius:22px 22px 0 0;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 -4px 32px rgba(106,27,154,0.18);transition:transform 0.3s cubic-bezier(0.34,1.56,0.64,1);transform:translateY(100%);">
+    <!-- Header -->
+    <div style="padding:16px 18px 12px;background:linear-gradient(135deg,#6a1b9a,#1565c0);color:#fff;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;border-radius:22px 22px 0 0;">
+      <div>
+        <div style="font-size:1rem;font-weight:800;font-family:'Baloo 2',sans-serif;letter-spacing:0.3px;">🪄 AI Text Enhancer</div>
+        <div style="font-size:0.72rem;opacity:0.85;margin-top:1px;">Plain text paste karo → AI rich notes banayega</div>
+      </div>
+      <button onclick="closeAiTextEnhancer()" style="background:rgba(255,255,255,0.18);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:1.1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
+    </div>
+
+    <!-- Info strip -->
+    <div style="background:rgba(106,27,154,0.07);border-bottom:1px solid rgba(106,27,154,0.15);padding:8px 16px;font-size:0.72rem;color:#6a1b9a;flex-shrink:0;line-height:1.5;">
+      ✅ Koi bhi point miss nahi hoga &nbsp;|&nbsp; 🎨 Tables, Bullets, Colors, Headings sab add honge &nbsp;|&nbsp; 🗂 Hindi/English dono support
+    </div>
+
+    <!-- Input area -->
+    <div style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <label style="font-size:0.78rem;font-weight:700;color:var(--text2);display:block;margin-bottom:5px;">📝 Apna plain text yahaan paste karo:</label>
+        <textarea id="aiEnhancerInput" rows="8" placeholder="Yahan apne notes paste karo... jaise:\n\n- Harappan Civilization 2600 BC mein thi\n- Mohenjo-daro aur Harappa main shahar the\n- Town planning bahut advanced thi\n- Great Bath milta hai Mohenjo-daro mein\n\nAI ise sundar rich HTML notes mein badal dega!"
+          style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;font-family:'Noto Sans Devanagari',sans-serif;font-size:0.83rem;color:var(--text);background:var(--surface2);outline:none;resize:vertical;line-height:1.7;box-sizing:border-box;min-height:160px;"></textarea>
+      </div>
+
+      <!-- Style Options -->
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
+        <div style="font-size:0.75rem;font-weight:700;color:var(--text2);margin-bottom:7px;">🎨 Formatting Style:</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.76rem;cursor:pointer;background:var(--surface);border:1.5px solid var(--border);padding:4px 9px;border-radius:20px;transition:all 0.15s;" id="style-lbl-study">
+            <input type="radio" name="aiEnhStyle" value="study" checked style="accent-color:#6a1b9a;"> 📚 Study Notes
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.76rem;cursor:pointer;background:var(--surface);border:1.5px solid var(--border);padding:4px 9px;border-radius:20px;transition:all 0.15s;" id="style-lbl-table">
+            <input type="radio" name="aiEnhStyle" value="table"> 📊 Table Format
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.76rem;cursor:pointer;background:var(--surface);border:1.5px solid var(--border);padding:4px 9px;border-radius:20px;transition:all 0.15s;" id="style-lbl-qa">
+            <input type="radio" name="aiEnhStyle" value="qa"> ❓ Q&A Format
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.76rem;cursor:pointer;background:var(--surface);border:1.5px solid var(--border);padding:4px 9px;border-radius:20px;transition:all 0.15s;" id="style-lbl-timeline">
+            <input type="radio" name="aiEnhStyle" value="timeline"> 📅 Timeline
+          </label>
+        </div>
+      </div>
+
+      <!-- Status / Preview -->
+      <div id="aiEnhancerStatus" style="display:none;font-size:0.78rem;padding:8px 12px;border-radius:8px;background:rgba(21,101,192,0.08);color:var(--accent);border:1px solid rgba(21,101,192,0.2);"></div>
+
+      <!-- Preview box -->
+      <div id="aiEnhancerPreview" style="display:none;">
+        <div style="font-size:0.75rem;font-weight:700;color:var(--text2);margin-bottom:5px;display:flex;align-items:center;justify-content:space-between;">
+          <span>👀 Preview (Rich HTML):</span>
+          <button onclick="aiEnhancerInsertToEditor()" style="background:linear-gradient(135deg,#2e7d32,#1b5e20);color:#fff;border:none;border-radius:7px;padding:4px 11px;font-size:0.73rem;font-weight:700;cursor:pointer;font-family:inherit;">✅ Editor mein daalo</button>
+        </div>
+        <div id="aiEnhancerPreviewContent" style="border:1.5px solid rgba(46,125,50,0.3);border-radius:10px;padding:12px 14px;background:var(--surface);max-height:280px;overflow-y:auto;font-size:0.83rem;line-height:1.8;color:var(--text);"></div>
+      </div>
+    </div>
+
+    <!-- Footer Buttons -->
+    <div style="padding:12px 16px;border-top:1.5px solid var(--border);display:flex;gap:8px;flex-shrink:0;background:var(--surface2);">
+      <button onclick="runAiTextEnhancer()" id="aiEnhancerRunBtn" style="flex:1;padding:11px;background:linear-gradient(135deg,#6a1b9a,#1565c0);color:#fff;border:none;border-radius:12px;font-size:0.88rem;font-weight:800;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px;">🪄 Enhance Karo</button>
+      <button onclick="aiEnhancerInsertToEditor()" id="aiEnhancerInsertBtn" style="display:none;flex:1;padding:11px;background:linear-gradient(135deg,#2e7d32,#1b5e20);color:#fff;border:none;border-radius:12px;font-size:0.88rem;font-weight:800;cursor:pointer;font-family:inherit;">✅ Editor mein Daalo</button>
+      <button onclick="closeAiTextEnhancer()" style="padding:11px 16px;background:var(--surface);color:var(--text2);border:1.5px solid var(--border);border-radius:12px;font-size:0.85rem;cursor:pointer;font-family:inherit;">Baad mein</button>
+    </div>
+  </div>
+</div>
+<!-- ====== END AI TEXT ENHANCER MODAL ====== -->
+
 </body>
 </html>
