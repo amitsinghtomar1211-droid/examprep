@@ -50722,12 +50722,12 @@ document.addEventListener('ne_editor_closed', function() {
 
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     🎮 TOPIC GAME MODE SYSTEM v3.0
-     — 4 Games: Lightning Quiz, Fill in Blank, Column Match, Fact Builder
-     — ALL facts covered, Level system (10-12 per level)
-     — No repeats within same game
-     — Master Level: auto-generates from wrong answers (10+ wrong = 2 master levels)
-     — Smart caching, Regenerate options, Info card after each answer
+     🎮 TOPIC GAME MODE SYSTEM v4.0
+     — 3 Games: Lightning Quiz, Fill in Blank, Column Match
+     — ALL facts covered, Level system (max 10 per level)
+     — STRICT No repeats within same game — deduplication enforced
+     — Master Level: auto-generates from ANY wrong answer, re-triggers if master level also has wrongs
+     — Smart caching, Regenerate options, Full related-facts Insight after each answer
      ═══════════════════════════════════════════════════════════════════ -->
 
 <div id="topicGamePanel" style="display:none;position:fixed;inset:0;z-index:20500;background:var(--bg);flex-direction:column;font-family:'Noto Sans Devanagari','Baloo 2',sans-serif;">
@@ -50871,9 +50871,9 @@ var _tgp = {
   gameState:{},
   _cacheKey:null,
   // Per-game wrong tracking: { 'lightning': [{fact}, ...], 'fillin': [...], ... }
-  _wrongLog: { lightning:[], fillin:[], match:[], factbuilder:[] }
+  _wrongLog: { lightning:[], fillin:[], match:[] }
 };
-var LEVEL_SIZE = 11; // questions per level
+var LEVEL_SIZE = 10; // questions per level (max 10 per level)
 
 // ── Cache ─────────────────────────────────────────────
 function _tgpCacheKey(s,sec,t){return 'tgp_v3_'+s+'_'+sec+'_'+t;}
@@ -50887,7 +50887,7 @@ window.openTopicGameMode = async function(sid,secid,tid,topicName){
   _tgp.topicName=topicName||'Topic';
   _tgp.score=0;_tgp.facts=[];
   _tgp._cacheKey=_tgpCacheKey(sid,secid,tid);
-  _tgp._wrongLog={lightning:[],fillin:[],match:[],factbuilder:[]};
+  _tgp._wrongLog={lightning:[],fillin:[],match:[]};
 
   var panel=document.getElementById('topicGamePanel');
   panel.style.display='flex';
@@ -50931,7 +50931,7 @@ window._tgpRegenMissed=async function(){
   _tgpSetProgress(10,'Missed facts dhundh raha hai...');
   try{
     var content=_tgpExtractTopicContent(_tgp.sid,_tgp.secid,_tgp.tid);
-    var allWrong=[].concat(_tgp._wrongLog.lightning,_tgp._wrongLog.fillin,_tgp._wrongLog.match,_tgp._wrongLog.factbuilder);
+    var allWrong=[].concat(_tgp._wrongLog.lightning,_tgp._wrongLog.fillin,_tgp._wrongLog.match);
     var missed=allWrong.map(function(f){return f.term;}).filter(function(v,i,a){return a.indexOf(v)===i;}).slice(0,10);
     if(missed.length)content+='\n\nIn topics par ZYADA FOCUS karo: '+missed.join(', ');
     var facts=await _tgpGenerateFacts(content,_tgp.topicName,'missed');
@@ -50942,7 +50942,7 @@ window._tgpRegenMissed=async function(){
 };
 window._tgpRegenFresh=async function(){
   _tgpClearCache();
-  _tgp._wrongLog={lightning:[],fillin:[],match:[],factbuilder:[]};
+  _tgp._wrongLog={lightning:[],fillin:[],match:[]};
   document.getElementById('tgpRegenOptions').style.display='none';
   document.getElementById('tgpLobby').style.display='none';
   document.getElementById('tgpLoading').style.display='flex';
@@ -50977,31 +50977,37 @@ async function _tgpGenerateFacts(content,topicName,mode){
   var model=(typeof S!=='undefined'&&S.selectedModel&&S.selectedModel.length>5)?S.selectedModel:'llama-3.3-70b-versatile';
   var modeHint=mode==='missed'?'User ne kuch facts miss kiye hain. Un areas par EXTRA focus karo aur naye angles se questions banao.':mode==='fresh'?'Pichli baar se BILKUL ALAG questions banao. Different aspects, different phrasing.':'';
 
-  var sys=`You are an expert educational content analyzer for Indian competitive exam preparation (UPSC, SSC, State PSC, Railways, Banking).
-READ the notes DEEPLY and identify ALL unique facts worth testing. ${modeHint}
+  var sys=`You are an expert Indian competitive exam question maker (UPSC, SSC, State PSC, Railways, Banking).
+Your job: READ the given notes COMPLETELY and extract EVERY SINGLE unique testable fact.
+${modeHint}
 
-Return ONLY valid JSON (no markdown, no extra text):
+Return ONLY valid JSON — no markdown, no explanation, no extra text whatsoever:
 {"facts":[
   {
-    "term":"Short question stem max 8 words — what is being asked (Hindi/English mix ok)",
-    "detail":"Complete standalone answer sentence with the full fact",
-    "fibSentence":"The detail sentence with ONE key exam-important word/number replaced by ___",
-    "fibAnswer":"The exact word/number that fills the blank",
-    "fibOptions":["fibAnswer","plausible_wrong1","plausible_wrong2","plausible_wrong3"],
-    "examNote":"Why this fact is exam-important OR what students commonly confuse",
+    "term":"Exam-style question stem (max 10 words, Hindi/English mix ok — use Kab/Kaun/Kahan/Kya/Kitna style)",
+    "detail":"Complete standalone answer — full sentence with all key info",
+    "fibSentence":"Same as detail but with ONE most exam-critical word/number replaced by ___",
+    "fibAnswer":"The exact word/number that fills ___",
+    "fibOptions":["fibAnswer","wrong_option_2","wrong_option_3","wrong_option_4"],
+    "examNote":"Why this is exam-important OR common confusion students make about this fact",
+    "relatedTerms":["keyword1","keyword2"],
     "isTrue":true
   }
 ]}
 
-RULES:
-- Extract EVERY unique fact — 20 to 30 facts minimum
-- fibOptions: always 4 items, first is correct, rest are plausible wrong from same content
-- fibSentence blank: most exam-worthy word (year/number/name/place/key term)
-- examNote: specific confusing point or exam relevance
-- term: frame as exam question style (Kab, Kaun, Kitna, Kahan, Kya)
-- Cover ALL aspects of the content — do not skip any unique information`;
+STRICT RULES — FOLLOW EXACTLY:
+1. COVER EVERY UNIQUE FACT — scan the ENTIRE content from start to end, do NOT skip anything
+2. Minimum 25 facts, maximum 40 facts — more content = more facts
+3. Each fact must be 100% UNIQUE — no two facts should test the same information
+4. fibOptions: exactly 4 items — first is always correct, other 3 are plausible wrong answers from same topic
+5. fibSentence blank: always the most exam-worthy word (year/number/name/place/key term)
+6. term: always frame as an exam question (not a statement)
+7. relatedTerms: 2-4 keywords that link this fact to other facts in the content
+8. examNote: must be specific — mention what students confuse or why this appears in exams
+9. Do NOT generate duplicate facts under any circumstance
+10. Cover ALL sub-topics, all dates, all names, all schemes, all statistics present in the notes`;
 
-  var userPrompt='Topic: '+topicName+'\n\nNotes:\n'+content+'\n\nGenerate 20-30 facts covering ALL unique information. Return ONLY JSON.';
+  var userPrompt='Topic: '+topicName+'\n\nNotes Content:\n'+content+'\n\n⚠️ IMPORTANT: Extract ALL unique facts from the ENTIRE content above. Every date, name, scheme, statistic, definition must become a separate fact. Return ONLY JSON, nothing else.';
   _tgpSetProgress(50,'AI facts generate kar raha hai...');
   var resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
     method:'POST',
@@ -51038,8 +51044,7 @@ function _tgpShowLobby(){
   var games=[
     {id:'lightning',emoji:'⚡',name:'Lightning Quiz',desc:'Timer ke saath MCQ — jaldi jawab do!',stars:'⭐⭐⭐⭐ Speed + Accuracy',color:'#e65100'},
     {id:'fillin',emoji:'✏️',name:'Fill in Blank',desc:'AI-smart blanks — key facts fill karo',stars:'⭐⭐⭐⭐ Deep Recall',color:'#2e7d32'},
-    {id:'match',emoji:'🔗',name:'Column Match',desc:'Column A se Column B ko match karo',stars:'⭐⭐⭐⭐ Concept Linking',color:'#6a1b9a'},
-    {id:'factbuilder',emoji:'🧩',name:'Fact Builder',desc:'Sahi option select karke fact complete karo',stars:'⭐⭐⭐⭐⭐ Exam Ready',color:'#c62828'}
+    {id:'match',emoji:'🔗',name:'Column Match',desc:'Column A se Column B ko match karo',stars:'⭐⭐⭐⭐ Concept Linking',color:'#6a1b9a'}
   ];
 
   // Check master levels
@@ -51066,7 +51071,37 @@ function _tgpShowInfoCard(fact){
   var old=document.getElementById('tgpInfoCard');if(old)old.remove();
   var card=document.createElement('div');
   card.id='tgpInfoCard';card.className='tgp-info-card';
-  card.innerHTML='<div class="tgp-info-label">📚 Exam Insight</div><div><strong>'+_tgpEsc(fact.term)+'</strong><br>'+_tgpEsc(fact.detail)+(fact.examNote?'<br><span style="color:var(--accent3);font-size:0.72rem;margin-top:4px;display:block;">💡 '+_tgpEsc(fact.examNote)+'</span>':'')+'</div>';
+
+  // Find ALL related facts from the full facts pool
+  var allFacts=_tgp.facts||[];
+  // Related = same term keywords appear in other facts' term or detail
+  var termWords=(fact.term||'').toLowerCase().split(/\s+/).filter(function(w){return w.length>3;});
+  var relatedFacts=allFacts.filter(function(f){
+    if(f===fact||f.term===fact.term)return false;
+    var combined=(f.term+' '+f.detail).toLowerCase();
+    return termWords.some(function(w){return combined.indexOf(w)!==-1;});
+  });
+
+  // Build insight HTML - show full fact detail + ALL related facts
+  var html='<div class="tgp-info-label">📚 Exam Insight — Puri Jankari</div>';
+  html+='<div style="margin-bottom:8px;padding:8px 10px;background:rgba(21,101,192,0.08);border-radius:8px;border-left:3px solid var(--accent);">';
+  html+='<div style="font-weight:800;color:var(--accent);font-size:0.8rem;margin-bottom:3px;">🎯 '+_tgpEsc(fact.term)+'</div>';
+  html+='<div style="color:var(--text);font-size:0.78rem;line-height:1.7;">'+_tgpEsc(fact.detail)+'</div>';
+  if(fact.examNote)html+='<div style="color:var(--accent3);font-size:0.72rem;margin-top:4px;font-style:italic;">💡 '+_tgpEsc(fact.examNote)+'</div>';
+  html+='</div>';
+
+  if(relatedFacts.length>0){
+    html+='<div style="font-size:0.68rem;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">🔗 Is Topic Se Jude Aur Facts:</div>';
+    relatedFacts.forEach(function(f){
+      html+='<div style="margin-bottom:6px;padding:6px 10px;background:rgba(106,27,154,0.06);border-radius:7px;border-left:2px solid var(--purple);">';
+      html+='<div style="font-weight:700;color:var(--purple);font-size:0.74rem;">'+_tgpEsc(f.term)+'</div>';
+      html+='<div style="color:var(--text);font-size:0.74rem;line-height:1.6;">'+_tgpEsc(f.detail)+'</div>';
+      if(f.examNote)html+='<div style="color:var(--teal);font-size:0.68rem;margin-top:2px;">💡 '+_tgpEsc(f.examNote)+'</div>';
+      html+='</div>';
+    });
+  }
+
+  card.innerHTML=html;
   area.appendChild(card);
   setTimeout(function(){card.scrollIntoView({behavior:'smooth',block:'nearest'});},100);
 }
@@ -51097,23 +51132,23 @@ function _tgpShuffle(arr){var a=arr.slice();for(var i=a.length-1;i>0;i--){var j=
 
 // Build levels array from questions pool
 // Returns: [{label:'Level 1', questions:[...], isMaster:false}, ...]
-function _tgpBuildLevels(pool, wrongLog){
+// Build levels array from questions pool - STRICT NO REPEAT within same game
+// Returns: [{label:'Level 1', questions:[...], isMaster:false}, ...]
+function _tgpBuildLevels(pool, wrongLogQ){
   var levels=[];
-  var shuffled=_tgpShuffle(pool.slice());
+  // Deduplicate pool by question term (no same fact in multiple levels)
+  var seenTerms={};
+  var uniquePool=pool.filter(function(q){
+    var key=(q.fact&&q.fact.term)?q.fact.term:(q.q||q.sentence||q.left||'');
+    if(seenTerms[key])return false;
+    seenTerms[key]=true;return true;
+  });
+  var shuffled=_tgpShuffle(uniquePool);
   var i=0,lvl=1;
   while(i<shuffled.length){
-    levels.push({label:'Level '+lvl,questions:shuffled.slice(i,i+LEVEL_SIZE),isMaster:false,done:false});
+    var chunk=shuffled.slice(i,i+LEVEL_SIZE);
+    levels.push({label:'Level '+lvl,questions:chunk,isMaster:false,done:false});
     i+=LEVEL_SIZE;lvl++;
-  }
-  // Add master levels from wrong log
-  if(wrongLog&&wrongLog.length>0){
-    var masterPool=_tgpShuffle(wrongLog.slice());
-    var ml=1;
-    for(var m=0;m<masterPool.length;m+=10){
-      var mq=masterPool.slice(m,m+10);
-      levels.push({label:'🔴 Master '+(ml>1?ml:''),questions:mq,isMaster:true,done:false});
-      ml++;
-    }
   }
   return levels;
 }
@@ -51142,7 +51177,6 @@ function _tgpJumpLevel(idx){
     case 'lightning': _tgpRenderLQQuestion();break;
     case 'fillin':    _tgpRenderFIBQuestion();break;
     case 'match':     _tgpStartMatchLevel();break;
-    case 'factbuilder':_tgpRenderFBQuestion();break;
   }
 }
 
@@ -51155,20 +51189,18 @@ function tgpStartGame(gameId){
   if(_tgp.gameState._timer)clearInterval(_tgp.gameState._timer);
   document.getElementById('tgpSubtitle').textContent={
     lightning:'⚡ Lightning Quiz',fillin:'✏️ Fill in Blank',
-    match:'🔗 Column Match',factbuilder:'🧩 Fact Builder'
+    match:'🔗 Column Match'
   }[gameId]||gameId;
   switch(gameId){
     case 'lightning':_tgpStartLightning();break;
     case 'fillin':   _tgpStartFillIn();break;
     case 'match':    _tgpStartMatch();break;
-    case 'factbuilder':_tgpStartFactBuilder();break;
   }
 }
 function tgpNextStep(){
   if(_tgp.activeGame==='lightning')_tgpNextLQQuestion();
   else if(_tgp.activeGame==='fillin')_tgpNextFIBQuestion();
   else if(_tgp.activeGame==='match')_tgpNextMatchLevel();
-  else if(_tgp.activeGame==='factbuilder')_tgpNextFBQuestion();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -51450,75 +51482,6 @@ function _tgpCheckMatch(){
 function _tgpNextMatchLevel(){_tgpLevelComplete('match');}
 
 // ═══════════════════════════════════════════════════════
-// 🧩 GAME 4: FACT BUILDER
-// Given term, select correct detail from 4 options
-// PLUS: a hint word-reveal system for harder facts
-// ═══════════════════════════════════════════════════════
-function _tgpStartFactBuilder(){
-  var gs=_tgp.gameState;
-  var trueFacts=_tgp.facts.filter(function(f){return f.isTrue!==false&&f.term&&f.detail;});
-  // Mix: even = "term → correct detail", odd = "detail snippet → correct term"
-  var allQ=_tgpShuffle(trueFacts).map(function(f,idx,arr){
-    var flip=idx%3===0; // every 3rd: reverse (detail→term)
-    var correct=flip?f.term:f.detail;
-    var pool=_tgpShuffle(arr.filter(function(x){return x!==f;})).slice(0,3);
-    var wrongs=pool.map(function(x){return flip?x.term:x.detail;});
-    var opts=_tgpShuffle([correct].concat(wrongs));
-    var qText=flip?('🔍 Yeh description kaunse concept ki hai?\n"'+f.detail.substring(0,90)+(f.detail.length>90?'...':'')+'"'):'📌 '+f.term+'\n\nIska sahi description kya hai?';
-    return{question:qText,correct:correct,options:opts,fact:f};
-  });
-  gs.levels=_tgpBuildLevels(allQ,(_tgp._wrongLog.factbuilder||[]).map(function(f){
-    var arr=trueFacts;
-    var wrong=_tgpShuffle(arr.filter(function(x){return x!==f;})).slice(0,3).map(function(x){return x.detail;});
-    return{question:'📌 '+f.term+'\n\nIska sahi description kya hai?',correct:f.detail,options:_tgpShuffle([f.detail].concat(wrong)),fact:f};
-  }));
-  gs.levelIdx=0;gs.current=0;gs.correct=0;gs.levelWrong=0;
-  _tgpRenderFBQuestion();
-}
-
-function _tgpRenderFBQuestion(){
-  var gs=_tgp.gameState;
-  var lv=gs.levels[gs.levelIdx];
-  if(!lv){_tgpGameResult('factbuilder');return;}
-  if(gs.current>=lv.questions.length){_tgpLevelComplete('factbuilder');return;}
-  var q=lv.questions[gs.current];
-  var pct=Math.round(gs.current/lv.questions.length*100);
-  var lvBar=_tgpRenderLevelBar('factbuilder',gs.levels,gs.levelIdx);
-  var masterTag=lv.isMaster?'<span style="background:#c62828;color:#fff;border-radius:8px;padding:2px 8px;font-size:0.68rem;font-weight:800;margin-left:6px;">🔴 MASTER</span>':'';
-
-  _tgpShowGameArea(lvBar+`
-    <div style="padding:14px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">${lv.label}${masterTag} — Q${gs.current+1}/${lv.questions.length}</div>
-        <div style="font-size:0.68rem;color:#c62828;font-weight:700;">🧩 Fact Builder</div>
-      </div>
-      <div style="height:3px;background:var(--bg2);border-radius:3px;margin-bottom:12px;overflow:hidden;">
-        <div style="height:100%;background:linear-gradient(90deg,#c62828,#e65100);width:${pct}%;border-radius:3px;transition:width 0.3s;"></div>
-      </div>
-      <div class="tgp-fb-question">${_tgpEsc(q.question).replace(/\n/g,'<br>')}</div>
-      <div id="tgpFbOpts">
-        ${q.options.map(function(opt,i){return'<button class="tgp-lq-option" onclick="_tgpFbAnswer('+i+')" id="fbopt_'+i+'">'+_tgpEsc(opt)+'</button>';}).join('')}
-      </div>
-      <div style="margin-top:8px;font-size:0.72rem;color:var(--text2);min-height:20px;" id="tgpFbMsg"></div>
-    </div>`);
-  document.getElementById('tgpNextBtn').style.display='none';
-}
-
-function _tgpFbAnswer(idx){
-  var gs=_tgp.gameState;
-  var q=gs.levels[gs.levelIdx].questions[gs.current];
-  var isCorrect=q.options[idx]===q.correct;
-  q.options.forEach(function(opt,i){var b=document.getElementById('fbopt_'+i);if(!b)return;b.disabled=true;if(opt===q.correct)b.classList.add('correct');else if(i===idx&&!isCorrect)b.classList.add('wrong');});
-  var msg=document.getElementById('tgpFbMsg');
-  if(isCorrect){_tgp.score+=10;gs.correct++;if(msg)msg.innerHTML='<strong style="color:#2e7d32;">✅ Sahi! +10</strong>';_tgpShowScorePopup('+10 🧩');}
-  else{if(msg)msg.innerHTML='<span style="color:#c62828;font-weight:700;">❌ Galat!</span> Sahi: <strong style="color:#c62828;">'+_tgpEsc(q.correct.substring(0,50))+(q.correct.length>50?'...':'')+'</strong>';_tgpTrackWrong('factbuilder',q.fact);gs.levelWrong=(gs.levelWrong||0)+1;}
-  _tgpUpdateScore();_tgpShowInfoCard(q.fact);
-  gs.current++;
-  document.getElementById('tgpNextBtn').style.display='block';
-  document.getElementById('tgpNextBtn').textContent=gs.current>=gs.levels[gs.levelIdx].questions.length?'✅ Level Khatam':'Agla →';
-}
-function _tgpNextFBQuestion(){_tgpRenderFBQuestion();}
-
 // ═══════════════════════════════════════════════════════
 // LEVEL COMPLETE — check master, move to next
 // ═══════════════════════════════════════════════════════
@@ -51527,17 +51490,16 @@ function _tgpLevelComplete(gameId){
   var lv=gs.levels[gs.levelIdx];
   if(lv)lv.done=true;
 
-  // Auto-generate master level if >= 3 wrong in this level AND not already master
+  // Auto-generate master level if ANY wrong in this level
   var wrongCount=gs.levelWrong||0;
-  if(wrongCount>=3&&!lv.isMaster){
+  if(wrongCount>=1){
     var gameWrong=_tgp._wrongLog[gameId]||[];
-    // Check if a master level covering these wrongs doesn't already exist
-    var masterExists=gs.levels.some(function(l){return l.isMaster&&!l.done;});
-    if(!masterExists&&gameWrong.length>0){
-      var masterQ=gameWrong.slice();
-      // Convert wrong facts to game-specific questions
-      var newMasterLevels=_tgpBuildMasterLevels(gameId,masterQ);
+    if(gameWrong.length>0){
+      // Always add a fresh master level for wrong facts (even if one already exists/done)
+      var newMasterLevels=_tgpBuildMasterLevels(gameId,gameWrong);
       newMasterLevels.forEach(function(ml){gs.levels.push(ml);});
+      // Clear wrong log so next master level is only for future wrongs
+      _tgp._wrongLog[gameId]=[];
     }
   }
 
@@ -51568,14 +51530,19 @@ window._tgpContinueLevel=function(gameId){
     case 'lightning':_tgpRenderLQQuestion();break;
     case 'fillin':   _tgpRenderFIBQuestion();break;
     case 'match':    _tgpStartMatchLevel();break;
-    case 'factbuilder':_tgpRenderFBQuestion();break;
   }
 };
 
 function _tgpBuildMasterLevels(gameId,wrongFacts){
+  // Deduplicate wrong facts by term
+  var seenTerms={};
+  var uniqueWrong=wrongFacts.filter(function(f){
+    if(seenTerms[f.term])return false;
+    seenTerms[f.term]=true;return true;
+  });
   var levels=[];
-  for(var i=0;i<wrongFacts.length;i+=10){
-    var batch=wrongFacts.slice(i,i+10);
+  for(var i=0;i<uniqueWrong.length;i+=10){
+    var batch=uniqueWrong.slice(i,i+10);
     var mqs=batch.map(function(f){
       if(gameId==='lightning'){
         var pool=_tgp.facts.filter(function(x){return x!==f&&x.detail;});
@@ -51583,23 +51550,19 @@ function _tgpBuildMasterLevels(gameId,wrongFacts){
         return{q:f.term,correct:f.detail,options:_tgpShuffle([f.detail].concat(w)),fact:f};
       }else if(gameId==='fillin'){
         return{sentence:f.fibSentence||f.term+': ___',answer:f.fibAnswer||f.term,options:_tgpShuffle((f.fibOptions||[f.fibAnswer||f.term,'A','B','C']).slice()),fact:f};
-      }else if(gameId==='match'){
-        return{left:f.term,right:f.detail,fact:f};
       }else{
         var pool2=_tgp.facts.filter(function(x){return x!==f&&x.detail;});
         var w2=_tgpShuffle(pool2).slice(0,3).map(function(x){return x.detail;});
-        return{question:'📌 '+f.term+'\n\nIska sahi description kya hai?',correct:f.detail,options:_tgpShuffle([f.detail].concat(w2)),fact:f};
+        return{left:f.term,right:f.detail,fact:f};
       }
     });
-    var num=Math.floor(i/10)+1;
+    var masterNum=Math.floor(i/10)+1;
     if(gameId==='match'){
-      // For match, pack into 5-pair groups
       for(var j=0;j<mqs.length;j+=5){
-        levels.push({label:'🔴 Master '+num+(mqs.length>5?' ('+(j/5+1)+')':''),pairs:mqs.slice(j,j+5),isMaster:true,done:false});
-        num++;
+        levels.push({label:'🔴 Master Level',pairs:mqs.slice(j,j+5),isMaster:true,done:false});
       }
     }else{
-      levels.push({label:'🔴 Master '+num,questions:mqs,isMaster:true,done:false});
+      levels.push({label:'🔴 Master Level',questions:mqs,isMaster:true,done:false});
     }
   }
   return levels;
@@ -51616,7 +51579,7 @@ function _tgpGameResult(gameId){
   var pct=totalQ>0?Math.round(correct/totalQ*100):0;
   var emoji=pct>=90?'🏆':pct>=70?'🥈':pct>=50?'🥉':'😊';
   var msg=pct>=90?'Zabardast! Aap toh topper ho!':pct>=70?'Bahut accha! Thodi aur practice karo.':pct>=50?'Theek hai! Dobara khelo — aur better karoge.':'Koi baat nahi! Regenerate se missed facts practice karo 💪';
-  var gNames={lightning:'⚡ Lightning Quiz',fillin:'✏️ Fill in Blank',match:'🔗 Column Match',factbuilder:'🧩 Fact Builder'};
+  var gNames={lightning:'⚡ Lightning Quiz',fillin:'✏️ Fill in Blank',match:'🔗 Column Match'};
   var allWrong=_tgp._wrongLog[gameId]||[];
   var levelsPlayed=gs.levels?gs.levels.filter(function(l){return l.done;}).length:0;
 
