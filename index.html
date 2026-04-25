@@ -2274,7 +2274,22 @@ body.night-mode .sc-color-dot:hover { border-color: rgba(255,255,255,0.7); }
 .ne-editable th{background:var(--bg2);font-weight:700;color:var(--accent);}
 .ne-editable tr:nth-child(even) td{background:var(--surface2);}
 /* Table scroll wrapper auto-added by JS */
-.ne-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;margin:10px 0;border-radius:6px;}
+.ne-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;margin:10px 0;border-radius:6px;position:relative;}
+/* Table corner space buttons */
+.ne-tbl-space-btn{
+  position:absolute;display:none;align-items:center;justify-content:center;
+  width:24px;height:24px;border-radius:50%;border:1.5px solid rgba(21,101,192,0.5);
+  background:rgba(21,101,192,0.85);color:#fff;font-size:0.65rem;cursor:pointer;
+  z-index:10;opacity:0;transition:opacity 0.2s;pointer-events:none;
+  -webkit-tap-highlight-color:transparent;font-weight:700;
+  box-shadow:0 2px 8px rgba(21,101,192,0.3);
+}
+.ne-tbl-space-btn.top{top:-12px;left:4px;}
+.ne-tbl-space-btn.bottom{bottom:-12px;left:4px;}
+[contenteditable="true"] .ne-table-wrap:hover .ne-tbl-space-btn,
+[contenteditable="true"] .ne-table-wrap:focus-within .ne-tbl-space-btn{
+  display:flex;opacity:1;pointer-events:auto;
+}
 .ne-table-wrap table{margin:0;}
 /* Mammoth docx converted content */
 .ne-editable p{margin:4px 0;line-height:1.75;}
@@ -5658,6 +5673,17 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         -webkit-tap-highlight-color:transparent;transition:all 0.15s;
         color:#fff;flex-shrink:0;
       ">↪</button>
+      <!-- Divider -->
+      <div style="width:1px;height:26px;background:rgba(255,255,255,0.15);margin:0 2px;flex-shrink:0;"></div>
+      <!-- Image Gallery Button (Reading Mode) -->
+      <button onclick="_openReadingImageGallery && _openReadingImageGallery()" title="📷 Note ki saari images ek jagah dekho" style="
+        width:38px;height:38px;border-radius:50%;
+        border:1.5px solid rgba(255,160,0,0.5);
+        background:rgba(230,81,0,0.18);font-size:1.1rem;cursor:pointer;
+        display:flex;align-items:center;justify-content:center;
+        -webkit-tap-highlight-color:transparent;transition:all 0.15s;
+        color:#fff;flex-shrink:0;
+      ">🖼</button>
       <!-- Hidden compat divs for JS references -->
       <div id="neRmPillToggle" style="display:none;">🖊</div>
       <div id="neRmPillTools" style="display:none;"></div>
@@ -12964,6 +12990,67 @@ function _neWrapTables(area) {
     tbl.parentNode.insertBefore(wrap, tbl);
     wrap.appendChild(tbl);
   });
+  // Add corner space buttons on every ne-table-wrap
+  _neAddTableSpaceButtons(area);
+}
+
+// Add ⬆/⬇ space buttons to all table wraps in area
+function _neAddTableSpaceButtons(area) {
+  if(!area) return;
+  area.querySelectorAll('.ne-table-wrap').forEach(function(wrap) {
+    // Remove existing if any (re-inject)
+    wrap.querySelectorAll('.ne-tbl-space-btn').forEach(function(b){ b.remove(); });
+
+    // TOP button
+    var topBtn = document.createElement('button');
+    topBtn.className = 'ne-tbl-space-btn top';
+    topBtn.title = 'Table ke UPAR space add karo (image insert ke liye)';
+    topBtn.textContent = '⬆+';
+    topBtn.addEventListener('pointerdown', function(e) {
+      e.stopPropagation(); e.preventDefault();
+      var p = document.createElement('p');
+      p.innerHTML = '&#8203;';
+      p.style.cssText = 'margin:4px 0;min-height:1.5em;';
+      wrap.parentNode.insertBefore(p, wrap);
+      if(typeof markModified==='function') markModified();
+      if(typeof showToast==='function') showToast('⬆ Table ke upar space add ho gayi! Click karke cursor rakho fir image insert karo ✅','success');
+      // Place cursor in new paragraph
+      try {
+        var range = document.createRange();
+        var sel = window.getSelection();
+        range.setStart(p, 0); range.collapse(true);
+        sel.removeAllRanges(); sel.addRange(range);
+        area.focus();
+      } catch(e2) {}
+    });
+
+    // BOTTOM button
+    var botBtn = document.createElement('button');
+    botBtn.className = 'ne-tbl-space-btn bottom';
+    botBtn.title = 'Table ke NEECHE space add karo (image insert ke liye)';
+    botBtn.textContent = '⬇+';
+    botBtn.addEventListener('pointerdown', function(e) {
+      e.stopPropagation(); e.preventDefault();
+      var p = document.createElement('p');
+      p.innerHTML = '&#8203;';
+      p.style.cssText = 'margin:4px 0;min-height:1.5em;';
+      var nextSib = wrap.nextSibling;
+      if(nextSib) wrap.parentNode.insertBefore(p, nextSib);
+      else wrap.parentNode.appendChild(p);
+      if(typeof markModified==='function') markModified();
+      if(typeof showToast==='function') showToast('⬇ Table ke neeche space add ho gayi! Click karke cursor rakho fir image insert karo ✅','success');
+      try {
+        var range = document.createRange();
+        var sel = window.getSelection();
+        range.setStart(p, 0); range.collapse(true);
+        sel.removeAllRanges(); sel.addRange(range);
+        area.focus();
+      } catch(e2) {}
+    });
+
+    wrap.appendChild(topBtn);
+    wrap.appendChild(botBtn);
+  });
 }
 // Helper: detect if HTML has rich formatting (tables, headings, lists etc.)
 function _neIsRichHTML(html) {
@@ -13318,6 +13405,8 @@ function neSetEditMode(on) {
         area.querySelectorAll('.ne-img-wrap').forEach(function(w){
           _neHotspotRender(w, true);
         });
+        // Edit mode mein table space buttons inject/refresh karo
+        if(typeof _neAddTableSpaceButtons === 'function') _neAddTableSpaceButtons(area);
       }, 150);
     } else {
       area.contentEditable = 'false';
@@ -46646,6 +46735,21 @@ function _showReadingFloatControls(screenId) {
     nightBtn.style.background = document.body.classList.contains('night-mode') ? 'rgba(255,235,59,0.2)' : 'rgba(0,0,0,0.7)';
   };
   ctrl.appendChild(nightBtn);
+
+  // ── Image Gallery Button (only for noteEditor screen) ──
+  if(screenId === 'noteEditor') {
+    var imgGalleryBtn = document.createElement('button');
+    imgGalleryBtn.id = '_readingImgGalleryBtn';
+    imgGalleryBtn.style.cssText = 'width:44px;height:44px;border-radius:50%;border:2px solid rgba(255,160,0,0.4);background:rgba(230,81,0,0.82);color:#fff;cursor:pointer;font-size:1.2rem;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(230,81,0,0.4);-webkit-tap-highlight-color:transparent;position:relative;';
+    imgGalleryBtn.innerHTML = '🖼';
+    imgGalleryBtn.title = 'Images Gallery — note ki saari images';
+    imgGalleryBtn.onclick = function(e) {
+      e.stopPropagation();
+      _openReadingImageGallery();
+    };
+    ctrl.appendChild(imgGalleryBtn);
+  }
+
   // Exit reading focus button
   var exitBtn = document.createElement('button');
   exitBtn.style.cssText = 'width:44px;height:44px;border-radius:50%;border:2px solid rgba(255,255,255,0.2);background:rgba(21,101,192,0.85);color:#fff;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(21,101,192,0.4);-webkit-tap-highlight-color:transparent;';
@@ -46658,6 +46762,224 @@ function _showReadingFloatControls(screenId) {
 
 function _removeReadingFloatControls() {
   var old = document.getElementById('_readingFloatCtrl');
+  if(old) old.remove();
+}
+
+// ═══════════════════════════════════════════════
+// READING MODE IMAGE GALLERY + FLOATING VIEWER
+// ═══════════════════════════════════════════════
+function _openReadingImageGallery() {
+  // Remove existing gallery/viewer if any
+  var existing = document.getElementById('_readingImgGallery');
+  if(existing) { existing.remove(); return; }
+
+  // Collect all images from noteEditableArea
+  var area = document.getElementById('noteEditableArea');
+  if(!area) return;
+  var imgs = Array.from(area.querySelectorAll('img'));
+  if(!imgs.length) {
+    if(typeof showToast === 'function') showToast('Is note mein koi image nahi hai 📭','error');
+    return;
+  }
+
+  // Build gallery dropdown panel
+  var panel = document.createElement('div');
+  panel.id = '_readingImgGallery';
+  panel.style.cssText = [
+    'position:fixed',
+    'left:50%',
+    'top:0',
+    'transform:translateX(-50%)',
+    'width:min(100vw, 420px)',
+    'max-height:54px',
+    'background:rgba(21,34,56,0.97)',
+    'backdrop-filter:blur(10px)',
+    '-webkit-backdrop-filter:blur(10px)',
+    'border-bottom:2px solid rgba(255,160,0,0.5)',
+    'border-radius:0 0 18px 18px',
+    'z-index:9999999',
+    'overflow:hidden',
+    'transition:max-height 0.35s cubic-bezier(0.4,0,0.2,1)',
+    'box-shadow:0 8px 32px rgba(0,0,0,0.5)',
+    'display:flex',
+    'flex-direction:column'
+  ].join(';');
+
+  // Header bar (always visible - left-right scroll handle)
+  var headerBar = document.createElement('div');
+  headerBar.style.cssText = 'display:flex;align-items:center;padding:0 14px;height:54px;flex-shrink:0;gap:10px;cursor:pointer;user-select:none;';
+
+  var galleryIcon = document.createElement('span');
+  galleryIcon.textContent = '🖼';
+  galleryIcon.style.cssText = 'font-size:1.3rem;flex-shrink:0;';
+
+  var headerTitle = document.createElement('span');
+  headerTitle.style.cssText = 'color:#fff;font-size:0.82rem;font-weight:700;flex:1;font-family:\'Noto Sans Devanagari\',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+  headerTitle.textContent = imgs.length + ' Image' + (imgs.length > 1 ? 's' : '') + ' — tap karke dekho';
+
+  var chevron = document.createElement('span');
+  chevron.textContent = '▼';
+  chevron.style.cssText = 'color:rgba(255,160,0,0.9);font-size:0.75rem;transition:transform 0.3s;flex-shrink:0;';
+
+  var closeGallBtn = document.createElement('button');
+  closeGallBtn.textContent = '✕';
+  closeGallBtn.style.cssText = 'background:rgba(255,255,255,0.12);border:none;color:#fff;width:28px;height:28px;border-radius:50%;font-size:0.9rem;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;';
+  closeGallBtn.onclick = function(e) { e.stopPropagation(); panel.remove(); _closeReadingFloatingImg(); };
+
+  headerBar.appendChild(galleryIcon);
+  headerBar.appendChild(headerTitle);
+  headerBar.appendChild(chevron);
+  headerBar.appendChild(closeGallBtn);
+
+  // Thumbnail scroll area
+  var thumbArea = document.createElement('div');
+  thumbArea.style.cssText = 'display:flex;flex-direction:row;overflow-x:auto;overflow-y:hidden;gap:10px;padding:10px 14px 14px;-webkit-overflow-scrolling:touch;scroll-snap-type:x mandatory;flex-shrink:0;';
+
+  var isOpen = false;
+  function toggleGallery() {
+    isOpen = !isOpen;
+    panel.style.maxHeight = isOpen ? '170px' : '54px';
+    chevron.style.transform = isOpen ? 'rotate(180deg)' : '';
+  }
+  headerBar.onclick = function(e) {
+    if(e.target === closeGallBtn) return;
+    toggleGallery();
+  };
+
+  imgs.forEach(function(img, idx) {
+    var thumb = document.createElement('div');
+    thumb.style.cssText = 'flex-shrink:0;width:90px;height:90px;border-radius:10px;overflow:hidden;border:2px solid rgba(255,255,255,0.15);cursor:pointer;background:#111;scroll-snap-align:start;position:relative;';
+
+    var tImg = document.createElement('img');
+    tImg.src = img.src;
+    tImg.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+    tImg.draggable = false;
+
+    var tLabel = document.createElement('div');
+    tLabel.style.cssText = 'position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.6);color:#fff;font-size:0.6rem;text-align:center;padding:2px;font-family:\'Noto Sans Devanagari\',sans-serif;';
+    tLabel.textContent = (idx+1) + '/' + imgs.length;
+
+    thumb.appendChild(tImg);
+    thumb.appendChild(tLabel);
+    thumb.onclick = function(e) {
+      e.stopPropagation();
+      _openReadingFloatingImg(img.src, idx, imgs.length);
+    };
+    thumbArea.appendChild(thumb);
+  });
+
+  panel.appendChild(headerBar);
+  panel.appendChild(thumbArea);
+  document.body.appendChild(panel);
+}
+
+// Floating draggable/resizable image viewer (does NOT delete from note)
+var _rfImgState = { x: 0, y: 100, w: 260, dragging: false, resizing: false, startX: 0, startY: 0, startW: 0 };
+
+function _openReadingFloatingImg(src, idx, total) {
+  var old = document.getElementById('_rfFloatingImg');
+  if(old) {
+    // Same image — toggle close
+    if(old._src === src) { old.remove(); return; }
+    old.remove();
+  }
+
+  var vw = window.innerWidth;
+  var vh = window.innerHeight;
+  var initW = Math.min(260, vw - 20);
+  var initX = Math.round((vw - initW) / 2);
+  var initY = Math.round(vh * 0.15);
+
+  var box = document.createElement('div');
+  box.id = '_rfFloatingImg';
+  box._src = src;
+  box.style.cssText = [
+    'position:fixed',
+    'left:' + initX + 'px',
+    'top:' + initY + 'px',
+    'width:' + initW + 'px',
+    'z-index:9999998',
+    'border-radius:14px',
+    'overflow:hidden',
+    'box-shadow:0 8px 40px rgba(0,0,0,0.6)',
+    'border:2px solid rgba(255,160,0,0.7)',
+    'background:#1a1a2e',
+    'touch-action:none',
+    'user-select:none',
+    '-webkit-user-select:none'
+  ].join(';');
+
+  // Header (drag handle)
+  var hdr = document.createElement('div');
+  hdr.style.cssText = 'background:rgba(21,34,56,0.97);padding:6px 10px;display:flex;align-items:center;justify-content:space-between;cursor:grab;';
+  var hdrL = document.createElement('span');
+  hdrL.style.cssText = 'color:rgba(255,160,0,0.9);font-size:0.72rem;font-weight:700;font-family:\'Noto Sans Devanagari\',sans-serif;';
+  hdrL.textContent = '🖼 Image ' + (idx+1) + '/' + total + '  (drag karo)';
+  var closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕';
+  closeBtn.style.cssText = 'background:rgba(198,40,40,0.7);border:none;color:#fff;width:24px;height:24px;border-radius:50%;font-size:0.75rem;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;flex-shrink:0;';
+  closeBtn.onclick = function(e) { e.stopPropagation(); box.remove(); };
+  hdr.appendChild(hdrL);
+  hdr.appendChild(closeBtn);
+
+  // Image
+  var imgEl = document.createElement('img');
+  imgEl.src = src;
+  imgEl.draggable = false;
+  imgEl.style.cssText = 'width:100%;display:block;max-height:70vh;object-fit:contain;background:#000;';
+
+  // Resize handle (bottom-right corner)
+  var resizeHandle = document.createElement('div');
+  resizeHandle.style.cssText = 'position:absolute;bottom:0;right:0;width:28px;height:28px;background:rgba(255,160,0,0.7);cursor:nwse-resize;border-radius:0 0 12px 0;display:flex;align-items:center;justify-content:center;font-size:0.75rem;';
+  resizeHandle.textContent = '↔';
+  resizeHandle.title = 'Drag karke bada/chhota karo';
+
+  box.appendChild(hdr);
+  box.appendChild(imgEl);
+  box.style.position = 'fixed'; // ensure
+  box.appendChild(resizeHandle);
+  document.body.appendChild(box);
+
+  // ── DRAG logic (pointer events on header) ──
+  var _drag = { on: false, ox: 0, oy: 0 };
+  hdr.addEventListener('pointerdown', function(e) {
+    if(e.target === closeBtn) return;
+    _drag.on = true;
+    _drag.ox = e.clientX - box.getBoundingClientRect().left;
+    _drag.oy = e.clientY - box.getBoundingClientRect().top;
+    hdr.style.cursor = 'grabbing';
+    hdr.setPointerCapture(e.pointerId);
+  }, { passive: true });
+  hdr.addEventListener('pointermove', function(e) {
+    if(!_drag.on) return;
+    var nx = e.clientX - _drag.ox;
+    var ny = e.clientY - _drag.oy;
+    nx = Math.max(0, Math.min(window.innerWidth - box.offsetWidth, nx));
+    ny = Math.max(0, Math.min(window.innerHeight - 60, ny));
+    box.style.left = nx + 'px';
+    box.style.top = ny + 'px';
+  }, { passive: true });
+  hdr.addEventListener('pointerup', function() { _drag.on = false; hdr.style.cursor = 'grab'; }, { passive: true });
+
+  // ── RESIZE logic (pointer events on resize handle) ──
+  var _rsz = { on: false, sx: 0, sw: 0 };
+  resizeHandle.addEventListener('pointerdown', function(e) {
+    e.stopPropagation();
+    _rsz.on = true;
+    _rsz.sx = e.clientX;
+    _rsz.sw = box.offsetWidth;
+    resizeHandle.setPointerCapture(e.pointerId);
+  });
+  resizeHandle.addEventListener('pointermove', function(e) {
+    if(!_rsz.on) return;
+    var nw = Math.max(120, Math.min(window.innerWidth - 20, _rsz.sw + (e.clientX - _rsz.sx)));
+    box.style.width = nw + 'px';
+  });
+  resizeHandle.addEventListener('pointerup', function() { _rsz.on = false; });
+}
+
+function _closeReadingFloatingImg() {
+  var old = document.getElementById('_rfFloatingImg');
   if(old) old.remove();
 }
 
@@ -47169,6 +47491,66 @@ setTimeout(_hookFCAuth, 2000);
       r1.appendChild(mkSep());
       r1.appendChild(mkBtn('↔Auto','Auto width','',function(){ _modalTable.style.width='auto'; }));
       r1.appendChild(mkBtn('↔Full','Full width','',function(){ _modalTable.style.width='100%'; }));
+      r1.appendChild(mkSep());
+      // ── "⬆ Space" button: table ke UPAR ek empty paragraph add karo (cursor wahan ja sake) ──
+      r1.appendChild(mkBtn('⬆Space','Table ke UPAR space add karo (image insert ke liye)','g',function(){
+        var tblEl = _netb_table;
+        if(!tblEl) return;
+        // parent mein table ka container dhundho (ne-table-wrap ya direct area)
+        var container = tblEl.parentElement;
+        // ek empty paragraph banao
+        var p = document.createElement('p');
+        p.innerHTML = '&#8203;'; // zero-width space so cursor lands here
+        p.style.cssText = 'margin:4px 0;min-height:1.5em;';
+        // table ke upar insert karo
+        container.insertBefore(p, tblEl);
+        if(typeof markModified==='function') markModified();
+        modal.remove();
+        // cursor us paragraph mein le jao
+        try {
+          var range = document.createRange();
+          var sel = window.getSelection();
+          range.setStart(p, 0); range.collapse(true);
+          sel.removeAllRanges(); sel.addRange(range);
+          p.focus && p.focus();
+          var area2 = document.getElementById('noteEditableArea');
+          if(area2 && area2.contentEditable === 'true') area2.focus();
+        } catch(e2) {}
+        _mToast('⬆ Table ke upar space add ho gayi! Ab wahan click karke image insert karo ✅');
+      }));
+      // ── "⬇ Space" button: table ke NEECHE ek empty paragraph add karo ──
+      r1.appendChild(mkBtn('⬇Space','Table ke NEECHE space add karo (image insert ke liye)','g',function(){
+        var tblEl = _netb_table;
+        if(!tblEl) return;
+        var container = tblEl.parentElement;
+        var p = document.createElement('p');
+        p.innerHTML = '&#8203;';
+        p.style.cssText = 'margin:4px 0;min-height:1.5em;';
+        // table ke baad insert karo
+        var nextSib = tblEl.nextSibling;
+        // wrap ke andar hai to wrap ke baad
+        var insertTarget = tblEl.classList && tblEl.classList.contains('ne-table-wrap') ? tblEl : (container && container.classList && container.classList.contains('ne-table-wrap') ? container : null);
+        if(insertTarget) {
+          var insertAfter = insertTarget.nextSibling;
+          var insertParent = insertTarget.parentElement;
+          if(insertAfter) insertParent.insertBefore(p, insertAfter);
+          else insertParent.appendChild(p);
+        } else {
+          if(nextSib) container.insertBefore(p, nextSib);
+          else container.appendChild(p);
+        }
+        if(typeof markModified==='function') markModified();
+        modal.remove();
+        try {
+          var range = document.createRange();
+          var sel = window.getSelection();
+          range.setStart(p, 0); range.collapse(true);
+          sel.removeAllRanges(); sel.addRange(range);
+          var area2 = document.getElementById('noteEditableArea');
+          if(area2 && area2.contentEditable === 'true') area2.focus();
+        } catch(e2) {}
+        _mToast('⬇ Table ke neeche space add ho gayi! Ab wahan click karke image insert karo ✅');
+      }));
       r1.appendChild(mkSep());
       r1.appendChild(mkBtn('🗑Table','Table delete','r',function(){
         if(!confirm('Table delete karni hai?')) return;
