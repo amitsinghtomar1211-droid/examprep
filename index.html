@@ -13151,7 +13151,7 @@ function neLoadContent(text, isHtml) {
 
 // Toggle edit mode on/off
 // ── Fullscreen zoomable+scrollable image viewer ──
-function _neOpenZoomViewer(imgSrc) {
+function _neOpenZoomViewer(imgSrc, _sourceImgEl) {
   var existing = document.getElementById('_neZoomViewerModal');
   if(existing) existing.remove();
 
@@ -13163,7 +13163,10 @@ function _neOpenZoomViewer(imgSrc) {
   var bar = document.createElement('div');
   bar.style.cssText = 'position:absolute;top:0;left:0;right:0;z-index:10;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);';
   bar.innerHTML = '<span style="color:#fff;font-size:0.75rem;font-weight:700;opacity:0.9;">Pinch = Zoom &nbsp;|&nbsp; 1-finger = Pan &nbsp;|&nbsp; 2x Tap = Toggle Zoom</span>'
-    + '<button id="_nzvClose" style="border:none;background:rgba(255,255,255,0.2);color:#fff;border-radius:50%;width:34px;height:34px;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">X</button>';
+    + '<div style="display:flex;align-items:center;gap:8px;">'
+    + '<button id="_nzvEdit" style="border:none;background:rgba(21,101,192,0.82);color:#fff;border-radius:8px;padding:6px 13px;font-size:0.75rem;font-weight:700;cursor:pointer;white-space:nowrap;letter-spacing:0.01em;">✏️ Edit Image</button>'
+    + '<button id="_nzvClose" style="border:none;background:rgba(255,255,255,0.2);color:#fff;border-radius:50%;width:34px;height:34px;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">✕</button>'
+    + '</div>';
   modal.appendChild(bar);
 
   // The image — transform:scale based zoom (no scroll boundaries issue)
@@ -13353,6 +13356,34 @@ function _neOpenZoomViewer(imgSrc) {
       _closeZoomViewer();
     }, {passive:false});
 
+    // ── Edit Image button — opens Advanced Editor directly from zoom viewer ──
+    var _nzvEditBtn = modal.querySelector('#_nzvEdit');
+    if(_nzvEditBtn) {
+      function _openEditorFromViewer() {
+        _closeZoomViewer();
+        // If we have the original imgEl reference, use it directly
+        if(_sourceImgEl) {
+          // Check if edit mode is active — if not, switch to edit mode first
+          var area = document.getElementById('noteEditableArea');
+          if(area && area.contentEditable !== 'true') {
+            if(typeof neSetEditMode === 'function') neSetEditMode(true);
+          }
+          // Small delay to let edit mode settle, then open editor
+          setTimeout(function() { _neAdvImgEditor(_sourceImgEl); }, 180);
+        } else {
+          // Fallback: create a temp img from the src and open editor
+          var tmpImg = new Image();
+          tmpImg.onload = function() { _neAdvImgEditor(tmpImg); };
+          tmpImg.src = imgSrc;
+          showToast('ℹ️ Save karne ke baad notes mein manually update hoga (direct ref nahi mila)', 'info');
+        }
+      }
+      _nzvEditBtn.onclick = function(e) { e.stopPropagation(); _openEditorFromViewer(); };
+      _nzvEditBtn.addEventListener('touchend', function(e) {
+        e.stopPropagation(); e.preventDefault(); _openEditorFromViewer();
+      }, {passive:false});
+    }
+
     // Escape key
     var _escFn = function(e) { if(e.key==='Escape') _closeZoomViewer(); };
     document.addEventListener('keydown', _escFn);
@@ -13436,7 +13467,7 @@ function neSetEditMode(on) {
               if(!img) return;
               if(n >= 3){
                 var src = img.src && img.src.startsWith('data:image') ? img.src : (img.getAttribute('data-origurl') || img.src);
-                _neOpenZoomViewer(src);
+                _neOpenZoomViewer(src, img);
               }
               // single/double tap - hotspot handling only, no image options in read mode
             }, 280);
@@ -13945,7 +13976,7 @@ function neImageOptions(imgEl) {
     tb.remove();
     var src = imgEl.src && imgEl.src.startsWith('data:') ? imgEl.src
       : (imgEl.getAttribute('data-origurl') || imgEl.src);
-    _neOpenZoomViewer(src);
+    _neOpenZoomViewer(src, imgEl);
   });
 
   // ── RESIZE / COMPRESS ──
@@ -14823,16 +14854,156 @@ function _neAdvImgEditorBuild(imgEl, srcImg) {
   }
 
   // ── Text overlay ──
+  // ── Draggable text overlays (not baked into canvas until Save) ──
+  var _textOverlays = []; // [{el, x, y, txt, size, color}]
+
   function _addText(e) {
     var pt = _pt(e);
     var txt = prompt('Text darj karo:');
     if(!txt) return;
     var size = Math.max(16, _brushSize * 4);
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = _drawColor;
-    ctx.font = 'bold ' + size + 'px sans-serif';
-    ctx.fillText(txt, pt.x, pt.y);
-    _pushHistory();
+    _spawnDraggableText(txt, pt.x, pt.y, size, _drawColor);
+  }
+
+  function _spawnDraggableText(txt, canvasX, canvasY, size, color) {
+    // Container over the canvas for positioning
+    var wrapper = document.getElementById('_aeTextLayer');
+    if(!wrapper) {
+      wrapper = document.createElement('div');
+      wrapper.id = '_aeTextLayer';
+      wrapper.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;';
+      canvasInner.appendChild(wrapper);
+    }
+
+    var el = document.createElement('div');
+    el.style.cssText = [
+      'position:absolute',
+      'pointer-events:auto',
+      'cursor:grab',
+      'user-select:none',
+      '-webkit-user-select:none',
+      'touch-action:none',
+      'padding:3px 6px',
+      'border:2px dashed rgba(255,255,255,0.7)',
+      'border-radius:4px',
+      'background:rgba(0,0,0,0.18)',
+      'white-space:pre',
+      'line-height:1.2',
+      'box-sizing:border-box'
+    ].join(';');
+    el.style.color    = color;
+    el.style.fontSize = size + 'px';
+    el.style.fontWeight = 'bold';
+    el.style.fontFamily = 'sans-serif';
+    el.textContent = txt;
+
+    // Convert canvas coords → display coords
+    var r = canvas.getBoundingClientRect();
+    var scaleX = r.width  / canvas.width;
+    var scaleY = r.height / canvas.height;
+    var dispX = canvasX * scaleX;
+    var dispY = canvasY * scaleY;
+    el.style.left = dispX + 'px';
+    el.style.top  = dispY + 'px';
+
+    // ── Double-click to edit text ──
+    el.ondblclick = function(ev) {
+      ev.stopPropagation();
+      var newTxt = prompt('Text edit karo:', el.textContent);
+      if(newTxt !== null) el.textContent = newTxt || el.textContent;
+      var obj = _textOverlays.find(function(o){ return o.el === el; });
+      if(obj) obj.txt = el.textContent;
+    };
+
+    // ── Delete on right-click ──
+    el.oncontextmenu = function(ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if(confirm('Yeh text hatao?')) {
+        el.remove();
+        _textOverlays = _textOverlays.filter(function(o){ return o.el !== el; });
+      }
+    };
+
+    // ── Drag — Mouse ──
+    var _dragActive = false, _dragOX = 0, _dragOY = 0;
+
+    el.addEventListener('mousedown', function(ev) {
+      if(ev.button !== 0) return;
+      ev.stopPropagation(); ev.preventDefault();
+      _dragActive = true;
+      _dragOX = ev.clientX - el.offsetLeft;
+      _dragOY = ev.clientY - el.offsetTop;
+      el.style.cursor = 'grabbing';
+      el.style.border = '2px dashed #ffeb3b';
+    });
+    document.addEventListener('mousemove', function(ev) {
+      if(!_dragActive) return;
+      el.style.left = (ev.clientX - _dragOX) + 'px';
+      el.style.top  = (ev.clientY - _dragOY) + 'px';
+    });
+    document.addEventListener('mouseup', function() {
+      if(!_dragActive) return;
+      _dragActive = false;
+      el.style.cursor = 'grab';
+      el.style.border = '2px dashed rgba(255,255,255,0.7)';
+    });
+
+    // ── Drag — Touch ──
+    el.addEventListener('touchstart', function(ev) {
+      ev.stopPropagation(); ev.preventDefault();
+      var t = ev.touches[0];
+      _dragActive = true;
+      _dragOX = t.clientX - el.offsetLeft;
+      _dragOY = t.clientY - el.offsetTop;
+      el.style.border = '2px dashed #ffeb3b';
+    }, { passive: false });
+    el.addEventListener('touchmove', function(ev) {
+      if(!_dragActive) return;
+      ev.stopPropagation(); ev.preventDefault();
+      var t = ev.touches[0];
+      el.style.left = (t.clientX - _dragOX) + 'px';
+      el.style.top  = (t.clientY - _dragOY) + 'px';
+    }, { passive: false });
+    el.addEventListener('touchend', function() {
+      _dragActive = false;
+      el.style.border = '2px dashed rgba(255,255,255,0.7)';
+    });
+
+    wrapper.appendChild(el);
+
+    var obj = { el: el, txt: txt, size: size, color: color };
+    _textOverlays.push(obj);
+
+    // Hint toast
+    showToast('✅ Text add hua! Drag karke position set karo. Double-tap = edit, Right-click = delete', 'success');
+  }
+
+  // ── Bake all draggable text overlays onto canvas before save ──
+  function _bakeTextOverlays() {
+    if(!_textOverlays.length) return;
+    var canvasRect = canvas.getBoundingClientRect();
+    var scaleX = canvas.width  / canvasRect.width;
+    var scaleY = canvas.height / canvasRect.height;
+    var wrapRect = canvasInner.getBoundingClientRect();
+
+    _textOverlays.forEach(function(obj) {
+      var r = obj.el.getBoundingClientRect();
+      // Position relative to canvas
+      var cx = (r.left - canvasRect.left) * scaleX;
+      var cy = (r.top  - canvasRect.top)  * scaleY + obj.size; // baseline offset
+      ctx.globalAlpha = 1;
+      ctx.fillStyle   = obj.color;
+      ctx.font        = 'bold ' + obj.size + 'px sans-serif';
+      ctx.fillText(obj.txt, cx, cy);
+    });
+
+    // Remove DOM overlays after baking
+    _textOverlays.forEach(function(obj) { obj.el.remove(); });
+    _textOverlays = [];
+
+    var layer = document.getElementById('_aeTextLayer');
+    if(layer) layer.remove();
   }
 
   // ── Crop ──
@@ -15060,6 +15231,8 @@ function _neAdvImgEditorBuild(imgEl, srcImg) {
 
   // ── Save result ──
   function _saveEditorResult() {
+    // Bake any draggable text overlays onto canvas before saving
+    _bakeTextOverlays();
     // Export at 0.82 quality
     _compressImage(canvas.toDataURL('image/png'), Math.max(W, 1200), 0.82, function(dataUrl){
       imgEl.src = dataUrl;
