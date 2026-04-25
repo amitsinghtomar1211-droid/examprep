@@ -50720,11 +50720,13 @@ document.addEventListener('ne_editor_closed', function() {
 </div>
 <!-- ====== END AI TEXT ENHANCER MODAL ====== -->
 
+
 <!-- ═══════════════════════════════════════════════════════════════════
-     🎮 TOPIC GAME MODE SYSTEM v1.0
-     — Topic ke notes se AI content extract karta hai
-     — 5 unique educational games banata hai
-     — Har game content yaad karaata hai
+     🎮 TOPIC GAME MODE SYSTEM v2.0
+     — Smart caching: ek baar generate, baar baar khelo
+     — 4 powerful games: Lightning Quiz, Fill in Blank, Spotlight, Rapid Fire
+     — Answer ke baad related info card
+     — Regenerate: missed facts ya fresh start
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="topicGamePanel" style="display:none;position:fixed;inset:0;z-index:20500;background:var(--bg);flex-direction:column;font-family:'Noto Sans Devanagari','Baloo 2',sans-serif;">
 
@@ -50745,23 +50747,36 @@ document.addEventListener('ne_editor_closed', function() {
     <div style="width:260px;height:6px;background:var(--bg2);border-radius:6px;overflow:hidden;">
       <div id="tgpLoadBar" style="height:100%;background:linear-gradient(90deg,#1565c0,#6a1b9a);width:0%;transition:width 0.5s;border-radius:6px;"></div>
     </div>
-    <div style="font-size:0.72rem;color:var(--text2);" id="tgpLoadSub">Thoda wait karo...</div>
+    <div style="font-size:0.72rem;color:var(--text2);text-align:center;max-width:260px;line-height:1.6;" id="tgpLoadSub">Pehli baar thoda time lagega — iske baad seedha game shuru hoga!</div>
   </div>
 
   <!-- GAME SELECTOR (lobby) -->
   <div id="tgpLobby" style="display:none;flex:1;overflow-y:auto;padding:14px;">
     <div style="font-size:0.82rem;font-weight:800;color:var(--text2);margin-bottom:12px;text-align:center;" id="tgpFactCount">0 facts extracted</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;" id="tgpGameGrid"></div>
-    <div style="margin-top:14px;padding:10px 12px;background:rgba(21,101,192,0.07);border-radius:10px;font-size:0.72rem;color:var(--text2);line-height:1.6;border:1px solid rgba(21,101,192,0.15);">
-      💡 <strong>Tip:</strong> Sabse pehle Memory Match khelo — facts yaad ho jayenge. Phir Lightning Quiz se test karo!
+    <!-- Regenerate button -->
+    <div style="margin-top:14px;" id="tgpRegenSection">
+      <button onclick="_tgpShowRegenOptions()" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px dashed var(--border);background:var(--surface2);color:var(--text2);font-size:0.76rem;font-weight:700;cursor:pointer;font-family:inherit;">🔄 Questions Regenerate Karo</button>
+    </div>
+    <!-- Regen options (hidden by default) -->
+    <div id="tgpRegenOptions" style="display:none;margin-top:10px;padding:12px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;">
+      <div style="font-size:0.78rem;font-weight:700;color:var(--text);margin-bottom:10px;">Regenerate kaise karna hai?</div>
+      <button onclick="_tgpRegenMissed()" style="width:100%;margin-bottom:8px;padding:10px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#e65100,#f4511e);color:#fff;font-size:0.78rem;font-weight:700;cursor:pointer;font-family:inherit;">📌 Chhute hue facts se nayi questions</button>
+      <button onclick="_tgpRegenFresh()" style="width:100%;padding:10px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.78rem;font-weight:700;cursor:pointer;font-family:inherit;">✨ Bilkul fresh — sab naye questions</button>
+      <button onclick="document.getElementById('tgpRegenOptions').style.display='none'" style="width:100%;margin-top:6px;padding:8px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font-size:0.72rem;cursor:pointer;font-family:inherit;">Raho nahi</button>
+    </div>
+    <div style="margin-top:12px;padding:10px 12px;background:rgba(21,101,192,0.07);border-radius:10px;font-size:0.72rem;color:var(--text2);line-height:1.6;border:1px solid rgba(21,101,192,0.15);">
+      💡 <strong>Tip:</strong> Pehle Lightning Quiz khelo speed ke liye, phir Fill in Blank se deep recall karo!
     </div>
   </div>
 
   <!-- ACTIVE GAME AREA -->
   <div id="tgpGameArea" style="display:none;flex:1;overflow-y:auto;flex-direction:column;"></div>
 
+  <!-- INFO CARD after answer (shown inside game area, so leave empty — rendered dynamically) -->
+
   <!-- GAME NAV BAR (bottom, during game) -->
-  <div id="tgpGameNav" style="display:none;padding:10px 14px;border-top:1.5px solid var(--border);background:var(--surface);display:none;gap:8px;flex-shrink:0;">
+  <div id="tgpGameNav" style="display:none;padding:10px 14px;border-top:1.5px solid var(--border);background:var(--surface);gap:8px;flex-shrink:0;">
     <button onclick="tgpBackToLobby()" style="flex:1;padding:10px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text2);font-size:0.78rem;font-weight:700;cursor:pointer;font-family:inherit;">🎮 Games</button>
     <button id="tgpNextBtn" onclick="tgpNextStep()" style="flex:2;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;font-family:inherit;display:none;">Agla →</button>
   </div>
@@ -50771,11 +50786,10 @@ document.addEventListener('ne_editor_closed', function() {
 <style>
 @keyframes tgpSpin { to { transform:rotate(360deg); } }
 @keyframes tgpBounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
-@keyframes tgpFlip { 0%{transform:rotateY(0)} 50%{transform:rotateY(90deg)} 100%{transform:rotateY(0)} }
-@keyframes tgpShake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
 @keyframes tgpPop { 0%{transform:scale(0.7);opacity:0} 70%{transform:scale(1.1)} 100%{transform:scale(1);opacity:1} }
+@keyframes tgpShake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
 @keyframes tgpGlow { 0%,100%{box-shadow:0 0 8px rgba(21,101,192,0.4)} 50%{box-shadow:0 0 20px rgba(21,101,192,0.8)} }
-@keyframes tgpTimer { from{width:100%} to{width:0%} }
+@keyframes tgpSlideUp { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
 
 /* Game card in lobby */
 .tgp-game-card {
@@ -50790,25 +50804,7 @@ document.addEventListener('ne_editor_closed', function() {
 .tgp-game-card .tgp-gc-desc{font-size:0.65rem;color:var(--text2);line-height:1.4;}
 .tgp-game-card .tgp-gc-stars{font-size:0.65rem;margin-top:6px;color:#f9a825;}
 
-/* Memory Match */
-.tgp-mem-grid{display:grid;gap:8px;padding:14px;}
-.tgp-mem-card{
-  background:linear-gradient(135deg,#1565c0,#1976d2);border-radius:12px;
-  aspect-ratio:1;display:flex;align-items:center;justify-content:center;
-  font-size:0.7rem;font-weight:700;color:#fff;cursor:pointer;
-  transition:all 0.3s;-webkit-tap-highlight-color:transparent;
-  padding:6px;text-align:center;line-height:1.3;
-  border:2px solid transparent;
-  position:relative;overflow:hidden;
-  min-height:70px;
-}
-.tgp-mem-card.face-down{background:linear-gradient(135deg,#1565c0,#6a1b9a)!important;color:transparent!important;user-select:none;}
-.tgp-mem-card.face-down::after{content:'?';color:#fff;font-size:1.4rem;font-weight:900;position:absolute;}
-.tgp-mem-card.matched{background:linear-gradient(135deg,#2e7d32,#43a047)!important;animation:tgpGlow 1s ease;}
-.tgp-mem-card.wrong-flash{animation:tgpShake 0.4s ease;}
-
 /* Lightning Quiz */
-.tgp-lq-timer-bar{height:5px;background:linear-gradient(90deg,#c62828,#f9a825,#2e7d32);border-radius:3px;margin-bottom:12px;transform-origin:left;}
 .tgp-lq-question{font-size:0.9rem;font-weight:700;color:var(--text);padding:14px 16px;background:var(--surface);border-radius:12px;border:1.5px solid var(--border);margin-bottom:12px;line-height:1.6;}
 .tgp-lq-option{
   display:block;width:100%;padding:12px 14px;border-radius:10px;
@@ -50824,18 +50820,19 @@ document.addEventListener('ne_editor_closed', function() {
 
 /* Fill in Blank */
 .tgp-fib-sentence{
-  font-size:0.88rem;color:var(--text);padding:14px 16px;
+  font-size:0.9rem;color:var(--text);padding:16px;
   background:var(--surface);border-radius:12px;border:1.5px solid var(--border);
-  margin-bottom:12px;line-height:2;
+  margin-bottom:12px;line-height:2.2;font-weight:500;
 }
 .tgp-fib-blank{
-  display:inline-block;min-width:100px;border-bottom:2px solid var(--accent);
-  padding:2px 8px;font-weight:700;color:var(--accent);text-align:center;
+  display:inline-block;min-width:110px;border-bottom:2.5px solid var(--accent);
+  padding:2px 10px;font-weight:800;color:var(--accent);text-align:center;
+  background:rgba(21,101,192,0.06);border-radius:4px;
 }
 .tgp-fib-opts{display:flex;flex-wrap:wrap;gap:8px;padding:4px 0;}
 .tgp-fib-opt{
-  padding:8px 14px;border-radius:20px;border:1.5px solid var(--border);
-  background:var(--surface2);color:var(--text);font-size:0.8rem;font-weight:700;
+  padding:9px 16px;border-radius:20px;border:1.5px solid var(--border);
+  background:var(--surface2);color:var(--text);font-size:0.82rem;font-weight:700;
   cursor:pointer;font-family:inherit;transition:all 0.15s;
   -webkit-tap-highlight-color:transparent;
 }
@@ -50843,28 +50840,46 @@ document.addEventListener('ne_editor_closed', function() {
 .tgp-fib-opt.correct{background:#e8f5e9;border-color:#43a047;color:#1b5e20;}
 .tgp-fib-opt.wrong{background:#ffebee;border-color:#e53935;color:#b71c1c;}
 
-/* Fact Shooter */
-.tgp-fs-statement{
-  font-size:0.88rem;color:var(--text);padding:16px;
-  background:var(--surface);border-radius:14px;border:1.5px solid var(--border);
-  margin-bottom:14px;line-height:1.7;text-align:center;font-weight:600;
+/* Spotlight Quiz */
+.tgp-spot-clue{
+  font-size:0.82rem;color:var(--text2);padding:10px 14px;
+  background:rgba(21,101,192,0.06);border-radius:10px;border-left:3px solid var(--accent);
+  margin-bottom:8px;line-height:1.6;font-weight:500;
 }
-.tgp-fs-btns{display:flex;gap:12px;padding:0 4px;}
-.tgp-fs-true{flex:1;padding:16px;border-radius:14px;border:none;background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;font-size:1rem;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;}
-.tgp-fs-false{flex:1;padding:16px;border-radius:14px;border:none;background:linear-gradient(135deg,#c62828,#e53935);color:#fff;font-size:1rem;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;}
-.tgp-fs-result{margin-top:12px;padding:12px;border-radius:10px;font-size:0.82rem;font-weight:700;text-align:center;animation:tgpPop 0.3s ease;}
+.tgp-spot-reveal{
+  font-size:0.88rem;font-weight:700;color:var(--text);padding:14px 16px;
+  background:var(--surface);border-radius:12px;border:1.5px solid var(--border);
+  margin-bottom:12px;line-height:1.6;
+}
 
-/* Sequence/Order game */
-.tgp-sq-item{
-  padding:12px 14px;border-radius:10px;border:1.5px solid var(--border);
-  background:var(--surface);color:var(--text);font-size:0.8rem;
-  font-weight:600;margin-bottom:8px;cursor:grab;
-  display:flex;align-items:center;gap:10px;
-  user-select:none;-webkit-user-select:none;
-  transition:all 0.15s;-webkit-tap-highlight-color:transparent;
+/* Rapid Fire */
+.tgp-rf-question{
+  font-size:1rem;font-weight:800;color:var(--text);padding:18px 16px;
+  background:var(--surface);border-radius:14px;border:1.5px solid var(--border);
+  margin-bottom:14px;line-height:1.6;text-align:center;
 }
-.tgp-sq-item.dragging{opacity:0.5;transform:scale(0.98);}
-.tgp-sq-handle{font-size:1rem;color:var(--text2);flex-shrink:0;}
+.tgp-rf-opt{
+  display:block;width:100%;padding:14px;border-radius:12px;
+  border:1.5px solid var(--border);background:var(--surface2);
+  color:var(--text);font-size:0.85rem;font-weight:700;
+  cursor:pointer;font-family:inherit;text-align:left;
+  transition:all 0.15s;margin-bottom:10px;
+  -webkit-tap-highlight-color:transparent;
+}
+.tgp-rf-opt:active{transform:scale(0.97);}
+.tgp-rf-opt.correct{background:linear-gradient(135deg,#e8f5e9,#c8e6c9)!important;border-color:#43a047!important;color:#1b5e20!important;font-weight:800!important;}
+.tgp-rf-opt.wrong{background:#ffebee!important;border-color:#e53935!important;color:#b71c1c!important;}
+
+/* Info card after answer */
+.tgp-info-card{
+  margin:12px 14px 4px;padding:12px 14px;
+  background:linear-gradient(135deg,rgba(21,101,192,0.07),rgba(106,27,154,0.05));
+  border:1.5px solid rgba(21,101,192,0.2);border-radius:12px;
+  font-size:0.78rem;color:var(--text);line-height:1.7;
+  animation:tgpSlideUp 0.3s ease;
+}
+.tgp-info-card .tgp-info-label{font-size:0.65rem;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;}
+.tgp-info-card .tgp-info-text{font-weight:500;color:var(--text);}
 
 /* Score popup */
 .tgp-score-popup{
@@ -50872,6 +50887,7 @@ document.addEventListener('ne_editor_closed', function() {
   background:linear-gradient(135deg,#1565c0,#6a1b9a);color:#fff;
   border-radius:20px;padding:20px 30px;text-align:center;z-index:30000;
   animation:tgpPop 0.4s ease;box-shadow:0 10px 40px rgba(0,0,0,0.4);
+  font-size:1.1rem;font-weight:900;pointer-events:none;
 }
 
 /* Result screen */
@@ -50885,147 +50901,233 @@ document.addEventListener('ne_editor_closed', function() {
   font-size:0.88rem;font-weight:800;cursor:pointer;font-family:inherit;
 }
 
+/* Night mode */
 body.night-mode .tgp-lq-option{background:var(--surface2);border-color:var(--border);}
-body.night-mode .tgp-mem-card.face-down{background:linear-gradient(135deg,#0d2644,#2d1b4e)!important;}
 body.night-mode .tgp-fib-opt{background:var(--surface2);border-color:var(--border);color:var(--text);}
-body.night-mode .tgp-sq-item{background:var(--surface2);border-color:var(--border);}
+body.night-mode .tgp-rf-opt{background:var(--surface2);border-color:var(--border);}
+body.night-mode .tgp-info-card{background:linear-gradient(135deg,rgba(74,158,255,0.07),rgba(188,140,255,0.05));border-color:rgba(74,158,255,0.2);}
 </style>
 
 <script>
 // ═══════════════════════════════════════════════════════
-// 🎮 TOPIC GAME MODE — Core Engine
+// 🎮 TOPIC GAME MODE v2.0 — Smart Cached Game Engine
 // ═══════════════════════════════════════════════════════
 
 var _tgp = {
   sid: null, secid: null, tid: null, topicName: '',
-  facts: [],       // [{term, detail, isTrue}]
-  pairs: [],       // [{q, a}] for memory match
+  facts: [],         // [{term, detail, fibSentence, fibAnswer, fibOptions, examNote, isTrue}]
   activeGame: null,
   score: 0,
-  totalRounds: 0,
-  gameState: {},   // per-game state
-  loading: false
+  gameState: {},
+  loading: false,
+  _cacheKey: null    // localStorage cache key
 };
+
+// ── Cache helpers ────────────────────────────────────────
+function _tgpCacheKey(sid, secid, tid) {
+  return 'tgp_cache_' + sid + '_' + secid + '_' + tid;
+}
+function _tgpSaveCache(facts) {
+  try {
+    var key = _tgp._cacheKey;
+    if (!key) return;
+    localStorage.setItem(key, JSON.stringify({ facts: facts, ts: Date.now() }));
+  } catch(e) {}
+}
+function _tgpLoadCache() {
+  try {
+    var key = _tgp._cacheKey;
+    if (!key) return null;
+    var raw = localStorage.getItem(key);
+    if (!raw) return null;
+    var obj = JSON.parse(raw);
+    // Cache valid for 7 days
+    if (Date.now() - obj.ts > 7 * 24 * 3600 * 1000) { localStorage.removeItem(key); return null; }
+    return obj.facts || null;
+  } catch(e) { return null; }
+}
+function _tgpClearCache() {
+  try { if (_tgp._cacheKey) localStorage.removeItem(_tgp._cacheKey); } catch(e) {}
+}
 
 // ── Open Game Mode ──────────────────────────────────────
 window.openTopicGameMode = async function(sid, secid, tid, topicName) {
   _tgp.sid = sid; _tgp.secid = secid; _tgp.tid = tid;
   _tgp.topicName = topicName || 'Topic';
-  _tgp.score = 0; _tgp.totalRounds = 0; _tgp.facts = []; _tgp.pairs = [];
+  _tgp.score = 0; _tgp.facts = [];
+  _tgp._cacheKey = _tgpCacheKey(sid, secid, tid);
 
-  // Show panel
   var panel = document.getElementById('topicGamePanel');
   panel.style.display = 'flex';
   document.getElementById('tgpTopicName').textContent = '🎮 ' + _tgp.topicName;
-  document.getElementById('tgpSubtitle').textContent = 'AI games bana raha hai...';
   document.getElementById('tgpLoading').style.display = 'flex';
   document.getElementById('tgpLobby').style.display = 'none';
   document.getElementById('tgpGameArea').style.display = 'none';
   document.getElementById('tgpGameNav').style.display = 'none';
   document.getElementById('tgpScoreBadge').style.display = 'none';
+
+  // Check cache first
+  var cached = _tgpLoadCache();
+  if (cached && cached.length >= 5) {
+    _tgp.facts = cached;
+    document.getElementById('tgpSubtitle').textContent = cached.length + ' facts ready (cached)';
+    _tgpSetProgress(100, 'Cache se load hua ⚡ — Super fast!');
+    setTimeout(function() { _tgpShowLobby(); }, 400);
+    return;
+  }
+
+  // Fresh generate
   _tgpSetProgress(5, 'Notes extract ho rahe hain...');
+  document.getElementById('tgpLoadSub').textContent = 'Pehli baar AI questions generate kar raha hai — agli baar seedha game!';
 
   try {
-    // Extract content from topic
     var content = _tgpExtractTopicContent(sid, secid, tid);
-
     if (!content || content.trim().length < 50) {
       _tgpShowError('Is topic mein abhi notes nahi hain! Pehle notes add karo.');
       return;
     }
-
-    _tgpSetProgress(25, 'AI facts generate kar raha hai...');
-
-    // Generate facts via Groq
+    _tgpSetProgress(20, 'AI content padh raha hai...');
     var facts = await _tgpGenerateFacts(content, topicName);
     if (!facts || facts.length < 3) {
       _tgpShowError('Facts generate nahi ho sake. Notes thodi zyada detail mein likho aur dobara try karo.');
       return;
     }
-
     _tgp.facts = facts;
-    _tgpSetProgress(90, 'Games taiyaar ho rahe hain...');
-
-    // Build Q/A pairs for memory match
-    _tgp.pairs = facts.slice(0, 12).map(f => ({ q: f.term, a: f.detail }));
-
-    _tgpSetProgress(100, 'Sab ready hai!');
-
-    setTimeout(function() {
-      _tgpShowLobby();
-    }, 500);
-
+    _tgpSaveCache(facts);
+    _tgpSetProgress(100, 'Sab taiyaar! 🎉');
+    setTimeout(function() { _tgpShowLobby(); }, 500);
   } catch(e) {
     _tgpShowError('Error: ' + (e.message || 'Kuch galat hua. API key check karo aur dobara try karo.'));
   }
 };
 
-// ── Extract topic content from app data ─────────────────
+// ── Regenerate options ───────────────────────────────────
+window._tgpShowRegenOptions = function() {
+  var el = document.getElementById('tgpRegenOptions');
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+};
+
+window._tgpRegenMissed = async function() {
+  // Generate questions focusing on facts that weren't covered or were answered wrong
+  document.getElementById('tgpRegenOptions').style.display = 'none';
+  document.getElementById('tgpLobby').style.display = 'none';
+  document.getElementById('tgpLoading').style.display = 'flex';
+  document.getElementById('tgpLoadSub').textContent = 'Chhute hue aur mushkil facts se nayi questions ban rahi hain...';
+  _tgpSetProgress(10, 'Missed facts dhundh raha hai...');
+
+  try {
+    var content = _tgpExtractTopicContent(_tgp.sid, _tgp.secid, _tgp.tid);
+    _tgpSetProgress(30, 'AI missed topics analyze kar raha hai...');
+    var missedHint = '';
+    if (_tgp._missedTerms && _tgp._missedTerms.length > 0) {
+      missedHint = '\n\nIn topics par ZYADA FOCUS karo (user ne galat kiya tha): ' + _tgp._missedTerms.slice(0,8).join(', ');
+    }
+    var facts = await _tgpGenerateFacts(content + missedHint, _tgp.topicName, 'missed');
+    _tgp.facts = facts;
+    _tgpSaveCache(facts);
+    _tgpSetProgress(100, 'Nayi questions ready!');
+    setTimeout(function() { _tgpShowLobby(); }, 400);
+  } catch(e) {
+    _tgpShowError('Error: ' + (e.message || 'Dobara try karo.'));
+  }
+};
+
+window._tgpRegenFresh = async function() {
+  _tgpClearCache();
+  _tgp._missedTerms = [];
+  document.getElementById('tgpRegenOptions').style.display = 'none';
+  document.getElementById('tgpLobby').style.display = 'none';
+  document.getElementById('tgpLoading').style.display = 'flex';
+  document.getElementById('tgpLoadSub').textContent = 'Bilkul naye angles se questions ban rahe hain...';
+  _tgpSetProgress(10, 'Fresh generation shuru...');
+
+  try {
+    var content = _tgpExtractTopicContent(_tgp.sid, _tgp.secid, _tgp.tid);
+    var facts = await _tgpGenerateFacts(content, _tgp.topicName, 'fresh');
+    _tgp.facts = facts;
+    _tgpSaveCache(facts);
+    _tgpSetProgress(100, 'Bilkul naye questions ready!');
+    setTimeout(function() { _tgpShowLobby(); }, 400);
+  } catch(e) {
+    _tgpShowError('Error: ' + (e.message || 'Dobara try karo.'));
+  }
+};
+
+// ── Extract topic content ────────────────────────────────
 function _tgpExtractTopicContent(sid, secid, tid) {
   var t = (typeof getTop === 'function') ? getTop(sid, secid, tid) : null;
   if (!t) return '';
   var parts = [];
-
-  // Raw notes
   (t.notes || []).forEach(function(n) {
     if (n.content && n.content.trim()) {
-      var txt = n.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      parts.push(txt);
+      parts.push(n.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
     }
   });
-
-  // Final notes
   if (t.finalNotes && t.finalNotes.trim()) {
-    var fn = t.finalNotes
-      .replace(/%%NEW%%|%%DATE%%.*?%%ENDNEW%%|%%HIGHLIGHT%%|%%ENDHIGHLIGHT%%/g, '')
-      .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    if (fn) parts.push(fn);
+    parts.push(t.finalNotes.replace(/%%NEW%%|%%DATE%%.*?%%ENDNEW%%|%%HIGHLIGHT%%|%%ENDHIGHLIGHT%%/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
   }
-
-  // Smart AI notes
   if (t.smartNotesAI && t.smartNotesAI.trim()) {
-    var sn = t.smartNotesAI.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    if (sn) parts.push(sn);
+    parts.push(t.smartNotesAI.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
   }
-
-  // Saved facts
-  (t.savedFacts || []).forEach(function(f) {
-    if (f.text) parts.push(f.text);
-  });
-
-  // Overview
+  (t.savedFacts || []).forEach(function(f) { if (f.text) parts.push(f.text); });
   if (t.overview && t.overview.trim()) parts.push(t.overview);
-
-  return parts.join('\n\n').substring(0, 6000); // limit for API
+  return parts.join('\n\n').substring(0, 7000);
 }
 
-// ── Call Groq to generate facts ─────────────────────────
-async function _tgpGenerateFacts(content, topicName) {
+// ── AI fact generation — SMART prompt ───────────────────
+async function _tgpGenerateFacts(content, topicName, mode) {
   var apiKey = (typeof S !== 'undefined' && S.apiKey) ? S.apiKey : (document.getElementById('apiKey') ? document.getElementById('apiKey').value : '');
   if (!apiKey || apiKey.length < 10) throw new Error('Pehle Settings mein Groq API Key daalo! (gsk_...)');
-
   var model = (typeof S !== 'undefined' && S.selectedModel && S.selectedModel.length > 5) ? S.selectedModel : 'llama-3.3-70b-versatile';
 
-  var systemPrompt = `You are an educational game content generator for Indian competitive exam students. 
-Extract key facts from the given notes and return ONLY valid JSON — no extra text, no markdown, no explanation.
+  var modeInstruction = mode === 'missed'
+    ? 'User ne kuch facts miss kiye hain. Un areas par EXTRA focus karo. Naye angles se questions banao.'
+    : mode === 'fresh'
+    ? 'Pichli baar se BILKUL ALAG questions banao. Different aspects, different phrasing use karo.'
+    : '';
 
-Return this exact JSON structure:
-{"facts":[
-  {"term":"Short key term or concept (5-8 words max)","detail":"One clear explanatory sentence with the important detail","isTrue":true},
-  ...
-]}
+  var systemPrompt = `You are an expert educational content analyzer for Indian competitive exam preparation (UPSC, SSC, State PSC, Railways, Banking).
 
-Rules:
-- Extract 15-20 most important facts
-- term = short label (like "Indus Valley civilization year", "Gandhi birth place", "Article 370 purpose")
-- detail = one complete factual sentence with the answer/explanation
-- isTrue = always true (these are real facts from notes)
-- Also add 4-5 "trap" facts where isTrue=false and detail contains a common misconception/wrong value
-- Mix true and false facts randomly
-- Keep language simple — Hindi terms can stay as-is
-- Focus on exam-important facts: dates, years, names, places, definitions, numbers`;
+Your job is to READ the given notes DEEPLY and identify:
+1. Hidden key facts that examiners love to test
+2. Specific numbers, dates, years, names that students forget
+3. Cause-effect relationships hidden in the text
+4. Definitions with precise wording
+5. Comparisons or rankings mentioned in the content
 
-  var userPrompt = `Topic: ${topicName}\n\nNotes Content:\n${content}\n\nGenerate 15-20 facts + 4-5 false traps. Return ONLY JSON.`;
+${modeInstruction}
+
+Return ONLY valid JSON with this EXACT structure (no markdown, no extra text):
+{
+  "facts": [
+    {
+      "term": "Short question stem (max 8 words) — what is being asked",
+      "detail": "Complete answer sentence with the full fact clearly stated",
+      "fibSentence": "The same detail sentence with ONE key word/number replaced by ___",
+      "fibAnswer": "The exact word/number that fills the blank",
+      "fibOptions": ["fibAnswer", "wrong1", "wrong2", "wrong3"],
+      "examNote": "One line: WHY this fact matters for exam OR what students usually confuse",
+      "isTrue": true
+    }
+  ]
+}
+
+RULES FOR fibSentence:
+- Replace the MOST IMPORTANT and EXAM-WORTHY word — usually a number, year, name, or key term
+- The blank must make the sentence meaningful — not trivial words like "the" or "is"
+- fibOptions must have EXACTLY 4 options — first one is the correct fibAnswer, rest are plausible wrong answers from the same content
+- fibOptions should be shuffled-looking but always put the correct one as index 0 (code will shuffle)
+
+RULES for facts:
+- Extract 18-22 facts total
+- Cover ALL unique facts in the content — even small details
+- term should be a question like "Kab...", "Kaun...", "Kitna...", "Kahan..." (exam style)
+- detail must be a complete, standalone sentence
+- examNote must explain what students usually mix up OR why this is exam-important`;
+
+  var userPrompt = `Topic: ${topicName}\n\nNotes:\n${content}\n\nGenerate 18-22 exam-focused facts. Return ONLY JSON.`;
+
+  _tgpSetProgress(50, 'AI facts aur FIB questions bana raha hai...');
 
   var resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -51033,8 +51135,8 @@ Rules:
     body: JSON.stringify({
       model: model,
       messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-      temperature: 0.3,
-      max_tokens: 3000
+      temperature: mode === 'fresh' ? 0.7 : 0.3,
+      max_tokens: 5000
     })
   });
 
@@ -51043,16 +51145,22 @@ Rules:
     throw new Error(err.error && err.error.message ? err.error.message : 'Groq API Error: ' + resp.status);
   }
 
+  _tgpSetProgress(85, 'Response process ho raha hai...');
   var data = await resp.json();
   var raw = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : '';
   raw = raw.replace(/```json|```/g, '').trim();
-
-  // Extract JSON safely
-  var start = raw.indexOf('{');
-  var end = raw.lastIndexOf('}');
+  var start = raw.indexOf('{'), end = raw.lastIndexOf('}');
   if (start === -1 || end === -1) throw new Error('AI ne sahi format mein jawab nahi diya.');
   var parsed = JSON.parse(raw.substring(start, end + 1));
-  return parsed.facts || [];
+  var facts = parsed.facts || [];
+
+  // Shuffle fibOptions for each fact
+  facts.forEach(function(f) {
+    if (f.fibOptions && f.fibOptions.length === 4) {
+      f.fibOptions = _tgpShuffle(f.fibOptions);
+    }
+  });
+  return facts;
 }
 
 // ── UI Helpers ───────────────────────────────────────────
@@ -51076,16 +51184,16 @@ function _tgpShowLobby() {
   document.getElementById('tgpLobby').style.display = 'block';
   document.getElementById('tgpGameArea').style.display = 'none';
   document.getElementById('tgpGameNav').style.display = 'none';
+  document.getElementById('tgpScoreBadge').style.display = 'none';
   document.getElementById('tgpSubtitle').textContent = _tgp.facts.length + ' facts extracted';
   document.getElementById('tgpFactCount').textContent = '✅ ' + _tgp.facts.length + ' facts ready — Game chuno!';
+  document.getElementById('tgpRegenOptions').style.display = 'none';
 
   var games = [
-    { id:'memory',  emoji:'🃏', name:'Memory Match',    desc:'Cards flip karke matching pairs dhundho',  stars:'⭐⭐⭐  Fun + Recall',   color:'#1565c0' },
-    { id:'lightning', emoji:'⚡', name:'Lightning Quiz',  desc:'10 second timer! Jaldi jawab do',         stars:'⭐⭐⭐⭐  Speed + Accuracy', color:'#e65100' },
-    { id:'fillin',  emoji:'✏️',  name:'Fill in Blank',   desc:'Blank mein sahi word daalo',               stars:'⭐⭐⭐  Writing Recall',  color:'#2e7d32' },
-    { id:'truefalse',emoji:'🎯', name:'Fact Shooter',    desc:'Sahi=✅ Galat=❌ — Sach ya jhooth?',       stars:'⭐⭐⭐⭐  Critical Thinking',color:'#6a1b9a' },
-    { id:'boss',    emoji:'🏆',  name:'Boss Level',      desc:'Sab games ka ultimate challenge!',         stars:'⭐⭐⭐⭐⭐ Mega Challenge', color:'#c62828' },
-    { id:'sequence', emoji:'📋', name:'Sort Sequence',   desc:'Facts ko sahi order mein lagao',           stars:'⭐⭐⭐  Order & Logic',   color:'#00695c' }
+    { id:'lightning', emoji:'⚡', name:'Lightning Quiz',   desc:'Timer ke saath MCQ — jaldi jawab do!',       stars:'⭐⭐⭐⭐ Speed + Accuracy', color:'#e65100' },
+    { id:'fillin',   emoji:'✏️', name:'Fill in Blank',    desc:'AI-smart blanks — key facts fill karo',      stars:'⭐⭐⭐⭐ Deep Recall',       color:'#2e7d32' },
+    { id:'spotlight',emoji:'🔦', name:'Spotlight Quiz',   desc:'Clues dekho, concept identify karo',         stars:'⭐⭐⭐⭐ Concept Clarity',   color:'#6a1b9a' },
+    { id:'rapidfire',emoji:'🔥', name:'Rapid Fire',       desc:'No timer — ek ek fact pe focus karo',        stars:'⭐⭐⭐⭐⭐ Exam Ready',       color:'#c62828' }
   ];
 
   var grid = document.getElementById('tgpGameGrid');
@@ -51112,6 +51220,30 @@ function _tgpUpdateScore() {
   document.getElementById('tgpScoreBadge').textContent = '⭐ ' + _tgp.score;
 }
 
+// Track missed terms for regen
+function _tgpTrackMiss(term) {
+  if (!_tgp._missedTerms) _tgp._missedTerms = [];
+  if (term && !_tgp._missedTerms.includes(term)) _tgp._missedTerms.push(term);
+}
+
+// Show info card after answer
+function _tgpShowInfoCard(fact) {
+  if (!fact) return;
+  var area = document.getElementById('tgpGameArea');
+  if (!area) return;
+  var old = document.getElementById('tgpInfoCard');
+  if (old) old.remove();
+  var examNote = fact.examNote || '';
+  var card = document.createElement('div');
+  card.id = 'tgpInfoCard';
+  card.className = 'tgp-info-card';
+  card.innerHTML = `<div class="tgp-info-label">📚 Exam Insight</div>
+    <div class="tgp-info-text"><strong>${_tgpEsc(fact.term)}</strong><br>${_tgpEsc(fact.detail)}${examNote ? '<br><span style="color:var(--accent3);font-size:0.72rem;margin-top:4px;display:block;">💡 ' + _tgpEsc(examNote) + '</span>' : ''}</div>`;
+  area.appendChild(card);
+  // Scroll to show card
+  setTimeout(function(){ card.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 100);
+}
+
 function tgpBackToLobby() {
   if (_tgp.gameState._timer) { clearInterval(_tgp.gameState._timer); clearTimeout(_tgp.gameState._timer); }
   _tgp.gameState = {};
@@ -51126,7 +51258,6 @@ window.closeTopicGame = function() {
   _tgp.gameState = {};
 };
 
-// ── Shuffle helper ────────────────────────────────────────
 function _tgpShuffle(arr) {
   var a = arr.slice();
   for (var i = a.length - 1; i > 0; i--) {
@@ -51142,170 +51273,43 @@ function _tgpShuffle(arr) {
 function tgpStartGame(gameId) {
   _tgp.activeGame = gameId;
   _tgp.gameState = {};
-  if (_tgp.gameState._timer) { clearInterval(_tgp.gameState._timer); }
-
+  _tgp.score = 0;
+  _tgpUpdateScore();
+  if (_tgp.gameState._timer) clearInterval(_tgp.gameState._timer);
   document.getElementById('tgpSubtitle').textContent = {
-    memory: '🃏 Memory Match',
     lightning: '⚡ Lightning Quiz',
-    fillin: '✏️ Fill in Blank',
-    truefalse: '🎯 Fact Shooter',
-    boss: '🏆 Boss Level',
-    sequence: '📋 Sort Sequence'
+    fillin:    '✏️ Fill in Blank',
+    spotlight: '🔦 Spotlight Quiz',
+    rapidfire: '🔥 Rapid Fire'
   }[gameId] || gameId;
-
   switch(gameId) {
-    case 'memory':    _tgpStartMemory(); break;
     case 'lightning': _tgpStartLightning(); break;
     case 'fillin':    _tgpStartFillIn(); break;
-    case 'truefalse': _tgpStartTrueFalse(); break;
-    case 'boss':      _tgpStartBoss(); break;
-    case 'sequence':  _tgpStartSequence(); break;
+    case 'spotlight': _tgpStartSpotlight(); break;
+    case 'rapidfire': _tgpStartRapidFire(); break;
   }
 }
 
 function tgpNextStep() {
-  if (_tgp.activeGame === 'memory') _tgpNextMemoryRound();
-  else if (_tgp.activeGame === 'lightning') _tgpNextLQQuestion();
-  else if (_tgp.activeGame === 'fillin') _tgpNextFIBQuestion();
-  else if (_tgp.activeGame === 'truefalse') _tgpNextTFQuestion();
-  else if (_tgp.activeGame === 'boss') _tgpBossNext();
-  else if (_tgp.activeGame === 'sequence') _tgpNextSequence();
+  if (_tgp.activeGame === 'lightning') _tgpNextLQQuestion();
+  else if (_tgp.activeGame === 'fillin')    _tgpNextFIBQuestion();
+  else if (_tgp.activeGame === 'spotlight') _tgpNextSpotlight();
+  else if (_tgp.activeGame === 'rapidfire') _tgpNextRapidFire();
 }
 
 // ═══════════════════════════════════════════════════════
-// 🃏 GAME 1: MEMORY MATCH
-// Cards flip karke pair dhundho — term + detail match karo
-// ═══════════════════════════════════════════════════════
-function _tgpStartMemory() {
-  var gs = _tgp.gameState;
-  gs.round = 0;
-  gs.maxRounds = Math.min(Math.floor(_tgp.pairs.length / 3), 4); // 3-4 rounds
-  gs.totalFound = 0;
-  _tgpRenderMemoryRound();
-}
-
-function _tgpRenderMemoryRound() {
-  var gs = _tgp.gameState;
-  var roundPairs = _tgp.pairs.slice(gs.round * 3, gs.round * 3 + 3); // 3 pairs per round
-  if (roundPairs.length < 2) { _tgpGameResult('memory'); return; }
-
-  gs.cards = [];
-  roundPairs.forEach(function(p, i) {
-    gs.cards.push({ id: 'q_' + i, text: p.q, pairId: i, type: 'q', matched: false });
-    gs.cards.push({ id: 'a_' + i, text: p.a, pairId: i, type: 'a', matched: false });
-  });
-  gs.cards = _tgpShuffle(gs.cards);
-  gs.flipped = [];
-  gs.locked = false;
-  gs.found = 0;
-  gs.totalCards = gs.cards.length;
-
-  var cols = gs.cards.length <= 4 ? 2 : gs.cards.length <= 6 ? 3 : 4;
-
-  _tgpShowGameArea(`
-    <div style="padding:12px 14px 4px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">Round ${gs.round + 1} / ${gs.maxRounds} &nbsp;|&nbsp; ${roundPairs.length} pairs</div>
-        <div style="font-size:0.78rem;font-weight:700;color:var(--accent);" id="tgpMemScore">Matches: 0/${roundPairs.length}</div>
-      </div>
-      <div style="font-size:0.72rem;color:var(--text2);margin-bottom:10px;padding:6px 10px;background:rgba(21,101,192,0.07);border-radius:8px;">
-        💡 Term aur uski detail ko match karo — cards click karo!
-      </div>
-    </div>
-    <div class="tgp-mem-grid" style="grid-template-columns:repeat(${cols},1fr);" id="tgpMemGrid">
-      ${gs.cards.map(function(c) {
-        return `<div class="tgp-mem-card face-down" id="mc_${c.id}" onclick="_tgpFlipCard('${c.id}')" data-pair="${c.pairId}" data-type="${c.type}">${_tgpEsc(c.text)}</div>`;
-      }).join('')}
-    </div>
-    <div style="padding:10px 14px;font-size:0.72rem;color:var(--text2);text-align:center;" id="tgpMemMsg"></div>
-  `);
-  document.getElementById('tgpNextBtn').style.display = 'none';
-}
-
-function _tgpFlipCard(cardId) {
-  var gs = _tgp.gameState;
-  if (gs.locked) return;
-  var card = gs.cards.find(function(c) { return c.id === cardId; });
-  if (!card || card.matched) return;
-  if (gs.flipped.find(function(f) { return f.id === cardId; })) return;
-
-  var el = document.getElementById('mc_' + cardId);
-  if (!el) return;
-  el.classList.remove('face-down');
-
-  gs.flipped.push(card);
-
-  if (gs.flipped.length === 2) {
-    gs.locked = true;
-    var f1 = gs.flipped[0], f2 = gs.flipped[1];
-    var isMatch = (f1.pairId === f2.pairId) && (f1.type !== f2.type);
-
-    setTimeout(function() {
-      if (isMatch) {
-        var e1 = document.getElementById('mc_' + f1.id);
-        var e2 = document.getElementById('mc_' + f2.id);
-        if (e1) e1.classList.add('matched');
-        if (e2) e2.classList.add('matched');
-        f1.matched = f2.matched = true;
-        gs.found++;
-        gs.totalFound++;
-        _tgp.score += 10;
-        _tgpUpdateScore();
-        var msg = document.getElementById('tgpMemMsg');
-        if (msg) msg.innerHTML = '<span style="color:#2e7d32;font-weight:700;">✅ Match! +10 points</span>';
-        var sc = document.getElementById('tgpMemScore');
-        if (sc) sc.textContent = 'Matches: ' + gs.found + '/' + Math.floor(gs.totalCards / 2);
-        _tgpShowScorePopup('+10 🎯');
-
-        if (gs.found >= Math.floor(gs.totalCards / 2)) {
-          setTimeout(function() {
-            gs.round++;
-            if (gs.round >= gs.maxRounds || gs.round * 3 >= _tgp.pairs.length) {
-              _tgpGameResult('memory');
-            } else {
-              document.getElementById('tgpNextBtn').style.display = 'block';
-              document.getElementById('tgpNextBtn').textContent = 'Agla Round →';
-              var msg2 = document.getElementById('tgpMemMsg');
-              if (msg2) msg2.innerHTML = '<strong style="color:var(--accent);">🎉 Round complete! Agla dabao.</strong>';
-            }
-          }, 600);
-        }
-      } else {
-        // No match — flip back
-        var e1b = document.getElementById('mc_' + f1.id);
-        var e2b = document.getElementById('mc_' + f2.id);
-        if (e1b) { e1b.classList.add('face-down'); e1b.classList.add('wrong-flash'); setTimeout(function(){e1b.classList.remove('wrong-flash');}, 400); }
-        if (e2b) { e2b.classList.add('face-down'); e2b.classList.add('wrong-flash'); setTimeout(function(){e2b.classList.remove('wrong-flash');}, 400); }
-        var msg3 = document.getElementById('tgpMemMsg');
-        if (msg3) msg3.innerHTML = '<span style="color:#c62828;font-weight:700;">❌ Match nahi! Dobara try karo.</span>';
-      }
-      gs.flipped = [];
-      gs.locked = false;
-    }, isMatch ? 400 : 900);
-  }
-}
-
-function _tgpNextMemoryRound() {
-  _tgpRenderMemoryRound();
-}
-
-// ═══════════════════════════════════════════════════════
-// ⚡ GAME 2: LIGHTNING QUIZ
-// 10 second timer — MCQ style — fast questions
+// ⚡ GAME 1: LIGHTNING QUIZ
+// 12 sec timer, MCQ — speed + accuracy
 // ═══════════════════════════════════════════════════════
 function _tgpStartLightning() {
   var gs = _tgp.gameState;
-  // Use only true facts for MCQ
-  var trueFacts = _tgp.facts.filter(function(f) { return f.isTrue; });
-  gs.questions = _tgpShuffle(trueFacts).slice(0, 10).map(function(f) {
-    // Build 4 options
-    var wrong = _tgpShuffle(trueFacts.filter(function(x) { return x !== f; })).slice(0, 3).map(function(x) { return x.detail; });
+  var trueFacts = _tgp.facts.filter(function(f){ return f.isTrue !== false && f.term && f.detail; });
+  gs.questions = _tgpShuffle(trueFacts).slice(0, Math.min(12, trueFacts.length)).map(function(f) {
+    var wrong = _tgpShuffle(trueFacts.filter(function(x){ return x !== f; })).slice(0, 3).map(function(x){ return x.detail; });
     var opts = _tgpShuffle([f.detail].concat(wrong));
-    return { q: f.term, correct: f.detail, options: opts };
+    return { q: f.term, correct: f.detail, options: opts, fact: f };
   });
-  gs.current = 0;
-  gs.correct = 0;
-  gs.answered = 0;
+  gs.current = 0; gs.correct = 0;
   _tgpRenderLQQuestion();
 }
 
@@ -51313,42 +51317,38 @@ function _tgpRenderLQQuestion() {
   var gs = _tgp.gameState;
   if (gs.current >= gs.questions.length) { _tgpGameResult('lightning'); return; }
   var q = gs.questions[gs.current];
-  var timeLeft = 10;
-
   if (gs._timer) clearInterval(gs._timer);
+  var totalTime = 12;
 
   _tgpShowGameArea(`
     <div style="padding:12px 14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">Q ${gs.current + 1} / ${gs.questions.length}</div>
-        <div style="font-size:0.88rem;font-weight:800;color:#c62828;" id="tgpLqTimer">⏱ 10</div>
+        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">Q ${gs.current+1} / ${gs.questions.length}</div>
+        <div style="font-size:0.88rem;font-weight:800;color:#c62828;" id="tgpLqTimer">⏱ 12</div>
       </div>
       <div style="height:5px;background:var(--bg2);border-radius:3px;overflow:hidden;margin-bottom:12px;">
-        <div id="tgpLqTimerBar" style="height:100%;background:linear-gradient(90deg,#c62828,#f9a825);width:100%;transition:width 1s linear;border-radius:3px;"></div>
+        <div id="tgpLqTimerBar" style="height:100%;background:linear-gradient(90deg,#c62828,#f9a825,#2e7d32);width:100%;transition:width 1s linear;border-radius:3px;"></div>
       </div>
       <div class="tgp-lq-question">❓ ${_tgpEsc(q.q)}</div>
       <div id="tgpLqOpts">
-        ${q.options.map(function(opt, i) {
+        ${q.options.map(function(opt, i){
           return `<button class="tgp-lq-option" onclick="_tgpLqAnswer(${i})" id="lqopt_${i}">${_tgpEsc(opt)}</button>`;
         }).join('')}
       </div>
-      <div style="margin-top:10px;font-size:0.72rem;color:var(--text2);text-align:center;" id="tgpLqMsg"></div>
+      <div style="margin-top:8px;font-size:0.72rem;color:var(--text2);text-align:center;min-height:20px;" id="tgpLqMsg"></div>
     </div>
   `);
   document.getElementById('tgpNextBtn').style.display = 'none';
 
-  // Start timer
-  gs._timerLeft = timeLeft;
+  gs._timerLeft = totalTime;
   gs._timer = setInterval(function() {
     gs._timerLeft--;
-    var timerEl = document.getElementById('tgpLqTimer');
-    var timerBar = document.getElementById('tgpLqTimerBar');
-    if (timerEl) timerEl.textContent = '⏱ ' + gs._timerLeft;
-    if (timerBar) timerBar.style.width = (gs._timerLeft / 10 * 100) + '%';
-    if (gs._timerLeft <= 0) {
-      clearInterval(gs._timer);
-      _tgpLqAnswer(-1); // time out = wrong
-    }
+    var te = document.getElementById('tgpLqTimer');
+    var tb = document.getElementById('tgpLqTimerBar');
+    if (te) te.textContent = '⏱ ' + gs._timerLeft;
+    if (tb) tb.style.width = (gs._timerLeft / totalTime * 100) + '%';
+    if (gs._timerLeft <= 3 && te) te.style.color = '#c62828';
+    if (gs._timerLeft <= 0) { clearInterval(gs._timer); _tgpLqAnswer(-1); }
   }, 1000);
 }
 
@@ -51360,7 +51360,6 @@ function _tgpLqAnswer(selectedIdx) {
   var q = gs.questions[gs.current];
   var isCorrect = selectedIdx >= 0 && q.options[selectedIdx] === q.correct;
 
-  // Color buttons
   q.options.forEach(function(opt, i) {
     var btn = document.getElementById('lqopt_' + i);
     if (!btn) return;
@@ -51371,51 +51370,48 @@ function _tgpLqAnswer(selectedIdx) {
 
   var msg = document.getElementById('tgpLqMsg');
   if (isCorrect) {
-    _tgp.score += gs._timerLeft >= 7 ? 15 : gs._timerLeft >= 4 ? 10 : 5;
-    gs.correct++;
-    if (msg) msg.innerHTML = '<strong style="color:#2e7d32;">✅ Sahi! +' + (gs._timerLeft >= 7 ? 15 : 10) + ' points</strong>';
-    _tgpShowScorePopup(gs._timerLeft >= 7 ? '⚡ FAST! +15' : '+10');
+    var pts = gs._timerLeft >= 9 ? 15 : gs._timerLeft >= 5 ? 10 : 5;
+    _tgp.score += pts; gs.correct++;
+    if (msg) msg.innerHTML = '<strong style="color:#2e7d32;">✅ Sahi! +' + pts + ' points</strong>';
+    _tgpShowScorePopup(gs._timerLeft >= 9 ? '⚡ FAST! +15' : '+' + pts);
   } else {
-    if (msg) msg.innerHTML = selectedIdx === -1 ? '<strong style="color:#c62828;">⏰ Time out!</strong>' : '<strong style="color:#c62828;">❌ Galat! Sahi answer dekho.</strong>';
+    if (msg) msg.innerHTML = selectedIdx === -1 ? '<strong style="color:#c62828;">⏰ Time out!</strong>' : '<strong style="color:#c62828;">❌ Galat!</strong>';
+    _tgpTrackMiss(q.fact ? q.fact.term : '');
   }
   _tgpUpdateScore();
+  _tgpShowInfoCard(q.fact);
   gs._answered = false;
-  gs.answered++;
   gs.current++;
   document.getElementById('tgpNextBtn').style.display = 'block';
   document.getElementById('tgpNextBtn').textContent = gs.current >= gs.questions.length ? '📊 Result' : 'Agla →';
 }
 
-function _tgpNextLQQuestion() {
-  _tgpRenderLQQuestion();
-}
+function _tgpNextLQQuestion() { _tgpRenderLQQuestion(); }
 
 // ═══════════════════════════════════════════════════════
-// ✏️ GAME 3: FILL IN THE BLANK
-// Blank fill karo — word choose karo
+// ✏️ GAME 2: FILL IN THE BLANK (AI-smart)
+// AI ne hi fibSentence + fibAnswer generate kiya hai
 // ═══════════════════════════════════════════════════════
 function _tgpStartFillIn() {
   var gs = _tgp.gameState;
-  var trueFacts = _tgp.facts.filter(function(f) { return f.isTrue && f.term && f.detail; });
-  gs.questions = _tgpShuffle(trueFacts).slice(0, 8).map(function(f) {
-    // Create blank sentence from detail — blank out the key word from term
-    var termWords = f.term.split(/\s+/).filter(function(w) { return w.length > 3; });
-    var blankWord = termWords.length ? termWords[termWords.length - 1] : f.term.split(/\s+/).pop();
-    // If term has numbers/years, blank those from detail
-    var yearMatch = f.detail.match(/\d{3,4}/);
-    if (yearMatch) blankWord = yearMatch[0];
-    var sentence = yearMatch ? f.detail.replace(yearMatch[0], '___') : f.detail.replace(new RegExp(blankWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '___');
-    if (!sentence.includes('___')) sentence = f.term + ': ___'; // fallback
-
-    // Wrong options
-    var wrongPool = trueFacts.filter(function(x){ return x !== f; });
-    var wrongs = _tgpShuffle(wrongPool).slice(0, 3).map(function(x) {
-      var xWords = x.term.split(/\s+/).filter(function(w){return w.length>3;});
-      return xWords.length ? xWords[xWords.length-1] : x.term.split(/\s+/).pop();
+  var trueFacts = _tgp.facts.filter(function(f){ return f.isTrue !== false && f.fibSentence && f.fibAnswer && f.fibOptions; });
+  if (trueFacts.length < 3) {
+    // Fallback: use regular facts with basic blank extraction
+    trueFacts = _tgp.facts.filter(function(f){ return f.isTrue !== false && f.term && f.detail; });
+    trueFacts = trueFacts.map(function(f) {
+      var yearMatch = f.detail.match(/\d{3,4}/);
+      var blankWord = yearMatch ? yearMatch[0] : f.term.split(/\s+/).filter(function(w){return w.length>3;}).pop() || f.term.split(/\s+/).pop();
+      var sentence = yearMatch ? f.detail.replace(yearMatch[0],'___') : f.detail.replace(new RegExp(blankWord.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'),'___');
+      if (!sentence.includes('___')) sentence = f.term + ': ___';
+      var pool = _tgp.facts.filter(function(x){return x!==f&&x.detail;});
+      var wrongs = _tgpShuffle(pool).slice(0,3).map(function(x){
+        var m = x.detail.match(/\d{3,4}/);
+        return m ? m[0] : (x.term.split(/\s+/).filter(function(w){return w.length>3;}).pop() || x.term.split(/\s+/).pop());
+      });
+      return Object.assign({}, f, { fibSentence: sentence, fibAnswer: blankWord, fibOptions: _tgpShuffle([blankWord].concat(wrongs)) });
     });
-    var opts = _tgpShuffle([blankWord].concat(wrongs));
-    return { sentence: sentence, answer: blankWord, options: opts, context: f.detail };
-  });
+  }
+  gs.questions = _tgpShuffle(trueFacts).slice(0, Math.min(10, trueFacts.length));
   gs.current = 0; gs.correct = 0;
   _tgpRenderFIBQuestion();
 }
@@ -51424,18 +51420,26 @@ function _tgpRenderFIBQuestion() {
   var gs = _tgp.gameState;
   if (gs.current >= gs.questions.length) { _tgpGameResult('fillin'); return; }
   var q = gs.questions[gs.current];
+  var pct = Math.round(gs.current / gs.questions.length * 100);
 
   _tgpShowGameArea(`
     <div style="padding:14px;">
-      <div style="font-size:0.78rem;font-weight:700;color:var(--text2);margin-bottom:10px;">Q ${gs.current+1} / ${gs.questions.length} — Sahi word chuno</div>
-      <div class="tgp-fib-sentence">${_tgpEsc(q.sentence).replace('___', '<span class="tgp-fib-blank" id="tgpFibBlank">___</span>')}</div>
-      <div style="font-size:0.72rem;color:var(--text2);margin-bottom:10px;">👇 Sahi option select karo:</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">Q ${gs.current+1} / ${gs.questions.length}</div>
+        <div style="font-size:0.72rem;color:var(--text2);">✏️ Fill in Blank</div>
+      </div>
+      <div style="height:4px;background:var(--bg2);border-radius:3px;margin-bottom:12px;overflow:hidden;">
+        <div style="height:100%;background:linear-gradient(90deg,#2e7d32,#43a047);width:${pct}%;border-radius:3px;transition:width 0.3s;"></div>
+      </div>
+      <div style="font-size:0.7rem;color:var(--accent);font-weight:700;margin-bottom:6px;padding:4px 8px;background:rgba(21,101,192,0.07);border-radius:6px;display:inline-block;">📌 ${_tgpEsc(q.term)}</div>
+      <div class="tgp-fib-sentence">${_tgpEsc(q.fibSentence).replace('___','<span class="tgp-fib-blank" id="tgpFibBlank">___</span>')}</div>
+      <div style="font-size:0.72rem;color:var(--text2);margin-bottom:10px;">👇 Sahi option chuno:</div>
       <div class="tgp-fib-opts" id="tgpFibOpts">
-        ${q.options.map(function(opt, i) {
+        ${q.fibOptions.map(function(opt, i){
           return `<button class="tgp-fib-opt" onclick="_tgpFibAnswer('${_tgpEscAttr(opt)}')" id="fibopt_${i}">${_tgpEsc(opt)}</button>`;
         }).join('')}
       </div>
-      <div style="margin-top:12px;font-size:0.72rem;color:var(--text2);min-height:32px;" id="tgpFibMsg"></div>
+      <div style="margin-top:10px;font-size:0.72rem;color:var(--text2);min-height:20px;" id="tgpFibMsg"></div>
     </div>
   `);
   document.getElementById('tgpNextBtn').style.display = 'none';
@@ -51444,19 +51448,16 @@ function _tgpRenderFIBQuestion() {
 function _tgpFibAnswer(selected) {
   var gs = _tgp.gameState;
   var q = gs.questions[gs.current];
-  var isCorrect = selected === q.answer;
+  var isCorrect = selected === q.fibAnswer;
 
-  // Disable all opts
-  var opts = document.querySelectorAll('.tgp-fib-opt');
-  opts.forEach(function(btn) {
+  document.querySelectorAll('.tgp-fib-opt').forEach(function(btn) {
     btn.disabled = true;
-    if (btn.textContent === q.answer) btn.classList.add('correct');
+    if (btn.textContent === q.fibAnswer) btn.classList.add('correct');
     else if (btn.textContent === selected && !isCorrect) btn.classList.add('wrong');
   });
 
-  // Fill blank
   var blank = document.getElementById('tgpFibBlank');
-  if (blank) { blank.textContent = q.answer; blank.style.color = '#2e7d32'; blank.style.borderColor = '#2e7d32'; }
+  if (blank) { blank.textContent = q.fibAnswer; blank.style.color = '#2e7d32'; blank.style.borderColor = '#2e7d32'; blank.style.background = 'rgba(46,125,50,0.1)'; }
 
   var msg = document.getElementById('tgpFibMsg');
   if (isCorrect) {
@@ -51464,379 +51465,222 @@ function _tgpFibAnswer(selected) {
     if (msg) msg.innerHTML = '<strong style="color:#2e7d32;">✅ Bilkul sahi! +10</strong>';
     _tgpShowScorePopup('+10 ✅');
   } else {
-    if (msg) msg.innerHTML = `<span style="color:#c62828;font-weight:700;">❌ Galat!</span> Sahi: <strong>${_tgpEsc(q.answer)}</strong>`;
+    if (msg) msg.innerHTML = `<span style="color:#c62828;font-weight:700;">❌ Galat!</span> Sahi: <strong style="color:#2e7d32;">${_tgpEsc(q.fibAnswer)}</strong>`;
+    _tgpTrackMiss(q.term);
   }
   _tgpUpdateScore();
+  _tgpShowInfoCard(q);
   gs.current++;
   document.getElementById('tgpNextBtn').style.display = 'block';
   document.getElementById('tgpNextBtn').textContent = gs.current >= gs.questions.length ? '📊 Result' : 'Agla →';
 }
 
-function _tgpNextFIBQuestion() {
-  _tgpRenderFIBQuestion();
-}
+function _tgpNextFIBQuestion() { _tgpRenderFIBQuestion(); }
 
 // ═══════════════════════════════════════════════════════
-// 🎯 GAME 4: FACT SHOOTER (True/False)
-// Sach ya jhooth — jaldi decide karo
+// 🔦 GAME 3: SPOTLIGHT QUIZ
+// Clues diye jaate hain — concept identify karo
+// MCQ with 4 options — concept clarity test
 // ═══════════════════════════════════════════════════════
-function _tgpStartTrueFalse() {
+function _tgpStartSpotlight() {
   var gs = _tgp.gameState;
-  gs.questions = _tgpShuffle(_tgp.facts).slice(0, 12);
+  var trueFacts = _tgp.facts.filter(function(f){ return f.isTrue !== false && f.term && f.detail; });
+  // Build spotlight questions: show part of detail as clue, ask for term
+  gs.questions = _tgpShuffle(trueFacts).slice(0, Math.min(10, trueFacts.length)).map(function(f, idx, arr) {
+    // Show detail as clue, ask what is the concept/term
+    var wrongTerms = _tgpShuffle(arr.filter(function(x){ return x !== f; })).slice(0, 3).map(function(x){ return x.term; });
+    var opts = _tgpShuffle([f.term].concat(wrongTerms));
+    return { clue: f.detail, correct: f.term, options: opts, fact: f };
+  });
   gs.current = 0; gs.correct = 0;
-  _tgpRenderTFQuestion();
+  _tgpRenderSpotlight();
 }
 
-function _tgpRenderTFQuestion() {
+function _tgpRenderSpotlight() {
   var gs = _tgp.gameState;
-  if (gs.current >= gs.questions.length) { _tgpGameResult('truefalse'); return; }
+  if (gs.current >= gs.questions.length) { _tgpGameResult('spotlight'); return; }
   var q = gs.questions[gs.current];
+  var pct = Math.round(gs.current / gs.questions.length * 100);
 
   _tgpShowGameArea(`
     <div style="padding:14px;">
-      <div style="display:flex;justify-content:space-between;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
         <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">Q ${gs.current+1} / ${gs.questions.length}</div>
-        <div style="font-size:0.78rem;font-weight:700;color:var(--accent);">⭐ ${_tgp.score}</div>
+        <div style="font-size:0.72rem;color:var(--purple);font-weight:700;">🔦 Spotlight</div>
       </div>
-      <div style="font-size:0.72rem;color:var(--text2);margin-bottom:8px;padding:6px 10px;background:rgba(106,27,154,0.07);border-radius:8px;">
-        🎯 Yeh fact sahi hai ya galat? Jaldi decide karo!
+      <div style="height:4px;background:var(--bg2);border-radius:3px;margin-bottom:12px;overflow:hidden;">
+        <div style="height:100%;background:linear-gradient(90deg,#6a1b9a,#8e24aa);width:${pct}%;border-radius:3px;transition:width 0.3s;"></div>
       </div>
-      <div class="tgp-fs-statement" id="tgpFsStatement">${_tgpEsc(q.detail)}</div>
-      <div class="tgp-fs-btns">
-        <button class="tgp-fs-true" onclick="_tgpTfAnswer(true)">✅ SAHI</button>
-        <button class="tgp-fs-false" onclick="_tgpTfAnswer(false)">❌ GALAT</button>
+      <div style="font-size:0.72rem;color:var(--text2);font-weight:700;margin-bottom:8px;text-align:center;">🔦 Yeh clue padho — phir batao yeh kaunsa concept hai?</div>
+      <div class="tgp-spot-clue">${_tgpEsc(q.clue)}</div>
+      <div style="font-size:0.78rem;font-weight:700;color:var(--text);margin-bottom:8px;">👇 Yeh kaunsa concept / term hai?</div>
+      <div id="tgpSpotOpts">
+        ${q.options.map(function(opt, i){
+          return `<button class="tgp-lq-option" onclick="_tgpSpotAnswer(${i})" id="spotopt_${i}">${_tgpEsc(opt)}</button>`;
+        }).join('')}
       </div>
-      <div id="tgpFsResult" style="display:none;" class="tgp-fs-result"></div>
-      <div style="margin-top:10px;font-size:0.7rem;color:var(--text2);text-align:center;opacity:0.7;">${_tgpEsc(q.term)}</div>
+      <div style="margin-top:8px;font-size:0.72rem;color:var(--text2);min-height:20px;" id="tgpSpotMsg"></div>
     </div>
   `);
   document.getElementById('tgpNextBtn').style.display = 'none';
 }
 
-function _tgpTfAnswer(userSaidTrue) {
+function _tgpSpotAnswer(idx) {
   var gs = _tgp.gameState;
   var q = gs.questions[gs.current];
-  var isCorrect = (userSaidTrue === q.isTrue);
+  var isCorrect = q.options[idx] === q.correct;
 
-  // Disable buttons
-  document.querySelectorAll('.tgp-fs-true, .tgp-fs-false').forEach(function(b){ b.disabled = true; b.style.opacity = '0.6'; });
+  q.options.forEach(function(opt, i) {
+    var btn = document.getElementById('spotopt_' + i);
+    if (!btn) return;
+    btn.disabled = true;
+    if (opt === q.correct) btn.classList.add('correct');
+    else if (i === idx && !isCorrect) btn.classList.add('wrong');
+  });
 
-  var result = document.getElementById('tgpFsResult');
-  if (result) {
-    result.style.display = 'block';
-    if (isCorrect) {
-      result.style.background = 'rgba(46,125,50,0.1)';
-      result.style.color = '#2e7d32';
-      result.style.border = '1px solid rgba(46,125,50,0.3)';
-      result.innerHTML = '✅ Sahi! Yeh fact ' + (q.isTrue ? 'SACH' : 'GALAT') + ' hai. +10';
-      _tgp.score += 10; gs.correct++;
-      _tgpShowScorePopup('+10 🎯');
-    } else {
-      result.style.background = 'rgba(198,40,40,0.07)';
-      result.style.color = '#c62828';
-      result.style.border = '1px solid rgba(198,40,40,0.2)';
-      result.innerHTML = '❌ Galat! Yeh fact asliyat mein ' + (q.isTrue ? 'SACH hai' : 'GALAT (trap) hai');
-    }
+  var msg = document.getElementById('tgpSpotMsg');
+  if (isCorrect) {
+    _tgp.score += 10; gs.correct++;
+    if (msg) msg.innerHTML = '<strong style="color:#2e7d32;">✅ Sahi! +10</strong>';
+    _tgpShowScorePopup('+10 🔦');
+  } else {
+    if (msg) msg.innerHTML = `<span style="color:#c62828;font-weight:700;">❌ Galat!</span> Sahi: <strong style="color:#6a1b9a;">${_tgpEsc(q.correct)}</strong>`;
+    _tgpTrackMiss(q.fact ? q.fact.term : '');
   }
   _tgpUpdateScore();
+  _tgpShowInfoCard(q.fact);
   gs.current++;
   document.getElementById('tgpNextBtn').style.display = 'block';
   document.getElementById('tgpNextBtn').textContent = gs.current >= gs.questions.length ? '📊 Result' : 'Agla →';
 }
 
-function _tgpNextTFQuestion() {
-  _tgpRenderTFQuestion();
-}
+function _tgpNextSpotlight() { _tgpRenderSpotlight(); }
 
 // ═══════════════════════════════════════════════════════
-// 📋 GAME 5: SORT SEQUENCE
-// Facts ko tap karke sahi sequence mein lagao
+// 🔥 GAME 4: RAPID FIRE
+// No timer — ek ek fact deeply — MCQ with context shown
+// After each answer full fact detail + exam note shown
 // ═══════════════════════════════════════════════════════
-function _tgpStartSequence() {
+function _tgpStartRapidFire() {
   var gs = _tgp.gameState;
-  var trueFacts = _tgp.facts.filter(function(f){ return f.isTrue; });
-  // Pick 5 facts and shuffle them — user has to put them in right/meaningful order
-  var selected = _tgpShuffle(trueFacts).slice(0, 5);
-  gs.original = selected.slice(); // correct order
-  gs.shuffled = _tgpShuffle(selected.slice());
-  gs.round = 0;
-  gs.correct = 0;
-  _tgpRenderSequence();
+  var trueFacts = _tgp.facts.filter(function(f){ return f.isTrue !== false && f.term && f.detail; });
+  // Mix Q style: some ask term (what is X?), some ask detail (X kab/kahan/kyun?)
+  gs.questions = _tgpShuffle(trueFacts).slice(0, Math.min(15, trueFacts.length)).map(function(f, idx, arr) {
+    var flip = idx % 2 === 0;
+    var correct = flip ? f.detail : f.term;
+    var wrongPool = _tgpShuffle(arr.filter(function(x){ return x !== f; })).slice(0, 3);
+    var wrongs = wrongPool.map(function(x){ return flip ? x.detail : x.term; });
+    var opts = _tgpShuffle([correct].concat(wrongs));
+    var question = flip
+      ? '❓ ' + f.term + ' — iska sahi description kya hai?'
+      : '🔍 Yeh description kaunse concept ki hai?\n"' + f.detail.substring(0, 100) + (f.detail.length > 100 ? '...' : '') + '"';
+    return { question: question, correct: correct, options: opts, fact: f };
+  });
+  gs.current = 0; gs.correct = 0;
+  _tgpRenderRapidFire();
 }
 
-function _tgpRenderSequence() {
+function _tgpRenderRapidFire() {
   var gs = _tgp.gameState;
-  if (gs.round >= 2) { _tgpGameResult('sequence'); return; }
-
-  var trueFacts = _tgp.facts.filter(function(f){ return f.isTrue; });
-  var selected = _tgpShuffle(trueFacts).slice(0, 5);
-  gs.original = selected.slice();
-  gs.userOrder = _tgpShuffle(selected.slice());
+  if (gs.current >= gs.questions.length) { _tgpGameResult('rapidfire'); return; }
+  var q = gs.questions[gs.current];
+  var pct = Math.round(gs.current / gs.questions.length * 100);
 
   _tgpShowGameArea(`
     <div style="padding:14px;">
-      <div style="font-size:0.78rem;font-weight:700;color:var(--text2);margin-bottom:6px;">Round ${gs.round+1}/2 — Facts ko yaad karo</div>
-      <div style="font-size:0.72rem;color:var(--text2);margin-bottom:10px;padding:6px 10px;background:rgba(0,105,92,0.07);border-radius:8px;">
-        📋 Niche ke facts ko padhke yaad karo — phir "Test Karo" button se test hoga!
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">Q ${gs.current+1} / ${gs.questions.length}</div>
+        <div style="font-size:0.72rem;color:#c62828;font-weight:700;">🔥 Rapid Fire</div>
       </div>
-      <div id="tgpSqList">
-        ${gs.original.map(function(f, i) {
-          return `<div class="tgp-sq-item" style="border-left:3px solid #1565c0;">
-            <span style="background:#1565c0;color:#fff;border-radius:6px;padding:2px 7px;font-size:0.72rem;font-weight:800;flex-shrink:0;">${i+1}</span>
-            <div><div style="font-size:0.72rem;font-weight:800;color:var(--text2);">${_tgpEsc(f.term)}</div><div style="font-size:0.78rem;color:var(--text);margin-top:2px;">${_tgpEsc(f.detail)}</div></div>
-          </div>`;
+      <div style="height:4px;background:var(--bg2);border-radius:3px;margin-bottom:12px;overflow:hidden;">
+        <div style="height:100%;background:linear-gradient(90deg,#c62828,#e65100);width:${pct}%;border-radius:3px;transition:width 0.3s;"></div>
+      </div>
+      <div class="tgp-rf-question">${_tgpEsc(q.question)}</div>
+      <div id="tgpRfOpts">
+        ${q.options.map(function(opt, i){
+          return `<button class="tgp-rf-opt" onclick="_tgpRfAnswer(${i})" id="rfopt_${i}">${_tgpEsc(opt)}</button>`;
         }).join('')}
       </div>
-      <button onclick="_tgpStartSeqTest()" style="width:100%;margin-top:14px;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#00695c,#00897b);color:#fff;font-size:0.85rem;font-weight:800;cursor:pointer;font-family:inherit;">📝 Test Karo — Order Sahi Karo</button>
+      <div style="margin-top:8px;font-size:0.72rem;color:var(--text2);min-height:20px;" id="tgpRfMsg"></div>
     </div>
   `);
   document.getElementById('tgpNextBtn').style.display = 'none';
 }
 
-function _tgpStartSeqTest() {
+function _tgpRfAnswer(idx) {
   var gs = _tgp.gameState;
-  var shuffled = _tgpShuffle(gs.original.slice());
-  gs.testOrder = shuffled;
-  gs.selected = [];
+  var q = gs.questions[gs.current];
+  var isCorrect = q.options[idx] === q.correct;
 
-  var gameArea = document.getElementById('tgpGameArea');
-  gameArea.innerHTML = `
-    <div style="padding:14px;">
-      <div style="font-size:0.78rem;font-weight:700;color:var(--text2);margin-bottom:6px;">Sahi order mein tap karo (1 → 2 → 3...)</div>
-      <div style="font-size:0.72rem;color:var(--text2);margin-bottom:10px;padding:6px 10px;background:rgba(230,81,0,0.07);border-radius:8px;">
-        ✅ Jo fact pehle aata hai use pehle tap karo
-      </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;" id="tgpSqSelected">
-        ${[0,1,2,3,4].map(function(i){ return `<div style="width:28px;height:28px;border-radius:50%;background:var(--bg2);border:1.5px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:700;color:var(--text2);" id="sqslot_${i}">${i+1}</div>`; }).join('')}
-      </div>
-      <div id="tgpSqOpts">
-        ${shuffled.map(function(f, i) {
-          return `<div class="tgp-sq-item" id="sqopt_${i}" onclick="_tgpSeqSelect(${i})" style="cursor:pointer;">
-            <span class="tgp-sq-handle">☰</span>
-            <div><div style="font-size:0.72rem;font-weight:800;color:var(--accent);">${_tgpEsc(f.term)}</div><div style="font-size:0.75rem;color:var(--text2);margin-top:2px;">${_tgpEsc(f.detail.substring(0,60))}...</div></div>
-          </div>`;
-        }).join('')}
-      </div>
-      <div id="tgpSqMsg" style="margin-top:10px;font-size:0.78rem;min-height:28px;text-align:center;"></div>
-    </div>
-  `;
-  document.getElementById('tgpNextBtn').style.display = 'none';
-}
-
-function _tgpSeqSelect(idx) {
-  var gs = _tgp.gameState;
-  if (gs.selected.includes(idx)) return;
-  gs.selected.push(idx);
-
-  var el = document.getElementById('sqopt_' + idx);
-  if (el) { el.style.opacity = '0.4'; el.style.pointerEvents = 'none'; }
-
-  var slotIdx = gs.selected.length - 1;
-  var slot = document.getElementById('sqslot_' + slotIdx);
-  var fact = gs.testOrder[idx];
-  if (slot && fact) {
-    slot.textContent = slotIdx + 1;
-    slot.style.background = 'rgba(21,101,192,0.15)';
-    slot.style.borderColor = '#1565c0';
-    slot.style.color = '#1565c0';
-    slot.title = fact.term;
-  }
-
-  if (gs.selected.length === gs.original.length) {
-    // Check order
-    var correctCount = 0;
-    gs.selected.forEach(function(si, pos) {
-      if (gs.testOrder[si] === gs.original[pos]) correctCount++;
-    });
-    var pts = correctCount * 5;
-    _tgp.score += pts; gs.correct += correctCount;
-    _tgpUpdateScore();
-    var msg = document.getElementById('tgpSqMsg');
-    if (msg) msg.innerHTML = correctCount === gs.original.length
-      ? `<strong style="color:#2e7d32;">🏆 Perfect order! +${pts}</strong>`
-      : `<span style="color:#e65100;font-weight:700;">${correctCount}/5 sahi position pe the. +${pts}</span>`;
-    if (correctCount === gs.original.length) _tgpShowScorePopup('🏆 PERFECT!');
-    gs.round++;
-    document.getElementById('tgpNextBtn').style.display = 'block';
-    document.getElementById('tgpNextBtn').textContent = gs.round >= 2 ? '📊 Result' : 'Agla Round →';
-  }
-}
-
-function _tgpNextSequence() {
-  _tgpRenderSequence();
-}
-
-// ═══════════════════════════════════════════════════════
-// 🏆 GAME 6: BOSS LEVEL
-// 3 games ka combination — 15 mixed questions
-// ═══════════════════════════════════════════════════════
-function _tgpStartBoss() {
-  var gs = _tgp.gameState;
-  var trueFacts = _tgp.facts.filter(function(f){ return f.isTrue; });
-  // Mix 3 game types
-  gs.bossTasks = [];
-  // 5 True/False
-  _tgpShuffle(_tgp.facts).slice(0,5).forEach(function(f){ gs.bossTasks.push({ type:'tf', fact: f }); });
-  // 5 MCQ (lightning style)
-  _tgpShuffle(trueFacts).slice(0,5).forEach(function(f){
-    var wrong = _tgpShuffle(trueFacts.filter(function(x){return x!==f;})).slice(0,3).map(function(x){return x.detail;});
-    gs.bossTasks.push({ type:'mcq', fact: f, options: _tgpShuffle([f.detail].concat(wrong)) });
+  q.options.forEach(function(opt, i) {
+    var btn = document.getElementById('rfopt_' + i);
+    if (!btn) return;
+    btn.disabled = true;
+    if (opt === q.correct) btn.classList.add('correct');
+    else if (i === idx && !isCorrect) btn.classList.add('wrong');
   });
-  // 5 Fill in blank
-  _tgpShuffle(trueFacts).slice(0,5).forEach(function(f){
-    var termWords = f.term.split(/\s+/).filter(function(w){return w.length>3;});
-    var blankWord = termWords.length ? termWords[termWords.length-1] : f.term.split(/\s+/).pop();
-    var yearMatch = f.detail.match(/\d{3,4}/);
-    if (yearMatch) blankWord = yearMatch[0];
-    var sentence = yearMatch ? f.detail.replace(yearMatch[0],'___') : f.detail.replace(new RegExp(blankWord.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'),'___');
-    if (!sentence.includes('___')) sentence = f.term + ': ___';
-    var wrongs = _tgpShuffle(trueFacts.filter(function(x){return x!==f;})).slice(0,3).map(function(x){
-      var xw = x.term.split(/\s+/).filter(function(w){return w.length>3;});
-      return xw.length ? xw[xw.length-1] : x.term.split(/\s+/).pop();
-    });
-    gs.bossTasks.push({ type:'fib', fact: f, sentence: sentence, answer: blankWord, options: _tgpShuffle([blankWord].concat(wrongs)) });
-  });
-  gs.bossTasks = _tgpShuffle(gs.bossTasks);
-  gs.bossIdx = 0; gs.bossCorrect = 0;
-  _tgpRenderBossTask();
-}
 
-function _tgpRenderBossTask() {
-  var gs = _tgp.gameState;
-  if (gs.bossIdx >= gs.bossTasks.length) { _tgpGameResult('boss'); return; }
-  var task = gs.bossTasks[gs.bossIdx];
-  var pct = Math.round((gs.bossIdx / gs.bossTasks.length) * 100);
-
-  var header = `<div style="padding:10px 14px 0;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-      <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">BOSS Q${gs.bossIdx+1}/${gs.bossTasks.length}</div>
-      <div style="font-size:0.78rem;font-weight:800;color:#c62828;">🏆 Boss Level</div>
-    </div>
-    <div style="height:4px;background:var(--bg2);border-radius:3px;margin-bottom:10px;">
-      <div style="height:100%;background:linear-gradient(90deg,#c62828,#f9a825);width:${pct}%;border-radius:3px;transition:width 0.3s;"></div>
-    </div>
-  </div>`;
-
-  var body = '';
-  if (task.type === 'tf') {
-    body = `<div style="padding:0 14px 14px;">
-      <div style="font-size:0.65rem;color:var(--purple);font-weight:800;margin-bottom:6px;">🎯 SACH ya JHOOTH?</div>
-      <div class="tgp-fs-statement">${_tgpEsc(task.fact.detail)}</div>
-      <div style="font-size:0.65rem;color:var(--text2);margin-bottom:8px;text-align:center;opacity:0.7;">${_tgpEsc(task.fact.term)}</div>
-      <div class="tgp-fs-btns">
-        <button class="tgp-fs-true" onclick="_tgpBossTfAnswer(true)">✅ SAHI</button>
-        <button class="tgp-fs-false" onclick="_tgpBossTfAnswer(false)">❌ GALAT</button>
-      </div>
-      <div id="tgpBossMsg" style="margin-top:10px;font-size:0.78rem;text-align:center;min-height:24px;"></div>
-    </div>`;
-  } else if (task.type === 'mcq') {
-    body = `<div style="padding:0 14px 14px;">
-      <div style="font-size:0.65rem;color:#e65100;font-weight:800;margin-bottom:6px;">⚡ QUICK MCQ</div>
-      <div class="tgp-lq-question">❓ ${_tgpEsc(task.fact.term)}</div>
-      <div id="tgpBossOpts">
-        ${task.options.map(function(opt,i){ return `<button class="tgp-lq-option" onclick="_tgpBossMcqAnswer(${i})" id="bossopt_${i}">${_tgpEsc(opt)}</button>`; }).join('')}
-      </div>
-      <div id="tgpBossMsg" style="margin-top:8px;font-size:0.78rem;text-align:center;min-height:24px;"></div>
-    </div>`;
+  var msg = document.getElementById('tgpRfMsg');
+  if (isCorrect) {
+    _tgp.score += 10; gs.correct++;
+    if (msg) msg.innerHTML = '<strong style="color:#2e7d32;">✅ Sahi! +10</strong>';
+    _tgpShowScorePopup('+10 🔥');
   } else {
-    body = `<div style="padding:0 14px 14px;">
-      <div style="font-size:0.65rem;color:#2e7d32;font-weight:800;margin-bottom:6px;">✏️ FILL IN BLANK</div>
-      <div class="tgp-fib-sentence">${_tgpEsc(task.sentence).replace('___','<span class="tgp-fib-blank" id="bossFibBlank">___</span>')}</div>
-      <div class="tgp-fib-opts" id="tgpBossFibOpts">
-        ${task.options.map(function(opt,i){ return `<button class="tgp-fib-opt" onclick="_tgpBossFibAnswer('${_tgpEscAttr(opt)}')" id="bossfib_${i}">${_tgpEsc(opt)}</button>`; }).join('')}
-      </div>
-      <div id="tgpBossMsg" style="margin-top:10px;font-size:0.78rem;text-align:center;min-height:24px;"></div>
-    </div>`;
+    if (msg) msg.innerHTML = `<span style="color:#c62828;font-weight:700;">❌ Galat!</span> Sahi: <strong style="color:#c62828;">${_tgpEsc(q.correct.substring(0,60))}${q.correct.length>60?'...':''}</strong>`;
+    _tgpTrackMiss(q.fact ? q.fact.term : '');
   }
-
-  _tgpShowGameArea(header + body);
-  document.getElementById('tgpNextBtn').style.display = 'none';
+  _tgpUpdateScore();
+  _tgpShowInfoCard(q.fact);
+  gs.current++;
+  document.getElementById('tgpNextBtn').style.display = 'block';
+  document.getElementById('tgpNextBtn').textContent = gs.current >= gs.questions.length ? '📊 Result' : 'Agla →';
 }
 
-function _tgpBossTfAnswer(userTrue) {
-  var gs = _tgp.gameState;
-  var task = gs.bossTasks[gs.bossIdx];
-  var ok = (userTrue === task.fact.isTrue);
-  document.querySelectorAll('.tgp-fs-true,.tgp-fs-false').forEach(function(b){b.disabled=true;b.style.opacity='0.6';});
-  var msg = document.getElementById('tgpBossMsg');
-  if (ok) { _tgp.score+=12; gs.bossCorrect++; if(msg) msg.innerHTML='<strong style="color:#2e7d32">✅ +12</strong>'; _tgpShowScorePopup('+12'); }
-  else { if(msg) msg.innerHTML='<span style="color:#c62828;font-weight:700">❌ Yeh ' + (task.fact.isTrue?'SACH':'JHOOTH') + ' tha</span>'; }
-  _tgpUpdateScore(); gs.bossIdx++;
-  document.getElementById('tgpNextBtn').style.display='block';
-  document.getElementById('tgpNextBtn').textContent = gs.bossIdx>=gs.bossTasks.length?'🏆 Boss Result':'Agla →';
-}
-
-function _tgpBossMcqAnswer(idx) {
-  var gs = _tgp.gameState;
-  var task = gs.bossTasks[gs.bossIdx];
-  var ok = task.options[idx] === task.fact.detail;
-  task.options.forEach(function(opt,i){
-    var b=document.getElementById('bossopt_'+i); if(!b)return;
-    b.disabled=true;
-    if(opt===task.fact.detail) b.classList.add('correct');
-    else if(i===idx&&!ok) b.classList.add('wrong');
-  });
-  var msg=document.getElementById('tgpBossMsg');
-  if(ok){_tgp.score+=12;gs.bossCorrect++;if(msg)msg.innerHTML='<strong style="color:#2e7d32">✅ +12</strong>';_tgpShowScorePopup('+12');}
-  else{if(msg)msg.innerHTML='<span style="color:#c62828;font-weight:700">❌ Galat</span>';}
-  _tgpUpdateScore(); gs.bossIdx++;
-  document.getElementById('tgpNextBtn').style.display='block';
-  document.getElementById('tgpNextBtn').textContent=gs.bossIdx>=gs.bossTasks.length?'🏆 Boss Result':'Agla →';
-}
-
-function _tgpBossFibAnswer(selected) {
-  var gs = _tgp.gameState;
-  var task = gs.bossTasks[gs.bossIdx];
-  var ok = selected === task.answer;
-  document.querySelectorAll('.tgp-fib-opt').forEach(function(b){
-    b.disabled=true;
-    if(b.textContent===task.answer) b.classList.add('correct');
-    else if(b.textContent===selected&&!ok) b.classList.add('wrong');
-  });
-  var blank=document.getElementById('bossFibBlank');
-  if(blank){blank.textContent=task.answer;blank.style.color='#2e7d32';blank.style.borderColor='#2e7d32';}
-  var msg=document.getElementById('tgpBossMsg');
-  if(ok){_tgp.score+=12;gs.bossCorrect++;if(msg)msg.innerHTML='<strong style="color:#2e7d32">✅ +12</strong>';_tgpShowScorePopup('+12');}
-  else{if(msg)msg.innerHTML='<span style="color:#c62828;font-weight:700">❌ Sahi: '+_tgpEsc(task.answer)+'</span>';}
-  _tgpUpdateScore(); gs.bossIdx++;
-  document.getElementById('tgpNextBtn').style.display='block';
-  document.getElementById('tgpNextBtn').textContent=gs.bossIdx>=gs.bossTasks.length?'🏆 Boss Result':'Agla →';
-}
-
-function _tgpBossNext() {
-  _tgpRenderBossTask();
-}
+function _tgpNextRapidFire() { _tgpRenderRapidFire(); }
 
 // ═══════════════════════════════════════════════════════
 // 🏁 RESULT SCREEN
 // ═══════════════════════════════════════════════════════
 function _tgpGameResult(gameId) {
   var score = _tgp.score;
-  var emoji = score >= 100 ? '🏆' : score >= 60 ? '🥈' : score >= 30 ? '🥉' : '😊';
-  var msg = score >= 100 ? 'Zabardast! Aap toh topper ho! Sab yaad hai!' :
-            score >= 60  ? 'Bahut accha! Thodi aur practice karo.' :
-            score >= 30  ? 'Theek hai! Dobara khelo — aur better karoge.' :
-            'Koi baat nahi! Notes padho aur dubara try karo! 💪';
-
-  var gameNames = { memory:'Memory Match', lightning:'Lightning Quiz', fillin:'Fill in Blank', truefalse:'Fact Shooter', boss:'Boss Level', sequence:'Sort Sequence' };
+  var total = _tgp.gameState.questions ? _tgp.gameState.questions.length : 0;
+  var correct = _tgp.gameState.correct || 0;
+  var pct = total > 0 ? Math.round(correct / total * 100) : 0;
+  var emoji = pct >= 90 ? '🏆' : pct >= 70 ? '🥈' : pct >= 50 ? '🥉' : '😊';
+  var msg = pct >= 90 ? 'Zabardast! Aap toh topper ho!' :
+            pct >= 70 ? 'Bahut accha! Thodi aur practice karo.' :
+            pct >= 50 ? 'Theek hai! Dobara khelo — aur better karoge.' :
+            'Koi baat nahi! Notes padho aur Regenerate se missed facts practice karo 💪';
+  var gameNames = { lightning:'⚡ Lightning Quiz', fillin:'✏️ Fill in Blank', spotlight:'🔦 Spotlight Quiz', rapidfire:'🔥 Rapid Fire' };
 
   _tgpShowGameArea(`
     <div class="tgp-result">
       <span class="tgp-result-emoji">${emoji}</span>
       <div style="font-size:0.85rem;font-weight:700;color:var(--text2);margin-bottom:6px;">${gameNames[gameId] || gameId} Complete!</div>
       <div class="tgp-result-score">⭐ ${score} Points</div>
+      <div style="font-size:1rem;font-weight:800;color:var(--text);margin-top:4px;">${correct}/${total} sahi (${pct}%)</div>
       <div class="tgp-result-msg">${msg}</div>
 
-      <div style="margin:16px 0;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:12px;text-align:center;">
-          <div style="font-size:1.4rem;font-weight:900;color:var(--accent);">${_tgp.facts.length}</div>
-          <div style="font-size:0.68rem;color:var(--text2);font-weight:600;">Total Facts</div>
+      <div style="margin:16px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+        <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:10px;text-align:center;">
+          <div style="font-size:1.3rem;font-weight:900;color:var(--accent);">${total}</div>
+          <div style="font-size:0.62rem;color:var(--text2);font-weight:600;">Questions</div>
         </div>
-        <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:12px;text-align:center;">
-          <div style="font-size:1.4rem;font-weight:900;color:#2e7d32;">${score}</div>
-          <div style="font-size:0.68rem;color:var(--text2);font-weight:600;">Score</div>
+        <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:10px;text-align:center;">
+          <div style="font-size:1.3rem;font-weight:900;color:#2e7d32;">${correct}</div>
+          <div style="font-size:0.62rem;color:var(--text2);font-weight:600;">Sahi</div>
+        </div>
+        <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:10px;text-align:center;">
+          <div style="font-size:1.3rem;font-weight:900;color:#c62828;">${total - correct}</div>
+          <div style="font-size:0.62rem;color:var(--text2);font-weight:600;">Galat</div>
         </div>
       </div>
+
+      ${(_tgp._missedTerms && _tgp._missedTerms.length > 0) ? `
+        <div style="margin-bottom:14px;padding:10px 12px;background:rgba(230,81,0,0.07);border:1px solid rgba(230,81,0,0.2);border-radius:10px;font-size:0.72rem;color:var(--text2);text-align:left;">
+          <div style="font-weight:700;color:#e65100;margin-bottom:4px;">📌 In topics par focus karo:</div>
+          ${(_tgp._missedTerms || []).slice(0,5).map(function(t){ return '<div style="margin-top:2px;">• ' + _tgpEsc(t) + '</div>'; }).join('')}
+        </div>` : ''}
 
       <button class="tgp-replay-btn" onclick="tgpStartGame('${gameId}')">🔄 Dobara Khelo</button>
       <br><br>
@@ -51847,7 +51691,7 @@ function _tgpGameResult(gameId) {
   if (navigator.vibrate) navigator.vibrate([50, 30, 50, 30, 100]);
 }
 
-// ── Score popup ──────────────────────────────────────────
+// ── Score popup ───────────────────────────────────────
 function _tgpShowScorePopup(text) {
   var old = document.getElementById('tgpScorePopup');
   if (old) old.remove();
@@ -51855,12 +51699,11 @@ function _tgpShowScorePopup(text) {
   div.id = 'tgpScorePopup';
   div.className = 'tgp-score-popup';
   div.textContent = text;
-  div.style.cssText = 'position:fixed;top:45%;left:50%;transform:translate(-50%,-50%);background:linear-gradient(135deg,#1565c0,#6a1b9a);color:#fff;border-radius:16px;padding:14px 26px;font-size:1.1rem;font-weight:900;z-index:30000;animation:tgpPop 0.35s ease;pointer-events:none;box-shadow:0 8px 32px rgba(0,0,0,0.35);';
   document.body.appendChild(div);
   setTimeout(function(){ if(div.parentNode) div.remove(); }, 900);
 }
 
-// ── Escape helpers ───────────────────────────────────────
+// ── Escape helpers ─────────────────────────────────────
 function _tgpEsc(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
