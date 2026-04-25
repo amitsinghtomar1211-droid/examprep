@@ -46879,104 +46879,302 @@ var _rfImgState = { x: 0, y: 100, w: 260, dragging: false, resizing: false, star
 
 function _openReadingFloatingImg(src, idx, total) {
   var old = document.getElementById('_rfFloatingImg');
-  if(old) {
-    // Same image — toggle close
-    if(old._src === src) { old.remove(); return; }
-    old.remove();
-  }
+  if(old) { if(old._src === src) { old.remove(); return; } old.remove(); }
 
-  var vw = window.innerWidth;
-  var vh = window.innerHeight;
-  var initW = Math.min(260, vw - 20);
+  var vw = window.innerWidth, vh = window.innerHeight;
+  var initW = Math.min(320, vw - 16);
+  var initH = Math.min(340, vh * 0.55);
   var initX = Math.round((vw - initW) / 2);
-  var initY = Math.round(vh * 0.15);
+  var initY = Math.round(vh * 0.12);
 
+  // ── STATE ──
+  var S = {
+    // box position/size
+    bx: initX, by: initY, bw: initW,
+    // image pan+zoom state
+    scale: 1, panX: 0, panY: 0,
+    minScale: 0.5, maxScale: 8,
+    // box drag
+    boxDrag: false, bdox: 0, bdoy: 0,
+    // box resize
+    boxResize: false, rsox: 0, rsow: 0, rsoh: 0,
+    // pinch
+    pinching: false, p0dist: 0, p0scale: 1, p0cx: 0, p0cy: 0, p0px: 0, p0py: 0,
+    // pan inside image
+    imgPan: false, ipox: 0, ipoy: 0, ipPanX: 0, ipPanY: 0,
+    // double-tap
+    lastTap: 0, tapX: 0, tapY: 0
+  };
+
+  // ── OUTER BOX ──
   var box = document.createElement('div');
-  box.id = '_rfFloatingImg';
-  box._src = src;
+  box.id = '_rfFloatingImg'; box._src = src;
   box.style.cssText = [
-    'position:fixed',
-    'left:' + initX + 'px',
-    'top:' + initY + 'px',
-    'width:' + initW + 'px',
-    'z-index:9999998',
-    'border-radius:14px',
-    'overflow:hidden',
-    'box-shadow:0 8px 40px rgba(0,0,0,0.6)',
-    'border:2px solid rgba(255,160,0,0.7)',
-    'background:#1a1a2e',
-    'touch-action:none',
-    'user-select:none',
-    '-webkit-user-select:none'
+    'position:fixed','left:'+initX+'px','top:'+initY+'px',
+    'width:'+initW+'px','height:'+initH+'px',
+    'z-index:9999998','border-radius:14px','overflow:hidden',
+    'box-shadow:0 12px 48px rgba(0,0,0,0.7)',
+    'border:2px solid rgba(255,160,0,0.8)',
+    'background:#0a0a14','touch-action:none',
+    'user-select:none','-webkit-user-select:none',
+    'display:flex','flex-direction:column'
   ].join(';');
 
-  // Header (drag handle)
+  // ── HEADER (box drag handle) ──
   var hdr = document.createElement('div');
-  hdr.style.cssText = 'background:rgba(21,34,56,0.97);padding:6px 10px;display:flex;align-items:center;justify-content:space-between;cursor:grab;';
+  hdr.style.cssText = 'background:rgba(15,25,50,0.98);padding:5px 8px;display:flex;align-items:center;gap:6px;cursor:grab;flex-shrink:0;border-bottom:1px solid rgba(255,160,0,0.25);';
+
+  var dragIcon = document.createElement('span');
+  dragIcon.textContent = '⠿';
+  dragIcon.style.cssText = 'color:rgba(255,160,0,0.6);font-size:1rem;flex-shrink:0;';
+
   var hdrL = document.createElement('span');
-  hdrL.style.cssText = 'color:rgba(255,160,0,0.9);font-size:0.72rem;font-weight:700;font-family:\'Noto Sans Devanagari\',sans-serif;';
-  hdrL.textContent = '🖼 Image ' + (idx+1) + '/' + total + '  (drag karo)';
+  hdrL.style.cssText = 'color:rgba(255,200,80,0.9);font-size:0.7rem;font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+  hdrL.textContent = '🖼 ' + (idx+1) + '/' + total;
+
+  // zoom level indicator
+  var zoomLbl = document.createElement('span');
+  zoomLbl.style.cssText = 'color:rgba(255,255,255,0.5);font-size:0.65rem;font-family:monospace;flex-shrink:0;min-width:34px;text-align:right;';
+  zoomLbl.textContent = '1×';
+
+  // Reset button
+  var resetBtn = document.createElement('button');
+  resetBtn.title = 'Zoom reset (1x)';
+  resetBtn.textContent = '⊙';
+  resetBtn.style.cssText = 'background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:#fff;width:26px;height:26px;border-radius:6px;font-size:0.85rem;cursor:pointer;-webkit-tap-highlight-color:transparent;flex-shrink:0;display:flex;align-items:center;justify-content:center;';
+
   var closeBtn = document.createElement('button');
   closeBtn.textContent = '✕';
-  closeBtn.style.cssText = 'background:rgba(198,40,40,0.7);border:none;color:#fff;width:24px;height:24px;border-radius:50%;font-size:0.75rem;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;flex-shrink:0;';
+  closeBtn.style.cssText = 'background:rgba(198,40,40,0.8);border:none;color:#fff;width:26px;height:26px;border-radius:50%;font-size:0.8rem;cursor:pointer;-webkit-tap-highlight-color:transparent;flex-shrink:0;display:flex;align-items:center;justify-content:center;';
   closeBtn.onclick = function(e) { e.stopPropagation(); box.remove(); };
-  hdr.appendChild(hdrL);
-  hdr.appendChild(closeBtn);
 
-  // Image
+  hdr.appendChild(dragIcon); hdr.appendChild(hdrL);
+  hdr.appendChild(zoomLbl); hdr.appendChild(resetBtn); hdr.appendChild(closeBtn);
+
+  // ── ZOOM CONTROLS BAR ──
+  var zbar = document.createElement('div');
+  zbar.style.cssText = 'background:rgba(10,15,35,0.95);display:flex;align-items:center;justify-content:center;gap:6px;padding:4px 8px;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,0.07);';
+
+  function mkZBtn(label, title, cb) {
+    var b = document.createElement('button');
+    b.textContent = label; b.title = title;
+    b.style.cssText = 'background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.18);color:#fff;min-width:34px;height:30px;border-radius:8px;font-size:0.8rem;cursor:pointer;-webkit-tap-highlight-color:transparent;padding:0 6px;font-weight:700;';
+    b.addEventListener('pointerdown', function(e){ e.stopPropagation(); cb(); });
+    return b;
+  }
+
+  var zoomInBtn  = mkZBtn('＋','Zoom In (2×)',  function(){ applyZoom(S.scale * 1.5, null, null); });
+  var zoomOutBtn = mkZBtn('－','Zoom Out',       function(){ applyZoom(S.scale / 1.5, null, null); });
+  var zoom1Btn   = mkZBtn('1×','Original size',  function(){ applyZoom(1, 0, 0); });
+  var zoom2Btn   = mkZBtn('2×','2× zoom',        function(){ applyZoom(2, null, null); });
+  var zoom4Btn   = mkZBtn('4×','4× zoom',        function(){ applyZoom(4, null, null); });
+
+  // hint text
+  var hintTxt = document.createElement('span');
+  hintTxt.style.cssText = 'color:rgba(255,255,255,0.3);font-size:0.58rem;margin-left:4px;white-space:nowrap;';
+  hintTxt.textContent = 'pinch / double-tap';
+
+  zbar.appendChild(zoomOutBtn); zbar.appendChild(zoomInBtn);
+  zbar.appendChild(zoom1Btn);   zbar.appendChild(zoom2Btn); zbar.appendChild(zoom4Btn);
+  zbar.appendChild(hintTxt);
+
+  // ── IMAGE VIEWPORT (clip area) ──
+  var viewport = document.createElement('div');
+  viewport.style.cssText = 'flex:1;overflow:hidden;position:relative;background:#000;touch-action:none;cursor:grab;';
+
   var imgEl = document.createElement('img');
-  imgEl.src = src;
-  imgEl.draggable = false;
-  imgEl.style.cssText = 'width:100%;display:block;max-height:70vh;object-fit:contain;background:#000;';
+  imgEl.src = src; imgEl.draggable = false;
+  imgEl.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;transform-origin:0 0;will-change:transform;pointer-events:none;';
 
-  // Resize handle (bottom-right corner)
-  var resizeHandle = document.createElement('div');
-  resizeHandle.style.cssText = 'position:absolute;bottom:0;right:0;width:28px;height:28px;background:rgba(255,160,0,0.7);cursor:nwse-resize;border-radius:0 0 12px 0;display:flex;align-items:center;justify-content:center;font-size:0.75rem;';
-  resizeHandle.textContent = '↔';
-  resizeHandle.title = 'Drag karke bada/chhota karo';
+  viewport.appendChild(imgEl);
+
+  // ── RESIZE HANDLE (bottom-right) ──
+  var resizeH = document.createElement('div');
+  resizeH.style.cssText = 'position:absolute;bottom:0;right:0;width:32px;height:32px;z-index:10;cursor:nwse-resize;display:flex;align-items:flex-end;justify-content:flex-end;padding:4px;';
+  resizeH.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="rgba(255,160,0,0.8)"><path d="M14 2L2 14M8 2L2 8M14 8L8 14"/><path stroke="rgba(255,160,0,0.8)" stroke-width="2" stroke-linecap="round" d="M14 2L2 14M9 2L2 9M14 9L9 14"/></svg>';
 
   box.appendChild(hdr);
-  box.appendChild(imgEl);
-  box.style.position = 'fixed'; // ensure
-  box.appendChild(resizeHandle);
+  box.appendChild(zbar);
+  box.appendChild(viewport);
+  box.appendChild(resizeH);
   document.body.appendChild(box);
 
-  // ── DRAG logic (pointer events on header) ──
-  var _drag = { on: false, ox: 0, oy: 0 };
+  // ── CORE: apply zoom+pan to image ──
+  function clampPan(scale, px, py) {
+    var vw2 = viewport.clientWidth, vh2 = viewport.clientHeight;
+    // Image displayed size = vw2 × vh2 (object-fit:contain uses the viewport)
+    // With transform scale, image canvas grows. Clamp so user can't pan into void.
+    var maxPanX = Math.max(0, vw2 * (scale - 1));
+    var maxPanY = Math.max(0, vh2 * (scale - 1));
+    px = Math.max(-maxPanX, Math.min(0, px));
+    py = Math.max(-maxPanY, Math.min(0, py));
+    return { px: px, py: py };
+  }
+
+  function applyTransform(sc, px, py) {
+    var c = clampPan(sc, px, py);
+    S.scale = sc; S.panX = c.px; S.panY = c.py;
+    imgEl.style.transform = 'scale(' + sc + ') translate(' + (c.px/sc) + 'px,' + (c.py/sc) + 'px)';
+    zoomLbl.textContent = (sc < 10 ? sc.toFixed(sc < 2 ? 1 : 0) : Math.round(sc)) + '×';
+  }
+
+  // Zoom toward a specific point in viewport coords (cx, cy)
+  function applyZoom(newScale, cx, cy) {
+    newScale = Math.max(S.minScale, Math.min(S.maxScale, newScale));
+    if(cx === null || cx === undefined) {
+      // zoom toward center
+      cx = viewport.clientWidth / 2;
+      cy = viewport.clientHeight / 2;
+    }
+    // Point under cursor in image-space before zoom
+    var imgSpX = (cx - S.panX) / S.scale;
+    var imgSpY = (cy - S.panY) / S.scale;
+    // After zoom, keep that point under cursor
+    var newPanX = cx - imgSpX * newScale;
+    var newPanY = cy - imgSpY * newScale;
+    applyTransform(newScale, newPanX, newPanY);
+  }
+
+  resetBtn.addEventListener('pointerdown', function(e) {
+    e.stopPropagation();
+    applyTransform(1, 0, 0);
+  });
+
+  applyTransform(1, 0, 0);
+
+  // ── BOX DRAG (header) ──
   hdr.addEventListener('pointerdown', function(e) {
-    if(e.target === closeBtn) return;
-    _drag.on = true;
-    _drag.ox = e.clientX - box.getBoundingClientRect().left;
-    _drag.oy = e.clientY - box.getBoundingClientRect().top;
+    if(e.target === closeBtn || e.target === resetBtn) return;
+    S.boxDrag = true;
+    var r = box.getBoundingClientRect();
+    S.bdox = e.clientX - r.left; S.bdoy = e.clientY - r.top;
     hdr.style.cursor = 'grabbing';
     hdr.setPointerCapture(e.pointerId);
-  }, { passive: true });
+  });
   hdr.addEventListener('pointermove', function(e) {
-    if(!_drag.on) return;
-    var nx = e.clientX - _drag.ox;
-    var ny = e.clientY - _drag.oy;
-    nx = Math.max(0, Math.min(window.innerWidth - box.offsetWidth, nx));
-    ny = Math.max(0, Math.min(window.innerHeight - 60, ny));
-    box.style.left = nx + 'px';
-    box.style.top = ny + 'px';
-  }, { passive: true });
-  hdr.addEventListener('pointerup', function() { _drag.on = false; hdr.style.cursor = 'grab'; }, { passive: true });
+    if(!S.boxDrag) return;
+    var nx = Math.max(0, Math.min(window.innerWidth - box.offsetWidth, e.clientX - S.bdox));
+    var ny = Math.max(0, Math.min(window.innerHeight - 60, e.clientY - S.bdoy));
+    box.style.left = nx+'px'; box.style.top = ny+'px';
+  });
+  hdr.addEventListener('pointerup', function() { S.boxDrag = false; hdr.style.cursor = 'grab'; });
 
-  // ── RESIZE logic (pointer events on resize handle) ──
-  var _rsz = { on: false, sx: 0, sw: 0 };
-  resizeHandle.addEventListener('pointerdown', function(e) {
+  // ── BOX RESIZE (bottom-right handle) ──
+  resizeH.addEventListener('pointerdown', function(e) {
     e.stopPropagation();
-    _rsz.on = true;
-    _rsz.sx = e.clientX;
-    _rsz.sw = box.offsetWidth;
-    resizeHandle.setPointerCapture(e.pointerId);
+    S.boxResize = true;
+    S.rsox = e.clientX; S.rsow = box.offsetWidth; S.rsoh = box.offsetHeight;
+    resizeH.setPointerCapture(e.pointerId);
   });
-  resizeHandle.addEventListener('pointermove', function(e) {
-    if(!_rsz.on) return;
-    var nw = Math.max(120, Math.min(window.innerWidth - 20, _rsz.sw + (e.clientX - _rsz.sx)));
-    box.style.width = nw + 'px';
+  resizeH.addEventListener('pointermove', function(e) {
+    if(!S.boxResize) return;
+    var dx = e.clientX - S.rsox;
+    var nw = Math.max(160, Math.min(window.innerWidth - 10, S.rsow + dx));
+    var nh = Math.max(160, Math.min(window.innerHeight - 80, S.rsoh + dx * 0.8));
+    box.style.width = nw+'px'; box.style.height = nh+'px';
   });
-  resizeHandle.addEventListener('pointerup', function() { _rsz.on = false; });
+  resizeH.addEventListener('pointerup', function() { S.boxResize = false; });
+
+  // ── IMAGE PAN + PINCH ZOOM (inside viewport) ──
+  var activePointers = {};
+
+  function getPinchDist(p1, p2) {
+    var dx = p1.clientX - p2.clientX, dy = p1.clientY - p2.clientY;
+    return Math.sqrt(dx*dx + dy*dy);
+  }
+  function getPinchCenter(p1, p2) {
+    var vr = viewport.getBoundingClientRect();
+    return {
+      x: (p1.clientX + p2.clientX) / 2 - vr.left,
+      y: (p1.clientY + p2.clientY) / 2 - vr.top
+    };
+  }
+
+  viewport.addEventListener('pointerdown', function(e) {
+    e.stopPropagation();
+    viewport.setPointerCapture(e.pointerId);
+    activePointers[e.pointerId] = e;
+    var ptrs = Object.values(activePointers);
+
+    if(ptrs.length === 2) {
+      // Start pinch
+      S.pinching = true; S.imgPan = false;
+      S.p0dist   = getPinchDist(ptrs[0], ptrs[1]);
+      S.p0scale  = S.scale;
+      var c      = getPinchCenter(ptrs[0], ptrs[1]);
+      S.p0cx = c.x; S.p0cy = c.y;
+      S.p0px = S.panX; S.p0py = S.panY;
+    } else if(ptrs.length === 1) {
+      // Start pan (1 finger)
+      S.pinching = false; S.imgPan = true;
+      var vr = viewport.getBoundingClientRect();
+      S.ipox = e.clientX - vr.left; S.ipoy = e.clientY - vr.top;
+      S.ipPanX = S.panX; S.ipPanY = S.panY;
+      viewport.style.cursor = 'grabbing';
+
+      // Double-tap detection
+      var now = Date.now();
+      var vr2 = viewport.getBoundingClientRect();
+      var tx = e.clientX - vr2.left, ty = e.clientY - vr2.top;
+      if(now - S.lastTap < 300 && Math.abs(tx - S.tapX) < 40 && Math.abs(ty - S.tapY) < 40) {
+        // Double tap → zoom in 2.5× toward tap point, or reset if already zoomed
+        if(S.scale > 1.5) { applyTransform(1, 0, 0); }
+        else { applyZoom(2.5, tx, ty); }
+        S.lastTap = 0; S.imgPan = false;
+        return;
+      }
+      S.lastTap = now; S.tapX = tx; S.tapY = ty;
+    }
+  });
+
+  viewport.addEventListener('pointermove', function(e) {
+    activePointers[e.pointerId] = e;
+    var ptrs = Object.values(activePointers);
+
+    if(S.pinching && ptrs.length >= 2) {
+      var p1 = ptrs[0], p2 = ptrs[1];
+      var dist    = getPinchDist(p1, p2);
+      var center  = getPinchCenter(p1, p2);
+      var newScale = Math.max(S.minScale, Math.min(S.maxScale, S.p0scale * (dist / S.p0dist)));
+
+      // Zoom toward pinch center
+      var imgSpX = (S.p0cx - S.p0px) / S.p0scale;
+      var imgSpY = (S.p0cy - S.p0py) / S.p0scale;
+      var newPanX = center.x - imgSpX * newScale;
+      var newPanY = center.y - imgSpY * newScale;
+      applyTransform(newScale, newPanX, newPanY);
+
+    } else if(S.imgPan && !S.pinching && ptrs.length === 1) {
+      var vr = viewport.getBoundingClientRect();
+      var cx = e.clientX - vr.left, cy = e.clientY - vr.top;
+      var dx = cx - S.ipox, dy = cy - S.ipoy;
+      applyTransform(S.scale, S.ipPanX + dx, S.ipPanY + dy);
+    }
+  });
+
+  function onPointerUp(e) {
+    delete activePointers[e.pointerId];
+    var ptrs = Object.values(activePointers);
+    if(ptrs.length < 2) {
+      if(S.pinching) {
+        // After pinch release, re-init single-finger pan from current state
+        S.pinching = false;
+        S.imgPan = false;
+      }
+    }
+    if(ptrs.length === 0) { S.imgPan = false; viewport.style.cursor = 'grab'; }
+  }
+  viewport.addEventListener('pointerup', onPointerUp);
+  viewport.addEventListener('pointercancel', onPointerUp);
+
+  // Mouse wheel zoom (desktop / tablet with mouse)
+  viewport.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    var vr = viewport.getBoundingClientRect();
+    var cx = e.clientX - vr.left, cy = e.clientY - vr.top;
+    var factor = e.deltaY < 0 ? 1.15 : (1/1.15);
+    applyZoom(S.scale * factor, cx, cy);
+  }, { passive: false });
 }
 
 function _closeReadingFloatingImg() {
