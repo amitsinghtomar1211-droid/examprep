@@ -50907,16 +50907,16 @@ window.openTopicGameMode = async function(sid,secid,tid,topicName){
     return;
   }
   _tgpSetProgress(5,'Notes extract ho rahe hain...');
-  document.getElementById('tgpLoadSub').textContent='Pehli baar AI questions generate kar raha hai — agli baar seedha game!';
+  document.getElementById('tgpLoadSub').textContent='Bade notes ko parts mein divide karke poore facts extract karega — thoda samay lagega!';
   try{
     var content=_tgpExtractTopicContent(sid,secid,tid);
     if(!content||content.trim().length<50){_tgpShowError('Is topic mein abhi notes nahi hain! Pehle notes add karo.');return;}
-    _tgpSetProgress(20,'AI content padh raha hai...');
+    _tgpSetProgress(10,'Content ready — '+Math.ceil(content.length/4000)+' chunks mein process hoga...');
     var facts=await _tgpGenerateFacts(content,topicName);
     if(!facts||facts.length<3){_tgpShowError('Facts generate nahi ho sake. Notes zyada detail mein likho.');return;}
     _tgp.facts=facts;
     _tgpSaveCache(facts);
-    _tgpSetProgress(100,'Sab taiyaar! 🎉');
+    _tgpSetProgress(100,facts.length+' facts ready! 🎉');
     setTimeout(_tgpShowLobby,500);
   }catch(e){_tgpShowError('Error: '+(e.message||'API key check karo aur dobara try karo.'));}
 };
@@ -50957,74 +50957,144 @@ window._tgpRegenFresh=async function(){
   }catch(e){_tgpShowError('Error: '+(e.message||'Dobara try karo.'));}
 };
 
-// ── Extract content ───────────────────────────────────
+// ── Extract content — NO character limit, all sources ───
 function _tgpExtractTopicContent(sid,secid,tid){
   var t=(typeof getTop==='function')?getTop(sid,secid,tid):null;
   if(!t)return '';
   var parts=[];
-  (t.notes||[]).forEach(function(n){if(n.content&&n.content.trim())parts.push(n.content.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());});
-  if(t.finalNotes&&t.finalNotes.trim())parts.push(t.finalNotes.replace(/%%NEW%%|%%DATE%%.*?%%ENDNEW%%|%%HIGHLIGHT%%|%%ENDHIGHLIGHT%%/g,'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
-  if(t.smartNotesAI&&t.smartNotesAI.trim())parts.push(t.smartNotesAI.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
+  // Raw notes (exclude summary)
+  (t.notes||[]).filter(function(n){return !n._isSummaryNote;}).forEach(function(n){
+    if(n.content&&n.content.trim())
+      parts.push(n.content.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
+  });
+  // finalNotes
+  if(t.finalNotes&&t.finalNotes.trim())
+    parts.push(t.finalNotes.replace(/%%NEW%%|%%DATE%%.*?%%ENDNEW%%|%%HIGHLIGHT%%|%%ENDHIGHLIGHT%%/g,'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
+  // AI smart notes
+  if(t.smartNotesAI&&t.smartNotesAI.trim())
+    parts.push(t.smartNotesAI.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
+  // Saved facts
   (t.savedFacts||[]).forEach(function(f){if(f.text)parts.push(f.text);});
+  // Overview
   if(t.overview&&t.overview.trim())parts.push(t.overview);
-  return parts.join('\n\n').substring(0,7000);
+  // Summary notes bhi add karo (game ke liye sab chahiye)
+  (t.notes||[]).filter(function(n){return n._isSummaryNote;}).forEach(function(n){
+    if(n.content&&n.content.trim())
+      parts.push(n.content.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
+  });
+  // Canvas slides
+  if(t.studyCanvas&&t.studyCanvas.slides&&t.studyCanvas.slides.length){
+    t.studyCanvas.slides.forEach(function(slide,si){
+      var slideTitle=slide.title||('Slide '+(si+1));
+      parts.push('=== '+slideTitle+' ===');
+      (slide.textBlocks||[]).forEach(function(blk){
+        var txt=blk.html
+          ?blk.html.replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ').trim()
+          :(blk.text||'').trim();
+        if(txt)parts.push(txt);
+      });
+    });
+  }
+  // NO substring — return full content
+  return parts.join('\n\n');
 }
 
-// ── AI Generate Facts ─────────────────────────────────
-async function _tgpGenerateFacts(content,topicName,mode){
-  var apiKey=(typeof S!=='undefined'&&S.apiKey)?S.apiKey:(document.getElementById('apiKey')?document.getElementById('apiKey').value:'');
-  if(!apiKey||apiKey.length<10)throw new Error('Pehle Settings mein Groq API Key daalo! (gsk_...)');
-  var model=(typeof S!=='undefined'&&S.selectedModel&&S.selectedModel.length>5)?S.selectedModel:'llama-3.3-70b-versatile';
-  var modeHint=mode==='missed'?'User ne kuch facts miss kiye hain. Un areas par EXTRA focus karo aur naye angles se questions banao.':mode==='fresh'?'Pichli baar se BILKUL ALAG questions banao. Different aspects, different phrasing.':'';
-
-  var sys=`You are an expert Indian competitive exam question maker (UPSC, SSC, State PSC, Railways, Banking).
-Your job: READ the given notes COMPLETELY and extract EVERY SINGLE unique testable fact.
-${modeHint}
-
-Return ONLY valid JSON — no markdown, no explanation, no extra text whatsoever:
-{"facts":[
-  {
-    "term":"Exam-style question stem (max 10 words, Hindi/English mix ok — use Kab/Kaun/Kahan/Kya/Kitna style)",
-    "detail":"Complete standalone answer — full sentence with all key info",
-    "fibSentence":"Same as detail but with ONE most exam-critical word/number replaced by ___",
-    "fibAnswer":"The exact word/number that fills ___",
-    "fibOptions":["fibAnswer","wrong_option_2","wrong_option_3","wrong_option_4"],
-    "examNote":"Why this is exam-important OR common confusion students make about this fact",
-    "relatedTerms":["keyword1","keyword2"],
-    "isTrue":true
+// ── Split content into chunks for multi-pass extraction ──
+function _tgpChunkContent(content, chunkSize){
+  var chunks=[];
+  // Split on paragraph/section boundaries first
+  var lines=content.split('\n');
+  var current='';
+  for(var i=0;i<lines.length;i++){
+    if(current.length+lines[i].length+1 > chunkSize && current.length>100){
+      chunks.push(current.trim());
+      current='';
+    }
+    current+=lines[i]+'\n';
   }
-]}
+  if(current.trim().length>50)chunks.push(current.trim());
+  return chunks.length>0?chunks:[content.substring(0,chunkSize)];
+}
 
-STRICT RULES — FOLLOW EXACTLY:
-1. COVER EVERY UNIQUE FACT — scan the ENTIRE content from start to end, do NOT skip anything
-2. Minimum 25 facts, maximum 40 facts — more content = more facts
-3. Each fact must be 100% UNIQUE — no two facts should test the same information
-4. fibOptions: exactly 4 items — first is always correct, other 3 are plausible wrong answers from same topic
-5. fibSentence blank: always the most exam-worthy word (year/number/name/place/key term)
-6. term: always frame as an exam question (not a statement)
-7. relatedTerms: 2-4 keywords that link this fact to other facts in the content
-8. examNote: must be specific — mention what students confuse or why this appears in exams
-9. Do NOT generate duplicate facts under any circumstance
-10. Cover ALL sub-topics, all dates, all names, all schemes, all statistics present in the notes`;
+// ── Single chunk fact extraction API call ─────────────
+async function _tgpFetchFactsForChunk(chunkContent, topicName, apiKey, model, mode, chunkNum, totalChunks, existingTerms){
+  var modeHint=mode==='missed'?'User ne kuch facts miss kiye hain. Un areas par EXTRA focus karo.':mode==='fresh'?'Pichli baar se BILKUL ALAG questions banao.':'';
+  var skipHint=existingTerms.length>0?('\n\nIN TOPICS KE DUPLICATE FACTS MAT BANAO (already covered):\n'+existingTerms.slice(0,30).join(', ')):'';
 
-  var userPrompt='Topic: '+topicName+'\n\nNotes Content:\n'+content+'\n\n⚠️ IMPORTANT: Extract ALL unique facts from the ENTIRE content above. Every date, name, scheme, statistic, definition must become a separate fact. Return ONLY JSON, nothing else.';
-  _tgpSetProgress(50,'AI facts generate kar raha hai...');
+  var sys='You are an expert Indian competitive exam question maker (UPSC, SSC, State PSC, Railways, Banking).\nYour job: READ the given notes chunk and extract EVERY SINGLE unique testable fact.\n'+modeHint+skipHint+'\n\nReturn ONLY valid JSON — no markdown, no explanation:\n{"facts":[\n  {\n    "term":"Exam-style question (max 10 words, Hindi/English mix, Kab/Kaun/Kahan/Kya/Kitna style)",\n    "detail":"Complete standalone answer — full sentence with all key info",\n    "fibSentence":"Same as detail but ONE most exam-critical word/number replaced by ___",\n    "fibAnswer":"The exact word/number that fills ___",\n    "fibOptions":["fibAnswer","wrong_option_2","wrong_option_3","wrong_option_4"],\n    "examNote":"Why exam-important OR common student confusion",\n    "relatedTerms":["keyword1","keyword2"],\n    "isTrue":true\n  }\n]}\n\nSTRICT RULES:\n1. Extract EVERY unique testable fact from this chunk — do NOT skip anything\n2. Each fact 100% UNIQUE — no duplicate information\n3. fibOptions: exactly 4 items\n4. Cover ALL dates, names, schemes, statistics, definitions in this chunk\n5. No upper limit on facts — extract as many unique facts as the chunk contains';
+
+  var userPrompt='Topic: '+topicName+'\n[Chunk '+chunkNum+'/'+totalChunks+']\n\nContent:\n'+chunkContent+'\n\n⚠️ Extract ALL unique facts from above. Return ONLY JSON.';
+
   var resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
     body:JSON.stringify({model:model,messages:[{role:'system',content:sys},{role:'user',content:userPrompt}],temperature:mode==='fresh'?0.7:0.3,max_tokens:6000})
   });
   if(!resp.ok){var err=await resp.json().catch(function(){return{};});throw new Error(err.error&&err.error.message?err.error.message:'Groq API Error: '+resp.status);}
-  _tgpSetProgress(85,'Response process ho raha hai...');
   var data=await resp.json();
   var raw=data.choices&&data.choices[0]&&data.choices[0].message?data.choices[0].message.content:'';
   raw=raw.replace(/```json|```/g,'').trim();
   var start=raw.indexOf('{'),end=raw.lastIndexOf('}');
-  if(start===-1||end===-1)throw new Error('AI ne sahi format mein jawab nahi diya.');
-  var parsed=JSON.parse(raw.substring(start,end+1));
-  var facts=parsed.facts||[];
-  facts.forEach(function(f){if(f.fibOptions&&f.fibOptions.length===4)f.fibOptions=_tgpShuffle(f.fibOptions);});
-  return facts;
+  if(start===-1||end===-1)return [];
+  try{
+    var parsed=JSON.parse(raw.substring(start,end+1));
+    return parsed.facts||[];
+  }catch(e){return [];}
+}
+
+// ── AI Generate Facts — MULTI-CHUNK SYSTEM (quiz jaisa) ──
+async function _tgpGenerateFacts(content,topicName,mode){
+  var apiKey=(typeof S!=='undefined'&&S.apiKey)?S.apiKey:(document.getElementById('apiKey')?document.getElementById('apiKey').value:'');
+  if(!apiKey||apiKey.length<10)throw new Error('Pehle Settings mein Groq API Key daalo! (gsk_...)');
+  var model=(typeof S!=='undefined'&&S.selectedModel&&S.selectedModel.length>5)?S.selectedModel:'llama-3.3-70b-versatile';
+
+  // Content ko 4000-char chunks mein divide karo (quiz system jaisa)
+  var CHUNK_SIZE=4000;
+  var chunks=_tgpChunkContent(content,CHUNK_SIZE);
+  var totalChunks=chunks.length;
+
+  _tgpSetProgress(15,'Content '+totalChunks+' parts mein divide hua...');
+
+  var allFacts=[];
+  var seenTerms={};
+
+  // Helper: normalize for dedup
+  function normTerm(s){return String(s||'').toLowerCase().replace(/[^a-z0-9\u0900-\u097f]/g,'').trim();}
+
+  for(var ci=0;ci<chunks.length;ci++){
+    var progressPct=15+Math.round((ci/totalChunks)*75);
+    _tgpSetProgress(progressPct,'Chunk '+(ci+1)+'/'+totalChunks+' process ho raha hai... ('+allFacts.length+' facts collected)');
+
+    // Pass existing terms to avoid duplicates across chunks
+    var existingTerms=allFacts.map(function(f){return f.term;});
+
+    try{
+      var chunkFacts=await _tgpFetchFactsForChunk(chunks[ci],topicName,apiKey,model,mode,ci+1,totalChunks,existingTerms);
+
+      // Deduplicate: skip if term already seen (normalized)
+      chunkFacts.forEach(function(f){
+        if(!f.term||!f.detail)return;
+        var key=normTerm(f.term);
+        if(!seenTerms[key]){
+          seenTerms[key]=true;
+          if(f.fibOptions&&f.fibOptions.length===4)f.fibOptions=_tgpShuffle(f.fibOptions);
+          allFacts.push(f);
+        }
+      });
+    }catch(e){
+      // Single chunk fail hone par skip karo, baaki continue
+      console.warn('Chunk '+(ci+1)+' failed:',e.message);
+    }
+
+    // Small delay between API calls to avoid rate limiting
+    if(ci<chunks.length-1)await new Promise(function(r){setTimeout(r,300);});
+  }
+
+  _tgpSetProgress(95,'Sab facts merge ho rahe hain...');
+
+  if(allFacts.length<3)throw new Error('Facts generate nahi ho sake. Notes zyada detail mein likho ya API key check karo.');
+
+  return allFacts;
 }
 
 // ── UI Helpers ────────────────────────────────────────
