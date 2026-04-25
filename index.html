@@ -51038,7 +51038,8 @@ function _tgpShowLobby(){
   document.getElementById('tgpGameNav').style.display='none';
   document.getElementById('tgpScoreBadge').style.display='none';
   document.getElementById('tgpSubtitle').textContent=_tgp.facts.length+' facts extracted';
-  document.getElementById('tgpFactCount').textContent='✅ '+_tgp.facts.length+' facts ready — Game chuno!';
+  var estLevels=Math.ceil(_tgp.facts.length/LEVEL_SIZE);
+  document.getElementById('tgpFactCount').textContent='✅ '+_tgp.facts.length+' facts ready — ~'+estLevels+' levels per game — Game chuno!';
   document.getElementById('tgpRegenOptions').style.display='none';
 
   var games=[
@@ -51072,33 +51073,66 @@ function _tgpShowInfoCard(fact){
   var card=document.createElement('div');
   card.id='tgpInfoCard';card.className='tgp-info-card';
 
-  // Find ALL related facts from the full facts pool
+  // ── Find related facts from full facts pool ──────────────
   var allFacts=_tgp.facts||[];
-  // Related = same term keywords appear in other facts' term or detail
+  // Use term keywords + relatedTerms field for matching
   var termWords=(fact.term||'').toLowerCase().split(/\s+/).filter(function(w){return w.length>3;});
+  var relTerms=(fact.relatedTerms||[]).map(function(t){return t.toLowerCase();});
+  var searchWords=termWords.concat(relTerms).filter(function(w,i,a){return a.indexOf(w)===i;});
+
   var relatedFacts=allFacts.filter(function(f){
     if(f===fact||f.term===fact.term)return false;
-    var combined=(f.term+' '+f.detail).toLowerCase();
-    return termWords.some(function(w){return combined.indexOf(w)!==-1;});
-  });
+    var combined=(f.term+' '+f.detail+' '+(f.relatedTerms||[]).join(' ')).toLowerCase();
+    return searchWords.some(function(w){return w.length>3&&combined.indexOf(w)!==-1;});
+  }).slice(0,8); // max 8 related facts
 
-  // Build insight HTML - show full fact detail + ALL related facts
+  // ── Build consolidated context paragraph ─────────────────
+  // Merge: main fact detail + related facts' details → one flowing paragraph
+  var contextParts=[fact.detail];
+  relatedFacts.forEach(function(f){
+    // Only add if it adds new info (not already substring of main detail)
+    if(fact.detail.toLowerCase().indexOf(f.detail.toLowerCase().substring(0,20))===-1){
+      contextParts.push(f.detail);
+    }
+  });
+  // Join into a flowing paragraph with connectors
+  var consolidatedContext=contextParts.join(' | ');
+
+  // ── Build insight HTML ───────────────────────────────────
   var html='<div class="tgp-info-label">📚 Exam Insight — Puri Jankari</div>';
-  html+='<div style="margin-bottom:8px;padding:8px 10px;background:rgba(21,101,192,0.08);border-radius:8px;border-left:3px solid var(--accent);">';
-  html+='<div style="font-weight:800;color:var(--accent);font-size:0.8rem;margin-bottom:3px;">🎯 '+_tgpEsc(fact.term)+'</div>';
-  html+='<div style="color:var(--text);font-size:0.78rem;line-height:1.7;">'+_tgpEsc(fact.detail)+'</div>';
-  if(fact.examNote)html+='<div style="color:var(--accent3);font-size:0.72rem;margin-top:4px;font-style:italic;">💡 '+_tgpEsc(fact.examNote)+'</div>';
+
+  // Main fact box — prominent
+  html+='<div style="margin-bottom:10px;padding:10px 12px;background:rgba(21,101,192,0.09);border-radius:10px;border-left:4px solid var(--accent);">';
+  html+='<div style="font-weight:800;color:var(--accent);font-size:0.82rem;margin-bottom:4px;">🎯 '+_tgpEsc(fact.term)+'</div>';
+  html+='<div style="color:var(--text);font-size:0.8rem;line-height:1.75;font-weight:500;">'+_tgpEsc(fact.detail)+'</div>';
+  if(fact.examNote)html+='<div style="color:var(--accent3);font-size:0.72rem;margin-top:5px;font-style:italic;padding:4px 6px;background:rgba(25,118,210,0.07);border-radius:5px;">💡 <strong>Exam Note:</strong> '+_tgpEsc(fact.examNote)+'</div>';
   html+='</div>';
 
+  // Consolidated context block — all related info merged together
   if(relatedFacts.length>0){
-    html+='<div style="font-size:0.68rem;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">🔗 Is Topic Se Jude Aur Facts:</div>';
-    relatedFacts.forEach(function(f){
-      html+='<div style="margin-bottom:6px;padding:6px 10px;background:rgba(106,27,154,0.06);border-radius:7px;border-left:2px solid var(--purple);">';
-      html+='<div style="font-weight:700;color:var(--purple);font-size:0.74rem;">'+_tgpEsc(f.term)+'</div>';
-      html+='<div style="color:var(--text);font-size:0.74rem;line-height:1.6;">'+_tgpEsc(f.detail)+'</div>';
-      if(f.examNote)html+='<div style="color:var(--teal);font-size:0.68rem;margin-top:2px;">💡 '+_tgpEsc(f.examNote)+'</div>';
-      html+='</div>';
+    html+='<div style="margin-bottom:8px;padding:10px 12px;background:rgba(0,105,92,0.07);border-radius:10px;border-left:4px solid var(--teal);">';
+    html+='<div style="font-size:0.7rem;font-weight:800;color:var(--teal);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">📖 Is Topic Ki Puri Jankari (Content Se)</div>';
+
+    // Consolidated paragraph — all related details merged
+    html+='<div style="color:var(--text);font-size:0.77rem;line-height:1.8;">';
+    // Show each related fact as a mini sentence inline, separated by dots
+    var inlineParts=relatedFacts.map(function(f){
+      return '<span style="display:inline;"><strong style="color:var(--purple);font-size:0.72rem;">'+_tgpEsc(f.term)+':</strong> '+_tgpEsc(f.detail)+'</span>';
     });
+    html+=inlineParts.join('<span style="color:var(--border);margin:0 4px;font-size:0.8rem;">•</span>');
+    html+='</div>';
+
+    // If any related fact has an examNote, show them grouped at bottom
+    var relExamNotes=relatedFacts.filter(function(f){return f.examNote;});
+    if(relExamNotes.length>0){
+      html+='<div style="margin-top:7px;padding:5px 8px;background:rgba(106,27,154,0.07);border-radius:7px;border-left:2px solid var(--purple);">';
+      html+='<div style="font-size:0.65rem;font-weight:800;color:var(--purple);margin-bottom:3px;">💡 Exam Tips (Related):</div>';
+      relExamNotes.forEach(function(f){
+        html+='<div style="font-size:0.68rem;color:var(--text2);line-height:1.6;margin-bottom:2px;">• <em>'+_tgpEsc(f.examNote)+'</em></div>';
+      });
+      html+='</div>';
+    }
+    html+='</div>';
   }
 
   card.innerHTML=html;
@@ -51143,11 +51177,14 @@ function _tgpBuildLevels(pool, wrongLogQ){
     if(seenTerms[key])return false;
     seenTerms[key]=true;return true;
   });
+  if(uniquePool.length===0)return levels;
   var shuffled=_tgpShuffle(uniquePool);
+  // Calculate total levels first for better labels
+  var totalLvls=Math.ceil(shuffled.length/LEVEL_SIZE);
   var i=0,lvl=1;
   while(i<shuffled.length){
     var chunk=shuffled.slice(i,i+LEVEL_SIZE);
-    levels.push({label:'Level '+lvl,questions:chunk,isMaster:false,done:false});
+    levels.push({label:'Level '+lvl+'/'+totalLvls,questions:chunk,isMaster:false,done:false,totalFacts:shuffled.length,coveredUpTo:Math.min(i+LEVEL_SIZE,shuffled.length)});
     i+=LEVEL_SIZE;lvl++;
   }
   return levels;
@@ -51369,14 +51406,19 @@ function _tgpStartMatch(){
   var rounds=[];
   for(var i=0;i<allPairs.length;i+=5){rounds.push(allPairs.slice(i,i+5));}
   gs.rounds=rounds;
-  // Build levels
-  gs.levels=rounds.map(function(r,i){return{label:'Level '+(i+1),pairs:r,isMaster:false,done:false};});
-  // Master levels from wrong log
+  // Build levels — total count for better label
+  var totalMatchLvls=rounds.length;
+  gs.levels=rounds.map(function(r,i){return{label:'Level '+(i+1)+'/'+totalMatchLvls,pairs:r,isMaster:false,done:false};});
+  // Master levels from wrong log — deduplicated
   var wrongFacts=_tgp._wrongLog.match||[];
   if(wrongFacts.length>0){
-    var wp=_tgpShuffle(wrongFacts.map(function(f){return{left:f.term,right:f.detail,fact:f};}));
+    var seenWrong={};
+    var uniqueWrongM=wrongFacts.filter(function(f){if(seenWrong[f.term])return false;seenWrong[f.term]=true;return true;});
+    var wp=_tgpShuffle(uniqueWrongM.map(function(f){return{left:f.term,right:f.detail,fact:f};}));
+    var masterNum=1;
     for(var m=0;m<wp.length;m+=5){
-      gs.levels.push({label:'🔴 Master '+(m/5>0?m/5+1:''),pairs:wp.slice(m,Math.min(m+5,wp.length)),isMaster:true,done:false});
+      gs.levels.push({label:'🔴 Master Level '+masterNum,pairs:wp.slice(m,Math.min(m+5,wp.length)),isMaster:true,done:false});
+      masterNum++;
     }
   }
   gs.levelIdx=0;gs.matchState={};
