@@ -50722,12 +50722,14 @@ document.addEventListener('ne_editor_closed', function() {
 
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     🎮 TOPIC GAME MODE SYSTEM v2.0
-     — Smart caching: ek baar generate, baar baar khelo
-     — 4 powerful games: Lightning Quiz, Fill in Blank, Spotlight, Rapid Fire
-     — Answer ke baad related info card
-     — Regenerate: missed facts ya fresh start
+     🎮 TOPIC GAME MODE SYSTEM v3.0
+     — 4 Games: Lightning Quiz, Fill in Blank, Column Match, Fact Builder
+     — ALL facts covered, Level system (10-12 per level)
+     — No repeats within same game
+     — Master Level: auto-generates from wrong answers (10+ wrong = 2 master levels)
+     — Smart caching, Regenerate options, Info card after each answer
      ═══════════════════════════════════════════════════════════════════ -->
+
 <div id="topicGamePanel" style="display:none;position:fixed;inset:0;z-index:20500;background:var(--bg);flex-direction:column;font-family:'Noto Sans Devanagari','Baloo 2',sans-serif;">
 
   <!-- HEADER -->
@@ -50754,11 +50756,10 @@ document.addEventListener('ne_editor_closed', function() {
   <div id="tgpLobby" style="display:none;flex:1;overflow-y:auto;padding:14px;">
     <div style="font-size:0.82rem;font-weight:800;color:var(--text2);margin-bottom:12px;text-align:center;" id="tgpFactCount">0 facts extracted</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;" id="tgpGameGrid"></div>
-    <!-- Regenerate button -->
-    <div style="margin-top:14px;" id="tgpRegenSection">
+    <!-- Regenerate -->
+    <div style="margin-top:14px;">
       <button onclick="_tgpShowRegenOptions()" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px dashed var(--border);background:var(--surface2);color:var(--text2);font-size:0.76rem;font-weight:700;cursor:pointer;font-family:inherit;">🔄 Questions Regenerate Karo</button>
     </div>
-    <!-- Regen options (hidden by default) -->
     <div id="tgpRegenOptions" style="display:none;margin-top:10px;padding:12px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;">
       <div style="font-size:0.78rem;font-weight:700;color:var(--text);margin-bottom:10px;">Regenerate kaise karna hai?</div>
       <button onclick="_tgpRegenMissed()" style="width:100%;margin-bottom:8px;padding:10px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#e65100,#f4511e);color:#fff;font-size:0.78rem;font-weight:700;cursor:pointer;font-family:inherit;">📌 Chhute hue facts se nayi questions</button>
@@ -50766,950 +50767,897 @@ document.addEventListener('ne_editor_closed', function() {
       <button onclick="document.getElementById('tgpRegenOptions').style.display='none'" style="width:100%;margin-top:6px;padding:8px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font-size:0.72rem;cursor:pointer;font-family:inherit;">Raho nahi</button>
     </div>
     <div style="margin-top:12px;padding:10px 12px;background:rgba(21,101,192,0.07);border-radius:10px;font-size:0.72rem;color:var(--text2);line-height:1.6;border:1px solid rgba(21,101,192,0.15);">
-      💡 <strong>Tip:</strong> Pehle Lightning Quiz khelo speed ke liye, phir Fill in Blank se deep recall karo!
+      💡 <strong>Tip:</strong> Sabse pehle Lightning Quiz khelo, phir Fill in Blank se deep recall karo. Column Match se revision karo!
     </div>
   </div>
 
   <!-- ACTIVE GAME AREA -->
   <div id="tgpGameArea" style="display:none;flex:1;overflow-y:auto;flex-direction:column;"></div>
 
-  <!-- INFO CARD after answer (shown inside game area, so leave empty — rendered dynamically) -->
-
-  <!-- GAME NAV BAR (bottom, during game) -->
+  <!-- GAME NAV BAR -->
   <div id="tgpGameNav" style="display:none;padding:10px 14px;border-top:1.5px solid var(--border);background:var(--surface);gap:8px;flex-shrink:0;">
     <button onclick="tgpBackToLobby()" style="flex:1;padding:10px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text2);font-size:0.78rem;font-weight:700;cursor:pointer;font-family:inherit;">🎮 Games</button>
     <button id="tgpNextBtn" onclick="tgpNextStep()" style="flex:2;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;font-family:inherit;display:none;">Agla →</button>
   </div>
-
 </div>
 
 <style>
-@keyframes tgpSpin { to { transform:rotate(360deg); } }
-@keyframes tgpBounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
-@keyframes tgpPop { 0%{transform:scale(0.7);opacity:0} 70%{transform:scale(1.1)} 100%{transform:scale(1);opacity:1} }
-@keyframes tgpShake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
-@keyframes tgpGlow { 0%,100%{box-shadow:0 0 8px rgba(21,101,192,0.4)} 50%{box-shadow:0 0 20px rgba(21,101,192,0.8)} }
-@keyframes tgpSlideUp { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
+@keyframes tgpSpin{to{transform:rotate(360deg);}}
+@keyframes tgpBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@keyframes tgpPop{0%{transform:scale(0.7);opacity:0}70%{transform:scale(1.1)}100%{transform:scale(1);opacity:1}}
+@keyframes tgpShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+@keyframes tgpSlideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes tgpFlipIn{0%{transform:rotateY(90deg);opacity:0}100%{transform:rotateY(0);opacity:1}}
+@keyframes tgpMasterPulse{0%,100%{box-shadow:0 0 0 0 rgba(198,40,40,0.4)}50%{box-shadow:0 0 0 8px rgba(198,40,40,0)}}
 
-/* Game card in lobby */
-.tgp-game-card {
-  background:var(--surface);border:1.5px solid var(--border);border-radius:16px;
-  padding:18px 14px;cursor:pointer;text-align:center;
-  transition:all 0.18s;-webkit-tap-highlight-color:transparent;
-  box-shadow:var(--shadow);position:relative;overflow:hidden;
-}
+.tgp-game-card{background:var(--surface);border:1.5px solid var(--border);border-radius:16px;padding:18px 14px;cursor:pointer;text-align:center;transition:all 0.18s;-webkit-tap-highlight-color:transparent;box-shadow:var(--shadow);position:relative;overflow:hidden;}
 .tgp-game-card:active{transform:scale(0.96);}
 .tgp-game-card .tgp-gc-emoji{font-size:2rem;margin-bottom:6px;display:block;}
 .tgp-game-card .tgp-gc-name{font-size:0.82rem;font-weight:800;color:var(--text);margin-bottom:3px;}
 .tgp-game-card .tgp-gc-desc{font-size:0.65rem;color:var(--text2);line-height:1.4;}
 .tgp-game-card .tgp-gc-stars{font-size:0.65rem;margin-top:6px;color:#f9a825;}
+.tgp-game-card.master-card{border-color:#c62828!important;animation:tgpMasterPulse 2s infinite;}
 
-/* Lightning Quiz */
+/* Level badge strip */
+.tgp-level-strip{display:flex;gap:6px;flex-wrap:wrap;padding:10px 14px 0;}
+.tgp-level-btn{padding:6px 12px;border-radius:20px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text2);font-size:0.72rem;font-weight:700;cursor:pointer;font-family:inherit;transition:all 0.15s;-webkit-tap-highlight-color:transparent;}
+.tgp-level-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+.tgp-level-btn.done{background:#e8f5e9;border-color:#43a047;color:#2e7d32;}
+.tgp-level-btn.master{background:linear-gradient(135deg,#c62828,#e53935);border-color:#c62828;color:#fff;}
+body.night-mode .tgp-level-btn.done{background:rgba(63,185,80,0.15);border-color:#3fb950;color:#3fb950;}
+
+/* Lightning */
 .tgp-lq-question{font-size:0.9rem;font-weight:700;color:var(--text);padding:14px 16px;background:var(--surface);border-radius:12px;border:1.5px solid var(--border);margin-bottom:12px;line-height:1.6;}
-.tgp-lq-option{
-  display:block;width:100%;padding:12px 14px;border-radius:10px;
-  border:1.5px solid var(--border);background:var(--surface2);
-  color:var(--text);font-size:0.82rem;font-weight:600;
-  cursor:pointer;font-family:inherit;text-align:left;
-  transition:all 0.15s;margin-bottom:8px;
-  -webkit-tap-highlight-color:transparent;
-}
+.tgp-lq-option{display:block;width:100%;padding:12px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-size:0.82rem;font-weight:600;cursor:pointer;font-family:inherit;text-align:left;transition:all 0.15s;margin-bottom:8px;-webkit-tap-highlight-color:transparent;}
 .tgp-lq-option:active{transform:scale(0.98);}
 .tgp-lq-option.correct{background:#e8f5e9!important;border-color:#43a047!important;color:#1b5e20!important;}
 .tgp-lq-option.wrong{background:#ffebee!important;border-color:#e53935!important;color:#b71c1c!important;}
 
 /* Fill in Blank */
-.tgp-fib-sentence{
-  font-size:0.9rem;color:var(--text);padding:16px;
-  background:var(--surface);border-radius:12px;border:1.5px solid var(--border);
-  margin-bottom:12px;line-height:2.2;font-weight:500;
-}
-.tgp-fib-blank{
-  display:inline-block;min-width:110px;border-bottom:2.5px solid var(--accent);
-  padding:2px 10px;font-weight:800;color:var(--accent);text-align:center;
-  background:rgba(21,101,192,0.06);border-radius:4px;
-}
+.tgp-fib-sentence{font-size:0.9rem;color:var(--text);padding:16px;background:var(--surface);border-radius:12px;border:1.5px solid var(--border);margin-bottom:12px;line-height:2.2;font-weight:500;}
+.tgp-fib-blank{display:inline-block;min-width:110px;border-bottom:2.5px solid var(--accent);padding:2px 10px;font-weight:800;color:var(--accent);text-align:center;background:rgba(21,101,192,0.06);border-radius:4px;}
 .tgp-fib-opts{display:flex;flex-wrap:wrap;gap:8px;padding:4px 0;}
-.tgp-fib-opt{
-  padding:9px 16px;border-radius:20px;border:1.5px solid var(--border);
-  background:var(--surface2);color:var(--text);font-size:0.82rem;font-weight:700;
-  cursor:pointer;font-family:inherit;transition:all 0.15s;
-  -webkit-tap-highlight-color:transparent;
-}
+.tgp-fib-opt{padding:9px 16px;border-radius:20px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-size:0.82rem;font-weight:700;cursor:pointer;font-family:inherit;transition:all 0.15s;-webkit-tap-highlight-color:transparent;}
 .tgp-fib-opt:active{transform:scale(0.95);}
 .tgp-fib-opt.correct{background:#e8f5e9;border-color:#43a047;color:#1b5e20;}
 .tgp-fib-opt.wrong{background:#ffebee;border-color:#e53935;color:#b71c1c;}
 
-/* Spotlight Quiz */
-.tgp-spot-clue{
-  font-size:0.82rem;color:var(--text2);padding:10px 14px;
-  background:rgba(21,101,192,0.06);border-radius:10px;border-left:3px solid var(--accent);
-  margin-bottom:8px;line-height:1.6;font-weight:500;
-}
-.tgp-spot-reveal{
-  font-size:0.88rem;font-weight:700;color:var(--text);padding:14px 16px;
-  background:var(--surface);border-radius:12px;border:1.5px solid var(--border);
-  margin-bottom:12px;line-height:1.6;
-}
+/* Column Match */
+.tgp-match-cols{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:4px 0;}
+.tgp-match-item{padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-size:0.78rem;font-weight:600;cursor:pointer;font-family:inherit;text-align:center;transition:all 0.2s;min-height:52px;display:flex;align-items:center;justify-content:center;line-height:1.4;-webkit-tap-highlight-color:transparent;}
+.tgp-match-item:active{transform:scale(0.97);}
+.tgp-match-item.selected{background:linear-gradient(135deg,rgba(21,101,192,0.18),rgba(106,27,154,0.12));border-color:var(--accent);color:var(--accent);font-weight:800;}
+.tgp-match-item.matched-ok{background:#e8f5e9!important;border-color:#43a047!important;color:#2e7d32!important;cursor:default;}
+.tgp-match-item.matched-wrong{animation:tgpShake 0.4s ease;background:#ffebee!important;border-color:#e53935!important;}
+.tgp-match-col-label{font-size:0.68rem;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;text-align:center;}
+body.night-mode .tgp-match-item{background:var(--surface2);border-color:var(--border);}
 
-/* Rapid Fire */
-.tgp-rf-question{
-  font-size:1rem;font-weight:800;color:var(--text);padding:18px 16px;
-  background:var(--surface);border-radius:14px;border:1.5px solid var(--border);
-  margin-bottom:14px;line-height:1.6;text-align:center;
-}
-.tgp-rf-opt{
-  display:block;width:100%;padding:14px;border-radius:12px;
-  border:1.5px solid var(--border);background:var(--surface2);
-  color:var(--text);font-size:0.85rem;font-weight:700;
-  cursor:pointer;font-family:inherit;text-align:left;
-  transition:all 0.15s;margin-bottom:10px;
-  -webkit-tap-highlight-color:transparent;
-}
-.tgp-rf-opt:active{transform:scale(0.97);}
-.tgp-rf-opt.correct{background:linear-gradient(135deg,#e8f5e9,#c8e6c9)!important;border-color:#43a047!important;color:#1b5e20!important;font-weight:800!important;}
-.tgp-rf-opt.wrong{background:#ffebee!important;border-color:#e53935!important;color:#b71c1c!important;}
+/* Fact Builder */
+.tgp-fb-question{font-size:0.88rem;font-weight:700;color:var(--text);padding:14px 16px;background:var(--surface);border-radius:12px;border:1.5px solid var(--border);margin-bottom:10px;line-height:1.6;}
+.tgp-fb-wordbank{display:flex;flex-wrap:wrap;gap:8px;padding:4px 0 10px;}
+.tgp-fb-word{padding:8px 14px;border-radius:20px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-size:0.8rem;font-weight:700;cursor:pointer;font-family:inherit;transition:all 0.15s;-webkit-tap-highlight-color:transparent;}
+.tgp-fb-word:active{transform:scale(0.95);}
+.tgp-fb-word.used{opacity:0.3;cursor:default;pointer-events:none;}
+.tgp-fb-word.correct-word{background:#e8f5e9;border-color:#43a047;color:#2e7d32;}
+.tgp-fb-word.wrong-word{background:#ffebee;border-color:#e53935;color:#b71c1c;animation:tgpShake 0.4s ease;}
+.tgp-fb-answer-area{min-height:44px;padding:10px 12px;border-radius:10px;border:2px dashed var(--border);background:rgba(21,101,192,0.04);color:var(--text2);font-size:0.82rem;font-weight:600;margin-bottom:8px;line-height:1.6;}
 
-/* Info card after answer */
-.tgp-info-card{
-  margin:12px 14px 4px;padding:12px 14px;
-  background:linear-gradient(135deg,rgba(21,101,192,0.07),rgba(106,27,154,0.05));
-  border:1.5px solid rgba(21,101,192,0.2);border-radius:12px;
-  font-size:0.78rem;color:var(--text);line-height:1.7;
-  animation:tgpSlideUp 0.3s ease;
-}
+/* Info card */
+.tgp-info-card{margin:10px 14px 4px;padding:12px 14px;background:linear-gradient(135deg,rgba(21,101,192,0.07),rgba(106,27,154,0.05));border:1.5px solid rgba(21,101,192,0.2);border-radius:12px;font-size:0.78rem;color:var(--text);line-height:1.7;animation:tgpSlideUp 0.3s ease;}
 .tgp-info-card .tgp-info-label{font-size:0.65rem;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;}
-.tgp-info-card .tgp-info-text{font-weight:500;color:var(--text);}
+body.night-mode .tgp-info-card{background:linear-gradient(135deg,rgba(74,158,255,0.07),rgba(188,140,255,0.05));border-color:rgba(74,158,255,0.2);}
 
 /* Score popup */
-.tgp-score-popup{
-  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-  background:linear-gradient(135deg,#1565c0,#6a1b9a);color:#fff;
-  border-radius:20px;padding:20px 30px;text-align:center;z-index:30000;
-  animation:tgpPop 0.4s ease;box-shadow:0 10px 40px rgba(0,0,0,0.4);
-  font-size:1.1rem;font-weight:900;pointer-events:none;
-}
+.tgp-score-popup{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:linear-gradient(135deg,#1565c0,#6a1b9a);color:#fff;border-radius:20px;padding:20px 30px;text-align:center;z-index:30000;animation:tgpPop 0.4s ease;box-shadow:0 10px 40px rgba(0,0,0,0.4);font-size:1.1rem;font-weight:900;pointer-events:none;}
 
-/* Result screen */
+/* Result */
 .tgp-result{padding:20px;text-align:center;}
 .tgp-result-emoji{font-size:3rem;display:block;margin-bottom:10px;animation:tgpBounce 1s ease infinite;}
 .tgp-result-score{font-size:1.8rem;font-weight:900;color:var(--accent);}
 .tgp-result-msg{font-size:0.85rem;color:var(--text2);margin-top:6px;line-height:1.6;}
-.tgp-replay-btn{
-  margin-top:16px;padding:12px 28px;border-radius:12px;border:none;
-  background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;
-  font-size:0.88rem;font-weight:800;cursor:pointer;font-family:inherit;
-}
-
-/* Night mode */
-body.night-mode .tgp-lq-option{background:var(--surface2);border-color:var(--border);}
-body.night-mode .tgp-fib-opt{background:var(--surface2);border-color:var(--border);color:var(--text);}
-body.night-mode .tgp-rf-opt{background:var(--surface2);border-color:var(--border);}
-body.night-mode .tgp-info-card{background:linear-gradient(135deg,rgba(74,158,255,0.07),rgba(188,140,255,0.05));border-color:rgba(74,158,255,0.2);}
+.tgp-replay-btn{margin-top:16px;padding:12px 28px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.88rem;font-weight:800;cursor:pointer;font-family:inherit;}
 </style>
 
 <script>
 // ═══════════════════════════════════════════════════════
-// 🎮 TOPIC GAME MODE v2.0 — Smart Cached Game Engine
+// 🎮 TOPIC GAME MODE v3.0
+// 4 Games × All-facts × Level system × Master Level
 // ═══════════════════════════════════════════════════════
-
 var _tgp = {
-  sid: null, secid: null, tid: null, topicName: '',
-  facts: [],         // [{term, detail, fibSentence, fibAnswer, fibOptions, examNote, isTrue}]
-  activeGame: null,
-  score: 0,
-  gameState: {},
-  loading: false,
-  _cacheKey: null    // localStorage cache key
+  sid:null, secid:null, tid:null, topicName:'',
+  facts:[],           // all facts from AI
+  activeGame:null,
+  score:0,
+  gameState:{},
+  _cacheKey:null,
+  // Per-game wrong tracking: { 'lightning': [{fact}, ...], 'fillin': [...], ... }
+  _wrongLog: { lightning:[], fillin:[], match:[], factbuilder:[] }
 };
+var LEVEL_SIZE = 11; // questions per level
 
-// ── Cache helpers ────────────────────────────────────────
-function _tgpCacheKey(sid, secid, tid) {
-  return 'tgp_cache_' + sid + '_' + secid + '_' + tid;
-}
-function _tgpSaveCache(facts) {
-  try {
-    var key = _tgp._cacheKey;
-    if (!key) return;
-    localStorage.setItem(key, JSON.stringify({ facts: facts, ts: Date.now() }));
-  } catch(e) {}
-}
-function _tgpLoadCache() {
-  try {
-    var key = _tgp._cacheKey;
-    if (!key) return null;
-    var raw = localStorage.getItem(key);
-    if (!raw) return null;
-    var obj = JSON.parse(raw);
-    // Cache valid for 7 days
-    if (Date.now() - obj.ts > 7 * 24 * 3600 * 1000) { localStorage.removeItem(key); return null; }
-    return obj.facts || null;
-  } catch(e) { return null; }
-}
-function _tgpClearCache() {
-  try { if (_tgp._cacheKey) localStorage.removeItem(_tgp._cacheKey); } catch(e) {}
-}
+// ── Cache ─────────────────────────────────────────────
+function _tgpCacheKey(s,sec,t){return 'tgp_v3_'+s+'_'+sec+'_'+t;}
+function _tgpSaveCache(facts){try{if(_tgp._cacheKey)localStorage.setItem(_tgp._cacheKey,JSON.stringify({facts:facts,ts:Date.now()}));}catch(e){}}
+function _tgpLoadCache(){try{var k=_tgp._cacheKey;if(!k)return null;var r=localStorage.getItem(k);if(!r)return null;var o=JSON.parse(r);if(Date.now()-o.ts>7*86400000){localStorage.removeItem(k);return null;}return o.facts||null;}catch(e){return null;}}
+function _tgpClearCache(){try{if(_tgp._cacheKey)localStorage.removeItem(_tgp._cacheKey);}catch(e){}}
 
-// ── Open Game Mode ──────────────────────────────────────
-window.openTopicGameMode = async function(sid, secid, tid, topicName) {
-  _tgp.sid = sid; _tgp.secid = secid; _tgp.tid = tid;
-  _tgp.topicName = topicName || 'Topic';
-  _tgp.score = 0; _tgp.facts = [];
-  _tgp._cacheKey = _tgpCacheKey(sid, secid, tid);
+// ── Open ──────────────────────────────────────────────
+window.openTopicGameMode = async function(sid,secid,tid,topicName){
+  _tgp.sid=sid;_tgp.secid=secid;_tgp.tid=tid;
+  _tgp.topicName=topicName||'Topic';
+  _tgp.score=0;_tgp.facts=[];
+  _tgp._cacheKey=_tgpCacheKey(sid,secid,tid);
+  _tgp._wrongLog={lightning:[],fillin:[],match:[],factbuilder:[]};
 
-  var panel = document.getElementById('topicGamePanel');
-  panel.style.display = 'flex';
-  document.getElementById('tgpTopicName').textContent = '🎮 ' + _tgp.topicName;
-  document.getElementById('tgpLoading').style.display = 'flex';
-  document.getElementById('tgpLobby').style.display = 'none';
-  document.getElementById('tgpGameArea').style.display = 'none';
-  document.getElementById('tgpGameNav').style.display = 'none';
-  document.getElementById('tgpScoreBadge').style.display = 'none';
+  var panel=document.getElementById('topicGamePanel');
+  panel.style.display='flex';
+  document.getElementById('tgpTopicName').textContent='🎮 '+_tgp.topicName;
+  document.getElementById('tgpLoading').style.display='flex';
+  document.getElementById('tgpLobby').style.display='none';
+  document.getElementById('tgpGameArea').style.display='none';
+  document.getElementById('tgpGameNav').style.display='none';
+  document.getElementById('tgpScoreBadge').style.display='none';
 
-  // Check cache first
-  var cached = _tgpLoadCache();
-  if (cached && cached.length >= 5) {
-    _tgp.facts = cached;
-    document.getElementById('tgpSubtitle').textContent = cached.length + ' facts ready (cached)';
-    _tgpSetProgress(100, 'Cache se load hua ⚡ — Super fast!');
-    setTimeout(function() { _tgpShowLobby(); }, 400);
+  var cached=_tgpLoadCache();
+  if(cached&&cached.length>=5){
+    _tgp.facts=cached;
+    _tgpSetProgress(100,'Cache se load hua ⚡');
+    document.getElementById('tgpLoadSub').textContent='Cached questions ready!';
+    setTimeout(_tgpShowLobby,400);
     return;
   }
-
-  // Fresh generate
-  _tgpSetProgress(5, 'Notes extract ho rahe hain...');
-  document.getElementById('tgpLoadSub').textContent = 'Pehli baar AI questions generate kar raha hai — agli baar seedha game!';
-
-  try {
-    var content = _tgpExtractTopicContent(sid, secid, tid);
-    if (!content || content.trim().length < 50) {
-      _tgpShowError('Is topic mein abhi notes nahi hain! Pehle notes add karo.');
-      return;
-    }
-    _tgpSetProgress(20, 'AI content padh raha hai...');
-    var facts = await _tgpGenerateFacts(content, topicName);
-    if (!facts || facts.length < 3) {
-      _tgpShowError('Facts generate nahi ho sake. Notes thodi zyada detail mein likho aur dobara try karo.');
-      return;
-    }
-    _tgp.facts = facts;
+  _tgpSetProgress(5,'Notes extract ho rahe hain...');
+  document.getElementById('tgpLoadSub').textContent='Pehli baar AI questions generate kar raha hai — agli baar seedha game!';
+  try{
+    var content=_tgpExtractTopicContent(sid,secid,tid);
+    if(!content||content.trim().length<50){_tgpShowError('Is topic mein abhi notes nahi hain! Pehle notes add karo.');return;}
+    _tgpSetProgress(20,'AI content padh raha hai...');
+    var facts=await _tgpGenerateFacts(content,topicName);
+    if(!facts||facts.length<3){_tgpShowError('Facts generate nahi ho sake. Notes zyada detail mein likho.');return;}
+    _tgp.facts=facts;
     _tgpSaveCache(facts);
-    _tgpSetProgress(100, 'Sab taiyaar! 🎉');
-    setTimeout(function() { _tgpShowLobby(); }, 500);
-  } catch(e) {
-    _tgpShowError('Error: ' + (e.message || 'Kuch galat hua. API key check karo aur dobara try karo.'));
-  }
+    _tgpSetProgress(100,'Sab taiyaar! 🎉');
+    setTimeout(_tgpShowLobby,500);
+  }catch(e){_tgpShowError('Error: '+(e.message||'API key check karo aur dobara try karo.'));}
 };
 
-// ── Regenerate options ───────────────────────────────────
-window._tgpShowRegenOptions = function() {
-  var el = document.getElementById('tgpRegenOptions');
-  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+// ── Regenerate ────────────────────────────────────────
+window._tgpShowRegenOptions=function(){var el=document.getElementById('tgpRegenOptions');if(el)el.style.display=el.style.display==='none'?'block':'none';};
+window._tgpRegenMissed=async function(){
+  document.getElementById('tgpRegenOptions').style.display='none';
+  document.getElementById('tgpLobby').style.display='none';
+  document.getElementById('tgpLoading').style.display='flex';
+  document.getElementById('tgpLoadSub').textContent='Chhute hue aur mushkil facts se nayi questions...';
+  _tgpSetProgress(10,'Missed facts dhundh raha hai...');
+  try{
+    var content=_tgpExtractTopicContent(_tgp.sid,_tgp.secid,_tgp.tid);
+    var allWrong=[].concat(_tgp._wrongLog.lightning,_tgp._wrongLog.fillin,_tgp._wrongLog.match,_tgp._wrongLog.factbuilder);
+    var missed=allWrong.map(function(f){return f.term;}).filter(function(v,i,a){return a.indexOf(v)===i;}).slice(0,10);
+    if(missed.length)content+='\n\nIn topics par ZYADA FOCUS karo: '+missed.join(', ');
+    var facts=await _tgpGenerateFacts(content,_tgp.topicName,'missed');
+    _tgp.facts=facts;_tgpSaveCache(facts);
+    _tgpSetProgress(100,'Nayi questions ready!');
+    setTimeout(_tgpShowLobby,400);
+  }catch(e){_tgpShowError('Error: '+(e.message||'Dobara try karo.'));}
 };
-
-window._tgpRegenMissed = async function() {
-  // Generate questions focusing on facts that weren't covered or were answered wrong
-  document.getElementById('tgpRegenOptions').style.display = 'none';
-  document.getElementById('tgpLobby').style.display = 'none';
-  document.getElementById('tgpLoading').style.display = 'flex';
-  document.getElementById('tgpLoadSub').textContent = 'Chhute hue aur mushkil facts se nayi questions ban rahi hain...';
-  _tgpSetProgress(10, 'Missed facts dhundh raha hai...');
-
-  try {
-    var content = _tgpExtractTopicContent(_tgp.sid, _tgp.secid, _tgp.tid);
-    _tgpSetProgress(30, 'AI missed topics analyze kar raha hai...');
-    var missedHint = '';
-    if (_tgp._missedTerms && _tgp._missedTerms.length > 0) {
-      missedHint = '\n\nIn topics par ZYADA FOCUS karo (user ne galat kiya tha): ' + _tgp._missedTerms.slice(0,8).join(', ');
-    }
-    var facts = await _tgpGenerateFacts(content + missedHint, _tgp.topicName, 'missed');
-    _tgp.facts = facts;
-    _tgpSaveCache(facts);
-    _tgpSetProgress(100, 'Nayi questions ready!');
-    setTimeout(function() { _tgpShowLobby(); }, 400);
-  } catch(e) {
-    _tgpShowError('Error: ' + (e.message || 'Dobara try karo.'));
-  }
-};
-
-window._tgpRegenFresh = async function() {
+window._tgpRegenFresh=async function(){
   _tgpClearCache();
-  _tgp._missedTerms = [];
-  document.getElementById('tgpRegenOptions').style.display = 'none';
-  document.getElementById('tgpLobby').style.display = 'none';
-  document.getElementById('tgpLoading').style.display = 'flex';
-  document.getElementById('tgpLoadSub').textContent = 'Bilkul naye angles se questions ban rahe hain...';
-  _tgpSetProgress(10, 'Fresh generation shuru...');
-
-  try {
-    var content = _tgpExtractTopicContent(_tgp.sid, _tgp.secid, _tgp.tid);
-    var facts = await _tgpGenerateFacts(content, _tgp.topicName, 'fresh');
-    _tgp.facts = facts;
-    _tgpSaveCache(facts);
-    _tgpSetProgress(100, 'Bilkul naye questions ready!');
-    setTimeout(function() { _tgpShowLobby(); }, 400);
-  } catch(e) {
-    _tgpShowError('Error: ' + (e.message || 'Dobara try karo.'));
-  }
+  _tgp._wrongLog={lightning:[],fillin:[],match:[],factbuilder:[]};
+  document.getElementById('tgpRegenOptions').style.display='none';
+  document.getElementById('tgpLobby').style.display='none';
+  document.getElementById('tgpLoading').style.display='flex';
+  document.getElementById('tgpLoadSub').textContent='Bilkul naye angles se questions...';
+  _tgpSetProgress(10,'Fresh generation...');
+  try{
+    var content=_tgpExtractTopicContent(_tgp.sid,_tgp.secid,_tgp.tid);
+    var facts=await _tgpGenerateFacts(content,_tgp.topicName,'fresh');
+    _tgp.facts=facts;_tgpSaveCache(facts);
+    _tgpSetProgress(100,'Naye questions ready!');
+    setTimeout(_tgpShowLobby,400);
+  }catch(e){_tgpShowError('Error: '+(e.message||'Dobara try karo.'));}
 };
 
-// ── Extract topic content ────────────────────────────────
-function _tgpExtractTopicContent(sid, secid, tid) {
-  var t = (typeof getTop === 'function') ? getTop(sid, secid, tid) : null;
-  if (!t) return '';
-  var parts = [];
-  (t.notes || []).forEach(function(n) {
-    if (n.content && n.content.trim()) {
-      parts.push(n.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
-    }
-  });
-  if (t.finalNotes && t.finalNotes.trim()) {
-    parts.push(t.finalNotes.replace(/%%NEW%%|%%DATE%%.*?%%ENDNEW%%|%%HIGHLIGHT%%|%%ENDHIGHLIGHT%%/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
-  }
-  if (t.smartNotesAI && t.smartNotesAI.trim()) {
-    parts.push(t.smartNotesAI.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
-  }
-  (t.savedFacts || []).forEach(function(f) { if (f.text) parts.push(f.text); });
-  if (t.overview && t.overview.trim()) parts.push(t.overview);
-  return parts.join('\n\n').substring(0, 7000);
+// ── Extract content ───────────────────────────────────
+function _tgpExtractTopicContent(sid,secid,tid){
+  var t=(typeof getTop==='function')?getTop(sid,secid,tid):null;
+  if(!t)return '';
+  var parts=[];
+  (t.notes||[]).forEach(function(n){if(n.content&&n.content.trim())parts.push(n.content.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());});
+  if(t.finalNotes&&t.finalNotes.trim())parts.push(t.finalNotes.replace(/%%NEW%%|%%DATE%%.*?%%ENDNEW%%|%%HIGHLIGHT%%|%%ENDHIGHLIGHT%%/g,'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
+  if(t.smartNotesAI&&t.smartNotesAI.trim())parts.push(t.smartNotesAI.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
+  (t.savedFacts||[]).forEach(function(f){if(f.text)parts.push(f.text);});
+  if(t.overview&&t.overview.trim())parts.push(t.overview);
+  return parts.join('\n\n').substring(0,7000);
 }
 
-// ── AI fact generation — SMART prompt ───────────────────
-async function _tgpGenerateFacts(content, topicName, mode) {
-  var apiKey = (typeof S !== 'undefined' && S.apiKey) ? S.apiKey : (document.getElementById('apiKey') ? document.getElementById('apiKey').value : '');
-  if (!apiKey || apiKey.length < 10) throw new Error('Pehle Settings mein Groq API Key daalo! (gsk_...)');
-  var model = (typeof S !== 'undefined' && S.selectedModel && S.selectedModel.length > 5) ? S.selectedModel : 'llama-3.3-70b-versatile';
+// ── AI Generate Facts ─────────────────────────────────
+async function _tgpGenerateFacts(content,topicName,mode){
+  var apiKey=(typeof S!=='undefined'&&S.apiKey)?S.apiKey:(document.getElementById('apiKey')?document.getElementById('apiKey').value:'');
+  if(!apiKey||apiKey.length<10)throw new Error('Pehle Settings mein Groq API Key daalo! (gsk_...)');
+  var model=(typeof S!=='undefined'&&S.selectedModel&&S.selectedModel.length>5)?S.selectedModel:'llama-3.3-70b-versatile';
+  var modeHint=mode==='missed'?'User ne kuch facts miss kiye hain. Un areas par EXTRA focus karo aur naye angles se questions banao.':mode==='fresh'?'Pichli baar se BILKUL ALAG questions banao. Different aspects, different phrasing.':'';
 
-  var modeInstruction = mode === 'missed'
-    ? 'User ne kuch facts miss kiye hain. Un areas par EXTRA focus karo. Naye angles se questions banao.'
-    : mode === 'fresh'
-    ? 'Pichli baar se BILKUL ALAG questions banao. Different aspects, different phrasing use karo.'
-    : '';
+  var sys=`You are an expert educational content analyzer for Indian competitive exam preparation (UPSC, SSC, State PSC, Railways, Banking).
+READ the notes DEEPLY and identify ALL unique facts worth testing. ${modeHint}
 
-  var systemPrompt = `You are an expert educational content analyzer for Indian competitive exam preparation (UPSC, SSC, State PSC, Railways, Banking).
-
-Your job is to READ the given notes DEEPLY and identify:
-1. Hidden key facts that examiners love to test
-2. Specific numbers, dates, years, names that students forget
-3. Cause-effect relationships hidden in the text
-4. Definitions with precise wording
-5. Comparisons or rankings mentioned in the content
-
-${modeInstruction}
-
-Return ONLY valid JSON with this EXACT structure (no markdown, no extra text):
-{
-  "facts": [
-    {
-      "term": "Short question stem (max 8 words) — what is being asked",
-      "detail": "Complete answer sentence with the full fact clearly stated",
-      "fibSentence": "The same detail sentence with ONE key word/number replaced by ___",
-      "fibAnswer": "The exact word/number that fills the blank",
-      "fibOptions": ["fibAnswer", "wrong1", "wrong2", "wrong3"],
-      "examNote": "One line: WHY this fact matters for exam OR what students usually confuse",
-      "isTrue": true
-    }
-  ]
-}
-
-RULES FOR fibSentence:
-- Replace the MOST IMPORTANT and EXAM-WORTHY word — usually a number, year, name, or key term
-- The blank must make the sentence meaningful — not trivial words like "the" or "is"
-- fibOptions must have EXACTLY 4 options — first one is the correct fibAnswer, rest are plausible wrong answers from the same content
-- fibOptions should be shuffled-looking but always put the correct one as index 0 (code will shuffle)
-
-RULES for facts:
-- Extract 18-22 facts total
-- Cover ALL unique facts in the content — even small details
-- term should be a question like "Kab...", "Kaun...", "Kitna...", "Kahan..." (exam style)
-- detail must be a complete, standalone sentence
-- examNote must explain what students usually mix up OR why this is exam-important`;
-
-  var userPrompt = `Topic: ${topicName}\n\nNotes:\n${content}\n\nGenerate 18-22 exam-focused facts. Return ONLY JSON.`;
-
-  _tgpSetProgress(50, 'AI facts aur FIB questions bana raha hai...');
-
-  var resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-    body: JSON.stringify({
-      model: model,
-      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-      temperature: mode === 'fresh' ? 0.7 : 0.3,
-      max_tokens: 5000
-    })
-  });
-
-  if (!resp.ok) {
-    var err = await resp.json().catch(function(){return{};});
-    throw new Error(err.error && err.error.message ? err.error.message : 'Groq API Error: ' + resp.status);
+Return ONLY valid JSON (no markdown, no extra text):
+{"facts":[
+  {
+    "term":"Short question stem max 8 words — what is being asked (Hindi/English mix ok)",
+    "detail":"Complete standalone answer sentence with the full fact",
+    "fibSentence":"The detail sentence with ONE key exam-important word/number replaced by ___",
+    "fibAnswer":"The exact word/number that fills the blank",
+    "fibOptions":["fibAnswer","plausible_wrong1","plausible_wrong2","plausible_wrong3"],
+    "examNote":"Why this fact is exam-important OR what students commonly confuse",
+    "isTrue":true
   }
+]}
 
-  _tgpSetProgress(85, 'Response process ho raha hai...');
-  var data = await resp.json();
-  var raw = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : '';
-  raw = raw.replace(/```json|```/g, '').trim();
-  var start = raw.indexOf('{'), end = raw.lastIndexOf('}');
-  if (start === -1 || end === -1) throw new Error('AI ne sahi format mein jawab nahi diya.');
-  var parsed = JSON.parse(raw.substring(start, end + 1));
-  var facts = parsed.facts || [];
+RULES:
+- Extract EVERY unique fact — 20 to 30 facts minimum
+- fibOptions: always 4 items, first is correct, rest are plausible wrong from same content
+- fibSentence blank: most exam-worthy word (year/number/name/place/key term)
+- examNote: specific confusing point or exam relevance
+- term: frame as exam question style (Kab, Kaun, Kitna, Kahan, Kya)
+- Cover ALL aspects of the content — do not skip any unique information`;
 
-  // Shuffle fibOptions for each fact
-  facts.forEach(function(f) {
-    if (f.fibOptions && f.fibOptions.length === 4) {
-      f.fibOptions = _tgpShuffle(f.fibOptions);
-    }
+  var userPrompt='Topic: '+topicName+'\n\nNotes:\n'+content+'\n\nGenerate 20-30 facts covering ALL unique information. Return ONLY JSON.';
+  _tgpSetProgress(50,'AI facts generate kar raha hai...');
+  var resp=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
+    body:JSON.stringify({model:model,messages:[{role:'system',content:sys},{role:'user',content:userPrompt}],temperature:mode==='fresh'?0.7:0.3,max_tokens:6000})
   });
+  if(!resp.ok){var err=await resp.json().catch(function(){return{};});throw new Error(err.error&&err.error.message?err.error.message:'Groq API Error: '+resp.status);}
+  _tgpSetProgress(85,'Response process ho raha hai...');
+  var data=await resp.json();
+  var raw=data.choices&&data.choices[0]&&data.choices[0].message?data.choices[0].message.content:'';
+  raw=raw.replace(/```json|```/g,'').trim();
+  var start=raw.indexOf('{'),end=raw.lastIndexOf('}');
+  if(start===-1||end===-1)throw new Error('AI ne sahi format mein jawab nahi diya.');
+  var parsed=JSON.parse(raw.substring(start,end+1));
+  var facts=parsed.facts||[];
+  facts.forEach(function(f){if(f.fibOptions&&f.fibOptions.length===4)f.fibOptions=_tgpShuffle(f.fibOptions);});
   return facts;
 }
 
-// ── UI Helpers ───────────────────────────────────────────
-function _tgpSetProgress(pct, text) {
-  var bar = document.getElementById('tgpLoadBar');
-  var txt = document.getElementById('tgpLoadText');
-  if (bar) bar.style.width = pct + '%';
-  if (txt) txt.textContent = text;
-}
+// ── UI Helpers ────────────────────────────────────────
+function _tgpSetProgress(pct,text){var b=document.getElementById('tgpLoadBar'),t=document.getElementById('tgpLoadText');if(b)b.style.width=pct+'%';if(t)t.textContent=text;}
+function _tgpShowError(msg){var l=document.getElementById('tgpLoading');if(l)l.innerHTML='<div style="font-size:2rem;">😞</div><div style="font-size:0.88rem;font-weight:700;color:var(--red);text-align:center;padding:0 20px;line-height:1.6;">'+msg+'</div><button onclick="closeTopicGame()" style="margin-top:16px;padding:10px 24px;border-radius:10px;border:none;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;font-family:inherit;">← Wapas</button>';}
 
-function _tgpShowError(msg) {
-  var loading = document.getElementById('tgpLoading');
-  if (loading) loading.innerHTML = `
-    <div style="font-size:2rem;">😞</div>
-    <div style="font-size:0.88rem;font-weight:700;color:var(--red);text-align:center;padding:0 20px;line-height:1.6;">${msg}</div>
-    <button onclick="closeTopicGame()" style="margin-top:16px;padding:10px 24px;border-radius:10px;border:none;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;font-family:inherit;">← Wapas</button>`;
-}
+function _tgpShowLobby(){
+  document.getElementById('tgpLoading').style.display='none';
+  document.getElementById('tgpLobby').style.display='block';
+  document.getElementById('tgpGameArea').style.display='none';
+  document.getElementById('tgpGameNav').style.display='none';
+  document.getElementById('tgpScoreBadge').style.display='none';
+  document.getElementById('tgpSubtitle').textContent=_tgp.facts.length+' facts extracted';
+  document.getElementById('tgpFactCount').textContent='✅ '+_tgp.facts.length+' facts ready — Game chuno!';
+  document.getElementById('tgpRegenOptions').style.display='none';
 
-function _tgpShowLobby() {
-  document.getElementById('tgpLoading').style.display = 'none';
-  document.getElementById('tgpLobby').style.display = 'block';
-  document.getElementById('tgpGameArea').style.display = 'none';
-  document.getElementById('tgpGameNav').style.display = 'none';
-  document.getElementById('tgpScoreBadge').style.display = 'none';
-  document.getElementById('tgpSubtitle').textContent = _tgp.facts.length + ' facts extracted';
-  document.getElementById('tgpFactCount').textContent = '✅ ' + _tgp.facts.length + ' facts ready — Game chuno!';
-  document.getElementById('tgpRegenOptions').style.display = 'none';
-
-  var games = [
-    { id:'lightning', emoji:'⚡', name:'Lightning Quiz',   desc:'Timer ke saath MCQ — jaldi jawab do!',       stars:'⭐⭐⭐⭐ Speed + Accuracy', color:'#e65100' },
-    { id:'fillin',   emoji:'✏️', name:'Fill in Blank',    desc:'AI-smart blanks — key facts fill karo',      stars:'⭐⭐⭐⭐ Deep Recall',       color:'#2e7d32' },
-    { id:'spotlight',emoji:'🔦', name:'Spotlight Quiz',   desc:'Clues dekho, concept identify karo',         stars:'⭐⭐⭐⭐ Concept Clarity',   color:'#6a1b9a' },
-    { id:'rapidfire',emoji:'🔥', name:'Rapid Fire',       desc:'No timer — ek ek fact pe focus karo',        stars:'⭐⭐⭐⭐⭐ Exam Ready',       color:'#c62828' }
+  var games=[
+    {id:'lightning',emoji:'⚡',name:'Lightning Quiz',desc:'Timer ke saath MCQ — jaldi jawab do!',stars:'⭐⭐⭐⭐ Speed + Accuracy',color:'#e65100'},
+    {id:'fillin',emoji:'✏️',name:'Fill in Blank',desc:'AI-smart blanks — key facts fill karo',stars:'⭐⭐⭐⭐ Deep Recall',color:'#2e7d32'},
+    {id:'match',emoji:'🔗',name:'Column Match',desc:'Column A se Column B ko match karo',stars:'⭐⭐⭐⭐ Concept Linking',color:'#6a1b9a'},
+    {id:'factbuilder',emoji:'🧩',name:'Fact Builder',desc:'Sahi option select karke fact complete karo',stars:'⭐⭐⭐⭐⭐ Exam Ready',color:'#c62828'}
   ];
 
-  var grid = document.getElementById('tgpGameGrid');
-  grid.innerHTML = games.map(function(g) {
-    return `<div class="tgp-game-card" onclick="tgpStartGame('${g.id}')" style="border-top:3px solid ${g.color};">
-      <span class="tgp-gc-emoji">${g.emoji}</span>
-      <div class="tgp-gc-name">${g.name}</div>
-      <div class="tgp-gc-desc">${g.desc}</div>
-      <div class="tgp-gc-stars">${g.stars}</div>
-    </div>`;
+  // Check master levels
+  var grid=document.getElementById('tgpGameGrid');
+  grid.innerHTML=games.map(function(g){
+    var wrongCount=(_tgp._wrongLog[g.id]||[]).length;
+    var masterBadge=wrongCount>0?'<div style="position:absolute;top:6px;right:6px;background:#c62828;color:#fff;border-radius:10px;padding:2px 7px;font-size:0.6rem;font-weight:800;">'+wrongCount+' galat</div>':'';
+    return '<div class="tgp-game-card" onclick="tgpStartGame(\''+g.id+'\')" style="border-top:3px solid '+g.color+';position:relative;">'+masterBadge+'<span class="tgp-gc-emoji">'+g.emoji+'</span><div class="tgp-gc-name">'+g.name+'</div><div class="tgp-gc-desc">'+g.desc+'</div><div class="tgp-gc-stars">'+g.stars+'</div></div>';
   }).join('');
 }
 
-function _tgpShowGameArea(html) {
-  document.getElementById('tgpLobby').style.display = 'none';
-  var area = document.getElementById('tgpGameArea');
-  area.style.display = 'flex';
-  area.innerHTML = html;
-  document.getElementById('tgpGameNav').style.display = 'flex';
-  document.getElementById('tgpScoreBadge').style.display = 'block';
+function _tgpShowGameArea(html){
+  document.getElementById('tgpLobby').style.display='none';
+  var area=document.getElementById('tgpGameArea');
+  area.style.display='flex';area.innerHTML=html;
+  document.getElementById('tgpGameNav').style.display='flex';
+  document.getElementById('tgpScoreBadge').style.display='block';
 }
+function _tgpUpdateScore(){document.getElementById('tgpScoreBadge').textContent='⭐ '+_tgp.score;}
 
-function _tgpUpdateScore() {
-  document.getElementById('tgpScoreBadge').textContent = '⭐ ' + _tgp.score;
-}
-
-// Track missed terms for regen
-function _tgpTrackMiss(term) {
-  if (!_tgp._missedTerms) _tgp._missedTerms = [];
-  if (term && !_tgp._missedTerms.includes(term)) _tgp._missedTerms.push(term);
-}
-
-// Show info card after answer
-function _tgpShowInfoCard(fact) {
-  if (!fact) return;
-  var area = document.getElementById('tgpGameArea');
-  if (!area) return;
-  var old = document.getElementById('tgpInfoCard');
-  if (old) old.remove();
-  var examNote = fact.examNote || '';
-  var card = document.createElement('div');
-  card.id = 'tgpInfoCard';
-  card.className = 'tgp-info-card';
-  card.innerHTML = `<div class="tgp-info-label">📚 Exam Insight</div>
-    <div class="tgp-info-text"><strong>${_tgpEsc(fact.term)}</strong><br>${_tgpEsc(fact.detail)}${examNote ? '<br><span style="color:var(--accent3);font-size:0.72rem;margin-top:4px;display:block;">💡 ' + _tgpEsc(examNote) + '</span>' : ''}</div>`;
+function _tgpShowInfoCard(fact){
+  if(!fact)return;
+  var area=document.getElementById('tgpGameArea');if(!area)return;
+  var old=document.getElementById('tgpInfoCard');if(old)old.remove();
+  var card=document.createElement('div');
+  card.id='tgpInfoCard';card.className='tgp-info-card';
+  card.innerHTML='<div class="tgp-info-label">📚 Exam Insight</div><div><strong>'+_tgpEsc(fact.term)+'</strong><br>'+_tgpEsc(fact.detail)+(fact.examNote?'<br><span style="color:var(--accent3);font-size:0.72rem;margin-top:4px;display:block;">💡 '+_tgpEsc(fact.examNote)+'</span>':'')+'</div>';
   area.appendChild(card);
-  // Scroll to show card
-  setTimeout(function(){ card.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 100);
+  setTimeout(function(){card.scrollIntoView({behavior:'smooth',block:'nearest'});},100);
 }
 
-function tgpBackToLobby() {
-  if (_tgp.gameState._timer) { clearInterval(_tgp.gameState._timer); clearTimeout(_tgp.gameState._timer); }
-  _tgp.gameState = {};
-  _tgp.activeGame = null;
-  document.getElementById('tgpNextBtn').style.display = 'none';
+function _tgpTrackWrong(gameId,fact){
+  if(!fact||!gameId)return;
+  if(!_tgp._wrongLog[gameId])_tgp._wrongLog[gameId]=[];
+  var exists=_tgp._wrongLog[gameId].some(function(f){return f.term===fact.term;});
+  if(!exists)_tgp._wrongLog[gameId].push(fact);
+}
+
+function tgpBackToLobby(){
+  if(_tgp.gameState._timer){clearInterval(_tgp.gameState._timer);clearTimeout(_tgp.gameState._timer);}
+  _tgp.gameState={};_tgp.activeGame=null;
+  document.getElementById('tgpNextBtn').style.display='none';
   _tgpShowLobby();
 }
-
-window.closeTopicGame = function() {
-  if (_tgp.gameState._timer) { clearInterval(_tgp.gameState._timer); clearTimeout(_tgp.gameState._timer); }
-  document.getElementById('topicGamePanel').style.display = 'none';
-  _tgp.gameState = {};
+window.closeTopicGame=function(){
+  if(_tgp.gameState._timer){clearInterval(_tgp.gameState._timer);}
+  document.getElementById('topicGamePanel').style.display='none';
+  _tgp.gameState={};
 };
+function _tgpShuffle(arr){var a=arr.slice();for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=a[i];a[i]=a[j];a[j]=t;}return a;}
 
-function _tgpShuffle(arr) {
-  var a = arr.slice();
-  for (var i = a.length - 1; i > 0; i--) {
-    var j = Math.floor(Math.random() * (i + 1));
-    var t = a[i]; a[i] = a[j]; a[j] = t;
+// ═══════════════════════════════════════════════════════
+// LEVEL SYSTEM HELPERS
+// ═══════════════════════════════════════════════════════
+
+// Build levels array from questions pool
+// Returns: [{label:'Level 1', questions:[...], isMaster:false}, ...]
+function _tgpBuildLevels(pool, wrongLog){
+  var levels=[];
+  var shuffled=_tgpShuffle(pool.slice());
+  var i=0,lvl=1;
+  while(i<shuffled.length){
+    levels.push({label:'Level '+lvl,questions:shuffled.slice(i,i+LEVEL_SIZE),isMaster:false,done:false});
+    i+=LEVEL_SIZE;lvl++;
   }
-  return a;
+  // Add master levels from wrong log
+  if(wrongLog&&wrongLog.length>0){
+    var masterPool=_tgpShuffle(wrongLog.slice());
+    var ml=1;
+    for(var m=0;m<masterPool.length;m+=10){
+      var mq=masterPool.slice(m,m+10);
+      levels.push({label:'🔴 Master '+(ml>1?ml:''),questions:mq,isMaster:true,done:false});
+      ml++;
+    }
+  }
+  return levels;
+}
+
+// Render level selector bar
+function _tgpRenderLevelBar(gameId,levels,activeLvl){
+  return '<div class="tgp-level-strip" id="tgpLvlStrip">'+
+    levels.map(function(lv,i){
+      var cls='tgp-level-btn'+(i===activeLvl?' active':'')+(lv.done?' done':'')+(lv.isMaster?' master':'');
+      return '<button class="'+cls+'" onclick="_tgpJumpLevel('+i+')">'+lv.label+'</button>';
+    }).join('')+
+  '</div>';
+}
+
+function _tgpJumpLevel(idx){
+  var gs=_tgp.gameState;
+  if(!gs.levels||!gs.levels[idx])return;
+  gs.levelIdx=idx;
+  gs.current=0;
+  gs.levelWrong=0;
+  if(!gs.levels[idx].done){
+    // reset questions for this level
+  }
+  // re-render current game at new level
+  switch(_tgp.activeGame){
+    case 'lightning': _tgpRenderLQQuestion();break;
+    case 'fillin':    _tgpRenderFIBQuestion();break;
+    case 'match':     _tgpStartMatchLevel();break;
+    case 'factbuilder':_tgpRenderFBQuestion();break;
+  }
 }
 
 // ═══════════════════════════════════════════════════════
 // 🎮 GAME ROUTER
 // ═══════════════════════════════════════════════════════
-function tgpStartGame(gameId) {
-  _tgp.activeGame = gameId;
-  _tgp.gameState = {};
-  _tgp.score = 0;
-  _tgpUpdateScore();
-  if (_tgp.gameState._timer) clearInterval(_tgp.gameState._timer);
-  document.getElementById('tgpSubtitle').textContent = {
-    lightning: '⚡ Lightning Quiz',
-    fillin:    '✏️ Fill in Blank',
-    spotlight: '🔦 Spotlight Quiz',
-    rapidfire: '🔥 Rapid Fire'
-  }[gameId] || gameId;
-  switch(gameId) {
-    case 'lightning': _tgpStartLightning(); break;
-    case 'fillin':    _tgpStartFillIn(); break;
-    case 'spotlight': _tgpStartSpotlight(); break;
-    case 'rapidfire': _tgpStartRapidFire(); break;
+function tgpStartGame(gameId){
+  _tgp.activeGame=gameId;_tgp.gameState={};
+  _tgp.score=0;_tgpUpdateScore();
+  if(_tgp.gameState._timer)clearInterval(_tgp.gameState._timer);
+  document.getElementById('tgpSubtitle').textContent={
+    lightning:'⚡ Lightning Quiz',fillin:'✏️ Fill in Blank',
+    match:'🔗 Column Match',factbuilder:'🧩 Fact Builder'
+  }[gameId]||gameId;
+  switch(gameId){
+    case 'lightning':_tgpStartLightning();break;
+    case 'fillin':   _tgpStartFillIn();break;
+    case 'match':    _tgpStartMatch();break;
+    case 'factbuilder':_tgpStartFactBuilder();break;
   }
 }
-
-function tgpNextStep() {
-  if (_tgp.activeGame === 'lightning') _tgpNextLQQuestion();
-  else if (_tgp.activeGame === 'fillin')    _tgpNextFIBQuestion();
-  else if (_tgp.activeGame === 'spotlight') _tgpNextSpotlight();
-  else if (_tgp.activeGame === 'rapidfire') _tgpNextRapidFire();
+function tgpNextStep(){
+  if(_tgp.activeGame==='lightning')_tgpNextLQQuestion();
+  else if(_tgp.activeGame==='fillin')_tgpNextFIBQuestion();
+  else if(_tgp.activeGame==='match')_tgpNextMatchLevel();
+  else if(_tgp.activeGame==='factbuilder')_tgpNextFBQuestion();
 }
 
 // ═══════════════════════════════════════════════════════
-// ⚡ GAME 1: LIGHTNING QUIZ
-// 12 sec timer, MCQ — speed + accuracy
+// ⚡ GAME 1: LIGHTNING QUIZ — All facts, levels, master
 // ═══════════════════════════════════════════════════════
-function _tgpStartLightning() {
-  var gs = _tgp.gameState;
-  var trueFacts = _tgp.facts.filter(function(f){ return f.isTrue !== false && f.term && f.detail; });
-  gs.questions = _tgpShuffle(trueFacts).slice(0, Math.min(12, trueFacts.length)).map(function(f) {
-    var wrong = _tgpShuffle(trueFacts.filter(function(x){ return x !== f; })).slice(0, 3).map(function(x){ return x.detail; });
-    var opts = _tgpShuffle([f.detail].concat(wrong));
-    return { q: f.term, correct: f.detail, options: opts, fact: f };
+function _tgpStartLightning(){
+  var gs=_tgp.gameState;
+  var trueFacts=_tgp.facts.filter(function(f){return f.isTrue!==false&&f.term&&f.detail;});
+  // Build MCQ questions — all facts, no repeats
+  var allQ=_tgpShuffle(trueFacts).map(function(f,idx,arr){
+    var wrong=_tgpShuffle(arr.filter(function(x){return x!==f;})).slice(0,3).map(function(x){return x.detail;});
+    return{q:f.term,correct:f.detail,options:_tgpShuffle([f.detail].concat(wrong)),fact:f};
   });
-  gs.current = 0; gs.correct = 0;
+  gs.levels=_tgpBuildLevels(allQ,(_tgp._wrongLog.lightning||[]).map(function(f){
+    var arr=trueFacts;
+    var wrong=_tgpShuffle(arr.filter(function(x){return x!==f;})).slice(0,3).map(function(x){return x.detail;});
+    return{q:f.term,correct:f.detail,options:_tgpShuffle([f.detail].concat(wrong)),fact:f};
+  }));
+  gs.levelIdx=0;gs.current=0;gs.correct=0;gs.levelWrong=0;
   _tgpRenderLQQuestion();
 }
 
-function _tgpRenderLQQuestion() {
-  var gs = _tgp.gameState;
-  if (gs.current >= gs.questions.length) { _tgpGameResult('lightning'); return; }
-  var q = gs.questions[gs.current];
-  if (gs._timer) clearInterval(gs._timer);
-  var totalTime = 12;
+function _tgpRenderLQQuestion(){
+  var gs=_tgp.gameState;
+  var lv=gs.levels[gs.levelIdx];
+  if(!lv){_tgpGameResult('lightning');return;}
+  if(gs.current>=lv.questions.length){_tgpLevelComplete('lightning');return;}
+  var q=lv.questions[gs.current];
+  if(gs._timer)clearInterval(gs._timer);
+  var totalTime=12,timeLeft=12;
+  gs._timerLeft=totalTime;
 
-  _tgpShowGameArea(`
+  var lvBar=_tgpRenderLevelBar('lightning',gs.levels,gs.levelIdx);
+  var pct=Math.round(gs.current/lv.questions.length*100);
+  var masterTag=lv.isMaster?'<span style="background:#c62828;color:#fff;border-radius:8px;padding:2px 8px;font-size:0.68rem;font-weight:800;margin-left:6px;">🔴 MASTER</span>':'';
+
+  _tgpShowGameArea(lvBar+`
     <div style="padding:12px 14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">Q ${gs.current+1} / ${gs.questions.length}</div>
-        <div style="font-size:0.88rem;font-weight:800;color:#c62828;" id="tgpLqTimer">⏱ 12</div>
+        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">${lv.label}${masterTag} — Q${gs.current+1}/${lv.questions.length}</div>
+        <div style="font-size:0.88rem;font-weight:800;color:#c62828;" id="tgpLqTimer">⏱ ${totalTime}</div>
       </div>
-      <div style="height:5px;background:var(--bg2);border-radius:3px;overflow:hidden;margin-bottom:12px;">
+      <div style="height:4px;background:var(--bg2);border-radius:3px;overflow:hidden;margin-bottom:4px;">
         <div id="tgpLqTimerBar" style="height:100%;background:linear-gradient(90deg,#c62828,#f9a825,#2e7d32);width:100%;transition:width 1s linear;border-radius:3px;"></div>
+      </div>
+      <div style="height:3px;background:var(--bg2);border-radius:3px;overflow:hidden;margin-bottom:12px;">
+        <div style="height:100%;background:var(--accent);width:${pct}%;border-radius:3px;transition:width 0.3s;"></div>
       </div>
       <div class="tgp-lq-question">❓ ${_tgpEsc(q.q)}</div>
       <div id="tgpLqOpts">
-        ${q.options.map(function(opt, i){
-          return `<button class="tgp-lq-option" onclick="_tgpLqAnswer(${i})" id="lqopt_${i}">${_tgpEsc(opt)}</button>`;
-        }).join('')}
+        ${q.options.map(function(opt,i){return'<button class="tgp-lq-option" onclick="_tgpLqAnswer('+i+')" id="lqopt_'+i+'">'+_tgpEsc(opt)+'</button>';}).join('')}
       </div>
       <div style="margin-top:8px;font-size:0.72rem;color:var(--text2);text-align:center;min-height:20px;" id="tgpLqMsg"></div>
-    </div>
-  `);
-  document.getElementById('tgpNextBtn').style.display = 'none';
+    </div>`);
+  document.getElementById('tgpNextBtn').style.display='none';
 
-  gs._timerLeft = totalTime;
-  gs._timer = setInterval(function() {
+  gs._timer=setInterval(function(){
     gs._timerLeft--;
-    var te = document.getElementById('tgpLqTimer');
-    var tb = document.getElementById('tgpLqTimerBar');
-    if (te) te.textContent = '⏱ ' + gs._timerLeft;
-    if (tb) tb.style.width = (gs._timerLeft / totalTime * 100) + '%';
-    if (gs._timerLeft <= 3 && te) te.style.color = '#c62828';
-    if (gs._timerLeft <= 0) { clearInterval(gs._timer); _tgpLqAnswer(-1); }
-  }, 1000);
+    var te=document.getElementById('tgpLqTimer'),tb=document.getElementById('tgpLqTimerBar');
+    if(te)te.textContent='⏱ '+gs._timerLeft;
+    if(tb)tb.style.width=(gs._timerLeft/totalTime*100)+'%';
+    if(gs._timerLeft<=3&&te)te.style.color='#c62828';
+    if(gs._timerLeft<=0){clearInterval(gs._timer);_tgpLqAnswer(-1);}
+  },1000);
 }
 
-function _tgpLqAnswer(selectedIdx) {
-  var gs = _tgp.gameState;
-  if (gs._answered) return;
-  gs._answered = true;
+function _tgpLqAnswer(selectedIdx){
+  var gs=_tgp.gameState;
+  if(gs._answered)return;
+  gs._answered=true;
   clearInterval(gs._timer);
-  var q = gs.questions[gs.current];
-  var isCorrect = selectedIdx >= 0 && q.options[selectedIdx] === q.correct;
-
-  q.options.forEach(function(opt, i) {
-    var btn = document.getElementById('lqopt_' + i);
-    if (!btn) return;
-    btn.disabled = true;
-    if (opt === q.correct) btn.classList.add('correct');
-    else if (i === selectedIdx) btn.classList.add('wrong');
-  });
-
-  var msg = document.getElementById('tgpLqMsg');
-  if (isCorrect) {
-    var pts = gs._timerLeft >= 9 ? 15 : gs._timerLeft >= 5 ? 10 : 5;
-    _tgp.score += pts; gs.correct++;
-    if (msg) msg.innerHTML = '<strong style="color:#2e7d32;">✅ Sahi! +' + pts + ' points</strong>';
-    _tgpShowScorePopup(gs._timerLeft >= 9 ? '⚡ FAST! +15' : '+' + pts);
-  } else {
-    if (msg) msg.innerHTML = selectedIdx === -1 ? '<strong style="color:#c62828;">⏰ Time out!</strong>' : '<strong style="color:#c62828;">❌ Galat!</strong>';
-    _tgpTrackMiss(q.fact ? q.fact.term : '');
-  }
-  _tgpUpdateScore();
-  _tgpShowInfoCard(q.fact);
-  gs._answered = false;
-  gs.current++;
-  document.getElementById('tgpNextBtn').style.display = 'block';
-  document.getElementById('tgpNextBtn').textContent = gs.current >= gs.questions.length ? '📊 Result' : 'Agla →';
+  var q=gs.levels[gs.levelIdx].questions[gs.current];
+  var isCorrect=selectedIdx>=0&&q.options[selectedIdx]===q.correct;
+  q.options.forEach(function(opt,i){var b=document.getElementById('lqopt_'+i);if(!b)return;b.disabled=true;if(opt===q.correct)b.classList.add('correct');else if(i===selectedIdx)b.classList.add('wrong');});
+  var msg=document.getElementById('tgpLqMsg');
+  if(isCorrect){var pts=gs._timerLeft>=9?15:gs._timerLeft>=5?10:5;_tgp.score+=pts;gs.correct++;if(msg)msg.innerHTML='<strong style="color:#2e7d32;">✅ Sahi! +'+pts+'</strong>';_tgpShowScorePopup(gs._timerLeft>=9?'⚡ FAST! +15':'+'+pts);}
+  else{if(msg)msg.innerHTML=selectedIdx===-1?'<strong style="color:#c62828;">⏰ Time out!</strong>':'<strong style="color:#c62828;">❌ Galat!</strong>';_tgpTrackWrong('lightning',q.fact);gs.levelWrong=(gs.levelWrong||0)+1;}
+  _tgpUpdateScore();_tgpShowInfoCard(q.fact);
+  gs._answered=false;gs.current++;
+  document.getElementById('tgpNextBtn').style.display='block';
+  document.getElementById('tgpNextBtn').textContent=gs.current>=gs.levels[gs.levelIdx].questions.length?'✅ Level Khatam':'Agla →';
 }
-
-function _tgpNextLQQuestion() { _tgpRenderLQQuestion(); }
+function _tgpNextLQQuestion(){_tgpRenderLQQuestion();}
 
 // ═══════════════════════════════════════════════════════
-// ✏️ GAME 2: FILL IN THE BLANK (AI-smart)
-// AI ne hi fibSentence + fibAnswer generate kiya hai
+// ✏️ GAME 2: FILL IN BLANK — All facts, levels, master
 // ═══════════════════════════════════════════════════════
-function _tgpStartFillIn() {
-  var gs = _tgp.gameState;
-  var trueFacts = _tgp.facts.filter(function(f){ return f.isTrue !== false && f.fibSentence && f.fibAnswer && f.fibOptions; });
-  if (trueFacts.length < 3) {
-    // Fallback: use regular facts with basic blank extraction
-    trueFacts = _tgp.facts.filter(function(f){ return f.isTrue !== false && f.term && f.detail; });
-    trueFacts = trueFacts.map(function(f) {
-      var yearMatch = f.detail.match(/\d{3,4}/);
-      var blankWord = yearMatch ? yearMatch[0] : f.term.split(/\s+/).filter(function(w){return w.length>3;}).pop() || f.term.split(/\s+/).pop();
-      var sentence = yearMatch ? f.detail.replace(yearMatch[0],'___') : f.detail.replace(new RegExp(blankWord.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'),'___');
-      if (!sentence.includes('___')) sentence = f.term + ': ___';
-      var pool = _tgp.facts.filter(function(x){return x!==f&&x.detail;});
-      var wrongs = _tgpShuffle(pool).slice(0,3).map(function(x){
-        var m = x.detail.match(/\d{3,4}/);
-        return m ? m[0] : (x.term.split(/\s+/).filter(function(w){return w.length>3;}).pop() || x.term.split(/\s+/).pop());
-      });
-      return Object.assign({}, f, { fibSentence: sentence, fibAnswer: blankWord, fibOptions: _tgpShuffle([blankWord].concat(wrongs)) });
+function _tgpStartFillIn(){
+  var gs=_tgp.gameState;
+  var trueFacts=_tgp.facts.filter(function(f){return f.isTrue!==false&&f.fibSentence&&f.fibAnswer&&f.fibOptions;});
+  if(trueFacts.length<3){
+    trueFacts=_tgp.facts.filter(function(f){return f.isTrue!==false&&f.term&&f.detail;}).map(function(f){
+      var yr=f.detail.match(/\d{3,4}/),blk=yr?yr[0]:(f.term.split(/\s+/).filter(function(w){return w.length>3;}).pop()||f.term.split(/\s+/).pop());
+      var sent=yr?f.detail.replace(yr[0],'___'):f.detail.replace(new RegExp(blk.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'),'___');
+      if(!sent.includes('___'))sent=f.term+': ___';
+      var pool=_tgp.facts.filter(function(x){return x!==f&&x.detail;});
+      var wrongs=_tgpShuffle(pool).slice(0,3).map(function(x){var m=x.detail.match(/\d{3,4}/);return m?m[0]:(x.term.split(/\s+/).filter(function(w){return w.length>3;}).pop()||x.term.split(/\s+/).pop());});
+      return Object.assign({},f,{fibSentence:sent,fibAnswer:blk,fibOptions:_tgpShuffle([blk].concat(wrongs))});
     });
   }
-  gs.questions = _tgpShuffle(trueFacts).slice(0, Math.min(10, trueFacts.length));
-  gs.current = 0; gs.correct = 0;
+  var allQ=_tgpShuffle(trueFacts).map(function(f){return{sentence:f.fibSentence,answer:f.fibAnswer,options:_tgpShuffle(f.fibOptions.slice()),fact:f};});
+  gs.levels=_tgpBuildLevels(allQ,(_tgp._wrongLog.fillin||[]).map(function(f){
+    return{sentence:f.fibSentence||f.term+': ___',answer:f.fibAnswer||f.term,options:_tgpShuffle((f.fibOptions||[f.fibAnswer||f.term,'a','b','c']).slice()),fact:f};
+  }));
+  gs.levelIdx=0;gs.current=0;gs.correct=0;gs.levelWrong=0;
   _tgpRenderFIBQuestion();
 }
 
-function _tgpRenderFIBQuestion() {
-  var gs = _tgp.gameState;
-  if (gs.current >= gs.questions.length) { _tgpGameResult('fillin'); return; }
-  var q = gs.questions[gs.current];
-  var pct = Math.round(gs.current / gs.questions.length * 100);
+function _tgpRenderFIBQuestion(){
+  var gs=_tgp.gameState;
+  var lv=gs.levels[gs.levelIdx];
+  if(!lv){_tgpGameResult('fillin');return;}
+  if(gs.current>=lv.questions.length){_tgpLevelComplete('fillin');return;}
+  var q=lv.questions[gs.current];
+  var pct=Math.round(gs.current/lv.questions.length*100);
+  var lvBar=_tgpRenderLevelBar('fillin',gs.levels,gs.levelIdx);
+  var masterTag=lv.isMaster?'<span style="background:#c62828;color:#fff;border-radius:8px;padding:2px 8px;font-size:0.68rem;font-weight:800;margin-left:6px;">🔴 MASTER</span>':'';
 
-  _tgpShowGameArea(`
+  _tgpShowGameArea(lvBar+`
     <div style="padding:14px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">Q ${gs.current+1} / ${gs.questions.length}</div>
-        <div style="font-size:0.72rem;color:var(--text2);">✏️ Fill in Blank</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">${lv.label}${masterTag} — Q${gs.current+1}/${lv.questions.length}</div>
+        <div style="font-size:0.68rem;color:var(--text2);">✏️ Fill in Blank</div>
       </div>
-      <div style="height:4px;background:var(--bg2);border-radius:3px;margin-bottom:12px;overflow:hidden;">
+      <div style="height:3px;background:var(--bg2);border-radius:3px;margin-bottom:12px;overflow:hidden;">
         <div style="height:100%;background:linear-gradient(90deg,#2e7d32,#43a047);width:${pct}%;border-radius:3px;transition:width 0.3s;"></div>
       </div>
-      <div style="font-size:0.7rem;color:var(--accent);font-weight:700;margin-bottom:6px;padding:4px 8px;background:rgba(21,101,192,0.07);border-radius:6px;display:inline-block;">📌 ${_tgpEsc(q.term)}</div>
-      <div class="tgp-fib-sentence">${_tgpEsc(q.fibSentence).replace('___','<span class="tgp-fib-blank" id="tgpFibBlank">___</span>')}</div>
+      <div style="font-size:0.7rem;color:var(--accent);font-weight:700;margin-bottom:6px;padding:4px 8px;background:rgba(21,101,192,0.07);border-radius:6px;display:inline-block;">📌 ${_tgpEsc(q.fact?q.fact.term:'')}</div>
+      <div class="tgp-fib-sentence">${_tgpEsc(q.sentence).replace('___','<span class="tgp-fib-blank" id="tgpFibBlank">___</span>')}</div>
       <div style="font-size:0.72rem;color:var(--text2);margin-bottom:10px;">👇 Sahi option chuno:</div>
       <div class="tgp-fib-opts" id="tgpFibOpts">
-        ${q.fibOptions.map(function(opt, i){
-          return `<button class="tgp-fib-opt" onclick="_tgpFibAnswer('${_tgpEscAttr(opt)}')" id="fibopt_${i}">${_tgpEsc(opt)}</button>`;
-        }).join('')}
+        ${q.options.map(function(opt,i){return'<button class="tgp-fib-opt" onclick="_tgpFibAnswer(\''+_tgpEscAttr(opt)+'\')" id="fibopt_'+i+'">'+_tgpEsc(opt)+'</button>';}).join('')}
       </div>
       <div style="margin-top:10px;font-size:0.72rem;color:var(--text2);min-height:20px;" id="tgpFibMsg"></div>
-    </div>
-  `);
-  document.getElementById('tgpNextBtn').style.display = 'none';
+    </div>`);
+  document.getElementById('tgpNextBtn').style.display='none';
 }
 
-function _tgpFibAnswer(selected) {
-  var gs = _tgp.gameState;
-  var q = gs.questions[gs.current];
-  var isCorrect = selected === q.fibAnswer;
-
-  document.querySelectorAll('.tgp-fib-opt').forEach(function(btn) {
-    btn.disabled = true;
-    if (btn.textContent === q.fibAnswer) btn.classList.add('correct');
-    else if (btn.textContent === selected && !isCorrect) btn.classList.add('wrong');
-  });
-
-  var blank = document.getElementById('tgpFibBlank');
-  if (blank) { blank.textContent = q.fibAnswer; blank.style.color = '#2e7d32'; blank.style.borderColor = '#2e7d32'; blank.style.background = 'rgba(46,125,50,0.1)'; }
-
-  var msg = document.getElementById('tgpFibMsg');
-  if (isCorrect) {
-    _tgp.score += 10; gs.correct++;
-    if (msg) msg.innerHTML = '<strong style="color:#2e7d32;">✅ Bilkul sahi! +10</strong>';
-    _tgpShowScorePopup('+10 ✅');
-  } else {
-    if (msg) msg.innerHTML = `<span style="color:#c62828;font-weight:700;">❌ Galat!</span> Sahi: <strong style="color:#2e7d32;">${_tgpEsc(q.fibAnswer)}</strong>`;
-    _tgpTrackMiss(q.term);
-  }
-  _tgpUpdateScore();
-  _tgpShowInfoCard(q);
+function _tgpFibAnswer(selected){
+  var gs=_tgp.gameState;
+  var q=gs.levels[gs.levelIdx].questions[gs.current];
+  var isCorrect=selected===q.answer;
+  document.querySelectorAll('.tgp-fib-opt').forEach(function(b){b.disabled=true;if(b.textContent===q.answer)b.classList.add('correct');else if(b.textContent===selected&&!isCorrect)b.classList.add('wrong');});
+  var blank=document.getElementById('tgpFibBlank');
+  if(blank){blank.textContent=q.answer;blank.style.color='#2e7d32';blank.style.borderColor='#2e7d32';blank.style.background='rgba(46,125,50,0.1)';}
+  var msg=document.getElementById('tgpFibMsg');
+  if(isCorrect){_tgp.score+=10;gs.correct++;if(msg)msg.innerHTML='<strong style="color:#2e7d32;">✅ Bilkul sahi! +10</strong>';_tgpShowScorePopup('+10 ✅');}
+  else{if(msg)msg.innerHTML='<span style="color:#c62828;font-weight:700;">❌ Galat!</span> Sahi: <strong style="color:#2e7d32;">'+_tgpEsc(q.answer)+'</strong>';_tgpTrackWrong('fillin',q.fact);gs.levelWrong=(gs.levelWrong||0)+1;}
+  _tgpUpdateScore();_tgpShowInfoCard(q.fact);
   gs.current++;
-  document.getElementById('tgpNextBtn').style.display = 'block';
-  document.getElementById('tgpNextBtn').textContent = gs.current >= gs.questions.length ? '📊 Result' : 'Agla →';
+  document.getElementById('tgpNextBtn').style.display='block';
+  document.getElementById('tgpNextBtn').textContent=gs.current>=gs.levels[gs.levelIdx].questions.length?'✅ Level Khatam':'Agla →';
 }
-
-function _tgpNextFIBQuestion() { _tgpRenderFIBQuestion(); }
+function _tgpNextFIBQuestion(){_tgpRenderFIBQuestion();}
 
 // ═══════════════════════════════════════════════════════
-// 🔦 GAME 3: SPOTLIGHT QUIZ
-// Clues diye jaate hain — concept identify karo
-// MCQ with 4 options — concept clarity test
+// 🔗 GAME 3: COLUMN MATCH — Column A ↔ Column B
+// Groups of 5 pairs per level — tap to match
 // ═══════════════════════════════════════════════════════
-function _tgpStartSpotlight() {
-  var gs = _tgp.gameState;
-  var trueFacts = _tgp.facts.filter(function(f){ return f.isTrue !== false && f.term && f.detail; });
-  // Build spotlight questions: show part of detail as clue, ask for term
-  gs.questions = _tgpShuffle(trueFacts).slice(0, Math.min(10, trueFacts.length)).map(function(f, idx, arr) {
-    // Show detail as clue, ask what is the concept/term
-    var wrongTerms = _tgpShuffle(arr.filter(function(x){ return x !== f; })).slice(0, 3).map(function(x){ return x.term; });
-    var opts = _tgpShuffle([f.term].concat(wrongTerms));
-    return { clue: f.detail, correct: f.term, options: opts, fact: f };
-  });
-  gs.current = 0; gs.correct = 0;
-  _tgpRenderSpotlight();
+function _tgpStartMatch(){
+  var gs=_tgp.gameState;
+  var trueFacts=_tgp.facts.filter(function(f){return f.isTrue!==false&&f.term&&f.detail;});
+  // Build match rounds: each round = 5 pairs
+  var allPairs=_tgpShuffle(trueFacts).map(function(f){return{left:f.term,right:f.detail,fact:f};});
+  // Pack into level-groups of 5 pairs each
+  var rounds=[];
+  for(var i=0;i<allPairs.length;i+=5){rounds.push(allPairs.slice(i,i+5));}
+  gs.rounds=rounds;
+  // Build levels
+  gs.levels=rounds.map(function(r,i){return{label:'Level '+(i+1),pairs:r,isMaster:false,done:false};});
+  // Master levels from wrong log
+  var wrongFacts=_tgp._wrongLog.match||[];
+  if(wrongFacts.length>0){
+    var wp=_tgpShuffle(wrongFacts.map(function(f){return{left:f.term,right:f.detail,fact:f};}));
+    for(var m=0;m<wp.length;m+=5){
+      gs.levels.push({label:'🔴 Master '+(m/5>0?m/5+1:''),pairs:wp.slice(m,Math.min(m+5,wp.length)),isMaster:true,done:false});
+    }
+  }
+  gs.levelIdx=0;gs.matchState={};
+  _tgpStartMatchLevel();
 }
 
-function _tgpRenderSpotlight() {
-  var gs = _tgp.gameState;
-  if (gs.current >= gs.questions.length) { _tgpGameResult('spotlight'); return; }
-  var q = gs.questions[gs.current];
-  var pct = Math.round(gs.current / gs.questions.length * 100);
+function _tgpStartMatchLevel(){
+  var gs=_tgp.gameState;
+  var lv=gs.levels[gs.levelIdx];
+  if(!lv){_tgpGameResult('match');return;}
+  var pairs=lv.pairs.slice(0,5);
+  // Shuffle both columns independently
+  var leftItems=_tgpShuffle(pairs.map(function(p,i){return{text:p.left,pairIdx:i,matched:false};}));
+  var rightItems=_tgpShuffle(pairs.map(function(p,i){return{text:p.right,pairIdx:i,matched:false};}));
+  gs.matchState={pairs:pairs,leftItems:leftItems,rightItems:rightItems,selectedLeft:null,selectedRight:null,matchedCount:0,wrong:0};
+  _tgpRenderMatch();
+}
 
-  _tgpShowGameArea(`
-    <div style="padding:14px;">
+function _tgpRenderMatch(){
+  var gs=_tgp.gameState;
+  var ms=gs.matchState;
+  var lv=gs.levels[gs.levelIdx];
+  var lvBar=_tgpRenderLevelBar('match',gs.levels,gs.levelIdx);
+  var masterTag=lv.isMaster?'<span style="background:#c62828;color:#fff;border-radius:8px;padding:2px 8px;font-size:0.68rem;font-weight:800;margin-left:6px;">🔴 MASTER</span>':'';
+  var pct=Math.round(ms.matchedCount/ms.pairs.length*100);
+
+  _tgpShowGameArea(lvBar+`
+    <div style="padding:12px 14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">Q ${gs.current+1} / ${gs.questions.length}</div>
-        <div style="font-size:0.72rem;color:var(--purple);font-weight:700;">🔦 Spotlight</div>
+        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">${lv.label}${masterTag} — ${ms.matchedCount}/${ms.pairs.length} matched</div>
+        <div style="font-size:0.68rem;color:var(--purple);font-weight:700;">🔗 Column Match</div>
       </div>
-      <div style="height:4px;background:var(--bg2);border-radius:3px;margin-bottom:12px;overflow:hidden;">
+      <div style="height:3px;background:var(--bg2);border-radius:3px;margin-bottom:10px;overflow:hidden;">
         <div style="height:100%;background:linear-gradient(90deg,#6a1b9a,#8e24aa);width:${pct}%;border-radius:3px;transition:width 0.3s;"></div>
       </div>
-      <div style="font-size:0.72rem;color:var(--text2);font-weight:700;margin-bottom:8px;text-align:center;">🔦 Yeh clue padho — phir batao yeh kaunsa concept hai?</div>
-      <div class="tgp-spot-clue">${_tgpEsc(q.clue)}</div>
-      <div style="font-size:0.78rem;font-weight:700;color:var(--text);margin-bottom:8px;">👇 Yeh kaunsa concept / term hai?</div>
-      <div id="tgpSpotOpts">
-        ${q.options.map(function(opt, i){
-          return `<button class="tgp-lq-option" onclick="_tgpSpotAnswer(${i})" id="spotopt_${i}">${_tgpEsc(opt)}</button>`;
-        }).join('')}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">
+        <div style="font-size:0.68rem;font-weight:800;color:var(--accent);text-align:center;padding:4px 0;background:rgba(21,101,192,0.08);border-radius:6px;">📋 Column A (Term)</div>
+        <div style="font-size:0.68rem;font-weight:800;color:var(--purple);text-align:center;padding:4px 0;background:rgba(106,27,154,0.08);border-radius:6px;">📝 Column B (Detail)</div>
       </div>
-      <div style="margin-top:8px;font-size:0.72rem;color:var(--text2);min-height:20px;" id="tgpSpotMsg"></div>
-    </div>
-  `);
-  document.getElementById('tgpNextBtn').style.display = 'none';
+      <div class="tgp-match-cols">
+        <div id="tgpMatchLeft">${ms.leftItems.map(function(it,i){return'<div class="tgp-match-item'+(it.matched?' matched-ok':'')+(ms.selectedLeft===i?' selected':'')+'" id="ml_'+i+'" onclick="_tgpMatchSelectLeft('+i+')">'+_tgpEsc(it.text)+'</div>';}).join('')}</div>
+        <div id="tgpMatchRight">${ms.rightItems.map(function(it,i){return'<div class="tgp-match-item'+(it.matched?' matched-ok':'')+(ms.selectedRight===i?' selected':'')+'" id="mr_'+i+'" onclick="_tgpMatchSelectRight('+i+')">'+_tgpEsc(it.text)+'</div>';}).join('')}</div>
+      </div>
+      <div style="margin-top:8px;font-size:0.72rem;color:var(--text2);text-align:center;min-height:20px;" id="tgpMatchMsg">👆 Pehle Column A se ek item tap karo, phir Column B se match karo</div>
+    </div>`);
+  document.getElementById('tgpNextBtn').style.display='none';
 }
 
-function _tgpSpotAnswer(idx) {
-  var gs = _tgp.gameState;
-  var q = gs.questions[gs.current];
-  var isCorrect = q.options[idx] === q.correct;
-
-  q.options.forEach(function(opt, i) {
-    var btn = document.getElementById('spotopt_' + i);
-    if (!btn) return;
-    btn.disabled = true;
-    if (opt === q.correct) btn.classList.add('correct');
-    else if (i === idx && !isCorrect) btn.classList.add('wrong');
-  });
-
-  var msg = document.getElementById('tgpSpotMsg');
-  if (isCorrect) {
-    _tgp.score += 10; gs.correct++;
-    if (msg) msg.innerHTML = '<strong style="color:#2e7d32;">✅ Sahi! +10</strong>';
-    _tgpShowScorePopup('+10 🔦');
-  } else {
-    if (msg) msg.innerHTML = `<span style="color:#c62828;font-weight:700;">❌ Galat!</span> Sahi: <strong style="color:#6a1b9a;">${_tgpEsc(q.correct)}</strong>`;
-    _tgpTrackMiss(q.fact ? q.fact.term : '');
+function _tgpMatchSelectLeft(idx){
+  var ms=_tgp.gameState.matchState;
+  if(ms.leftItems[idx].matched)return;
+  ms.selectedLeft=idx;
+  _tgpUpdateMatchUI();
+  if(ms.selectedRight!==null)_tgpCheckMatch();
+}
+function _tgpMatchSelectRight(idx){
+  var ms=_tgp.gameState.matchState;
+  if(ms.rightItems[idx].matched)return;
+  ms.selectedRight=idx;
+  _tgpUpdateMatchUI();
+  if(ms.selectedLeft!==null)_tgpCheckMatch();
+}
+function _tgpUpdateMatchUI(){
+  var ms=_tgp.gameState.matchState;
+  ms.leftItems.forEach(function(it,i){var el=document.getElementById('ml_'+i);if(!el)return;el.className='tgp-match-item'+(it.matched?' matched-ok':'')+(ms.selectedLeft===i?' selected':'');});
+  ms.rightItems.forEach(function(it,i){var el=document.getElementById('mr_'+i);if(!el)return;el.className='tgp-match-item'+(it.matched?' matched-ok':'')+(ms.selectedRight===i?' selected':'');});
+}
+function _tgpCheckMatch(){
+  var gs=_tgp.gameState;var ms=gs.matchState;
+  var li=ms.selectedLeft,ri=ms.selectedRight;
+  if(li===null||ri===null)return;
+  var lItem=ms.leftItems[li],rItem=ms.rightItems[ri];
+  var isMatch=lItem.pairIdx===rItem.pairIdx;
+  if(isMatch){
+    lItem.matched=rItem.matched=true;
+    ms.matchedCount++;
+    _tgp.score+=15;gs.correct=(gs.correct||0)+1;
+    _tgpUpdateScore();_tgpShowScorePopup('+15 🔗');
+    var msg=document.getElementById('tgpMatchMsg');
+    if(msg)msg.innerHTML='<strong style="color:#2e7d32;">✅ Sahi match! +15</strong>';
+    _tgpShowInfoCard(ms.pairs[lItem.pairIdx].fact);
+  }else{
+    // Flash wrong
+    var elL=document.getElementById('ml_'+li),elR=document.getElementById('mr_'+ri);
+    if(elL){elL.classList.add('matched-wrong');setTimeout(function(){if(elL)elL.classList.remove('matched-wrong');_tgpUpdateMatchUI();},500);}
+    if(elR){elR.classList.add('matched-wrong');setTimeout(function(){if(elR)elR.classList.remove('matched-wrong');_tgpUpdateMatchUI();},500);}
+    var msg2=document.getElementById('tgpMatchMsg');
+    if(msg2)msg2.innerHTML='<span style="color:#c62828;font-weight:700;">❌ Galat pair! Dobara try karo.</span>';
+    _tgpTrackWrong('match',ms.pairs[lItem.pairIdx].fact);
+    gs.levelWrong=(gs.levelWrong||0)+1;
   }
-  _tgpUpdateScore();
-  _tgpShowInfoCard(q.fact);
-  gs.current++;
-  document.getElementById('tgpNextBtn').style.display = 'block';
-  document.getElementById('tgpNextBtn').textContent = gs.current >= gs.questions.length ? '📊 Result' : 'Agla →';
+  ms.selectedLeft=null;ms.selectedRight=null;
+  setTimeout(function(){_tgpUpdateMatchUI();},isMatch?0:550);
+  if(ms.matchedCount>=ms.pairs.length){
+    setTimeout(function(){
+      var msg3=document.getElementById('tgpMatchMsg');
+      if(msg3)msg3.innerHTML='<strong style="color:var(--accent);">🎉 Level complete!</strong>';
+      document.getElementById('tgpNextBtn').style.display='block';
+      document.getElementById('tgpNextBtn').textContent='✅ Level Khatam';
+    },600);
+  }
 }
-
-function _tgpNextSpotlight() { _tgpRenderSpotlight(); }
+function _tgpNextMatchLevel(){_tgpLevelComplete('match');}
 
 // ═══════════════════════════════════════════════════════
-// 🔥 GAME 4: RAPID FIRE
-// No timer — ek ek fact deeply — MCQ with context shown
-// After each answer full fact detail + exam note shown
+// 🧩 GAME 4: FACT BUILDER
+// Given term, select correct detail from 4 options
+// PLUS: a hint word-reveal system for harder facts
 // ═══════════════════════════════════════════════════════
-function _tgpStartRapidFire() {
-  var gs = _tgp.gameState;
-  var trueFacts = _tgp.facts.filter(function(f){ return f.isTrue !== false && f.term && f.detail; });
-  // Mix Q style: some ask term (what is X?), some ask detail (X kab/kahan/kyun?)
-  gs.questions = _tgpShuffle(trueFacts).slice(0, Math.min(15, trueFacts.length)).map(function(f, idx, arr) {
-    var flip = idx % 2 === 0;
-    var correct = flip ? f.detail : f.term;
-    var wrongPool = _tgpShuffle(arr.filter(function(x){ return x !== f; })).slice(0, 3);
-    var wrongs = wrongPool.map(function(x){ return flip ? x.detail : x.term; });
-    var opts = _tgpShuffle([correct].concat(wrongs));
-    var question = flip
-      ? '❓ ' + f.term + ' — iska sahi description kya hai?'
-      : '🔍 Yeh description kaunse concept ki hai?\n"' + f.detail.substring(0, 100) + (f.detail.length > 100 ? '...' : '') + '"';
-    return { question: question, correct: correct, options: opts, fact: f };
+function _tgpStartFactBuilder(){
+  var gs=_tgp.gameState;
+  var trueFacts=_tgp.facts.filter(function(f){return f.isTrue!==false&&f.term&&f.detail;});
+  // Mix: even = "term → correct detail", odd = "detail snippet → correct term"
+  var allQ=_tgpShuffle(trueFacts).map(function(f,idx,arr){
+    var flip=idx%3===0; // every 3rd: reverse (detail→term)
+    var correct=flip?f.term:f.detail;
+    var pool=_tgpShuffle(arr.filter(function(x){return x!==f;})).slice(0,3);
+    var wrongs=pool.map(function(x){return flip?x.term:x.detail;});
+    var opts=_tgpShuffle([correct].concat(wrongs));
+    var qText=flip?('🔍 Yeh description kaunse concept ki hai?\n"'+f.detail.substring(0,90)+(f.detail.length>90?'...':'')+'"'):'📌 '+f.term+'\n\nIska sahi description kya hai?';
+    return{question:qText,correct:correct,options:opts,fact:f};
   });
-  gs.current = 0; gs.correct = 0;
-  _tgpRenderRapidFire();
+  gs.levels=_tgpBuildLevels(allQ,(_tgp._wrongLog.factbuilder||[]).map(function(f){
+    var arr=trueFacts;
+    var wrong=_tgpShuffle(arr.filter(function(x){return x!==f;})).slice(0,3).map(function(x){return x.detail;});
+    return{question:'📌 '+f.term+'\n\nIska sahi description kya hai?',correct:f.detail,options:_tgpShuffle([f.detail].concat(wrong)),fact:f};
+  }));
+  gs.levelIdx=0;gs.current=0;gs.correct=0;gs.levelWrong=0;
+  _tgpRenderFBQuestion();
 }
 
-function _tgpRenderRapidFire() {
-  var gs = _tgp.gameState;
-  if (gs.current >= gs.questions.length) { _tgpGameResult('rapidfire'); return; }
-  var q = gs.questions[gs.current];
-  var pct = Math.round(gs.current / gs.questions.length * 100);
+function _tgpRenderFBQuestion(){
+  var gs=_tgp.gameState;
+  var lv=gs.levels[gs.levelIdx];
+  if(!lv){_tgpGameResult('factbuilder');return;}
+  if(gs.current>=lv.questions.length){_tgpLevelComplete('factbuilder');return;}
+  var q=lv.questions[gs.current];
+  var pct=Math.round(gs.current/lv.questions.length*100);
+  var lvBar=_tgpRenderLevelBar('factbuilder',gs.levels,gs.levelIdx);
+  var masterTag=lv.isMaster?'<span style="background:#c62828;color:#fff;border-radius:8px;padding:2px 8px;font-size:0.68rem;font-weight:800;margin-left:6px;">🔴 MASTER</span>':'';
 
-  _tgpShowGameArea(`
+  _tgpShowGameArea(lvBar+`
     <div style="padding:14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">Q ${gs.current+1} / ${gs.questions.length}</div>
-        <div style="font-size:0.72rem;color:#c62828;font-weight:700;">🔥 Rapid Fire</div>
+        <div style="font-size:0.78rem;font-weight:700;color:var(--text2);">${lv.label}${masterTag} — Q${gs.current+1}/${lv.questions.length}</div>
+        <div style="font-size:0.68rem;color:#c62828;font-weight:700;">🧩 Fact Builder</div>
       </div>
-      <div style="height:4px;background:var(--bg2);border-radius:3px;margin-bottom:12px;overflow:hidden;">
+      <div style="height:3px;background:var(--bg2);border-radius:3px;margin-bottom:12px;overflow:hidden;">
         <div style="height:100%;background:linear-gradient(90deg,#c62828,#e65100);width:${pct}%;border-radius:3px;transition:width 0.3s;"></div>
       </div>
-      <div class="tgp-rf-question">${_tgpEsc(q.question)}</div>
-      <div id="tgpRfOpts">
-        ${q.options.map(function(opt, i){
-          return `<button class="tgp-rf-opt" onclick="_tgpRfAnswer(${i})" id="rfopt_${i}">${_tgpEsc(opt)}</button>`;
-        }).join('')}
+      <div class="tgp-fb-question">${_tgpEsc(q.question).replace(/\n/g,'<br>')}</div>
+      <div id="tgpFbOpts">
+        ${q.options.map(function(opt,i){return'<button class="tgp-lq-option" onclick="_tgpFbAnswer('+i+')" id="fbopt_'+i+'">'+_tgpEsc(opt)+'</button>';}).join('')}
       </div>
-      <div style="margin-top:8px;font-size:0.72rem;color:var(--text2);min-height:20px;" id="tgpRfMsg"></div>
-    </div>
-  `);
-  document.getElementById('tgpNextBtn').style.display = 'none';
+      <div style="margin-top:8px;font-size:0.72rem;color:var(--text2);min-height:20px;" id="tgpFbMsg"></div>
+    </div>`);
+  document.getElementById('tgpNextBtn').style.display='none';
 }
 
-function _tgpRfAnswer(idx) {
-  var gs = _tgp.gameState;
-  var q = gs.questions[gs.current];
-  var isCorrect = q.options[idx] === q.correct;
-
-  q.options.forEach(function(opt, i) {
-    var btn = document.getElementById('rfopt_' + i);
-    if (!btn) return;
-    btn.disabled = true;
-    if (opt === q.correct) btn.classList.add('correct');
-    else if (i === idx && !isCorrect) btn.classList.add('wrong');
-  });
-
-  var msg = document.getElementById('tgpRfMsg');
-  if (isCorrect) {
-    _tgp.score += 10; gs.correct++;
-    if (msg) msg.innerHTML = '<strong style="color:#2e7d32;">✅ Sahi! +10</strong>';
-    _tgpShowScorePopup('+10 🔥');
-  } else {
-    if (msg) msg.innerHTML = `<span style="color:#c62828;font-weight:700;">❌ Galat!</span> Sahi: <strong style="color:#c62828;">${_tgpEsc(q.correct.substring(0,60))}${q.correct.length>60?'...':''}</strong>`;
-    _tgpTrackMiss(q.fact ? q.fact.term : '');
-  }
-  _tgpUpdateScore();
-  _tgpShowInfoCard(q.fact);
+function _tgpFbAnswer(idx){
+  var gs=_tgp.gameState;
+  var q=gs.levels[gs.levelIdx].questions[gs.current];
+  var isCorrect=q.options[idx]===q.correct;
+  q.options.forEach(function(opt,i){var b=document.getElementById('fbopt_'+i);if(!b)return;b.disabled=true;if(opt===q.correct)b.classList.add('correct');else if(i===idx&&!isCorrect)b.classList.add('wrong');});
+  var msg=document.getElementById('tgpFbMsg');
+  if(isCorrect){_tgp.score+=10;gs.correct++;if(msg)msg.innerHTML='<strong style="color:#2e7d32;">✅ Sahi! +10</strong>';_tgpShowScorePopup('+10 🧩');}
+  else{if(msg)msg.innerHTML='<span style="color:#c62828;font-weight:700;">❌ Galat!</span> Sahi: <strong style="color:#c62828;">'+_tgpEsc(q.correct.substring(0,50))+(q.correct.length>50?'...':'')+'</strong>';_tgpTrackWrong('factbuilder',q.fact);gs.levelWrong=(gs.levelWrong||0)+1;}
+  _tgpUpdateScore();_tgpShowInfoCard(q.fact);
   gs.current++;
-  document.getElementById('tgpNextBtn').style.display = 'block';
-  document.getElementById('tgpNextBtn').textContent = gs.current >= gs.questions.length ? '📊 Result' : 'Agla →';
+  document.getElementById('tgpNextBtn').style.display='block';
+  document.getElementById('tgpNextBtn').textContent=gs.current>=gs.levels[gs.levelIdx].questions.length?'✅ Level Khatam':'Agla →';
+}
+function _tgpNextFBQuestion(){_tgpRenderFBQuestion();}
+
+// ═══════════════════════════════════════════════════════
+// LEVEL COMPLETE — check master, move to next
+// ═══════════════════════════════════════════════════════
+function _tgpLevelComplete(gameId){
+  var gs=_tgp.gameState;
+  var lv=gs.levels[gs.levelIdx];
+  if(lv)lv.done=true;
+
+  // Auto-generate master level if >= 3 wrong in this level AND not already master
+  var wrongCount=gs.levelWrong||0;
+  if(wrongCount>=3&&!lv.isMaster){
+    var gameWrong=_tgp._wrongLog[gameId]||[];
+    // Check if a master level covering these wrongs doesn't already exist
+    var masterExists=gs.levels.some(function(l){return l.isMaster&&!l.done;});
+    if(!masterExists&&gameWrong.length>0){
+      var masterQ=gameWrong.slice();
+      // Convert wrong facts to game-specific questions
+      var newMasterLevels=_tgpBuildMasterLevels(gameId,masterQ);
+      newMasterLevels.forEach(function(ml){gs.levels.push(ml);});
+    }
+  }
+
+  // Move to next level
+  gs.levelIdx++;
+  gs.current=0;gs.levelWrong=0;
+  if(gs.levelIdx>=gs.levels.length){_tgpGameResult(gameId);return;}
+
+  // Show level complete toast
+  var nextLv=gs.levels[gs.levelIdx];
+  var isMasterNext=nextLv&&nextLv.isMaster;
+  _tgpShowGameArea(`
+    <div style="padding:30px 20px;text-align:center;">
+      <div style="font-size:2.5rem;margin-bottom:12px;">${isMasterNext?'🔴':'🎉'}</div>
+      <div style="font-size:1rem;font-weight:800;color:var(--text);margin-bottom:6px;">${lv?lv.label:''} Complete!</div>
+      ${wrongCount>0?'<div style="font-size:0.78rem;color:#e65100;font-weight:700;margin-bottom:8px;">'+wrongCount+' galat the — practice karte raho!</div>':'<div style="font-size:0.78rem;color:#2e7d32;font-weight:700;margin-bottom:8px;">Sab sahi! Ekdum badhiya! 🌟</div>'}
+      ${isMasterNext?'<div style="font-size:0.82rem;color:#c62828;font-weight:700;padding:10px;background:rgba(198,40,40,0.08);border-radius:10px;margin-bottom:14px;">🔴 Master Level unlock hua!<br><span style="font-size:0.72rem;font-weight:500;">Galat hue facts ki practice hogi</span></div>':''}
+      <div style="font-size:0.82rem;color:var(--text2);margin-bottom:16px;">Agli level: <strong>${nextLv?nextLv.label:''}</strong></div>
+      <button onclick="_tgpContinueLevel('${gameId}')" style="padding:12px 28px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.88rem;font-weight:800;cursor:pointer;font-family:inherit;">${isMasterNext?'🔴 Master Level Shuru Karo':'➡️ Agla Level'}</button>
+      <br><br>
+      <button onclick="tgpBackToLobby()" style="padding:8px 20px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text2);font-size:0.76rem;font-weight:700;cursor:pointer;font-family:inherit;">🎮 Game Lobby</button>
+    </div>`);
+  document.getElementById('tgpNextBtn').style.display='none';
 }
 
-function _tgpNextRapidFire() { _tgpRenderRapidFire(); }
+window._tgpContinueLevel=function(gameId){
+  switch(gameId){
+    case 'lightning':_tgpRenderLQQuestion();break;
+    case 'fillin':   _tgpRenderFIBQuestion();break;
+    case 'match':    _tgpStartMatchLevel();break;
+    case 'factbuilder':_tgpRenderFBQuestion();break;
+  }
+};
+
+function _tgpBuildMasterLevels(gameId,wrongFacts){
+  var levels=[];
+  for(var i=0;i<wrongFacts.length;i+=10){
+    var batch=wrongFacts.slice(i,i+10);
+    var mqs=batch.map(function(f){
+      if(gameId==='lightning'){
+        var pool=_tgp.facts.filter(function(x){return x!==f&&x.detail;});
+        var w=_tgpShuffle(pool).slice(0,3).map(function(x){return x.detail;});
+        return{q:f.term,correct:f.detail,options:_tgpShuffle([f.detail].concat(w)),fact:f};
+      }else if(gameId==='fillin'){
+        return{sentence:f.fibSentence||f.term+': ___',answer:f.fibAnswer||f.term,options:_tgpShuffle((f.fibOptions||[f.fibAnswer||f.term,'A','B','C']).slice()),fact:f};
+      }else if(gameId==='match'){
+        return{left:f.term,right:f.detail,fact:f};
+      }else{
+        var pool2=_tgp.facts.filter(function(x){return x!==f&&x.detail;});
+        var w2=_tgpShuffle(pool2).slice(0,3).map(function(x){return x.detail;});
+        return{question:'📌 '+f.term+'\n\nIska sahi description kya hai?',correct:f.detail,options:_tgpShuffle([f.detail].concat(w2)),fact:f};
+      }
+    });
+    var num=Math.floor(i/10)+1;
+    if(gameId==='match'){
+      // For match, pack into 5-pair groups
+      for(var j=0;j<mqs.length;j+=5){
+        levels.push({label:'🔴 Master '+num+(mqs.length>5?' ('+(j/5+1)+')':''),pairs:mqs.slice(j,j+5),isMaster:true,done:false});
+        num++;
+      }
+    }else{
+      levels.push({label:'🔴 Master '+num,questions:mqs,isMaster:true,done:false});
+    }
+  }
+  return levels;
+}
 
 // ═══════════════════════════════════════════════════════
 // 🏁 RESULT SCREEN
 // ═══════════════════════════════════════════════════════
-function _tgpGameResult(gameId) {
-  var score = _tgp.score;
-  var total = _tgp.gameState.questions ? _tgp.gameState.questions.length : 0;
-  var correct = _tgp.gameState.correct || 0;
-  var pct = total > 0 ? Math.round(correct / total * 100) : 0;
-  var emoji = pct >= 90 ? '🏆' : pct >= 70 ? '🥈' : pct >= 50 ? '🥉' : '😊';
-  var msg = pct >= 90 ? 'Zabardast! Aap toh topper ho!' :
-            pct >= 70 ? 'Bahut accha! Thodi aur practice karo.' :
-            pct >= 50 ? 'Theek hai! Dobara khelo — aur better karoge.' :
-            'Koi baat nahi! Notes padho aur Regenerate se missed facts practice karo 💪';
-  var gameNames = { lightning:'⚡ Lightning Quiz', fillin:'✏️ Fill in Blank', spotlight:'🔦 Spotlight Quiz', rapidfire:'🔥 Rapid Fire' };
+function _tgpGameResult(gameId){
+  var gs=_tgp.gameState;
+  var score=_tgp.score;
+  var totalQ=gs.levels?gs.levels.filter(function(l){return!l.isMaster;}).reduce(function(sum,l){return sum+(l.questions?l.questions.length:l.pairs?l.pairs.length:0);},0):0;
+  var correct=gs.correct||0;
+  var pct=totalQ>0?Math.round(correct/totalQ*100):0;
+  var emoji=pct>=90?'🏆':pct>=70?'🥈':pct>=50?'🥉':'😊';
+  var msg=pct>=90?'Zabardast! Aap toh topper ho!':pct>=70?'Bahut accha! Thodi aur practice karo.':pct>=50?'Theek hai! Dobara khelo — aur better karoge.':'Koi baat nahi! Regenerate se missed facts practice karo 💪';
+  var gNames={lightning:'⚡ Lightning Quiz',fillin:'✏️ Fill in Blank',match:'🔗 Column Match',factbuilder:'🧩 Fact Builder'};
+  var allWrong=_tgp._wrongLog[gameId]||[];
+  var levelsPlayed=gs.levels?gs.levels.filter(function(l){return l.done;}).length:0;
 
   _tgpShowGameArea(`
     <div class="tgp-result">
       <span class="tgp-result-emoji">${emoji}</span>
-      <div style="font-size:0.85rem;font-weight:700;color:var(--text2);margin-bottom:6px;">${gameNames[gameId] || gameId} Complete!</div>
+      <div style="font-size:0.85rem;font-weight:700;color:var(--text2);margin-bottom:6px;">${gNames[gameId]||gameId} — Sab Levels Complete! 🎉</div>
       <div class="tgp-result-score">⭐ ${score} Points</div>
-      <div style="font-size:1rem;font-weight:800;color:var(--text);margin-top:4px;">${correct}/${total} sahi (${pct}%)</div>
+      <div style="font-size:1rem;font-weight:800;color:var(--text);margin-top:4px;">${correct}/${totalQ} sahi (${pct}%)</div>
       <div class="tgp-result-msg">${msg}</div>
-
       <div style="margin:16px 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
         <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:10px;text-align:center;">
-          <div style="font-size:1.3rem;font-weight:900;color:var(--accent);">${total}</div>
-          <div style="font-size:0.62rem;color:var(--text2);font-weight:600;">Questions</div>
+          <div style="font-size:1.3rem;font-weight:900;color:var(--accent);">${levelsPlayed}</div>
+          <div style="font-size:0.62rem;color:var(--text2);font-weight:600;">Levels</div>
         </div>
         <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:10px;text-align:center;">
           <div style="font-size:1.3rem;font-weight:900;color:#2e7d32;">${correct}</div>
           <div style="font-size:0.62rem;color:var(--text2);font-weight:600;">Sahi</div>
         </div>
         <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:10px;text-align:center;">
-          <div style="font-size:1.3rem;font-weight:900;color:#c62828;">${total - correct}</div>
-          <div style="font-size:0.62rem;color:var(--text2);font-weight:600;">Galat</div>
+          <div style="font-size:1.3rem;font-weight:900;color:#c62828;">${allWrong.length}</div>
+          <div style="font-size:0.62rem;color:var(--text2);font-weight:600;">Weak Topics</div>
         </div>
       </div>
-
-      ${(_tgp._missedTerms && _tgp._missedTerms.length > 0) ? `
-        <div style="margin-bottom:14px;padding:10px 12px;background:rgba(230,81,0,0.07);border:1px solid rgba(230,81,0,0.2);border-radius:10px;font-size:0.72rem;color:var(--text2);text-align:left;">
-          <div style="font-weight:700;color:#e65100;margin-bottom:4px;">📌 In topics par focus karo:</div>
-          ${(_tgp._missedTerms || []).slice(0,5).map(function(t){ return '<div style="margin-top:2px;">• ' + _tgpEsc(t) + '</div>'; }).join('')}
-        </div>` : ''}
-
-      <button class="tgp-replay-btn" onclick="tgpStartGame('${gameId}')">🔄 Dobara Khelo</button>
+      ${allWrong.length>0?'<div style="margin-bottom:14px;padding:10px 12px;background:rgba(230,81,0,0.07);border:1px solid rgba(230,81,0,0.2);border-radius:10px;font-size:0.72rem;color:var(--text2);text-align:left;"><div style="font-weight:700;color:#e65100;margin-bottom:4px;">📌 In topics par focus karo:</div>'+allWrong.slice(0,5).map(function(f){return'<div style="margin-top:2px;">• '+_tgpEsc(f.term)+'</div>';}).join('')+'</div>':''}
+      <button class="tgp-replay-btn" onclick="tgpStartGame(\'${gameId}\')">🔄 Dobara Khelo</button>
       <br><br>
       <button onclick="tgpBackToLobby()" style="padding:10px 24px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text2);font-size:0.78rem;font-weight:700;cursor:pointer;font-family:inherit;">🎮 Doosra Game</button>
-    </div>
-  `);
-  document.getElementById('tgpNextBtn').style.display = 'none';
-  if (navigator.vibrate) navigator.vibrate([50, 30, 50, 30, 100]);
+    </div>`);
+  document.getElementById('tgpNextBtn').style.display='none';
+  if(navigator.vibrate)navigator.vibrate([50,30,50,30,100]);
 }
 
 // ── Score popup ───────────────────────────────────────
-function _tgpShowScorePopup(text) {
-  var old = document.getElementById('tgpScorePopup');
-  if (old) old.remove();
-  var div = document.createElement('div');
-  div.id = 'tgpScorePopup';
-  div.className = 'tgp-score-popup';
-  div.textContent = text;
-  document.body.appendChild(div);
-  setTimeout(function(){ if(div.parentNode) div.remove(); }, 900);
+function _tgpShowScorePopup(text){
+  var old=document.getElementById('tgpScorePopup');if(old)old.remove();
+  var div=document.createElement('div');div.id='tgpScorePopup';div.className='tgp-score-popup';div.textContent=text;
+  document.body.appendChild(div);setTimeout(function(){if(div.parentNode)div.remove();},900);
 }
-
-// ── Escape helpers ─────────────────────────────────────
-function _tgpEsc(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function _tgpEscAttr(s) {
-  return String(s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
-}
+function _tgpEsc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function _tgpEscAttr(s){return String(s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');}
 </script>
 
 </body>
