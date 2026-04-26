@@ -11448,13 +11448,12 @@ function renderGameHistory(){
       +'<span style="background:rgba('+(pct>=80?'46,125,50':pct>=50?'245,124,0':'198,40,40')+',0.1);border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;color:'+pctColor+';">'+pct+'%</span>'
       +(wrongCount>0?'<span style="background:rgba(230,81,0,0.1);border:1px solid rgba(230,81,0,0.2);border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;color:var(--accent2);">⚠️ '+wrongCount+' weak</span>':'')
       +'<span style="background:var(--surface2);border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;color:var(--text2);">🎚️ '+(g.levelsPlayed||0)+' levels</span>'
-      +(g.status==='in_progress'?'<span style="background:rgba(245,124,0,0.12);border:1px solid rgba(245,124,0,0.3);border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;color:#e65100;">⏸️ Beech mein chhutha</span>':'<span style="background:rgba(46,125,50,0.12);border:1px solid rgba(46,125,50,0.3);border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;color:var(--green);">✅ Pura</span>')
       +'</div>'
       +(wrongCount>0?'<div style="margin-top:7px;font-size:0.7rem;color:var(--accent2);font-weight:600;">📌 Weak: '+( g.wrongFacts||[]).slice(0,4).map(function(f){return'<span style="background:rgba(230,81,0,0.07);border-radius:4px;padding:1px 5px;margin:1px;display:inline-block;">'+_ghEsc(f.term||'')+'</span>';}).join('')+(wrongCount>4?'<span style="color:var(--text2);"> +' +(wrongCount-4)+' more</span>':'')+'</div>':'')
       +'</div>'
       +'<div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end;flex-shrink:0;">'
       +'<button onclick="ghDeleteSession(\''+_ghEsc(g.gameKey||'')+'\',this)" style="background:rgba(198,40,40,0.07);color:var(--red);border:1.5px solid rgba(198,40,40,0.2);border-radius:8px;padding:4px 10px;font-size:0.68rem;font-weight:700;cursor:pointer;font-family:inherit;">🗑️</button>'
-      +'<button onclick="ghViewFacts(\''+_ghEsc(g.gameKey||'')+'\',this)" style="background:rgba(21,101,192,0.08);color:var(--accent);border:1.5px solid rgba(21,101,192,0.2);border-radius:8px;padding:4px 10px;font-size:0.68rem;font-weight:700;cursor:pointer;font-family:inherit;">📚 Facts</button>'
+      +'<button onclick="openGameDetailModal(\''+_ghEsc(g.gameKey||'')+'\')" style="background:linear-gradient(135deg,rgba(21,101,192,0.12),rgba(106,27,154,0.1));color:var(--accent);border:1.5px solid rgba(21,101,192,0.25);border-radius:8px;padding:4px 10px;font-size:0.68rem;font-weight:700;cursor:pointer;font-family:inherit;">🔍 Details</button>'
       +'</div>'
       +'</div>'
       +'<div class="gh-facts-panel" id="ghfp_'+_ghEsc(g.gameKey||'')+'" style="display:none;margin-top:10px;"></div>'
@@ -11498,6 +11497,194 @@ window.ghViewFacts=function(gameKey,btn){
   });
   panel.innerHTML=html;
   panel.style.display='block';
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// 🎮 GAME DETAIL MODAL — Full session review + Reattempt
+// ═══════════════════════════════════════════════════════════════════════
+function _gdmEsc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+window.openGameDetailModal = function(gameKey){
+  var g = (S.gameVault||[]).find(function(x){return x.gameKey===gameKey;});
+  if(!g){ showToast && showToast('Session nahi mili','error'); return; }
+
+  var modal = document.getElementById('gameDetailModal');
+  var gNames = {lightning:'⚡ Lightning Quiz', fillin:'✏️ Fill in Blank', match:'🔗 Column Match'};
+  var pct = g.totalQ>0 ? Math.round((g.correct||0)/g.totalQ*100) : 0;
+  var emoji = pct>=90?'🏆':pct>=70?'🥈':pct>=50?'🥉':'💪';
+  var date = g.playedAt ? new Date(g.playedAt).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+  var statusBadge = g.status==='in_progress'
+    ? '<span style="background:rgba(245,124,0,0.15);color:#e65100;border:1px solid rgba(245,124,0,0.3);border-radius:20px;padding:2px 10px;font-size:0.7rem;font-weight:700;">⏸️ Beech mein chhutha</span>'
+    : '<span style="background:rgba(46,125,50,0.12);color:#2e7d32;border:1px solid rgba(46,125,50,0.3);border-radius:20px;padding:2px 10px;font-size:0.7rem;font-weight:700;">✅ Pura Complete</span>';
+
+  // Header
+  document.getElementById('gdmTopicName').textContent = emoji+' '+(g.topicName||'Topic');
+  document.getElementById('gdmSubtitle').textContent = (gNames[g.gameId]||g.gameId)+' — '+date;
+  document.getElementById('gdmScore').textContent = '⭐ '+(g.score||0)+' pts';
+
+  // Stats Bar
+  var pctColor = pct>=80?'#2e7d32':pct>=50?'#f57c00':'#c62828';
+  document.getElementById('gdmStatsBar').innerHTML =
+    '<span style="background:rgba(46,125,50,0.1);border:1px solid rgba(46,125,50,0.2);border-radius:20px;padding:3px 11px;font-size:0.72rem;font-weight:700;color:#2e7d32;">✅ '+(g.correct||0)+'/'+(g.totalQ||0)+' Sahi</span>'
+    +'<span style="background:rgba('+( pct>=80?'46,125,50':pct>=50?'245,124,0':'198,40,40')+',0.1);border-radius:20px;padding:3px 11px;font-size:0.72rem;font-weight:700;color:'+pctColor+';">📊 '+pct+'%</span>'
+    +'<span style="background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 11px;font-size:0.72rem;font-weight:700;color:var(--text2);">🎚️ '+(g.levelsPlayed||0)+' Levels</span>'
+    +((g.wrongFacts||[]).length?'<span style="background:rgba(230,81,0,0.1);border:1px solid rgba(230,81,0,0.2);border-radius:20px;padding:3px 11px;font-size:0.72rem;font-weight:700;color:var(--accent2);">⚠️ '+(g.wrongFacts||[]).length+' Weak</span>':'')
+    +statusBadge;
+
+  // Reattempt Bar
+  var hasSid = g.sid && g.secid && g.tid;
+  var rBar = '';
+  if(hasSid){
+    var _gk = _gdmEsc(g.gameKey);
+    var _gi = g.gameId;
+    rBar += '<button onclick="gdmReattempt(\'' +_gk+ '\',\'' +_gi+ '\',\'all\')" style="padding:7px 13px;border-radius:9px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.74rem;font-weight:800;cursor:pointer;font-family:inherit;">🔄 Dobara Khelo</button>';
+    rBar += '<button onclick="gdmReattempt(\'' +_gk+ '\',\'' +_gi+ '\',\'wrong\')" style="padding:7px 13px;border-radius:9px;border:none;background:linear-gradient(135deg,#c62828,#e53935);color:#fff;font-size:0.74rem;font-weight:800;cursor:pointer;font-family:inherit;">🔴 Sirf Galat Wale</button>';
+    rBar += '<button onclick="gdmReattempt(\'' +_gk+ '\',\'lightning\',\'all\')" style="padding:7px 13px;border-radius:9px;border:none;background:rgba(21,101,192,0.1);color:var(--accent);border:1.5px solid rgba(21,101,192,0.25);font-size:0.74rem;font-weight:700;cursor:pointer;font-family:inherit;">⚡ Lightning</button>';
+    rBar += '<button onclick="gdmReattempt(\'' +_gk+ '\',\'fillin\',\'all\')" style="padding:7px 13px;border-radius:9px;border:1.5px solid rgba(106,27,154,0.25);background:rgba(106,27,154,0.08);color:var(--purple);font-size:0.74rem;font-weight:700;cursor:pointer;font-family:inherit;">✏️ Fill in Blank</button>';
+    rBar += '<button onclick="gdmReattempt(\'' +_gk+ '\',\'match\',\'all\')" style="padding:7px 13px;border-radius:9px;border:1.5px solid rgba(0,105,92,0.25);background:rgba(0,105,92,0.08);color:var(--teal);font-size:0.74rem;font-weight:700;cursor:pointer;font-family:inherit;">🔗 Match</button>';
+  } else {
+    rBar = '<div style="font-size:0.74rem;color:var(--text2);padding:4px 0;">ℹ️ Reattempt ke liye topic library mein ja ke game kholo.</div>';
+  }
+  document.getElementById('gdmReattemptBar').innerHTML = rBar;
+
+  // Content — all facts
+  var facts = g.facts || [];
+  var wrongTerms = new Set((g.wrongFacts||[]).map(function(f){return f.term;}));
+  var wrongFacts = facts.filter(function(f){return wrongTerms.has(f.term);});
+  var rightFacts = facts.filter(function(f){return !wrongTerms.has(f.term);});
+
+  var html = '';
+
+  // Summary card
+  html += '<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:14px;">'
+    +'<div style="font-size:0.82rem;font-weight:800;color:var(--text);margin-bottom:8px;">📋 Session Summary</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">'
+    +'<div style="background:var(--surface2);border-radius:10px;padding:8px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:var(--accent);">'+(g.score||0)+'</div><div style="font-size:0.62rem;color:var(--text2);font-weight:600;">Points</div></div>'
+    +'<div style="background:var(--surface2);border-radius:10px;padding:8px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#2e7d32;">'+(g.correct||0)+'</div><div style="font-size:0.62rem;color:var(--text2);font-weight:600;">Sahi</div></div>'
+    +'<div style="background:var(--surface2);border-radius:10px;padding:8px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#c62828;">'+(g.wrongFacts||[]).length+'</div><div style="font-size:0.62rem;color:var(--text2);font-weight:600;">Galat</div></div>'
+    +'</div>'
+    +(facts.length ? '<div style="font-size:0.72rem;color:var(--text2);">📚 Total '+facts.length+' facts is session mein the.</div>' : '')
+    +'</div>';
+
+  // Wrong facts section
+  if(wrongFacts.length){
+    html += '<div style="font-size:0.82rem;font-weight:800;color:#c62828;margin:14px 0 8px;">❌ Galat Jawab Wale Facts ('+wrongFacts.length+')</div>';
+    wrongFacts.forEach(function(f, i){
+      html += _gdmFactCard(f, i+1, true);
+    });
+  }
+
+  // Right facts section
+  if(rightFacts.length){
+    html += '<div style="font-size:0.82rem;font-weight:800;color:#2e7d32;margin:14px 0 8px;">✅ Sahi Jawab Wale Facts ('+rightFacts.length+')</div>';
+    rightFacts.forEach(function(f, i){
+      html += _gdmFactCard(f, i+1, false);
+    });
+  }
+
+  if(!facts.length){
+    html += '<div style="text-align:center;padding:30px;color:var(--text2);font-size:0.84rem;">📭 Is session mein facts ka data nahi mila.</div>';
+  }
+
+  document.getElementById('gdmContent').innerHTML = html;
+  modal.style.display = 'flex';
+};
+
+function _gdmFactCard(f, num, isWrong){
+  var bg = isWrong ? 'rgba(198,40,40,0.05)' : 'var(--surface)';
+  var border = isWrong ? '1.5px solid rgba(198,40,40,0.25)' : '1.5px solid var(--border)';
+  var termColor = isWrong ? '#c62828' : 'var(--text)';
+  var icon = isWrong ? '❌' : '✅';
+
+  // FIB sentence display
+  var fibHtml = '';
+  if(f.fibSentence && f.fibAnswer){
+    var highlighted = f.fibSentence.replace('___', '<span style="background:#fff176;color:#333;font-weight:800;border-radius:4px;padding:0 4px;">['+_gdmEsc(f.fibAnswer)+']</span>');
+    fibHtml = '<div style="font-size:0.72rem;color:var(--text2);margin-top:4px;background:rgba(21,101,192,0.06);border-radius:7px;padding:5px 8px;">✏️ '+highlighted+'</div>';
+  }
+
+  // FIB options
+  var optHtml = '';
+  if(f.fibOptions && f.fibOptions.length){
+    optHtml = '<div style="font-size:0.68rem;color:var(--text2);margin-top:3px;">Options: '
+      + f.fibOptions.map(function(o){
+          var isAns = o===f.fibAnswer;
+          return '<span style="background:'+(isAns?'rgba(46,125,50,0.15)':'var(--surface2)')+';color:'+(isAns?'#2e7d32':'var(--text2)')+';border-radius:5px;padding:1px 7px;margin:1px;display:inline-block;font-weight:'+(isAns?'700':'400')+';">'+_gdmEsc(o)+'</span>';
+        }).join(' ')
+      +'</div>';
+  }
+
+  var examHtml = f.examNote ? '<div style="font-size:0.7rem;color:var(--purple);margin-top:4px;font-weight:600;">📝 '+_gdmEsc(f.examNote)+'</div>' : '';
+  var insightHtml = f.insightHTML ? '<div style="font-size:0.7rem;color:var(--teal);margin-top:5px;background:rgba(0,105,92,0.07);border-radius:7px;padding:5px 8px;line-height:1.5;">💡 '+f.insightHTML+'</div>' : '';
+  var relatedHtml = (f.relatedTerms && f.relatedTerms.length)
+    ? '<div style="font-size:0.68rem;color:var(--text2);margin-top:3px;">🔗 Related: '+f.relatedTerms.slice(0,4).map(function(r){return '<span style="background:var(--surface2);border-radius:4px;padding:1px 6px;margin:1px;display:inline-block;">'+_gdmEsc(r)+'</span>';}).join('')+'</div>'
+    : '';
+
+  return '<div style="background:'+bg+';border:'+border+';border-radius:11px;padding:10px 12px;margin-bottom:8px;">'
+    +'<div style="display:flex;align-items:flex-start;gap:7px;">'
+    +'<span style="font-size:0.72rem;font-weight:800;color:var(--text2);flex-shrink:0;padding-top:2px;">'+num+'.</span>'
+    +'<div style="flex:1;min-width:0;">'
+    +'<div style="font-size:0.82rem;font-weight:800;color:'+termColor+';margin-bottom:2px;">'+icon+' '+_gdmEsc(f.term||'')+'</div>'
+    +'<div style="font-size:0.76rem;color:var(--text2);line-height:1.5;">'+_gdmEsc(f.detail||'')+'</div>'
+    +fibHtml+optHtml+examHtml+relatedHtml+insightHtml
+    +'</div>'
+    +'</div>'
+    +'</div>';
+}
+
+window.gdmReattempt = function(gameKey, gameId, mode){
+  var g = (S.gameVault||[]).find(function(x){return x.gameKey===gameKey;});
+  if(!g){ showToast && showToast('Session nahi mili','error'); return; }
+
+  var facts = (g.facts||[]).filter(function(f){return f.term&&f.detail;});
+  if(mode==='wrong'){
+    var wrongTerms = new Set((g.wrongFacts||[]).map(function(f){return f.term;}));
+    facts = facts.filter(function(f){return wrongTerms.has(f.term);});
+    if(!facts.length){ showToast && showToast('Koi galat fact nahi — sab sahi tha!','info'); return; }
+  }
+  if(!facts.length){ showToast && showToast('Is session mein facts nahi hain','error'); return; }
+
+  // Set up _tgp for reattempt
+  _tgp.sid = String(g.sid||'0');
+  _tgp.secid = String(g.secid||'0');
+  _tgp.tid = String(g.tid||'0');
+  _tgp.topicName = g.topicName || 'Topic';
+  _tgp.facts = facts;
+  _tgp._cacheKey = null;
+  _tgp._wrongLog = {lightning:[], fillin:[], match:[]};
+  _tgp.score = 0;
+  _tgp.gameState = {};
+
+  // Set pending facts
+  window._tgpPendingLevelFacts = facts.slice();
+  window._tgpPendingLevelMode = mode;
+
+  // Close detail modal, open game panel
+  closeGameDetailModal();
+  var panel = document.getElementById('topicGamePanel');
+  panel.style.display = 'flex';
+  document.getElementById('tgpTopicName').textContent = '🎮 '+_tgp.topicName;
+
+  // Update score display
+  if(typeof _tgpUpdateScore === 'function') _tgpUpdateScore();
+
+  // Subtitle update
+  var gNamesR = {lightning:'⚡ Lightning Quiz', fillin:'✏️ Fill in Blank', match:'🔗 Column Match'};
+  var subEl = document.getElementById('tgpSubtitle');
+  if(subEl) subEl.textContent = (gNamesR[gameId]||gameId) + (mode==='wrong' ? ' — Galat Facts Practice' : '');
+
+  // Seedha game start — no lobby needed
+  setTimeout(function(){
+    tgpStartGame(gameId);
+  }, 150);
+
+  if(typeof showToast==='function') showToast('🔄 Reattempt shuru! '+(mode==='wrong'?'Sirf '+facts.length+' galat facts':facts.length+' facts ke saath'), 'success');
+};
+
+window.closeGameDetailModal = function(){
+  var modal = document.getElementById('gameDetailModal');
+  if(modal) modal.style.display = 'none';
 };
 
 window.clearAllGameHistory=function(){
@@ -11609,6 +11796,13 @@ function renderGameVaultPage(){
       +(insightCount>0?'<span style="background:rgba(0,105,92,0.1);border-radius:20px;padding:2px 8px;color:var(--teal);">💡 '+insightCount+' insights</span>':'')
       +'<span style="background:rgba(106,27,154,0.1);border-radius:20px;padding:2px 8px;color:var(--purple);">🎮 '+t.sessions+' sessions</span>'
       +'</div>'
+      +'</div>'
+      +'<div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0;">'
+      +(sessions.filter(function(s){return (s.topicName||'Unknown Topic')+'___'+String(s.sid||'')+'_'+String(s.secid||'')+'_'+String(s.tid||'')===k;}).map(function(s,si){
+          var sp=s.totalQ>0?Math.round((s.correct||0)/s.totalQ*100):0;
+          var se=sp>=90?'🏆':sp>=70?'🥈':sp>=50?'🥉':'💪';
+          return '<button onclick="openGameDetailModal(\''+_ghEsc(s.gameKey||'')+'\')" style="background:linear-gradient(135deg,rgba(21,101,192,0.1),rgba(106,27,154,0.08));color:var(--accent);border:1.5px solid rgba(21,101,192,0.2);border-radius:8px;padding:4px 9px;font-size:0.66rem;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">'+se+' S'+(si+1)+' 🔍</button>';
+        }).join(''))
       +'</div>'
       +'</div>'
       +'<div>';
@@ -51263,6 +51457,27 @@ document.addEventListener('ne_editor_closed', function() {
      — Smart caching, Regenerate options, Full related-facts Insight after each answer
      ═══════════════════════════════════════════════════════════════════ -->
 
+<!-- ═══════════════════════════════════════════════════════════
+     🎮 GAME DETAIL MODAL — History/Vault se full session review
+     ═══════════════════════════════════════════════════════════ -->
+<div id="gameDetailModal" style="display:none;position:fixed;inset:0;z-index:25000;background:var(--bg);flex-direction:column;font-family:'Noto Sans Devanagari','Baloo 2',sans-serif;overflow:hidden;">
+  <!-- Header -->
+  <div style="background:linear-gradient(135deg,#1565c0,#6a1b9a);color:#fff;padding:12px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0;">
+    <button onclick="closeGameDetailModal()" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.3);color:#fff;border-radius:8px;padding:5px 10px;cursor:pointer;font-size:0.8rem;font-weight:700;font-family:inherit;">← Wapas</button>
+    <div style="flex:1;min-width:0;">
+      <div id="gdmTopicName" style="font-size:0.95rem;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Game Details</div>
+      <div id="gdmSubtitle" style="font-size:0.72rem;opacity:0.85;"></div>
+    </div>
+    <div id="gdmScore" style="font-size:1.1rem;font-weight:900;background:rgba(255,255,255,0.15);border-radius:10px;padding:4px 12px;white-space:nowrap;">⭐ 0</div>
+  </div>
+  <!-- Stats Bar -->
+  <div id="gdmStatsBar" style="background:var(--surface);border-bottom:1.5px solid var(--border);padding:8px 14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;flex-shrink:0;"></div>
+  <!-- Reattempt Buttons -->
+  <div id="gdmReattemptBar" style="background:var(--surface2);border-bottom:1.5px solid var(--border);padding:8px 12px;display:flex;gap:7px;flex-wrap:wrap;flex-shrink:0;"></div>
+  <!-- Content -->
+  <div id="gdmContent" style="flex:1;overflow-y:auto;padding:12px 14px;-webkit-overflow-scrolling:touch;"></div>
+</div>
+
 <div id="topicGamePanel" style="display:none;position:fixed;inset:0;z-index:20500;background:var(--bg);flex-direction:column;font-family:'Noto Sans Devanagari','Baloo 2',sans-serif;">
 
   <!-- HEADER -->
@@ -52737,8 +52952,6 @@ function _tgpJumpLevel(idx){
 function tgpStartGame(gameId){
   _tgp.activeGame=gameId;_tgp.gameState={};
   _tgp.score=0;_tgpUpdateScore();
-  // ── Generate a fixed gameKey at session start — used by both auto-save & final save ──
-  _tgp._sessionGameKey = gameId+'_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||'')+'_'+Date.now();
   if(_tgp.gameState._timer)clearInterval(_tgp.gameState._timer);
   document.getElementById('tgpSubtitle').textContent={
     lightning:'⚡ Lightning Quiz',fillin:'✏️ Fill in Blank',
@@ -53070,37 +53283,6 @@ function _tgpLevelComplete(gameId){
   var wrongCount=gs.levelWrong||0;
   var gameWrong=(_tgp._wrongLog[gameId]||[]);
 
-  // ── AUTO-SAVE: Level complete hote hi save karo (in_progress) ──
-  try{
-    if(typeof _saveGameSessionToFirebase==='function' && _tgp && _tgp.tid){
-      var _gs2 = _tgp.gameState || {};
-      var _totalQ2 = (_gs2.levels||[]).filter(function(l){return !l.isMaster;})
-        .reduce(function(s,l){return s+(l.questions?l.questions.length:(l.pairs?l.pairs.length:0));},0);
-      var _factsOut2 = (_tgp.facts||[]).map(function(f){
-        return {term:f.term, detail:f.detail, fibSentence:f.fibSentence, fibAnswer:f.fibAnswer,
-          fibOptions:f.fibOptions, examNote:f.examNote, relatedTerms:f.relatedTerms,
-          insightHTML:f.insightHTML||(f._insight&&f._insight.html)||''};
-      });
-      var _autoEntry = {
-        gameKey: _tgp._sessionGameKey || (gameId+'_'+_tgp.sid+'_'+_tgp.secid+'_'+_tgp.tid+'_'+Date.now()),
-        gameId: gameId,
-        sid: String(_tgp.sid||''), secid: String(_tgp.secid||''), tid: String(_tgp.tid||''),
-        topicName: _tgp.topicName || '',
-        score: _tgp.score || 0,
-        correct: _gs2.correct || 0,
-        totalQ: _totalQ2,
-        levelsPlayed: (_gs2.levels||[]).filter(function(l){return l.done;}).length,
-        wrongFacts: gameWrong.map(function(f){return {term:f.term, detail:f.detail};}),
-        facts: _factsOut2,
-        playedAt: new Date().toISOString(),
-        dateRaw: Date.now(),
-        status: 'in_progress'
-      };
-      _saveGameSessionToFirebase(_autoEntry);
-      console.log('[AutoSave] Level complete par save kiya ✅ | gameKey:', _autoEntry.gameKey);
-    }
-  }catch(eAuto){ console.warn('[AutoSave] Level save error:', eAuto&&eAuto.message); }
-
   // ── PERSIST PROGRESS — quiz jaisa fact coverage tracking ──
   // Mark facts from THIS just-completed level as covered + record wrong-of-this-level
   if(lv && !lv.isMaster){
@@ -53298,7 +53480,7 @@ function _tgpGameResult(gameId){
         };
       });
       var _entry = {
-        gameKey: _tgp._sessionGameKey || (gameId+'_'+_tgp.sid+'_'+_tgp.secid+'_'+_tgp.tid+'_'+Date.now()),
+        gameKey: gameId+'_'+_tgp.sid+'_'+_tgp.secid+'_'+_tgp.tid+'_'+Date.now(),
         gameId: gameId,
         sid: String(_tgp.sid||''), secid: String(_tgp.secid||''), tid: String(_tgp.tid||''),
         topicName: _tgp.topicName || '',
@@ -53308,8 +53490,7 @@ function _tgpGameResult(gameId){
         wrongFacts: _wrong.map(function(f){ return {term:f.term, detail:f.detail}; }),
         facts: _factsOut,
         playedAt: new Date().toISOString(),
-        dateRaw: Date.now(),
-        status: 'completed'
+        dateRaw: Date.now()
       };
       _saveGameSessionToFirebase(_entry);
     }
