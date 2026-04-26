@@ -7128,7 +7128,8 @@ let S={
   wrongedQuestions:[],    // Globally wronged question IDs
   vaultFilter:'all',      // Current vault filter
   quizFactProgress:{},   // Quiz fact coverage progress (persisted across sessions)
-  hlQuizProgress:{}      // Quiz highlight coverage progress (persisted across sessions)
+  hlQuizProgress:{},      // Quiz highlight coverage progress (persisted across sessions)
+  gameVault:[]            // Game mode session history (synced via Firebase sub-collection)
 };
 
 // Global answer-hide mode toggle
@@ -7151,6 +7152,7 @@ function load(){
     S.wrongedQuestions=d.wrongedQuestions||[];
     S.quizFactProgress=d.quizFactProgress||{};
     S.hlQuizProgress=d.hlQuizProgress||{};
+    S.gameVault=d.gameVault||[];  // Game history restore from localStorage
 
     var _needsClean = false;
     S.subjects.forEach(s=>{
@@ -11249,14 +11251,24 @@ window._gameVaultListener = null;
 //   wrongFacts:[{term,detail}], facts:[{term,detail,fibSentence,fibAnswer,fibOptions,examNote,insightHTML?}],
 //   playedAt, dateRaw, gameKey }
 async function _saveGameSessionToFirebase(entry){
-  if(!_db || !_currentUser || !entry || !entry.gameKey) return;
-  // Local mirror
+  if(!entry || !entry.gameKey){ console.warn('[GameVault] Entry invalid, skip save'); return; }
+
+  // ── STEP 1: Hamesha local mein save karo (Firebase se pehle) ──
   S.gameVault = S.gameVault || [];
-  // Replace any existing session with same gameKey (latest wins)
   S.gameVault = S.gameVault.filter(function(g){ return g.gameKey !== entry.gameKey; });
   S.gameVault.unshift(entry);
   if(S.gameVault.length > 200) S.gameVault = S.gameVault.slice(0,200);
   try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+  console.log('[GameVault] Local save done. Total sessions:', S.gameVault.length, '| Entry:', entry.gameKey);
+
+  // Badge update
+  try{ updateGameHistBadge(); updateGameVaultBadge(); }catch(e){}
+
+  // ── STEP 2: Firebase mein save karo (agar logged in ho) ──
+  if(!_db || !_currentUser){
+    console.warn('[GameVault] Firebase not ready — only local save done. _db:', !!_db, '_currentUser:', !!_currentUser);
+    return;
+  }
   try{
     var uid = _currentUser.uid;
     var clean = (typeof _fsClean==='function') ? _fsClean(entry) : entry;
@@ -11264,8 +11276,9 @@ async function _saveGameSessionToFirebase(entry){
       clean.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
     }
     await _db.collection('users').doc(uid).collection('gameVault').doc(entry.gameKey).set(clean);
+    console.log('[GameVault] Firebase save done ✅ | key:', entry.gameKey);
   }catch(e){
-    console.warn('gameVault save error:', e && e.message);
+    console.warn('[GameVault] Firebase save error:', e && e.message);
   }
 }
 
@@ -11290,19 +11303,27 @@ async function _saveGameEnrichmentToFirebase(sid, secid, tid, gameId, payload){
 }
 
 async function _loadGameVaultFromFirebase(){
-  if(!_db || !_currentUser) return;
+  if(!_db || !_currentUser){ console.warn('[GameVault] Load skipped — _db:', !!_db, '_currentUser:', !!_currentUser); return; }
   try{
     var uid = _currentUser.uid;
+    console.log('[GameVault] Loading from Firebase for uid:', uid.slice(0,8)+'...');
     var snap = await _db.collection('users').doc(uid).collection('gameVault')
                         .orderBy('dateRaw','desc').limit(300).get();
-    if(snap.empty){ S.gameVault = S.gameVault || []; return; }
+    if(snap.empty){
+      console.log('[GameVault] Firebase gameVault is empty — using local S.gameVault:', (S.gameVault||[]).length, 'items');
+      S.gameVault = S.gameVault || [];
+      return;
+    }
     var loaded = [];
     snap.forEach(function(d){ loaded.push(d.data()); });
     S.gameVault = loaded;
+    console.log('[GameVault] Firebase load done ✅ — loaded', loaded.length, 'sessions');
     try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
     updateGameHistBadge(); updateGameVaultBadge();
+    // Refresh page if user is currently viewing
+    try{ if(typeof _tgpRefreshGameVaultUI==='function') _tgpRefreshGameVaultUI(); }catch(e){}
   }catch(e){
-    console.warn('gameVault load error:', e && e.message);
+    console.warn('[GameVault] Load error:', e && e.message);
   }
 }
 
@@ -11350,6 +11371,21 @@ function renderGameHistory(){
   var el=document.getElementById('gameHistoryList'); if(!el)return;
   var statEl=document.getElementById('ghSummaryStats');
   var vault=S.gameVault||[];
+
+  // Debug info bar
+  var dbg=document.getElementById('ghDebugBar');
+  if(!dbg){
+    dbg=document.createElement('div');dbg.id='ghDebugBar';
+    dbg.style.cssText='font-size:0.7rem;background:rgba(21,101,192,0.07);border:1px solid rgba(21,101,192,0.2);border-radius:8px;padding:6px 10px;margin-bottom:10px;color:var(--text2);line-height:1.6;';
+    el.parentNode.insertBefore(dbg,el);
+  }
+  dbg.innerHTML='🔍 <strong>Debug Info:</strong> S.gameVault length = <strong>'+vault.length+'</strong>'
+    +' | localStorage gameVault = <strong>'+(function(){try{var d=JSON.parse(localStorage.getItem('epp5')||'{}');return (d.gameVault||[]).length;}catch(e){return 'error';}})()+'</strong>'
+    +' | Firebase user = <strong>'+(window._currentUser?window._currentUser.uid.slice(0,8)+'...':'not logged in')+'</strong>'
+    +' | _db ready = <strong>'+(window._db?'yes':'no')+'</strong>'
+    +' <button onclick="document.getElementById(\'ghDebugBar\').remove()" style="float:right;background:none;border:none;cursor:pointer;font-size:0.7rem;color:var(--text2);">✕ hide</button>';
+
+  console.log('[GameHistory] Render called. S.gameVault:', vault.length, 'entries');
   // Filters
   var gameF=(document.getElementById('ghFilterGame')||{}).value||'all';
   var dateF=(document.getElementById('ghFilterDate')||{}).value||'new';
@@ -53211,6 +53247,7 @@ function _tgpBuildMasterLevels(gameId,wrongFacts){
 function _tgpGameResult(gameId){
   // ── Cloud save: persist this game session + sync across devices ──
   try{
+    console.log('[GameResult] Saving game. gameId:', gameId, '| _tgp.tid:', _tgp && _tgp.tid, '| _saveGameSessionToFirebase:', typeof _saveGameSessionToFirebase);
     if(typeof _saveGameSessionToFirebase==='function' && _tgp && _tgp.tid){
       var _gs = _tgp.gameState || {};
       var _totalQ = _gs.levels ? _gs.levels.filter(function(l){return !l.isMaster;})
