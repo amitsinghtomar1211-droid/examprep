@@ -51840,93 +51840,78 @@ async function _tgpEnrichFactsForLevel(facts, gameId){
   // (Background, NOT a new fact source — strict source lock still applies)
   var guidance = _tgpBuildGuidanceBlock();
 
-  // ── Per-game prompt — quiz ke style me ──
+  // ── Per-game prompt — QUIZ-style (accuracy ke liye quiz wala best prompt reuse) ──
+  // NOTE: Insight/guidance block game-mode ka apna hai (background only),
+  // par question banane ka core prompt EXACTLY quiz prompt jaisa hai —
+  // "Tu EXPERT MCQ question maker hai" framing + STRICT RULES + FACT-N source lock.
+  // Output schema game-mode ka hi rakha hai (term/detail/fibSentence/fibAnswer/fibOptions...).
   var prompt = '';
-  if(gameId === 'fillin'){
-     prompt =
-'Tu EXPERT competitive-exam (UPSC/SSC/State PCS/Railway/Banking) fact-question maker hai. MODERATE-to-TOUGH level fill-in-the-blank questions banana hai (Hindi) jo ek HOSHIYAR/TOPPER student ko challenge kare.\n\n'+
-guidance+
+
+  // Common quiz-style header (quiz prompt ka exact tone)
+  var quizHeader =
+'Tu EXPERT MCQ question maker hai. EDUCATIONAL questions banana hai.\n\n'+
 'TOPIC: '+topicLabel+'\n\n'+
-'⚠️ SOURCE LOCK — YE HI EKMATRA SOURCE HAI. INKE BAHAR KA KOI BHI SHABD/NUMBER/NAAM/JAGAH USE NAHI KARNA:\n'+factsBlock+'\n\n'+
-'✅ IN '+count+' FACTS SE FILL-IN-BLANK BANAO (ek FACT = ek question, exactly).\n\n'+
-'TASK: HAR FACT-N ke liye ek MODERATE-to-TOUGH fill-in-the-blank question banao jisme exam ki MAIN/CORE factual jaankari poochhi gayi ho — wahi cheez jo aksar examiner exam me poochhta hai.\n\n'+
-'DIFFICULTY & FACT-SELECTION:\n'+
-'• Blank wahi word/number ho jo FACT-N ki SABSE exam-critical jaankari ho (year, founder, article number, scheme launch year, capital, river, battle date, committee, ratio, %, first/last/largest, ministry, organisation HQ, ruler, period, treaty, act, section). Easy/throwaway shabd (jaise "tha", "ka", "me", "aur") blank MAT karo.\n'+
-'• Question ka level moderate-to-tough ho — surface-level nahi; aisa fact pick karo jo PYQ-style competitive exam me poochha jata ho.\n\n'+
-'STRICT RULES:\n'+
-'1. ❗ Question, blank ka answer, aur poora detail SIRF usi FACT-N ki line ke andar mojud shabdon/numbers se banane hain. FACT-N me jo nahi likha hai, woh kabhi mat banao.\n'+
-'2. fibSentence = original fact ka sentence jisme SABSE EXAM-CRITICAL ek word/number ___ se replace ho.\n'+
-'3. fibAnswer = wahi exact word/number jo blank fill karta hai (FACT-N me likha hua, copy-paste exact).\n'+
-'4. fibOptions = EXACTLY 4 options ka array. ❗❗ ATI-MAHATVAPURNA NIYAM:\n'+
-'   (a) In 4 options me se EK option BILKUL EXACTLY fibAnswer ke barabar (same spelling, same matra, same spaces, same case) hona CHAHIYE — koi variant/synonym/translation/modify NAHI.\n'+
-'   (b) Agar fibAnswer "1857" hai to ek option exactly "1857" — "1858"/"सन् 1857" mismatch NAHI.\n'+
-'   (c) Baki 3 options plausible galat decoys (same category — same type of date/name/place/concept) jo ek topper ko bhi confuse kar sakein, par 100% galat ho.\n'+
-'   (d) Self-check: JSON return karne se pehle khud verify karo ki fibOptions me fibAnswer hai. Agar nahi hai to question regenerate karo.\n'+
-'5. term = chhota exam-style question label (max 10 words) — sirf is FACT-N ka essence.\n'+
-'6. detail = poora answer sentence (1 line, complete fact) jisme fibAnswer apni jagah ho (NA ki ___). FACT-N ki hi line, paraphrase ok par naya info add MAT karo. detail aur fibOptions me wahi exact answer ho — mismatch NAHI.\n'+
-'7. examNote = 1-line kyun yeh exam ke liye important hai.\n'+
-'8. relatedTerms = 1-3 keyword array (sirf FACT-N me se).\n'+
-'9. EXACTLY '+count+' objects — kam ya zyada NAHI.\n'+
-'10. Hindi mein likho (terms/proper nouns English ok).\n'+
-'11. JSON ke alawa KUCH MAT LIKHO.\n\n'+
+guidance+
+'CONTENT (INHI SE QUESTIONS BANANA HAI — SOURCE LOCK, INKE BAHAR KA KUCH NAHI):\n'+
+factsBlock+'\n\n'+
+'TASK: EXACTLY '+count+' questions banao — har FACT-N se strictly ek question (ek fact = ek question).\n\n';
+
+  if(gameId === 'fillin'){
+    prompt = quizHeader +
+'STRICT RULES (quiz wale same rules):\n'+
+'1. Sirf diye FACT-N content se questions banao — bahar ka koi fact/number/naam nahi.\n'+
+'2. Har question BILKUL ALAG fact/concept pe — ek FACT = ek question.\n'+
+'3. Format: Fill-in-the-blank. fibSentence me FACT-N ka sentence ho jisme SABSE exam-critical ek word/number ___ se replace ho.\n'+
+'4. fibAnswer = wahi exact word/number jo blank fill karta hai (FACT-N me likha exact, copy-paste).\n'+
+'5. fibOptions = EXACTLY 4 options: 1 sahi (= fibAnswer character-by-character match) + 3 believable galat (same category — year/name/place/article/scheme — topper ko bhi confuse karein, par 100% galat).\n'+
+'6. CRITICAL — Correct answer ki position RANDOMLY vary karo: kuch questions me correct 0(A), kuch me 1(B), kuch me 2(C), kuch me 3(D). Pehle '+Math.ceil(count/4)+' questions me sahi ki position 0,1,2,3 rotation me rakho. Sab ek hi option par NAHI.\n'+
+'7. term = chhota exam-style question label (max 10 words) — is FACT-N ka essence.\n'+
+'8. detail = poora answer sentence (1 line, complete fact) jisme fibAnswer apni jagah ho. fibOptions / fibAnswer / detail teeno me answer mismatch NAHI.\n'+
+'9. examNote = 1-line kyun yeh exam ke liye important hai.\n'+
+'10. relatedTerms = 1-3 keyword array (sirf FACT-N me se).\n'+
+'11. EXACTLY '+count+' objects — zyada ya kam NAHI.\n'+
+'12. Hindi mein likho (proper nouns English ok).\n'+
+'13. JSON ke alawa KUCH MAT LIKHO.\n\n'+
 'RESPONSE FORMAT (strict JSON):\n'+
 '{"facts":[{"idx":1,"term":"...","detail":"...","fibSentence":"... ___ ...","fibAnswer":"...","fibOptions":["...","...","...","..."],"examNote":"...","relatedTerms":["..."]}]}';
   }
   else if(gameId === 'match'){
-    prompt =
-'Tu EXPERT exam fact-question maker hai. Column-Match pairs banana hai (Hindi).\n\n'+
-guidance+
-'TOPIC: '+topicLabel+'\n\n'+
-'⚠️ SOURCE LOCK — YE HI EKMATRA SOURCE HAI. INKE BAHAR KA KUCH NAHI USE KARNA:\n'+factsBlock+'\n\n'+
-'✅ IN '+count+' FACTS SE PAIRS BANAO (ek FACT = ek pair, exactly).\n\n'+
-'TASK: HAR FACT-N ke liye ek term ↔ detail pair banao jo column match game me use ho.\n\n'+
-'STRICT RULES:\n'+
-'1. ❗ Term aur detail dono SIRF usi FACT-N ki line ke shabdon se nikalne hain. Apni training/general knowledge ka use STRICTLY mana hai. FACT-N me jo nahi hai, woh pair me bhi nahi aana chahiye.\n'+
-'2. term = LEFT column item — short, distinct (2-6 words). Person/Place/Year/Concept/Event\n'+
-'3. detail = RIGHT column item — uska accurate description/answer (1 line, complete)\n'+
-'4. term aur detail ek hi fact ke do hisse hone chahiye — pair clearly matchable ho\n'+
-'5. Har FACT-N ka term UNIQUE ho (duplicate term mat banao)\n'+
-'6. Match game ke liye details overlap-free hone chahiye (har detail sirf ek term ko match ho)\n'+
-'7. fibSentence = detail jisme ek key word ___ se replace (backup ke liye)\n'+
-'8. fibAnswer = blank ka answer\n'+
-'9. fibOptions = 4 plausible options (sahi + 3 galat)\n'+
-'10. examNote = 1-line exam relevance\n'+
-'11. relatedTerms = 1-3 keyword array\n'+
-'12. EXACTLY '+count+' objects — Hindi mein\n'+
-'13. JSON ke alawa KUCH MAT LIKHO\n\n'+
-'RESPONSE FORMAT:\n'+
+    prompt = quizHeader +
+'STRICT RULES (quiz wale same rules + match-pair adapt):\n'+
+'1. Sirf diye FACT-N content se pairs banao — bahar ka koi fact nahi.\n'+
+'2. Har pair BILKUL ALAG fact pe — ek FACT = ek pair.\n'+
+'3. term = LEFT column item — short, distinct (2-6 words). Person/Place/Year/Concept/Event — FACT-N me se.\n'+
+'4. detail = RIGHT column item — uska accurate description/answer (1 line, complete). FACT-N me se.\n'+
+'5. term aur detail ek hi fact ke do hisse hone chahiye — pair clearly matchable ho.\n'+
+'6. Har FACT-N ka term UNIQUE ho (duplicate term mat banao). Match game ke liye details overlap-free hone chahiye (har detail sirf ek term ko match ho).\n'+
+'7. Backup FIB ke liye: fibSentence = detail jisme ek key word ___ se replace; fibAnswer = blank ka exact answer; fibOptions = EXACTLY 4 options (1 sahi = fibAnswer character-by-character match + 3 believable galat, same category).\n'+
+'8. CRITICAL — fibOptions me sahi answer ki position randomly vary karo: kuch me 0(A), kuch me 1(B), kuch me 2(C), kuch me 3(D) — sab ek hi par NAHI.\n'+
+'9. examNote = 1-line exam relevance.\n'+
+'10. relatedTerms = 1-3 keyword array (FACT-N me se).\n'+
+'11. EXACTLY '+count+' objects — zyada ya kam NAHI.\n'+
+'12. Hindi mein likho (proper nouns English ok).\n'+
+'13. JSON ke alawa KUCH MAT LIKHO.\n\n'+
+'RESPONSE FORMAT (strict JSON):\n'+
 '{"facts":[{"idx":1,"term":"...","detail":"...","fibSentence":"...","fibAnswer":"...","fibOptions":["...","...","...","..."],"examNote":"...","relatedTerms":["..."]}]}';
   }
   else { // lightning (MCQ) — DEFAULT
-    prompt =
-'Tu EXPERT competitive-exam MCQ question maker hai (UPSC/SSC/State PCS/Railway/Banking). Lightning Quiz ke liye MODERATE-to-TOUGH MCQ banana hai (Hindi) jo ek HOSHIYAR/TOPPER student ko bhi sochne par majboor kare.\n\n'+
-guidance+
-'TOPIC: '+topicLabel+'\n\n'+
-'⚠️ SOURCE LOCK — YE HI EKMATRA SOURCE HAI. INKE BAHAR KA KOI BHI FACT/NAAM/SANKHYA USE NAHI KARNA:\n'+factsBlock+'\n\n'+
-'✅ IN '+count+' FACTS SE MCQ BANAO (ek FACT = ek question, exactly).\n\n'+
-'TASK: EXACTLY '+count+' MCQ banao — har FACT-N ke liye strict ek MCQ. Difficulty MODERATE-to-TOUGH ho.\n\n'+
-'FACT-PICKING / DIFFICULTY:\n'+
-'• Question wahi cheez poochhe jo FACT-N ki SABSE exam-critical jaankari hai — wahi factual point jo aksar examiner exam me poochhta hai (year, founder, article, ministry, scheme launch, treaty, battle date, committee, ratio, %, first/last/largest, capital, river, ruler, period, act/section, organisation HQ, etc.).\n'+
-'• Surface-level / "kya ye sentence sahi hai" type easy MCQ MAT banao.\n\n'+
-'STRICT RULES:\n'+
-'1. ❗ Question text, sahi answer, aur explanation SIRF usi FACT-N ki line ke andar likhe content se nikalne hain. General knowledge / outside data zero.\n'+
-'2. Har question BILKUL ALAG fact pe — ek FACT = ek question.\n'+
+    prompt = quizHeader +
+'STRICT RULES (quiz wale exact same rules):\n'+
+'1. Sirf diye FACT-N content se questions banao — bahar ka koi fact/naam/sankhya nahi.\n'+
+'2. Har question BILKUL ALAG fact/concept pe — ek FACT = ek question.\n'+
 '3. term = MCQ ka question text (max 14 words, exam-style, Hindi). Direct factual question — "Kab", "Kaun", "Kahan", "Kis Article me", "Konsi scheme", etc.\n'+
-'4. fibOptions = EXACTLY 4 options array. ❗❗ HARD CONSTRAINT:\n'+
-'   (a) In 4 options me se EK option BILKUL EXACTLY fibAnswer ke barabar (same spelling/spaces/matra/case) hona CHAHIYE.\n'+
-'   (b) Koi variant ya synonym mismatch NAHI — character-by-character match hona chahiye.\n'+
-'   (c) Baki 3 plausible galat decoys (same category — year/name/place/article number/scheme) jo topper ko bhi confuse kar sakein, par 100% galat ho.\n'+
-'   (d) Self-check before output: fibAnswer ∈ fibOptions ho — agar nahi to question dobara likho.\n'+
-'5. fibAnswer = sahi option ka EXACT text (fibOptions me jo likha wahi).\n'+
-'6. detail = poora answer + 1-line short explanation (kyun sahi). detail me bhi wahi exact answer aaye, fibOptions / fibAnswer / detail teeno me answer mismatch NAHI.\n'+
-'7. fibSentence = detail ka sentence jisme key word ___ se replace (backup FIB ke liye).\n'+
-'8. examNote = 1-line kyun important.\n'+
-'9. relatedTerms = 1-3 keyword array.\n'+
-'10. EXACTLY '+count+' objects — kam/zyada NAHI.\n'+
-'11. Sahi answer ki position randomly vary karo (sab ek option pe NAHI).\n'+
-'12. Hindi mein likho, JSON ke alawa kuch nahi.\n\n'+
+'4. fibOptions = EXACTLY 4 options: 1 sahi + 3 believable galat (same category — year/name/place/article/scheme — topper ko bhi confuse karein, par 100% galat).\n'+
+'5. fibAnswer = sahi option ka EXACT text (fibOptions me jo likha wahi — character-by-character match). Self-check: fibAnswer ∈ fibOptions hona CHAHIYE.\n'+
+'6. CRITICAL — Correct answer ki position RANDOMLY vary karo: kuch questions me correct 0(A), kuch me 1(B), kuch me 2(C), kuch me 3(D) — MATLAB ek batch me A/B/C/D sabhi ki roughly equal baari aani chahiye, BILKUL ek hi option (sab B ya sab A) repeat NAHI hona chahiye. Pehle '+Math.ceil(count/4)+' questions me sahi ki position 0,1,2,3 ki rotation me rakho.\n'+
+'7. detail = poora answer + 1-line short explanation (kyun sahi, kyun galat, related fact). fibOptions / fibAnswer / detail teeno me answer mismatch NAHI.\n'+
+'8. fibSentence = detail ka sentence jisme key word ___ se replace (backup FIB ke liye).\n'+
+'9. examNote = 1-line kyun important.\n'+
+'10. relatedTerms = 1-3 keyword array (FACT-N me se).\n'+
+'11. EXACTLY '+count+' objects — zyada ya kam NAHI.\n'+
+'12. Hindi mein likho (proper nouns English ok).\n'+
+'13. JSON ke alawa KUCH MAT LIKHO.\n\n'+
 'RESPONSE FORMAT (strict JSON):\n'+
-'{"facts":[{"idx":1,"term":"...","detail":"...","fibSentence":"... ___ ...","fibAnswer":"...","fibOptions":["...","...","...","..."],"examNote":"...","relatedTerms":["..."]}]}';
+'{"facts":[{"idx":1,"term":"...","detail":"...","fibSentence":"...","fibAnswer":"...","fibOptions":["...","...","...","..."],"examNote":"...","relatedTerms":["..."]}]}';
   }
 
   // ── Quiz wala same call path: callGroq + safeJsonParse ──
