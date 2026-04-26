@@ -11198,13 +11198,34 @@ async function _saveGameSessionToFirebase(entry){
 
 // ── Save ONE level (frozen questions + per-question user responses + insights) ──
 // Game Vault me har level alag tile bante hai. Replay overwrite karta hai (gameKey same).
+function _tgpGameKeyPart(v){ return String(v==null?'':v).replace(/[\/#\[\].?]/g,'_').substring(0,90); }
+function _tgpGameHash(str){
+  str=String(str||'');
+  var h=2166136261;
+  for(var i=0;i<str.length;i++){ h^=str.charCodeAt(i); h+=(h<<1)+(h<<4)+(h<<7)+(h<<8)+(h<<24); }
+  return (h>>>0).toString(36);
+}
+function _tgpLevelSignature(gameId, lv){
+  var parts=[];
+  if(lv && lv.questions){
+    lv.questions.forEach(function(q){ parts.push((q&&q.fact&&typeof _tgpFactKey==='function')?_tgpFactKey(q.fact):(q&&((q.q||q.sentence||'')+'|'+(q.correct||q.answer||'')))); });
+  }else if(lv && lv.pairs){
+    lv.pairs.forEach(function(p){ parts.push((p&&p.fact&&typeof _tgpFactKey==='function')?_tgpFactKey(p.fact):(p&&((p.left||'')+'|'+(p.right||'')))); });
+  }
+  return _tgpGameHash([gameId, lv&&lv.label, lv&&lv.isMaster?'master':'level', parts.join('||')].join('::'));
+}
 async function _saveGameLevelToFirebase(gameId, levelIdx, lv){
   if(!lv || !_tgp) return;
   var sid=String(_tgp.sid||''), secid=String(_tgp.secid||''), tid=String(_tgp.tid||'');
   // If this level was started as a replay of a saved entry, overwrite that same gameKey
-  var gameKey = lv._replayKey || (gameId+'_'+sid+'_'+secid+'_'+tid+'_lvl'+(lv._replayLevelIdx!=null?lv._replayLevelIdx:levelIdx));
+  var levelSig = lv._replaySig || _tgpLevelSignature(gameId, lv);
+  var modeKey = lv.isMaster ? 'master' : (((_tgp.gameState||{})._levelMode)||'level');
+  var sessionKey = ((_tgp.gameState||{})._sessionKey) || _tgpGameHash(Date.now()+'_'+Math.random());
+  var gameKey = lv._replayKey || ([gameId,_tgpGameKeyPart(sid),_tgpGameKeyPart(secid),_tgpGameKeyPart(tid),_tgpGameKeyPart(modeKey),_tgpGameKeyPart(sessionKey),'lvl'+(levelIdx+1)+'_'+levelSig].join('_'));
   var entry = {
     gameKey: gameKey,
+    levelSig: levelSig,
+    sessionKey: sessionKey,
     gameId: gameId,
     sid: sid, secid: secid, tid: tid,
     topicName: _tgp.topicName || '',
@@ -11428,7 +11449,7 @@ function renderGameVault(){
   var html='';
   Object.keys(groups).forEach(function(k){
     var grp=groups[k];
-    grp.levels.sort(function(a,b){ return (a.levelIdx||0)-(b.levelIdx||0); });
+    grp.levels.sort(function(a,b){ return ((a.levelIdx||0)-(b.levelIdx||0)) || ((b.dateRaw||0)-(a.dateRaw||0)); });
     var totalQ=grp.levels.reduce(function(s,l){return s+(l.totalQ||0);},0);
     var totalC=grp.levels.reduce(function(s,l){return s+(l.correct||0);},0);
     var totalScore=grp.levels.reduce(function(s,l){return s+(l.score||0);},0);
@@ -11452,7 +11473,7 @@ function renderGameVault(){
       var lcolor=lpct>=70?'#2e7d32':lpct>=50?'#e65100':'#c62828';
       html+='<div style="border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-top:6px;background:var(--surface2);">'+
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">'+
-          '<div style="flex:1;min-width:0;font-weight:700;font-size:0.8rem;">'+_tgpEscHtml(lv.levelLabel||('Level '+((lv.levelIdx||0)+1)))+(lv.isMaster?' <span style="background:#c62828;color:#fff;border-radius:6px;padding:1px 6px;font-size:0.62rem;">MASTER</span>':'')+'</div>'+
+          '<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:0.8rem;">'+_tgpEscHtml(lv.levelLabel||('Level '+((lv.levelIdx||0)+1)))+(lv.isMaster?' <span style="background:#c62828;color:#fff;border-radius:6px;padding:1px 6px;font-size:0.62rem;">MASTER</span>':'')+'</div><div style="font-size:0.64rem;color:var(--text2);margin-top:1px;">🕒 '+_tgpEscHtml(lv.dateRaw?new Date(lv.dateRaw).toLocaleString():'')+'</div></div>'+
           '<div style="font-weight:800;font-size:0.82rem;color:'+lcolor+';">'+(lv.correct||0)+'/'+(lv.totalQ||0)+' ('+lpct+'%)</div>'+
         '</div>'+
         '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">'+
@@ -11469,6 +11490,10 @@ function renderGameVault(){
 
 function _gvFindByKey(key){ return (S.gameVault||[]).filter(function(g){return g.gameKey===key;})[0]; }
 function _gvAttr(s){return String(s==null?'':s).replace(/[&<>"'\\]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','\\':'\\\\'}[c];});}
+function _tgpToggleGvInsight(id){
+  var el=document.getElementById(id); if(!el) return;
+  el.style.display = (el.style.display==='none' || !el.style.display) ? 'block' : 'none';
+}
 
 function openGameVaultDetailByKey(key){
   var g=_gvFindByKey(key); if(!g){ showToast('Entry nahi mili','error'); return; }
@@ -11488,7 +11513,7 @@ function openGameVaultDetailByKey(key){
         '<div style="font-size:0.78rem;"><b>'+(i+1)+'. '+_tgpEscHtml(p.left)+'</b></div>'+
         '<div style="font-size:0.74rem;color:var(--text2);margin-top:3px;">✅ Sahi: <b style="color:#2e7d32;">'+_tgpEscHtml(p.right)+'</b></div>'+
         '<div style="font-size:0.74rem;margin-top:2px;">'+(ok?'<span style="color:#2e7d32;font-weight:700;">✅ Aapne sahi match kiya</span>':('<span style="color:#c62828;font-weight:700;">❌ Aapka match: '+_tgpEscHtml((p.wrongAttempts&&p.wrongAttempts[0])||'(skip)')+'</span>'))+'</div>'+
-        (p.insightHTML?'<details style="margin-top:6px;"><summary style="font-size:0.72rem;color:var(--accent);cursor:pointer;font-weight:700;">💡 Insight dekho</summary><div style="font-size:0.74rem;margin-top:6px;">'+p.insightHTML+'</div></details>':'')+
+        (p.insightHTML?'<button class="btn btn-outline btn-sm" style="margin-top:6px;font-size:0.7rem;padding:4px 8px;" onclick="_tgpToggleGvInsight(\'gv-ins-'+_gvAttr(key)+'-'+i+'\')">💡 Insight dekho</button><div id="gv-ins-'+_gvAttr(key)+'-'+i+'" style="display:none;font-size:0.74rem;margin-top:6px;padding:8px;border-radius:8px;background:var(--surface);border:1px solid var(--border);">'+p.insightHTML+'</div>':'')+
         '</div>';
     });
   } else if(g.questions){
@@ -11516,7 +11541,7 @@ function openGameVaultDetailByKey(key){
       }
       if(q.timedOut) html+='<div style="font-size:0.7rem;color:#e65100;font-weight:700;margin-top:4px;">⏰ Time out — koi answer nahi diya</div>';
       if(q.insightHTML){
-        html+='<details style="margin-top:6px;"><summary style="font-size:0.72rem;color:var(--accent);cursor:pointer;font-weight:700;">💡 Insight dekho</summary><div style="font-size:0.74rem;margin-top:6px;">'+q.insightHTML+'</div></details>';
+        html+='<button class="btn btn-outline btn-sm" style="margin-top:6px;font-size:0.7rem;padding:4px 8px;" onclick="_tgpToggleGvInsight(\'gv-ins-'+_gvAttr(key)+'-'+i+'\')">💡 Insight dekho</button><div id="gv-ins-'+_gvAttr(key)+'-'+i+'" style="display:none;font-size:0.74rem;margin-top:6px;padding:8px;border-radius:8px;background:var(--surface);border:1px solid var(--border);">'+q.insightHTML+'</div>';
       }
       html+='</div>';
     });
@@ -51705,7 +51730,17 @@ window.openTopicGameMode = async function(sid,secid,tid,topicName){
   document.getElementById('tgpTopicName').textContent='🎮 '+_tgp.topicName;
 
   try{
-    _tgpLoadFactsFromCurrentTopic(true);
+    var replayOpen = window._tgpReplayPayload && window._tgpReplayPayload.entry &&
+      String(window._tgpReplayPayload.entry.sid||'')===_tgp.sid &&
+      String(window._tgpReplayPayload.entry.secid||'')===_tgp.secid &&
+      String(window._tgpReplayPayload.entry.tid||'')===_tgp.tid;
+    if(replayOpen){
+      document.getElementById('tgpLoading').style.display='none';
+      document.getElementById('tgpLobby').style.display='none';
+      document.getElementById('tgpGameArea').style.display='none';
+    } else {
+      _tgpLoadFactsFromCurrentTopic(true);
+    }
   }catch(e){_tgpShowError('Error: '+(e.message||'Notes load nahi ho sake.'));}
 
   // ── Background guidance setup (non-blocking for facts UI) ──
@@ -52669,7 +52704,7 @@ function _tgpJumpLevel(idx){
 // 🎮 GAME ROUTER
 // ═══════════════════════════════════════════════════════
 function tgpStartGame(gameId){
-  _tgp.activeGame=gameId;_tgp.gameState={};
+  _tgp.activeGame=gameId;_tgp.gameState={_sessionKey:_tgpGameHash(Date.now()+'_'+Math.random())};
   _tgp.score=0;_tgpUpdateScore();
   if(_tgp.gameState._timer)clearInterval(_tgp.gameState._timer);
   document.getElementById('tgpSubtitle').textContent={
@@ -52701,7 +52736,7 @@ function _tgpApplyReplayLightning(){
     var fact = { term: sq.term||'', detail: sq.detail||'', insightHTML: sq.insightHTML||'' };
     return { q: sq.questionText||sq.term||'', correct: sq.correct, options:(sq.options||[]).slice(), fact: fact };
   });
-  gs.levels = [{ label: e.levelLabel||'Replay', isMaster: !!e.isMaster, done:false, questions: qs, _replayKey: e.gameKey, _replayLevelIdx: e.levelIdx||0 }];
+  gs.levels = [{ label: e.levelLabel||'Replay', isMaster: !!e.isMaster, done:false, questions: qs, _replayKey: e.gameKey, _replaySig: e.levelSig||'', _replayLevelIdx: e.levelIdx||0 }];
   gs._levelMode='replay'; gs._levelFactsAtStart=[]; gs.levelIdx=0; gs.current=0; gs.correct=0; gs.levelWrong=0;
   window._tgpPendingLevelFacts=null; window._tgpPendingLevelMode=null;
   window._tgpReplayPayload=null;
@@ -52717,7 +52752,7 @@ function _tgpApplyReplayFillin(){
     var fact = { term: sq.term||'', detail: sq.detail||'', fibSentence: sq.sentence, fibAnswer: sq.answer, fibOptions: sq.options, insightHTML: sq.insightHTML||'' };
     return { sentence: sq.sentence, answer: sq.answer, options:(sq.options||[]).slice(), fact: fact };
   });
-  gs.levels = [{ label: e.levelLabel||'Replay', isMaster:!!e.isMaster, done:false, questions: qs, _replayKey:e.gameKey, _replayLevelIdx:e.levelIdx||0 }];
+  gs.levels = [{ label: e.levelLabel||'Replay', isMaster:!!e.isMaster, done:false, questions: qs, _replayKey:e.gameKey, _replaySig:e.levelSig||'', _replayLevelIdx:e.levelIdx||0 }];
   gs._levelMode='replay'; gs._levelFactsAtStart=[]; gs.levelIdx=0; gs.current=0; gs.correct=0; gs.levelWrong=0;
   window._tgpPendingLevelFacts=null; window._tgpPendingLevelMode=null;
   window._tgpReplayPayload=null;
@@ -52733,7 +52768,7 @@ function _tgpApplyReplayMatch(){
     var fact = { term: sp.term||sp.left||'', detail: sp.detail||sp.right||'', insightHTML: sp.insightHTML||'' };
     return { left: sp.left, right: sp.right, fact: fact };
   });
-  gs.levels = [{ label: e.levelLabel||'Replay', isMaster:!!e.isMaster, done:false, pairs: pairs, _replayKey:e.gameKey, _replayLevelIdx:e.levelIdx||0 }];
+  gs.levels = [{ label: e.levelLabel||'Replay', isMaster:!!e.isMaster, done:false, pairs: pairs, _replayKey:e.gameKey, _replaySig:e.levelSig||'', _replayLevelIdx:e.levelIdx||0 }];
   gs._levelMode='replay'; gs._levelFactsAtStart=[]; gs.levelIdx=0; gs.matchState={};
   window._tgpPendingLevelFacts=null; window._tgpPendingLevelMode=null;
   window._tgpReplayPayload=null;
