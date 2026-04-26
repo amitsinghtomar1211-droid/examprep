@@ -51868,33 +51868,44 @@ window._tgpStartLevelFromSetup = async function(gameId){
   tgpStartGame(gameId);
 };
 
-// Pre-generate insights for every fact in the level (sequential, with progress)
+// Pre-generate insights for every fact in the level — PARALLEL (concurrency=3) for speed
 async function _tgpPrewarmInsightsForLevel(facts){
   if(!Array.isArray(facts) || !facts.length) return;
   var apiKey=(typeof S!=='undefined' && S.apiKey)?S.apiKey:'';
-  if(!apiKey || apiKey.length<10 || typeof callGroq!=='function') return; // no API → skip silently
+  if(!apiKey || apiKey.length<10 || typeof callGroq!=='function') return;
   var cache = _tgpReadInsightCache();
   var total = facts.length;
-  for(var i=0;i<total;i++){
-    var fact = facts[i];
-    var key = _tgpFactKey(fact);
-    if(cache[key]) { // already cached, skip
-      var pctSkip = 45 + Math.round(((i+1)/total)*52);
-      _tgpSetProgress(pctSkip, 'Insight '+(i+1)+'/'+total+' ready (cached)...');
-      continue;
-    }
-    var pct = 45 + Math.round(((i+1)/total)*52);
-    _tgpSetProgress(pct, 'Insight '+(i+1)+'/'+total+' web se verify hokar ban raha hai...');
-    try{
-      var html = await _tgpBuildFactInsightHtml(fact);
-      if(html){
-        cache[key] = html;
-        _tgpWriteInsightCache(cache);
+  var done = 0;
+  var CONCURRENCY = 3; // 3 insights ek saath — speed ~3x, rate-limit safe
+  var idx = 0;
+
+  async function worker(){
+    while(idx < total){
+      var i = idx++;
+      var fact = facts[i];
+      var key = _tgpFactKey(fact);
+      if(cache[key]){
+        done++;
+        var pctSkip = 45 + Math.round((done/total)*52);
+        _tgpSetProgress(pctSkip, 'Insight '+done+'/'+total+' ready (cached)...');
+        continue;
       }
-    }catch(e){ console.warn('prewarm fail for fact', i, e); }
-    // gentle pacing for rate limits
-    await new Promise(function(r){ setTimeout(r, 200); });
+      try{
+        var html = await _tgpBuildFactInsightHtml(fact);
+        if(html){
+          cache[key] = html;
+          _tgpWriteInsightCache(cache);
+        }
+      }catch(e){ console.warn('prewarm fail for fact', i, e); }
+      done++;
+      var pct = 45 + Math.round((done/total)*52);
+      _tgpSetProgress(pct, 'Insight '+done+'/'+total+' tayyar ho raha hai...');
+    }
   }
+
+  var workers = [];
+  for(var w=0; w<Math.min(CONCURRENCY,total); w++) workers.push(worker());
+  await Promise.all(workers);
 }
 
 function _tgpShowGameArea(html){
@@ -51955,7 +51966,7 @@ function _tgpShowInfoCard(fact){
 
 // Per-fact insight cache (localStorage) — kisi ek fact ki extra jaankari dobara fetch nahi hoti
 function _tgpInsightCacheKey(){
-  return 'tgp_insight_v3_verified_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||'');
+  return 'tgp_insight_v4_kp_addl_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||'');
 }
 function _tgpReadInsightCache(){
   try{ var raw=localStorage.getItem(_tgpInsightCacheKey()); return raw?(JSON.parse(raw)||{}):{};}catch(e){return {};}
@@ -51972,7 +51983,7 @@ function _tgpInsightOptionContext(fact){
     opts.forEach(function(o){ if(unique.indexOf(o)===-1) unique.push(o); });
     if(!unique.length && fact && fact.relatedTerms) unique = fact.relatedTerms.slice(0,4);
     if(!unique.length) return '';
-    return 'QUESTION OPTIONS CONTEXT (textbook-style Additional Information ke liye):\nCorrect answer: '+(ans||'given fact answer')+'\nAll options / related terms: '+unique.join(' | ')+'\nInstruction: Key Points correct answer par do; Additional Information me galat options/related terms par short exam-useful facts do, lekin fact se direct relation bana rahe.\n\n';
+    return 'QUESTION OPTIONS CONTEXT (Additional Information ke liye):\nCorrect answer: '+(ans||'given fact answer')+'\nAll options / related terms: '+unique.join(' | ')+'\nInstruction: Key Points correct answer par; Additional Information me wrong options/related terms par short exam-useful facts + agar koi similar PYQ-style fact web context me mile to use bhi yahin add karo (ek hi Additional Information block me).\n\n';
   }catch(e){ return ''; }
 }
 
@@ -51981,28 +51992,28 @@ async function _tgpGetInsightWebContext(factLine, fact){
     if(!S || !S.serperKey || typeof aeSerperSearch!=='function') return '';
     var term = (fact && fact.term ? String(fact.term) : '').trim();
     var ans = (fact && fact.fibAnswer ? String(fact.fibAnswer) : '').trim();
-    var opts = (fact && Array.isArray(fact.fibOptions)) ? fact.fibOptions.map(function(o){return String(o||'').trim();}).filter(Boolean) : [];
-    var queries = [];
     var base = (term || ans || factLine).slice(0,140);
-    queries.push(base + ' important facts competitive exams UPSC SSC State PCS');
-    queries.push((ans || base) + ' history geography polity exam key points PYQ');
-    queries.push(base + ' previous year question PYQ exam');
-    opts.slice(0,4).forEach(function(o){ if(o && queries.length<7) queries.push(o + ' exam important facts'); });
-    var seen = {}, blocks = [];
+    // ⚡ SPEED: sirf 2 focused parallel queries — ek main fact ke liye, ek similar-PYQ ke liye
+    var queries = [
+      base + ' important facts UPSC SSC State PCS',
+      base + ' similar previous year question PYQ exam'
+    ];
+    // Parallel fire — sequential ki jagah, total latency ~1 query jitna
+    var results = await Promise.all(queries.map(function(q){
+      return aeSerperSearch(q).catch(function(){ return []; });
+    }));
+    var blocks = [];
     for(var i=0;i<queries.length;i++){
-      var q = queries[i];
-      if(!q || seen[q]) continue;
-      seen[q]=true;
-      var res = await aeSerperSearch(q);
+      var res = results[i];
       if(res && res.length){
-        blocks.push('QUERY: '+q+'\n'+res.slice(0,4).map(function(item,idx){
-          return '• '+(item.title||'Result')+' — '+(item.snippet||'')+(item.link?' ['+item.link+']':'');
+        // Sirf top 3 snippets — payload chhota = LLM faster
+        blocks.push('QUERY: '+queries[i]+'\n'+res.slice(0,3).map(function(item){
+          return '• '+(item.title||'Result')+' — '+(item.snippet||'');
         }).join('\n'));
       }
-      await new Promise(function(r){ setTimeout(r, 140); });
     }
     if(!blocks.length) return '';
-    return '─── REAL WEB / SEARCH CONTEXT (sirf grounding ke liye; fake source/year mat banana) ───\n'+blocks.join('\n\n')+'\n─── END WEB CONTEXT ───\n\n';
+    return '─── REAL WEB / SEARCH CONTEXT (grounding + similar PYQ facts; fake source/year mat banana) ───\n'+blocks.join('\n\n')+'\n─── END WEB CONTEXT ───\n\n';
   }catch(e){ return ''; }
 }
 
@@ -52045,41 +52056,36 @@ async function _tgpBuildFactInsightHtml(fact){
   var optionContext = _tgpInsightOptionContext(fact);
   var webContext = await _tgpGetInsightWebContext(factLine, fact);
   var prompt =
-'Tu ek expert Indian competitive-exam mentor aur textbook-solution analyst hai (UPSC, UPPSC, BPSC, MPPSC, RPSC, State PCS, SSC, Railway, Banking, NDA/CDS/CAPF). Tu textbook quiz ke solution ki tarah likhta hai — har claim verified hona chahiye.\n\n'+'⚠️ ACCURACY MANDATE — ye sabse important hai:\n'+'• Niche jo REAL WEB / SEARCH CONTEXT diya gaya hai use HI primary source maano. Web context ke andar jo info hai usko cross-check karke hi likho.\n'+'• Web context me jo cheez NAHI hai, ya jo claim tum 100% confidently common-knowledge GK ke roop me jante ho — sirf usi ko likho.\n'+'• Halki bhi doubt ho to claim DEFINITIVE tone me MAT likho. "Aksar mana jata hai" / "sambhavtah" use karo, ya us point ko skip kar do.\n'+'• Date, year, person ka naam, scheme ka naam, place — ye saari cheezein web context se verify karke likho. Galat data dena fail hai.\n'+'• Fake PYQ year, fake examiner naam, fake source kabhi mat banao.\n\n'+
-'Niche ek **SINGLE FACT / QUESTION FACT** diya gaya hai. Iska insight bilkul textbook quiz-solution jaisa banana hai: pehle correct answer ka analysis, fir us fact se directly related additional information.\n\n'+
-'─── GUIDANCE (user ka target exam / prep purpose — PYQ aur tips me ise priority do) ───\n'+
+'Tu ek expert Indian competitive-exam mentor aur textbook-solution analyst hai (UPSC, UPPSC, BPSC, MPPSC, RPSC, State PCS, SSC, Railway, Banking, NDA/CDS/CAPF). Tu textbook quiz ke solution ki tarah likhta hai — har claim verified hona chahiye.\n\n'+
+'⚠️ ACCURACY MANDATE:\n'+
+'• Niche jo REAL WEB / SEARCH CONTEXT diya gaya hai use HI primary source maano. Web context ke andar jo info hai usko cross-check karke hi likho.\n'+
+'• Jo cheez web context me NAHI hai aur 100% common-knowledge GK bhi nahi — usko skip karo ya hedge karo ("sambhavtah").\n'+
+'• Date, year, person, scheme, place — sab web context se verify karo. Fake PYQ year, fake source kabhi nahi.\n\n'+
+'Niche ek **SINGLE FACT / QUESTION FACT** diya gaya hai. Iska insight chhota aur sirf 2 sections me dena hai: Key Points + Additional Information. Aur kuch nahi.\n\n'+
+'─── GUIDANCE (user ka target exam) ───\n'+
 guidance+'\n'+
 '─── FACT (sirf isi ke baare mein insight chahiye) ───\n'+
 factLine+'\n\n'+
 optionContext+
 webContext+
-'─── OUTPUT FORMAT (HTML safe, Hindi me, simple tags) ───\n'+
-'Exactly ye structure follow karo:\n\n'+
-'<b>✅ Correct Answer / Main Fact</b><br>\n'+
-'• Is fact ka seedha sahi answer ya central point kya hai, 1 line me likho.<br>\n\n'+
+'─── OUTPUT FORMAT (HTML safe, Hindi me, sirf <b>/<strong>/<em>/<i>/<br> tags) ───\n'+
+'Exactly ye 2 sections, isi order me, koi aur heading nahi:\n\n'+
 '<b>🔑 Key Points</b><br>\n'+
-'• Correct answer se judi 2-4 exam-useful baatein do: place/date/person/discovery/feature/cause-effect jo bhi directly relevant ho.<br>\n'+
-'• Agar fact archaeological/history/geography/polity type hai to exact location, discoverer, period, river/state/article/scheme objective jaise concrete details do.<br>\n\n'+
+'• Correct answer / main fact se judi 3-5 exam-useful concrete baatein (place, date, person, period, feature, cause-effect, article/scheme number jo bhi directly relevant ho).<br>\n\n'+
 '<b>📝 Additional Information</b><br>\n'+
-'• Agar options/related terms diye gaye hain, unme se har important wrong option/related term par 1-2 short bullets do — jaise textbook solution me hota hai.<br>\n'+
-'• Agar options nahi hain, to isi fact ke aas-paas ke 2-3 directly connected micro-facts do, unrelated topic summary nahi.<br>\n\n'+
-'<b>📜 PYQ / Exam Pattern Angle</b><br>\n'+
-'• Is fact ya iske aas-paas exam me kis tarah pucha ja sakta hai / pucha gaya hai. Galat year kabhi mat do; sure na ho to general exam naam likho.<br>\n\n'+
-'<b>⚠️ Trick / Confusion / Mnemonic</b><br>\n'+
-'• Common confusion aur yaad rakhne ki short trick do.\n\n'+
+'• Agar options/related terms diye hain, har important wrong option/related term par 1-2 short bullets do.<br>\n'+
+'• Web context me agar isi fact jaisa koi SIMILAR PYQ ya related exam-fact mile (jaise same topic ka doosra angle, related ruler/article/river/scheme jo kisi exam me poocha gaya ho), uska crisp fact bhi yahin add karo.<br>\n'+
+'• Saari additional baatein ek hi Additional Information block me — alag PYQ ya Mnemonic section MAT banao.<br>\n\n'+
 '─── STRICT RULES ───\n'+
-'1. Sirf is fact ke specific subject par focus karo; doosre fact ya pure topic summary nahi dena.\n'+
-'2. REAL WEB / SEARCH CONTEXT block ko PRIMARY SOURCE maano. Har factual claim (date/place/person/number/scheme) web context se cross-verify karo; agar mismatch ya missing hai to claim drop karo ya hedge karo ("sambhavtah", "sources ke anusaar").\n'+
-'3. Web data missing ho to general GK use kar sakte ho lekin sirf confidently-known facts; uncertain claim ko definitive tone me MAT likho. Fake web source, fake PYQ year, fake examiner data kabhi mat banao — ye fail hai.\n'+
-'4. Textbook-style answer chahiye: concise bullets, headings clear, no long essay.\n'+
-'5. Additional Information me wrong options/related terms ko explain karo, lekin har info ka relation current fact/question se direct hona chahiye.\n'+
-'6. PYQ section me max 2-3 exam-pattern angles; exact year sirf tab jab 100% sure ho.\n'+
-'7. Hindi simple rakho, English technical terms allowed. Sirf <b>, <strong>, <em>, <i>, <br> tags use karo.\n'+
-'8. 180-300 words me detailed but concise insight do.\n'+
-'9. Only plain text HTML return karo, JSON/markdown/code-fence nahi.\n\n'+
-'Ab diye gaye FACT ke liye textbook-style Exam Insight likho.';
+'1. Sirf 2 sections: Key Points aur Additional Information. PYQ Angle / Trick / Mnemonic / Correct Answer ka alag heading MAT do.\n'+
+'2. Sirf is fact ke specific subject par focus; pure topic summary nahi.\n'+
+'3. Web context primary source; mismatch ya missing ho to claim drop karo ya hedge karo. Fake data = fail.\n'+
+'4. Concise bullets, short lines, no long essay. 100-180 words total.\n'+
+'5. Hindi simple, English technical terms allowed. Sirf <b>, <strong>, <em>, <i>, <br> tags.\n'+
+'6. Only plain HTML return karo, JSON/markdown/code-fence nahi.\n\n'+
+'Ab diye gaye FACT ke liye sirf Key Points + Additional Information likho.';
 
-  var text = await callGroq(prompt, 1600, false);
+  var text = await callGroq(prompt, 900, false);
   if(!text || !text.trim()) return '';
   var clean = String(text).trim()
     .replace(/^```[a-z]*\s*/i,'').replace(/```\s*$/,'')
