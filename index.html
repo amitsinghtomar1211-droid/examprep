@@ -51847,9 +51847,18 @@ window._tgpStartLevelFromSetup = async function(gameId){
 
   try{
     await _tgpEnrichFactsForLevel(levelFacts, gameId);
-    _tgpSetProgress(95, 'Ho gaya!');
+    _tgpSetProgress(45, 'Questions ready! Ab insights pre-generate ho rahe hain...');
   }catch(e){
     console.warn('Level enrich error:', e);
+  }
+
+  // ── Pre-warm insights for ALL level facts so submit pe instant dikhe ──
+  try{
+    if(subEl) subEl.textContent = 'Har question ka textbook-style insight web se cross-check karke pehle hi tayyar kar rahe hain — submit ke baad turant dikhega.';
+    await _tgpPrewarmInsightsForLevel(levelFacts);
+    _tgpSetProgress(98, 'Sab insights ready! 🎉');
+  }catch(e){
+    console.warn('Insight prewarm error:', e);
   }
 
   window._tgpPendingLevelFacts = levelFacts;
@@ -51859,6 +51868,35 @@ window._tgpStartLevelFromSetup = async function(gameId){
   tgpStartGame(gameId);
 };
 
+// Pre-generate insights for every fact in the level (sequential, with progress)
+async function _tgpPrewarmInsightsForLevel(facts){
+  if(!Array.isArray(facts) || !facts.length) return;
+  var apiKey=(typeof S!=='undefined' && S.apiKey)?S.apiKey:'';
+  if(!apiKey || apiKey.length<10 || typeof callGroq!=='function') return; // no API → skip silently
+  var cache = _tgpReadInsightCache();
+  var total = facts.length;
+  for(var i=0;i<total;i++){
+    var fact = facts[i];
+    var key = _tgpFactKey(fact);
+    if(cache[key]) { // already cached, skip
+      var pctSkip = 45 + Math.round(((i+1)/total)*52);
+      _tgpSetProgress(pctSkip, 'Insight '+(i+1)+'/'+total+' ready (cached)...');
+      continue;
+    }
+    var pct = 45 + Math.round(((i+1)/total)*52);
+    _tgpSetProgress(pct, 'Insight '+(i+1)+'/'+total+' web se verify hokar ban raha hai...');
+    try{
+      var html = await _tgpBuildFactInsightHtml(fact);
+      if(html){
+        cache[key] = html;
+        _tgpWriteInsightCache(cache);
+      }
+    }catch(e){ console.warn('prewarm fail for fact', i, e); }
+    // gentle pacing for rate limits
+    await new Promise(function(r){ setTimeout(r, 200); });
+  }
+}
+
 function _tgpShowGameArea(html){
   document.getElementById('tgpLobby').style.display='none';
   var area=document.getElementById('tgpGameArea');
@@ -51867,6 +51905,18 @@ function _tgpShowGameArea(html){
   document.getElementById('tgpScoreBadge').style.display='block';
 }
 function _tgpUpdateScore(){document.getElementById('tgpScoreBadge').textContent='⭐ '+_tgp.score;}
+
+
+// Insight card readable typography
+(function(){
+  if(document.getElementById('tgpInsightStyles'))return;
+  var st=document.createElement('style');st.id='tgpInsightStyles';
+  st.textContent='.tgp-insight-body b,.tgp-insight-body strong{display:inline-block;color:var(--accent);font-size:1rem;margin-top:10px;margin-bottom:4px;letter-spacing:0.2px;}'
+    +'.tgp-insight-body br + b,.tgp-insight-body br + strong{margin-top:14px;}'
+    +'.tgp-insight-body em,.tgp-insight-body i{color:var(--text2);font-style:italic;}'
+    +'.tgp-insight-body{white-space:normal;}';
+  document.head.appendChild(st);
+})();
 
 function _tgpShowInfoCard(fact){
   if(!fact)return;
@@ -51882,17 +51932,17 @@ function _tgpShowInfoCard(fact){
   // knowledge dikhayi jayegi — kisi aur fact ka content nahi.
   var html='<div class="tgp-info-label">📚 Exam Insight — Is Fact Ki Jankari</div>';
 
-  // Main fact box — prominent
-  html+='<div style="margin-bottom:10px;padding:10px 12px;background:rgba(21,101,192,0.09);border-radius:10px;border-left:4px solid var(--accent);">';
-  html+='<div style="font-weight:800;color:var(--accent);font-size:0.82rem;margin-bottom:4px;">🎯 '+_tgpEsc(fact.term||'')+'</div>';
-  html+='<div style="color:var(--text);font-size:0.8rem;line-height:1.75;font-weight:500;">'+_tgpEsc(fact.detail||'')+'</div>';
-  if(fact.examNote)html+='<div style="color:var(--accent3);font-size:0.72rem;margin-top:5px;font-style:italic;padding:4px 6px;background:rgba(25,118,210,0.07);border-radius:5px;">💡 <strong>Exam Note:</strong> '+_tgpEsc(fact.examNote)+'</div>';
+  // Main fact box — prominent (bigger, readable)
+  html+='<div style="margin-bottom:14px;padding:14px 16px;background:linear-gradient(135deg,rgba(21,101,192,0.10),rgba(25,118,210,0.04));border-radius:14px;border-left:5px solid var(--accent);box-shadow:0 1px 3px rgba(0,0,0,0.04);">';
+  html+='<div style="font-weight:800;color:var(--accent);font-size:1.02rem;margin-bottom:8px;letter-spacing:0.2px;">🎯 '+_tgpEsc(fact.term||'')+'</div>';
+  html+='<div style="color:var(--text);font-size:0.95rem;line-height:1.85;font-weight:500;">'+_tgpEsc(fact.detail||'')+'</div>';
+  if(fact.examNote)html+='<div style="color:var(--accent3);font-size:0.86rem;margin-top:10px;font-style:italic;padding:8px 10px;background:rgba(25,118,210,0.09);border-radius:8px;line-height:1.7;">💡 <strong>Exam Note:</strong> '+_tgpEsc(fact.examNote)+'</div>';
   html+='</div>';
 
-  // Placeholder for AI-fetched extra info about THIS fact only
-  html+='<div id="tgpFactExtraBox" style="margin-bottom:6px;padding:10px 12px;background:rgba(0,105,92,0.07);border-radius:10px;border-left:4px solid var(--teal);">';
-  html+='<div style="font-size:0.7rem;font-weight:800;color:var(--teal);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">🔎 Is Fact Ke Baare Me Extra Jankari</div>';
-  html+='<div id="tgpFactExtraBody" style="color:var(--text);font-size:0.77rem;line-height:1.8;">⏳ Web/source context check karke textbook-style analysis ban raha hai…</div>';
+  // Placeholder for AI-fetched extra info about THIS fact only — large readable card
+  html+='<div id="tgpFactExtraBox" style="margin-bottom:8px;padding:16px 18px;background:linear-gradient(135deg,rgba(0,105,92,0.09),rgba(0,150,136,0.03));border-radius:14px;border-left:5px solid var(--teal);box-shadow:0 1px 3px rgba(0,0,0,0.04);">';
+  html+='<div style="font-size:0.82rem;font-weight:800;color:var(--teal);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;display:flex;align-items:center;gap:6px;">🔎 Textbook-Style Exam Insight</div>';
+  html+='<div id="tgpFactExtraBody" class="tgp-insight-body" style="color:var(--text);font-size:0.95rem;line-height:2.0;font-weight:450;letter-spacing:0.1px;word-spacing:0.5px;">⏳ Insight tayyar ho raha hai…</div>';
   html+='</div>';
 
   card.innerHTML=html;
@@ -51905,7 +51955,7 @@ function _tgpShowInfoCard(fact){
 
 // Per-fact insight cache (localStorage) — kisi ek fact ki extra jaankari dobara fetch nahi hoti
 function _tgpInsightCacheKey(){
-  return 'tgp_insight_v2_textbook_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||'');
+  return 'tgp_insight_v3_verified_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||'');
 }
 function _tgpReadInsightCache(){
   try{ var raw=localStorage.getItem(_tgpInsightCacheKey()); return raw?(JSON.parse(raw)||{}):{};}catch(e){return {};}
@@ -51962,7 +52012,7 @@ async function _tgpFetchFactInsight(fact){
   var key=_tgpFactKey(fact);
   var cache=_tgpReadInsightCache();
   if(cache[key]){
-    body.innerHTML=cache[key];
+    body.innerHTML=cache[key];   // INSTANT — pre-warmed during level load
     return;
   }
 
@@ -51973,13 +52023,29 @@ async function _tgpFetchFactInsight(fact){
     return;
   }
 
+  try{
+    var safe = await _tgpBuildFactInsightHtml(fact);
+    if(safe){
+      body.innerHTML = safe;
+      cache[key] = safe;
+      _tgpWriteInsightCache(cache);
+    } else {
+      body.innerHTML='<em style="color:var(--text2);">Is fact ke liye extra jankari uplabdh nahi.</em>';
+    }
+  }catch(e){
+    body.innerHTML='<em style="color:var(--text2);">Extra jankari fetch nahi ho saki ('+_tgpEsc((e&&e.message||'error').substring(0,60))+').</em>';
+  }
+}
+
+// Builds the insight HTML for a single fact (used both by submit-time fetch and pre-warm)
+async function _tgpBuildFactInsightHtml(fact){
   // STRICT prompt — textbook solution style: correct answer key points + related options additional info
   var factLine = (fact.detail || fact.term || '').replace(/\n/g,' ').trim();
   var guidance = _tgpBuildGuidanceBlock();
   var optionContext = _tgpInsightOptionContext(fact);
   var webContext = await _tgpGetInsightWebContext(factLine, fact);
   var prompt =
-'Tu ek expert Indian competitive-exam mentor aur textbook-solution analyst hai. Tere paas UPSC CSE, UPPSC, BPSC, MPPSC, RPSC, UKPSC, JPSC, CGPSC, HPSC, State PCS, SSC CGL/CHSL/MTS, Railway NTPC/Group D, Banking, NDA, CDS, CAPF aur one-day exams ka detailed knowledge hai.\n\n'+
+'Tu ek expert Indian competitive-exam mentor aur textbook-solution analyst hai (UPSC, UPPSC, BPSC, MPPSC, RPSC, State PCS, SSC, Railway, Banking, NDA/CDS/CAPF). Tu textbook quiz ke solution ki tarah likhta hai — har claim verified hona chahiye.\n\n'+'⚠️ ACCURACY MANDATE — ye sabse important hai:\n'+'• Niche jo REAL WEB / SEARCH CONTEXT diya gaya hai use HI primary source maano. Web context ke andar jo info hai usko cross-check karke hi likho.\n'+'• Web context me jo cheez NAHI hai, ya jo claim tum 100% confidently common-knowledge GK ke roop me jante ho — sirf usi ko likho.\n'+'• Halki bhi doubt ho to claim DEFINITIVE tone me MAT likho. "Aksar mana jata hai" / "sambhavtah" use karo, ya us point ko skip kar do.\n'+'• Date, year, person ka naam, scheme ka naam, place — ye saari cheezein web context se verify karke likho. Galat data dena fail hai.\n'+'• Fake PYQ year, fake examiner naam, fake source kabhi mat banao.\n\n'+
 'Niche ek **SINGLE FACT / QUESTION FACT** diya gaya hai. Iska insight bilkul textbook quiz-solution jaisa banana hai: pehle correct answer ka analysis, fir us fact se directly related additional information.\n\n'+
 '─── GUIDANCE (user ka target exam / prep purpose — PYQ aur tips me ise priority do) ───\n'+
 guidance+'\n'+
@@ -52003,8 +52069,8 @@ webContext+
 '• Common confusion aur yaad rakhne ki short trick do.\n\n'+
 '─── STRICT RULES ───\n'+
 '1. Sirf is fact ke specific subject par focus karo; doosre fact ya pure topic summary nahi dena.\n'+
-'2. Agar REAL WEB / SEARCH CONTEXT diya hai to usko primary grounding maana; web context se bahar ka claim tabhi add karo jab confidently common verified GK ho.\n'+
-'3. Web data na ho to apni knowledge use kar sakte ho, par uncertain claim ko definitive mat likho. Fake web source, fake PYQ year, fake examiner data kabhi mat banana.\n'+
+'2. REAL WEB / SEARCH CONTEXT block ko PRIMARY SOURCE maano. Har factual claim (date/place/person/number/scheme) web context se cross-verify karo; agar mismatch ya missing hai to claim drop karo ya hedge karo ("sambhavtah", "sources ke anusaar").\n'+
+'3. Web data missing ho to general GK use kar sakte ho lekin sirf confidently-known facts; uncertain claim ko definitive tone me MAT likho. Fake web source, fake PYQ year, fake examiner data kabhi mat banao — ye fail hai.\n'+
 '4. Textbook-style answer chahiye: concise bullets, headings clear, no long essay.\n'+
 '5. Additional Information me wrong options/related terms ko explain karo, lekin har info ka relation current fact/question se direct hona chahiye.\n'+
 '6. PYQ section me max 2-3 exam-pattern angles; exact year sirf tab jab 100% sure ho.\n'+
@@ -52013,23 +52079,14 @@ webContext+
 '9. Only plain text HTML return karo, JSON/markdown/code-fence nahi.\n\n'+
 'Ab diye gaye FACT ke liye textbook-style Exam Insight likho.';
 
-  try{
-    var text = await callGroq(prompt, 1600, false);
-    if(!text || !text.trim()){
-      body.innerHTML='<em style="color:var(--text2);">Is fact ke liye extra jankari uplabdh nahi.</em>';
-      return;
-    }
-    var clean = String(text).trim()
-      .replace(/^```[a-z]*\s*/i,'').replace(/```\s*$/,'')
-      .replace(/^json\s*/i,'');
-    // Basic safety: only allow b/strong/em/i/br tags
-    var safe = clean.replace(/<(?!\/?(b|strong|em|i|br)\b)[^>]*>/gi,'');
-    body.innerHTML = safe;
-    cache[key] = safe;
-    _tgpWriteInsightCache(cache);
-  }catch(e){
-    body.innerHTML='<em style="color:var(--text2);">Extra jankari fetch nahi ho saki ('+_tgpEsc((e&&e.message||'error').substring(0,60))+').</em>';
-  }
+  var text = await callGroq(prompt, 1600, false);
+  if(!text || !text.trim()) return '';
+  var clean = String(text).trim()
+    .replace(/^```[a-z]*\s*/i,'').replace(/```\s*$/,'')
+    .replace(/^json\s*/i,'');
+  // Basic safety: only allow b/strong/em/i/br tags
+  var safe = clean.replace(/<(?!\/?(b|strong|em|i|br)\b)[^>]*>/gi,'');
+  return safe;
 }
 
 function _tgpTrackWrong(gameId,fact){
