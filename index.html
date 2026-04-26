@@ -10277,6 +10277,125 @@ function startQuizForTopic(sid, secid, tid) {
   }, 300);
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// QUIZ INSIGHTS — Game-style textbook insights for quiz questions
+// Game ka _tgpBuildFactInsightHtml reuse karte hain (same accuracy + web grounding)
+// Question ko fact-shape me convert: term=question, detail=correct option, fibAnswer=correct, fibOptions=all
+// ═══════════════════════════════════════════════════════════════════════
+function _quizQToFact(q){
+  if(!q) return null;
+  var correctIdx = (typeof q.correct==='number') ? q.correct : 0;
+  var correctOpt = (q.options && q.options[correctIdx]) ? q.options[correctIdx] : '';
+  return {
+    term: q.question || '',
+    detail: correctOpt + (q.explanation ? ' — '+q.explanation : ''),
+    fibAnswer: correctOpt,
+    fibOptions: Array.isArray(q.options) ? q.options.slice() : [],
+    examNote: q.explanation || '',
+    _raw: q.question || ''
+  };
+}
+function _quizInsightCacheKey(){
+  // Per-user/topic cache so vault re-open shows instantly
+  var sid=(window._cq&&window._cq.sid)||'';
+  var secid=(window._cq&&window._cq.secid)||'';
+  var tid=(window._cq&&window._cq.tid)||'';
+  return 'quiz_insight_v1_'+sid+'_'+secid+'_'+tid;
+}
+function _quizInsightFactKey(q){
+  // Stable key per quiz question
+  try{ if(typeof _tgpNormFact==='function') return _tgpNormFact(String(q.question||'').substring(0,120)); }catch(e){}
+  return String(q.question||'').toLowerCase().replace(/\s+/g,' ').trim().substring(0,120);
+}
+function _quizReadInsightCache(){
+  try{ var raw=localStorage.getItem(_quizInsightCacheKey()); return raw?(JSON.parse(raw)||{}):{};}catch(e){return {};}
+}
+function _quizWriteInsightCache(c){
+  try{ localStorage.setItem(_quizInsightCacheKey(), JSON.stringify(c||{})); }catch(e){}
+}
+async function _quizPrewarmInsights(questions, onProgress){
+  if(!Array.isArray(questions) || !questions.length) return;
+  var apiKey=(typeof S!=='undefined' && S.apiKey)?S.apiKey:'';
+  if(!apiKey || apiKey.length<10 || typeof callGroq!=='function' || typeof _tgpBuildFactInsightHtml!=='function') return;
+  var cache = _quizReadInsightCache();
+  var total = questions.length;
+  var done = 0;
+  var CONCURRENCY = 3;
+  var idx = 0;
+  async function worker(){
+    while(idx < total){
+      var i = idx++;
+      var q = questions[i];
+      var key = _quizInsightFactKey(q);
+      if(cache[key]){
+        q.insightHTML = cache[key];
+        done++;
+        if(onProgress) try{onProgress(done,total);}catch(e){}
+        continue;
+      }
+      try{
+        var fact = _quizQToFact(q);
+        var html = await _tgpBuildFactInsightHtml(fact);
+        if(html){
+          q.insightHTML = html;
+          cache[key] = html;
+          _quizWriteInsightCache(cache);
+        }
+      }catch(e){ console.warn('quiz insight prewarm fail q'+(i+1), e); }
+      done++;
+      if(onProgress) try{onProgress(done,total);}catch(e){}
+    }
+  }
+  var workers = [];
+  for(var w=0; w<Math.min(CONCURRENCY,total); w++) workers.push(worker());
+  await Promise.all(workers);
+}
+// On-demand fetch (fallback if prewarm skipped or failed for one question)
+async function quizFetchInsightOnDemand(idx){
+  var cq=window._cq; if(!cq) return;
+  var q=cq.questions[idx]; if(!q) return;
+  var bodyEl=document.getElementById('quizInsightBody-'+idx);
+  if(!bodyEl) return;
+  if(q.insightHTML){ bodyEl.innerHTML=q.insightHTML; return; }
+  var cache=_quizReadInsightCache();
+  var key=_quizInsightFactKey(q);
+  if(cache[key]){ q.insightHTML=cache[key]; bodyEl.innerHTML=cache[key]; return; }
+  bodyEl.innerHTML='<em style="color:var(--text2);">⏳ Insight fetch ho raha hai…</em>';
+  try{
+    var fact=_quizQToFact(q);
+    var html=await _tgpBuildFactInsightHtml(fact);
+    if(html){
+      q.insightHTML=html;
+      cache[key]=html; _quizWriteInsightCache(cache);
+      bodyEl.innerHTML=html;
+      // Sync to vault too
+      try{
+        var key2=makeQKey(q.question);
+        if(typeof updateVaultQFlag==='function') updateVaultQFlag(key2,'insightHTML',html);
+      }catch(e){}
+    } else {
+      bodyEl.innerHTML='<em style="color:var(--text2);">Is question ke liye insight uplabdh nahi.</em>';
+    }
+  }catch(e){
+    bodyEl.innerHTML='<em style="color:var(--text2);">Insight fetch nahi ho saka.</em>';
+  }
+}
+function quizToggleInsight(idx){
+  var box=document.getElementById('quizInsightBox-'+idx);
+  if(!box) return;
+  if(box.style.display==='none' || !box.style.display){
+    box.style.display='block';
+    // Lazy-fetch if not yet loaded
+    var bodyEl=document.getElementById('quizInsightBody-'+idx);
+    if(bodyEl && bodyEl.dataset.loaded!=='1'){
+      bodyEl.dataset.loaded='1';
+      quizFetchInsightOnDemand(idx);
+    }
+  } else {
+    box.style.display='none';
+  }
+}
+
 async function startQuiz(){
   if(!S.apiKey){showToast('Pehle API Key daalo!','error');return;}
   const sid=document.getElementById('quizSubject').value;
@@ -10548,6 +10667,18 @@ RESPONSE FORMAT:
     if(!parsed.questions?.length)throw new Error('Questions nahi mile');
     parsed.questions=shuffleQuizOptions(parsed.questions);
 
+    // ── Pre-warm game-style insights for EVERY quiz question (parallel, concurrency=3) ──
+    // Quiz questions ko fact-shape me convert karke wahi _tgpBuildFactInsightHtml use karte hain
+    // jo game (Lightning/FillIn/Match) me use hota hai — bilkul same textbook-style insight.
+    try{
+      var _qLoadSub=document.querySelector('#quizLoading .loading-subtext')||document.querySelector('#quizLoading p');
+      if(_qLoadSub){ _qLoadSub.dataset._orig=_qLoadSub.textContent; _qLoadSub.textContent='Har question ka textbook-style insight web se cross-check karke tayyar ho raha hai…'; }
+      await _quizPrewarmInsights(parsed.questions, function(done,total){
+        if(_qLoadSub) _qLoadSub.textContent='Insight '+done+'/'+total+' tayyar ho raha hai…';
+      });
+      if(_qLoadSub && _qLoadSub.dataset._orig) _qLoadSub.textContent=_qLoadSub.dataset._orig;
+    }catch(_eIns){ console.warn('Quiz insight prewarm failed:', _eIns); }
+
     const quizId='q_'+Date.now();
     const quizName=label+' \u00b7 '+new Date().toLocaleDateString('hi-IN');
     addToVault(parsed.questions,quizId,quizName,label,sid,secid,tid);
@@ -10612,6 +10743,14 @@ function showQ(idx){
         return `<div class="${cls}" id="op${i}" onclick="${answered?'':'selOpt('+i+')'}"><span class="opt-lbl">${'ABCD'[i]}</span><span>${o}</span></div>`;
       }).join('')}</div>
       <div class="expl ${answered?'show':''}" id="expl" style="${_hideAnswers&&answered?'filter:blur(5px);transition:filter 0.3s;':''}">${q.explanation?`<strong>💡</strong> ${q.explanation}`:''}</div>
+      ${answered?`
+      <div style="margin-top:10px;">
+        <button class="btn btn-outline btn-sm" style="font-size:0.78rem;padding:6px 12px;border-radius:8px;" onclick="quizToggleInsight(${idx})">💡 Textbook-Style Insight ${q.insightHTML?'dekho':'(load karo)'}</button>
+        <div id="quizInsightBox-${idx}" style="display:none;margin-top:10px;padding:14px 16px;background:linear-gradient(135deg,rgba(0,105,92,0.09),rgba(0,150,136,0.03));border-radius:12px;border-left:5px solid var(--teal);box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+          <div style="font-size:0.78rem;font-weight:800;color:var(--teal);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">🔎 Exam Insight — Key Points + Related Facts</div>
+          <div id="quizInsightBody-${idx}" class="tgp-insight-body" data-loaded="${q.insightHTML?'1':'0'}" style="color:var(--text);font-size:0.92rem;line-height:1.95;font-weight:450;">${q.insightHTML||'<em style="color:var(--text2);">Click karo to load…</em>'}</div>
+        </div>
+      </div>`:''}
     </div>
     <!-- Difficulty Rating -->
     <div class="diff-bar" id="diffBar">
