@@ -10594,6 +10594,10 @@ async function startQuizActual(){
 
   if(!content){showToast('Selected area mein notes nahi hain!','error');return;}
   const _quizModel=S.model||'meta-llama/llama-4-scout-17b-16e-instruct';
+  const _quizQuestionCount=Math.max(1,parseInt(count)||10);
+  // Groq TPM max_tokens ko bhi reserve karta hai. 1-10 questions ke liye 8000 unnecessary tha,
+  // isliye dynamic output budget use karte hain; quiz generation style/prompt same rahega.
+  const _quizMaxTokens=Math.min(8000,Math.max(1800,(_quizQuestionCount*420)+1200));
   const _contentLimit=_quizModel.includes('8b')?4000:14000;
   if(content.length>_contentLimit)content=content.substring(0,_contentLimit);
 
@@ -10718,7 +10722,7 @@ RESPONSE FORMAT:
   document.getElementById('quizResults').style.display='none';
 
   try{
-    const text=await callGroq(prompt,8000,true);
+    const text=await callGroq(prompt,_quizMaxTokens,true);
     const parsed=safeJsonParse(text);
     if(!parsed.questions?.length)throw new Error('Questions nahi mile');
     parsed.questions=shuffleQuizOptions(parsed.questions);
@@ -18384,7 +18388,7 @@ async function callGroq(prompt, maxTokens=4000, useJsonFormat=false){
     const e=await r.json();
     const errMsg=e.error?.message||'API Error';
     if(errMsg.includes('rate')||errMsg.includes('limit')||errMsg.includes('quota')){
-      throw new Error(`⚠️ Token limit! Settings mein "Llama 4 Scout" select karo — sabse zyada free tokens milenge!`);
+      throw new Error('⚠️ Token/minute limit hit ho gayi. 60-90 sec wait karke retry karo ya questions count kam rakho.');
     }
     throw new Error(errMsg);
   }
@@ -50329,7 +50333,7 @@ async function aeCallGroq(systemPrompt, userPrompt, maxTokens) {
     const e = await r.json();
     const errMsg = e.error?.message || 'Groq API Error: ' + r.status;
     if(errMsg.includes('rate') || errMsg.includes('limit') || errMsg.includes('quota')) {
-      throw new Error('⚠️ Token limit! Settings mein "Llama 4 Scout" select karo — sabse zyada free tokens!');
+      throw new Error('⚠️ Token/minute limit hit ho gayi. 60-90 sec wait karke retry karo ya question/output size kam rakho.');
     }
     throw new Error(errMsg);
   }
