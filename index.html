@@ -11448,6 +11448,7 @@ function renderGameHistory(){
       +'<span style="background:rgba('+(pct>=80?'46,125,50':pct>=50?'245,124,0':'198,40,40')+',0.1);border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;color:'+pctColor+';">'+pct+'%</span>'
       +(wrongCount>0?'<span style="background:rgba(230,81,0,0.1);border:1px solid rgba(230,81,0,0.2);border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;color:var(--accent2);">⚠️ '+wrongCount+' weak</span>':'')
       +'<span style="background:var(--surface2);border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;color:var(--text2);">🎚️ '+(g.levelsPlayed||0)+' levels</span>'
+      +(g.status==='in_progress'?'<span style="background:rgba(245,124,0,0.12);border:1px solid rgba(245,124,0,0.3);border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;color:#e65100;">⏸️ Beech mein chhutha</span>':'<span style="background:rgba(46,125,50,0.12);border:1px solid rgba(46,125,50,0.3);border-radius:20px;padding:2px 9px;font-size:0.68rem;font-weight:700;color:var(--green);">✅ Pura</span>')
       +'</div>'
       +(wrongCount>0?'<div style="margin-top:7px;font-size:0.7rem;color:var(--accent2);font-weight:600;">📌 Weak: '+( g.wrongFacts||[]).slice(0,4).map(function(f){return'<span style="background:rgba(230,81,0,0.07);border-radius:4px;padding:1px 5px;margin:1px;display:inline-block;">'+_ghEsc(f.term||'')+'</span>';}).join('')+(wrongCount>4?'<span style="color:var(--text2);"> +' +(wrongCount-4)+' more</span>':'')+'</div>':'')
       +'</div>'
@@ -52736,6 +52737,8 @@ function _tgpJumpLevel(idx){
 function tgpStartGame(gameId){
   _tgp.activeGame=gameId;_tgp.gameState={};
   _tgp.score=0;_tgpUpdateScore();
+  // ── Generate a fixed gameKey at session start — used by both auto-save & final save ──
+  _tgp._sessionGameKey = gameId+'_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||'')+'_'+Date.now();
   if(_tgp.gameState._timer)clearInterval(_tgp.gameState._timer);
   document.getElementById('tgpSubtitle').textContent={
     lightning:'⚡ Lightning Quiz',fillin:'✏️ Fill in Blank',
@@ -53067,6 +53070,37 @@ function _tgpLevelComplete(gameId){
   var wrongCount=gs.levelWrong||0;
   var gameWrong=(_tgp._wrongLog[gameId]||[]);
 
+  // ── AUTO-SAVE: Level complete hote hi save karo (in_progress) ──
+  try{
+    if(typeof _saveGameSessionToFirebase==='function' && _tgp && _tgp.tid){
+      var _gs2 = _tgp.gameState || {};
+      var _totalQ2 = (_gs2.levels||[]).filter(function(l){return !l.isMaster;})
+        .reduce(function(s,l){return s+(l.questions?l.questions.length:(l.pairs?l.pairs.length:0));},0);
+      var _factsOut2 = (_tgp.facts||[]).map(function(f){
+        return {term:f.term, detail:f.detail, fibSentence:f.fibSentence, fibAnswer:f.fibAnswer,
+          fibOptions:f.fibOptions, examNote:f.examNote, relatedTerms:f.relatedTerms,
+          insightHTML:f.insightHTML||(f._insight&&f._insight.html)||''};
+      });
+      var _autoEntry = {
+        gameKey: _tgp._sessionGameKey || (gameId+'_'+_tgp.sid+'_'+_tgp.secid+'_'+_tgp.tid+'_'+Date.now()),
+        gameId: gameId,
+        sid: String(_tgp.sid||''), secid: String(_tgp.secid||''), tid: String(_tgp.tid||''),
+        topicName: _tgp.topicName || '',
+        score: _tgp.score || 0,
+        correct: _gs2.correct || 0,
+        totalQ: _totalQ2,
+        levelsPlayed: (_gs2.levels||[]).filter(function(l){return l.done;}).length,
+        wrongFacts: gameWrong.map(function(f){return {term:f.term, detail:f.detail};}),
+        facts: _factsOut2,
+        playedAt: new Date().toISOString(),
+        dateRaw: Date.now(),
+        status: 'in_progress'
+      };
+      _saveGameSessionToFirebase(_autoEntry);
+      console.log('[AutoSave] Level complete par save kiya ✅ | gameKey:', _autoEntry.gameKey);
+    }
+  }catch(eAuto){ console.warn('[AutoSave] Level save error:', eAuto&&eAuto.message); }
+
   // ── PERSIST PROGRESS — quiz jaisa fact coverage tracking ──
   // Mark facts from THIS just-completed level as covered + record wrong-of-this-level
   if(lv && !lv.isMaster){
@@ -53264,7 +53298,7 @@ function _tgpGameResult(gameId){
         };
       });
       var _entry = {
-        gameKey: gameId+'_'+_tgp.sid+'_'+_tgp.secid+'_'+_tgp.tid+'_'+Date.now(),
+        gameKey: _tgp._sessionGameKey || (gameId+'_'+_tgp.sid+'_'+_tgp.secid+'_'+_tgp.tid+'_'+Date.now()),
         gameId: gameId,
         sid: String(_tgp.sid||''), secid: String(_tgp.secid||''), tid: String(_tgp.tid||''),
         topicName: _tgp.topicName || '',
@@ -53274,7 +53308,8 @@ function _tgpGameResult(gameId){
         wrongFacts: _wrong.map(function(f){ return {term:f.term, detail:f.detail}; }),
         facts: _factsOut,
         playedAt: new Date().toISOString(),
-        dateRaw: Date.now()
+        dateRaw: Date.now(),
+        status: 'completed'
       };
       _saveGameSessionToFirebase(_entry);
     }
