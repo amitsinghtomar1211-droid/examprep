@@ -10313,6 +10313,54 @@ function _quizReadInsightCache(){
 function _quizWriteInsightCache(c){
   try{ localStorage.setItem(_quizInsightCacheKey(), JSON.stringify(c||{})); }catch(e){}
 }
+function _quizSleep(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+function _quizErrorText(e){
+  try{
+    if(!e) return 'unknown error';
+    if(typeof e==='string') return e;
+    if(e.message) return String(e.message);
+    if(e.error && e.error.message) return String(e.error.message);
+    if(e.status) return 'HTTP '+e.status;
+    var j=JSON.stringify(e);
+    return (j && j!=='{}') ? j : String(e);
+  }catch(_){ return 'unknown error'; }
+}
+function _quizWithGameContext(fn){
+  var old=null, ctx=(window._cq||window._quizInsightCtx||{});
+  try{
+    if(typeof _tgp!=='undefined' && _tgp){
+      old={sid:_tgp.sid,secid:_tgp.secid,tid:_tgp.tid,topicName:_tgp.topicName};
+      if(ctx.sid!=null)_tgp.sid=String(ctx.sid);
+      if(ctx.secid!=null)_tgp.secid=String(ctx.secid);
+      if(ctx.tid!=null)_tgp.tid=String(ctx.tid);
+      if(ctx.label||ctx.topicName)_tgp.topicName=ctx.label||ctx.topicName||_tgp.topicName;
+    }
+    return Promise.resolve(fn()).finally(function(){
+      try{ if(old && typeof _tgp!=='undefined' && _tgp){ _tgp.sid=old.sid; _tgp.secid=old.secid; _tgp.tid=old.tid; _tgp.topicName=old.topicName; } }catch(_){}
+    });
+  }catch(e){
+    try{ if(old && typeof _tgp!=='undefined' && _tgp){ _tgp.sid=old.sid; _tgp.secid=old.secid; _tgp.tid=old.tid; _tgp.topicName=old.topicName; } }catch(_){}
+    return Promise.reject(e);
+  }
+}
+async function _quizBuildInsightHtml(fact){
+  if(typeof _tgpBuildFactInsightHtml==='function'){
+    try{ return await _quizWithGameContext(function(){ return _tgpBuildFactInsightHtml(fact); }); }
+    catch(e1){ console.warn('quiz game-insight primary failed:', _quizErrorText(e1)); }
+  }
+  if(typeof callGroq!=='function') return '';
+  var q=(fact&&fact.term)||'';
+  var ans=(fact&&fact.fibAnswer)||'';
+  var expl=(fact&&fact.examNote)||'';
+  var opts=(fact&&Array.isArray(fact.fibOptions))?fact.fibOptions.join(' | '):'';
+  var prompt='Tu Indian competitive-exam mentor hai. Niche quiz question diya hai. Game mode jaisa textbook-style insight Hindi me do. Sirf HTML safe tags <b>/<strong>/<em>/<i>/<br> use karo.\n\n'+
+    'Question: '+q+'\nCorrect answer: '+ans+'\nOptions: '+opts+'\nExplanation: '+expl+'\n\n'+
+    'Exactly 2 sections return karo:\n<b>🔑 Key Points</b><br> 4-6 crisp exam facts.\n<b>📝 Additional Information</b><br> 4-6 related/similar exam facts. Wrong options ka analysis mat karo. 120-220 words.';
+  var text=await callGroq(prompt, 1100, false);
+  if(!text || !String(text).trim()) return '';
+  var clean=String(text).trim().replace(/^```[a-z]*\s*/i,'').replace(/```\s*$/,'').replace(/^json\s*/i,'');
+  return clean.replace(/<(?!\/?(b|strong|em|i|br)\b)[^>]*>/gi,'');
+}
 async function _quizPrewarmInsights(questions, onProgress){
   if(!Array.isArray(questions) || !questions.length) return;
   var apiKey=(typeof S!=='undefined' && S.apiKey)?S.apiKey:'';
@@ -10320,7 +10368,8 @@ async function _quizPrewarmInsights(questions, onProgress){
   var cache = _quizReadInsightCache();
   var total = questions.length;
   var done = 0;
-  var CONCURRENCY = 3;
+  // Quiz generation ke turant baad API limit tight hoti hai, isliye sequential + small gap reliable hai.
+  var CONCURRENCY = 1;
   var idx = 0;
   async function worker(){
     while(idx < total){
@@ -10335,13 +10384,17 @@ async function _quizPrewarmInsights(questions, onProgress){
       }
       try{
         var fact = _quizQToFact(q);
-        var html = await _tgpBuildFactInsightHtml(fact);
+        var html = await _quizBuildInsightHtml(fact);
         if(html){
           q.insightHTML = html;
           cache[key] = html;
           _quizWriteInsightCache(cache);
         }
-      }catch(e){ try{ console.warn('quiz insight prewarm fail q'+(i+1), (e&&(e.message||e.toString()))||e, e); }catch(_){} }
+      }catch(e){
+        q._insightError = _quizErrorText(e);
+        try{ console.warn('quiz insight prewarm fail q'+(i+1)+': '+q._insightError, e); }catch(_){}
+      }
+      if(idx < total) await _quizSleep(900);
       done++;
       if(onProgress) try{onProgress(done,total);}catch(e){}
     }
@@ -10363,7 +10416,7 @@ async function quizFetchInsightOnDemand(idx){
   bodyEl.innerHTML='<em style="color:var(--text2);">⏳ Insight fetch ho raha hai…</em>';
   try{
     var fact=_quizQToFact(q);
-    var html=await _tgpBuildFactInsightHtml(fact);
+    var html=await _quizBuildInsightHtml(fact);
     if(html){
       q.insightHTML=html;
       cache[key]=html; _quizWriteInsightCache(cache);
@@ -10377,7 +10430,10 @@ async function quizFetchInsightOnDemand(idx){
       bodyEl.innerHTML='<em style="color:var(--text2);">Is question ke liye insight uplabdh nahi.</em>';
     }
   }catch(e){
-    bodyEl.innerHTML='<em style="color:var(--text2);">Insight fetch nahi ho saka.</em>';
+    var msg=_quizErrorText(e);
+    q._insightError=msg;
+    var safeMsg=(typeof _tgpEsc==='function')?_tgpEsc(msg.substring(0,90)):msg.substring(0,90).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});
+    bodyEl.innerHTML='<em style="color:var(--text2);">Insight fetch nahi ho saka: '+safeMsg+'</em>';
   }
 }
 function quizToggleInsight(idx){
@@ -10666,8 +10722,9 @@ RESPONSE FORMAT:
     const parsed=safeJsonParse(text);
     if(!parsed.questions?.length)throw new Error('Questions nahi mile');
     parsed.questions=shuffleQuizOptions(parsed.questions);
+    window._quizInsightCtx={sid:String(sid),secid:String(secid),tid:String(tid),label:label};
 
-    // ── Pre-warm game-style insights for EVERY quiz question (parallel, concurrency=3) ──
+    // ── Pre-warm game-style insights for EVERY quiz question (sequential, API-limit safe) ──
     // Quiz questions ko fact-shape me convert karke wahi _tgpBuildFactInsightHtml use karte hain
     // jo game (Lightning/FillIn/Match) me use hota hai — bilkul same textbook-style insight.
     try{
