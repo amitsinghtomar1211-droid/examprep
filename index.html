@@ -11214,10 +11214,25 @@ async function _saveGameLevelToFirebase(gameId, levelIdx, lv){
     playedAt: new Date().toISOString(),
     dateRaw: Date.now()
   };
+  // Pull cached insights (per-fact) so review screen has the same insight that user saw in-game
+  var insightCache={};
+  try{ if(typeof _tgpReadInsightCache==='function') insightCache = _tgpReadInsightCache()||{}; }catch(e){}
+  function _resolveInsight(fact){
+    if(!fact) return '';
+    var direct = fact.insightHTML || (fact._insight && fact._insight.html) || '';
+    if(direct) return direct;
+    try{
+      if(typeof _tgpFactKey==='function'){
+        var k=_tgpFactKey(fact);
+        if(k && insightCache[k]) return insightCache[k];
+      }
+    }catch(e){}
+    return '';
+  }
   // Stats + frozen content per game type
   if(gameId==='match'){
     var pairsOut = (lv.pairs||[]).map(function(p){
-      var insight = (p.fact && (p.fact.insightHTML || (p.fact._insight && p.fact._insight.html))) || '';
+      var insight = _resolveInsight(p.fact);
       return {
         left: p.left, right: p.right,
         userMatchedRightText: p.userMatchedRightText || null,
@@ -11234,7 +11249,7 @@ async function _saveGameLevelToFirebase(gameId, levelIdx, lv){
   } else {
     var qs = (lv.questions||[]).map(function(q){
       var f = q.fact || {};
-      var insight = f.insightHTML || (f._insight && f._insight.html) || '';
+      var insight = _resolveInsight(f);
       var base = {
         userAnswer: (q.userAnswer===undefined?null:q.userAnswer),
         userCorrect: !!q.userCorrect,
@@ -11244,7 +11259,7 @@ async function _saveGameLevelToFirebase(gameId, levelIdx, lv){
         term: f.term||'', detail: f.detail||''
       };
       if(gameId==='lightning'){
-        base.questionText = q.text || q.question || '';
+        base.questionText = q.q || q.text || q.question || f.term || '';
         base.options = (q.options||[]).slice();
         base.correct = q.correct;
       } else if(gameId==='fillin'){
@@ -11532,10 +11547,49 @@ function deleteGameVaultEntryByKey(key){
 // Replay a saved level with frozen questions.
 function tgpReplayLevelByKey(key){
   var g=_gvFindByKey(key); if(!g){ showToast('Level nahi mila','error'); return; }
-  if(typeof openTopicGamePanel!=='function'){ showToast('Topic open nahi ho saka','error'); return; }
+  if(typeof window.openTopicGameMode!=='function'){ showToast('Game mode load nahi hua','error'); return; }
+  // Set replay payload BEFORE opening — game start functions check this and bypass AI generation
   window._tgpReplayPayload = { entry: g };
-  openTopicGamePanel(g.sid, g.secid, g.tid, g.topicName);
-  setTimeout(function(){ if(typeof tgpStartGame==='function') tgpStartGame(g.gameId); }, 450);
+
+  // Pre-warm insight cache from saved entry so in-game insight popup also shows same insights
+  try{
+    if(typeof _tgpReadInsightCache==='function' && typeof _tgpFactKey==='function'){
+      // We need _tgp.sid/secid/tid set first for cache key — set them now
+      if(typeof _tgp!=='undefined'){
+        _tgp.sid=String(g.sid||''); _tgp.secid=String(g.secid||''); _tgp.tid=String(g.tid||'');
+      }
+      var cache=_tgpReadInsightCache()||{};
+      var items = g.questions || g.pairs || [];
+      items.forEach(function(sq){
+        if(!sq || !sq.insightHTML) return;
+        var fakeFact = { term: sq.term||sq.left||'', detail: sq.detail||sq.right||sq.answer||'' };
+        var k = _tgpFactKey(fakeFact);
+        if(k && !cache[k]) cache[k] = sq.insightHTML;
+      });
+      if(typeof _tgpWriteInsightCache==='function') _tgpWriteInsightCache(cache);
+    }
+  }catch(e){ console.warn('replay insight prewarm failed', e); }
+
+  // Open the topic game panel (async — loads facts then shows lobby)
+  try{ window.openTopicGameMode(g.sid, g.secid, g.tid, g.topicName); }
+  catch(e){ showToast('Replay open error: '+(e.message||e),'error'); return; }
+
+  // Poll until panel is open + facts loaded, then start the saved game
+  var tries=0;
+  var iv=setInterval(function(){
+    tries++;
+    var panel=document.getElementById('topicGamePanel');
+    var ready = panel && panel.style.display!=='none' && _tgp && _tgp.facts && (_tgp.facts.length>0 || (g.questions||g.pairs));
+    if(ready){
+      clearInterval(iv);
+      try{ tgpStartGame(g.gameId); }
+      catch(e){ showToast('Replay start error: '+(e.message||e),'error'); }
+    } else if(tries>40){
+      clearInterval(iv);
+      // Try once anyway — replay payload bypasses facts requirement
+      try{ tgpStartGame(g.gameId); }catch(e){ showToast('Replay timeout','error'); }
+    }
+  }, 150);
 }
 
 
