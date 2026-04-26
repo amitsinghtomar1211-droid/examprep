@@ -51966,7 +51966,7 @@ function _tgpShowInfoCard(fact){
 
 // Per-fact insight cache (localStorage) — kisi ek fact ki extra jaankari dobara fetch nahi hoti
 function _tgpInsightCacheKey(){
-  return 'tgp_insight_v4_kp_addl_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||'');
+  return 'tgp_insight_v5_topper_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||'');
 }
 function _tgpReadInsightCache(){
   try{ var raw=localStorage.getItem(_tgpInsightCacheKey()); return raw?(JSON.parse(raw)||{}):{};}catch(e){return {};}
@@ -51982,8 +51982,10 @@ function _tgpInsightOptionContext(fact){
     var unique = [];
     opts.forEach(function(o){ if(unique.indexOf(o)===-1) unique.push(o); });
     if(!unique.length && fact && fact.relatedTerms) unique = fact.relatedTerms.slice(0,4);
-    if(!unique.length) return '';
-    return 'QUESTION OPTIONS CONTEXT (Additional Information ke liye):\nCorrect answer: '+(ans||'given fact answer')+'\nAll options / related terms: '+unique.join(' | ')+'\nInstruction: Key Points correct answer par; Additional Information me wrong options/related terms par short exam-useful facts + agar koi similar PYQ-style fact web context me mile to use bhi yahin add karo (ek hi Additional Information block me).\n\n';
+    var ctx = 'CORRECT ANSWER / MAIN FACT: '+(ans||'(given fact answer)')+'\n';
+    if(unique.length) ctx += 'RELATED TERMS (sirf similar-question topics dhundhne ke liye hint — IN options ka analysis MAT karo): '+unique.join(' | ')+'\n';
+    ctx += 'INSTRUCTION: Key Points sirf correct answer / main fact ke exam-oriented topper-level facts par. Additional Information me IS question se MILTE-JULTE / SIMILAR exam questions ki direct factual jaankari (jo exam me poochi gayi ho ya poochi ja sakti ho) — wrong options ka vishleshan / "yeh galat kyun hai" type bilkul MAT likho.\n\n';
+    return ctx;
   }catch(e){ return ''; }
 }
 
@@ -51993,10 +51995,10 @@ async function _tgpGetInsightWebContext(factLine, fact){
     var term = (fact && fact.term ? String(fact.term) : '').trim();
     var ans = (fact && fact.fibAnswer ? String(fact.fibAnswer) : '').trim();
     var base = (term || ans || factLine).slice(0,140);
-    // ⚡ SPEED: sirf 2 focused parallel queries — ek main fact ke liye, ek similar-PYQ ke liye
+    // ⚡ SPEED: 2 focused parallel queries — (1) topper-level exam facts on main answer, (2) similar/related PYQ-style questions
     var queries = [
-      base + ' important facts UPSC SSC State PCS',
-      base + ' similar previous year question PYQ exam'
+      base + ' important exam facts previous year UPSC SSC PCS topper notes',
+      base + ' similar previous year questions related PYQ exam asked'
     ];
     // Parallel fire — sequential ki jagah, total latency ~1 query jitna
     var results = await Promise.all(queries.map(function(q){
@@ -52056,11 +52058,11 @@ async function _tgpBuildFactInsightHtml(fact){
   var optionContext = _tgpInsightOptionContext(fact);
   var webContext = await _tgpGetInsightWebContext(factLine, fact);
   var prompt =
-'Tu ek expert Indian competitive-exam mentor aur textbook-solution analyst hai (UPSC, UPPSC, BPSC, MPPSC, RPSC, State PCS, SSC, Railway, Banking, NDA/CDS/CAPF). Tu textbook quiz ke solution ki tarah likhta hai — har claim verified hona chahiye.\n\n'+
+'Tu ek expert Indian competitive-exam mentor + topper-level notes writer hai (UPSC, UPPSC, BPSC, MPPSC, RPSC, State PCS, SSC, Railway, Banking, NDA/CDS/CAPF). Tu aise notes likhta hai jo HOSHIYAR / TOPPER students ke liye ho — sirf direct, exam me poochhe gaye ya poochhe ja sakne wale FACTUAL points, koi general intro / option-analysis / "yeh galat hai" type baat nahi.\n\n'+
 '⚠️ ACCURACY MANDATE:\n'+
-'• Niche jo REAL WEB / SEARCH CONTEXT diya gaya hai use HI primary source maano. Web context ke andar jo info hai usko cross-check karke hi likho.\n'+
-'• Jo cheez web context me NAHI hai aur 100% common-knowledge GK bhi nahi — usko skip karo ya hedge karo ("sambhavtah").\n'+
-'• Date, year, person, scheme, place — sab web context se verify karo. Fake PYQ year, fake source kabhi nahi.\n\n'+
+'• REAL WEB / SEARCH CONTEXT ko PRIMARY source maano. Usi se cross-check karke likho.\n'+
+'• Jo cheez web context me NAHI hai aur 100% common GK bhi nahi — skip karo ya hedge ("sambhavtah").\n'+
+'• Date, year, person, scheme, place, article number — sab verified ho. Fake PYQ year / fake source = fail.\n\n'+
 'Niche ek **SINGLE FACT / QUESTION FACT** diya gaya hai. Iska insight chhota aur sirf 2 sections me dena hai: Key Points + Additional Information. Aur kuch nahi.\n\n'+
 '─── GUIDANCE (user ka target exam) ───\n'+
 guidance+'\n'+
@@ -52071,21 +52073,24 @@ webContext+
 '─── OUTPUT FORMAT (HTML safe, Hindi me, sirf <b>/<strong>/<em>/<i>/<br> tags) ───\n'+
 'Exactly ye 2 sections, isi order me, koi aur heading nahi:\n\n'+
 '<b>🔑 Key Points</b><br>\n'+
-'• Correct answer / main fact se judi 3-5 exam-useful concrete baatein (place, date, person, period, feature, cause-effect, article/scheme number jo bhi directly relevant ho).<br>\n\n'+
+'• Correct answer / main fact se judi 4-6 EXAM-ORIENTED concrete factual baatein — wahi facts jo exam me poochhe gaye hain ya poochhe ja sakte hain (year, person, place, article/scheme number, period, founder, capital, river, battle date, committee, report, organisation HQ, important first/last/largest jaisi direct GK).<br>\n'+
+'• Har bullet ek standalone yaad-rakhne layak fact ho — topper-style crisp note, na ki explanation/essay.<br>\n'+
+'• Wrong options ka analysis / "kyun galat hai" yahan MAT likho.<br>\n\n'+
 '<b>📝 Additional Information</b><br>\n'+
-'• Agar options/related terms diye hain, har important wrong option/related term par 1-2 short bullets do.<br>\n'+
-'• Web context me agar isi fact jaisa koi SIMILAR PYQ ya related exam-fact mile (jaise same topic ka doosra angle, related ruler/article/river/scheme jo kisi exam me poocha gaya ho), uska crisp fact bhi yahin add karo.<br>\n'+
-'• Saari additional baatein ek hi Additional Information block me — alag PYQ ya Mnemonic section MAT banao.<br>\n\n'+
+'• Yahan IS question se MILTE-JULTE / SIMILAR exam questions ki direct factual jaankari do — jo facts isi topic / related personality / related scheme / related article / related event ke around exams (UPSC/SSC/PCS/Railway/Banking) me poochhe gaye hain ya poochhe ja sakte hain.<br>\n'+
+'• 4-6 crisp factual bullets, har ek standalone exam-useful fact (jaise "Yeh Article kis Part me hai", "Is scheme ka launch year aur ministry", "Is ruler ke baad/pehle kaun", "Is river ka udgam/sangam", "Is committee ki sifarish kaun se Article par", etc.).<br>\n'+
+'• Wrong options ka vishleshan BILKUL MAT karo. Sirf related/similar exam-facts.<br>\n'+
+'• Web context me agar similar PYQ-style fact mile to wo zaroor add karo (bina source year fake kiye).<br>\n\n'+
 '─── STRICT RULES ───\n'+
-'1. Sirf 2 sections: Key Points aur Additional Information. PYQ Angle / Trick / Mnemonic / Correct Answer ka alag heading MAT do.\n'+
-'2. Sirf is fact ke specific subject par focus; pure topic summary nahi.\n'+
+'1. Sirf 2 sections: Key Points aur Additional Information. PYQ Angle / Trick / Mnemonic / Correct Answer / Option Analysis ka alag heading MAT do.\n'+
+'2. Har bullet DIRECT FACTUAL ho — topper ke short notes jaisa. Generic explanation, "is question me", "options me se" type lines MAT likho.\n'+
 '3. Web context primary source; mismatch ya missing ho to claim drop karo ya hedge karo. Fake data = fail.\n'+
-'4. Concise bullets, short lines, no long essay. 100-180 words total.\n'+
+'4. Concise bullets, short lines, no essay. 120-220 words total.\n'+
 '5. Hindi simple, English technical terms allowed. Sirf <b>, <strong>, <em>, <i>, <br> tags.\n'+
 '6. Only plain HTML return karo, JSON/markdown/code-fence nahi.\n\n'+
-'Ab diye gaye FACT ke liye sirf Key Points + Additional Information likho.';
+'Ab diye gaye FACT ke liye sirf Key Points (topper-level exam facts) + Additional Information (similar/related exam questions ke direct facts) likho.';
 
-  var text = await callGroq(prompt, 900, false);
+  var text = await callGroq(prompt, 1100, false);
   if(!text || !text.trim()) return '';
   var clean = String(text).trim()
     .replace(/^```[a-z]*\s*/i,'').replace(/```\s*$/,'')
