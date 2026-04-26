@@ -51352,7 +51352,7 @@ guidance+
 '1. ❗ Question, blank ka answer, aur poora detail SIRF usi FACT-N ki line ke andar mojud shabdon/numbers se banane hain. FACT-N me jo nahi likha hai, woh kabhi mat banao — apni general knowledge, training data, internet, ya kisi aur fact ki line se kuch bhi mat lo.\n'+
 '2. fibSentence = original fact ka sentence jisme SABSE EXAM-CRITICAL ek word/number ___ se replace ho\n'+
 '3. fibAnswer = wahi exact word/number jo blank fill karta hai (FACT-N me likha hua)\n'+
-'4. fibOptions = EXACTLY 4 options (1 sahi = fibAnswer + 3 plausible galat). Galat 3 options same category ke ho (date hai to fake date, name hai to fake name) — ye plausible decoys hain. Lekin koi bhi option aisa NAHI ho jo asli duniya ka koi alag verified fact ho aur student ko confuse kare. Decoys made-up plausible rakho.\n'+
+'4. fibOptions = EXACTLY 4 options ka array. ❗❗ ATI-MAHATVAPURNA: in 4 options me se EK option BILKUL EXACTLY fibAnswer ke barabar (same spelling, same matra, same spaces) hona CHAHIYE — koi modify/variant nahi. Agar fibAnswer “एकसींगी बैल” hai to ek option exactly “एकसींगी बैल” hi likho — “एकसींगी शेर”/“दोसींगी बैल” jaise mismatch NAHI. Baki 3 options plausible galat decoys (same category — date/name/place/concept), made-up but believable.\n'+
 '5. term = chhota exam-style question label (max 10 words) — sirf is FACT-N ka essence\n'+
 '6. detail = poora answer sentence (1 line, complete fact) — FACT-N ki hi line, paraphrase ok par naya information add MAT karo\n'+
 '7. examNote = 1-line kyun yeh exam ke liye important hai (sirf is FACT ke baare me, kisi aur fact ka zikr nahi)\n'+
@@ -51400,7 +51400,7 @@ guidance+
 '1. ❗ Question text, sahi answer, aur explanation SIRF usi FACT-N ki line ke andar likhe content se nikalne hain. Apni training/general knowledge se kuch bhi mat add karo. Agar FACT-N me kisi cheez ka zikr nahi hai, to woh question/answer/explanation me NAHI aana chahiye.\n'+
 '2. Har question BILKUL ALAG fact pe — ek FACT = ek question\n'+
 '3. term = MCQ ka question text (max 14 words, exam-style, Hindi)\n'+
-'4. fibOptions = EXACTLY 4 options array (1 sahi + 3 plausible galat). Galat options same category ke (year/name/place/concept)\n'+
+'4. fibOptions = EXACTLY 4 options array. ❗ EK option BILKUL EXACTLY fibAnswer ke barabar hona CHAHIYE (same spelling/spaces/matra). Baki 3 plausible galat decoys (same category — year/name/place/concept), made-up but believable.\n'+
 '5. fibAnswer = sahi option ka exact text (fibOptions me se ek)\n'+
 '6. detail = poora answer + short explanation (kyun sahi)\n'+
 '7. fibSentence = detail ka sentence jisme key word ___ se replace (backup FIB ke liye)\n'+
@@ -51431,7 +51431,38 @@ guidance+
       if(en.fibSentence) fact.fibSentence = en.fibSentence;
       if(en.fibAnswer) fact.fibAnswer = en.fibAnswer;
       if(en.fibOptions && en.fibOptions.length === 4){
-        fact.fibOptions = _tgpShuffle(en.fibOptions.slice());
+        var _opts = en.fibOptions.slice().map(function(o){ return (o==null?'':String(o)).trim(); });
+        var _ans  = (en.fibAnswer==null?'':String(en.fibAnswer)).trim();
+        if(_ans){
+          var _norm = function(x){ return String(x||'').replace(/\s+/g,' ').trim().toLowerCase(); };
+          var _hit = _opts.some(function(o){ return _norm(o) === _norm(_ans); });
+          if(!_hit){
+            // AI didn't include correct answer in options → force-replace one decoy
+            var _replaceIdx = -1;
+            for(var _ri=0; _ri<_opts.length; _ri++){
+              if(!_opts[_ri] || _opts[_ri]==='—'){ _replaceIdx=_ri; break; }
+            }
+            if(_replaceIdx<0){
+              for(var _ri2=0; _ri2<_opts.length; _ri2++){
+                if(_norm(_opts[_ri2]).indexOf(_norm(_ans))>=0){ _replaceIdx=_ri2; break; }
+              }
+            }
+            if(_replaceIdx<0) _replaceIdx = Math.floor(Math.random()*_opts.length);
+            _opts[_replaceIdx] = _ans;
+          } else {
+            // Preserve exact spelling of answer
+            for(var _ci=0; _ci<_opts.length; _ci++){
+              if(_norm(_opts[_ci]) === _norm(_ans)) _opts[_ci] = _ans;
+            }
+          }
+          // De-duplicate (case-insensitive)
+          var _seen = {}, _uniq = [];
+          _opts.forEach(function(o){ var k=_norm(o); if(k && !_seen[k]){ _seen[k]=1; _uniq.push(o); } });
+          while(_uniq.length<4) _uniq.push('—');
+          _opts = _uniq.slice(0,4);
+        }
+        fact.fibOptions = _tgpShuffle(_opts);
+        if(_ans) fact.fibAnswer = _ans;
       }
       if(en.examNote) fact.examNote = en.examNote;
       if(en.relatedTerms) fact.relatedTerms = en.relatedTerms;
@@ -51904,21 +51935,22 @@ async function _tgpFetchFactInsight(fact){
   var factLine = (fact.detail || fact.term || '').replace(/\n/g,' ').trim();
   var guidance = _tgpBuildGuidanceBlock();
   var prompt =
-'Tu ek expert Indian competitive-exam teacher hai. Niche ek SINGLE fact diya gaya hai.\n'+
-'Tera kaam: SIRF is ek fact ke baare me 2-4 line ki short, exam-relevant DEEPER jaankari Hindi me batana.\n\n'+
+'Tu ek expert Indian competitive-exam mentor hai (UPSC, UPPCS, BPSC, MPPSC, RPSC, SSC CGL/CHSL/MTS, Railway NTPC/Group D, Banking, NDA, CDS, State PCS — saare PCS & one-day exams). Niche ek SINGLE fact diya gaya hai.\n'+
+'Tera kaam: SIRF is ek fact ke baare me exam-angle se DEEPER jaankari Hindi me batana — jisme yeh bhi cover ho ki ALAG-ALAG competitive exams me is fact (ya iske aas-paas ke micro-detail) se kis tarah ke prashn pooche jaa chuke hain, taki student ko us fact se bann sakne wale har possible question ka answer pehle se pata ho.\n\n'+
 guidance+
 'FACT: "'+factLine+'"\n\n'+
 'STRICT RULES:\n'+
-'1. ❗ Sirf is fact ke specific subject (jo iske andar mention hai — naam/jagah/sankhya/scheme/event) ke baare me extra background, importance, ya useful related context batao.\n'+
-'2. ❌ Kisi DOOSRE fact, doosri jagah, doosre vyakti, ya doosre topic ka zikr MAT karo.\n'+
-'3. ❌ Pure topic ka summary mat do — sirf is ek fact pe focus.\n'+
-'4. ✅ Apni general knowledge / web-style knowledge se extra detail add kar sakte ho — par sab is fact ke MAIN subject se directly related ho. Agar guidance me user ka target exam diya hai to extra info usi exam ke angle se prefer karo (PYQ trend, common confusion, mnemonic).\n'+
-'5. ✅ Hindi, max 4 lines, exam student ke kaam ki baat (date/significance/PYQ angle/common confusion).\n'+
-'6. ❌ JSON nahi, koi heading nahi — sirf 2-4 line plain Hindi text (HTML tags <b>, <em>, <br> use kar sakte ho lightly).\n'+
-'7. Agar fact itna self-contained hai ki extra kuch valid jaankari nahi de sakte, to sirf 1 line me iska exam-importance batao — bana-bana kar mat likho.';
+'1. ❗ Sirf is fact ke specific subject (iske andar mention naam/jagah/sankhya/scheme/event/year) pe focus. Doosre fact ya pure topic summary MAT do.\n'+
+'2. ✅ Apni general knowledge se 3 cheezein add karo — sab is fact ke MAIN subject se directly related:\n'+
+'   (a) <b>Background/Importance:</b> Short context — date, location, significance, related micro-details (sirf is fact se jude).\n'+
+'   (b) <b>PYQ Angle (sabse zaroori):</b> UPSC Prelims, UPPCS, BPSC, SSC, Railway, State PCS — in exams me is fact se kya-kya pucha gaya hai. Multiple angles bata: "____ ke baare me pucha jata hai", "____ vs ____ confuse karaya jata hai", "____ wala year/jagah/naam aksar option me aata hai". Agar exact paper yaad nahi hai to general pattern likho — par galat year/paper MAT banao.\n'+
+'   (c) <b>Common Confusion / Trick:</b> Students kahan galti karte hain, similar-naam wala confuser kya hai, ya mnemonic.\n'+
+'3. ✅ Format: Hindi, 4-7 short lines. <b>bold</b>, <em>italic</em>, <br> tags lightly use karo. PYQ angle wali line zaroor ho. Agar guidance me user ka target exam hai to usko priority.\n'+
+'4. ❌ JSON nahi, koi made-up exact paper-year nahi (confident nahi to general likho).\n'+
+'5. Agar PYQ context valid nahi hai to sirf (a) aur (c) likho — jhootha PYQ MAT banao.';
 
   try{
-    var text = await callGroq(prompt, 600, false);
+    var text = await callGroq(prompt, 1100, false);
     if(!text || !text.trim()){
       body.innerHTML='<em style="color:var(--text2);">Is fact ke liye extra jankari uplabdh nahi.</em>';
       return;
