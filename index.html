@@ -50873,7 +50873,97 @@ var _tgp = {
   // Per-game wrong tracking: { 'lightning': [{fact}, ...], 'fillin': [...], ... }
   _wrongLog: { lightning:[], fillin:[], match:[] }
 };
-var LEVEL_SIZE = 10; // questions per level (max 10 per level)
+var LEVEL_SIZE = 10; // default questions per level (user can override per level)
+
+// ═══════════════════════════════════════════════════════
+// 🎯 GAME FACT PROGRESS — quiz jaisa per-game coverage tracking
+// Per (topic + gameId) covered/wrong facts persist hote hain (localStorage)
+// User naya level banayega → uncovered facts se utne questions milenge
+// Saare facts cover ho jayein → auto-reset for fresh cycle
+// ═══════════════════════════════════════════════════════
+function _tgpProgKey(sid, secid, tid, gameId){
+  return 'tgpProg_v1_' + sid + '_' + secid + '_' + tid + '_' + gameId;
+}
+function _tgpNormFact(s){
+  return String(s||'').toLowerCase().replace(/[^a-z0-9\u0900-\u097f]/g,'').trim();
+}
+function _tgpFactKey(f){
+  // Stable key per fact — term + first 30 chars of detail
+  return _tgpNormFact((f && f.term ? f.term : '') + '|' + (f && f.detail ? String(f.detail).substring(0,30) : ''));
+}
+function _tgpGetGameProg(gameId){
+  var key = _tgpProgKey(_tgp.sid, _tgp.secid, _tgp.tid, gameId);
+  try{
+    var raw = localStorage.getItem(key);
+    if(!raw) return { coveredKeys:[], wrongKeys:[], totalKnown:0, lastUpdated:null };
+    var p = JSON.parse(raw);
+    return {
+      coveredKeys: p.coveredKeys || [],
+      wrongKeys:   p.wrongKeys   || [],
+      totalKnown:  p.totalKnown  || 0,
+      lastUpdated: p.lastUpdated || null
+    };
+  }catch(e){ return { coveredKeys:[], wrongKeys:[], totalKnown:0, lastUpdated:null }; }
+}
+function _tgpSaveGameProg(gameId, prog){
+  var key = _tgpProgKey(_tgp.sid, _tgp.secid, _tgp.tid, gameId);
+  try{ localStorage.setItem(key, JSON.stringify(prog)); }catch(e){}
+}
+function _tgpResetGameProg(gameId){
+  _tgpSaveGameProg(gameId, { coveredKeys:[], wrongKeys:[], totalKnown:_tgp.facts.length, lastUpdated:new Date().toLocaleDateString('hi-IN') });
+}
+// Get uncovered facts for a game (from current _tgp.facts, excluding already covered)
+function _tgpGetUncoveredFacts(gameId){
+  var prog = _tgpGetGameProg(gameId);
+  var coveredSet = {};
+  prog.coveredKeys.forEach(function(k){ coveredSet[k] = true; });
+  return _tgp.facts.filter(function(f){ return !coveredSet[_tgpFactKey(f)]; });
+}
+// Get wrong facts for a game (still in current pool)
+function _tgpGetWrongFacts(gameId){
+  var prog = _tgpGetGameProg(gameId);
+  var wrongSet = {};
+  prog.wrongKeys.forEach(function(k){ wrongSet[k] = true; });
+  return _tgp.facts.filter(function(f){ return wrongSet[_tgpFactKey(f)]; });
+}
+// Mark facts as covered + record wrong ones; auto-reset cycle when 100%
+function _tgpMarkFactsCovered(gameId, factsUsed, wrongFacts){
+  var prog = _tgpGetGameProg(gameId);
+  var covSet = {}; prog.coveredKeys.forEach(function(k){ covSet[k]=true; });
+  var wrSet  = {}; prog.wrongKeys.forEach(function(k){ wrSet[k]=true; });
+  (factsUsed||[]).forEach(function(f){
+    var k = _tgpFactKey(f);
+    if(!covSet[k]){ covSet[k]=true; prog.coveredKeys.push(k); }
+  });
+  (wrongFacts||[]).forEach(function(f){
+    var k = _tgpFactKey(f);
+    if(!wrSet[k]){ wrSet[k]=true; prog.wrongKeys.push(k); }
+  });
+  // Wrong facts jo ab sahi ho gaye — unko wrong list se hata do
+  var wrongUsedKeys = {};
+  (wrongFacts||[]).forEach(function(f){ wrongUsedKeys[_tgpFactKey(f)] = true; });
+  (factsUsed||[]).forEach(function(f){
+    var k = _tgpFactKey(f);
+    if(!wrongUsedKeys[k]){
+      // Used and was correct → remove from wrong list if present
+      prog.wrongKeys = prog.wrongKeys.filter(function(w){ return w !== k; });
+    }
+  });
+  prog.totalKnown  = _tgp.facts.length;
+  prog.lastUpdated = new Date().toLocaleDateString('hi-IN');
+
+  // Cycle complete?
+  var totalNow = _tgp.facts.length;
+  var validCovered = prog.coveredKeys.filter(function(k){
+    return _tgp.facts.some(function(f){ return _tgpFactKey(f) === k; });
+  }).length;
+  if(totalNow > 0 && validCovered >= totalNow){
+    if(typeof showToast==='function') showToast('🎉 Sare facts cover ho gaye! Naya cycle shuru ho raha hai.', 'success');
+    prog.coveredKeys = [];
+    // wrongKeys preserve karte hain taaki "weak practice" mil sake
+  }
+  _tgpSaveGameProg(gameId, prog);
+}
 
 // ── Cache ─────────────────────────────────────────────
 function _tgpCacheKey(s,sec,t){return 'tgp_v3_'+s+'_'+sec+'_'+t;}
@@ -51108,8 +51198,7 @@ function _tgpShowLobby(){
   document.getElementById('tgpGameNav').style.display='none';
   document.getElementById('tgpScoreBadge').style.display='none';
   document.getElementById('tgpSubtitle').textContent=_tgp.facts.length+' facts extracted';
-  var estLevels=Math.ceil(_tgp.facts.length/LEVEL_SIZE);
-  document.getElementById('tgpFactCount').textContent='✅ '+_tgp.facts.length+' facts ready — ~'+estLevels+' levels per game — Game chuno!';
+  document.getElementById('tgpFactCount').textContent='✅ '+_tgp.facts.length+' facts ready — Game choose karo, fir level size set karo!';
   document.getElementById('tgpRegenOptions').style.display='none';
 
   var games=[
@@ -51118,14 +51207,162 @@ function _tgpShowLobby(){
     {id:'match',emoji:'🔗',name:'Column Match',desc:'Column A se Column B ko match karo',stars:'⭐⭐⭐⭐ Concept Linking',color:'#6a1b9a'}
   ];
 
-  // Check master levels
+  // Game cards — har card par per-game progress badge dikhao
   var grid=document.getElementById('tgpGameGrid');
   grid.innerHTML=games.map(function(g){
-    var wrongCount=(_tgp._wrongLog[g.id]||[]).length;
-    var masterBadge=wrongCount>0?'<div style="position:absolute;top:6px;right:6px;background:#c62828;color:#fff;border-radius:10px;padding:2px 7px;font-size:0.6rem;font-weight:800;">'+wrongCount+' galat</div>':'';
-    return '<div class="tgp-game-card" onclick="tgpStartGame(\''+g.id+'\')" style="border-top:3px solid '+g.color+';position:relative;">'+masterBadge+'<span class="tgp-gc-emoji">'+g.emoji+'</span><div class="tgp-gc-name">'+g.name+'</div><div class="tgp-gc-desc">'+g.desc+'</div><div class="tgp-gc-stars">'+g.stars+'</div></div>';
+    var prog = _tgpGetGameProg(g.id);
+    var totalNow = _tgp.facts.length;
+    var coveredNow = prog.coveredKeys.filter(function(k){
+      return _tgp.facts.some(function(f){ return _tgpFactKey(f) === k; });
+    }).length;
+    var remaining = Math.max(0, totalNow - coveredNow);
+    var wrongNow = _tgpGetWrongFacts(g.id).length;
+    var pct = totalNow>0 ? Math.round((coveredNow/totalNow)*100) : 0;
+
+    var progBadge = '<div style="position:absolute;top:6px;right:6px;background:'+(remaining===0?'#2e7d32':'#1565c0')+';color:#fff;border-radius:10px;padding:2px 7px;font-size:0.58rem;font-weight:800;">'+coveredNow+'/'+totalNow+'</div>';
+    var wrongBadge = wrongNow>0 ? '<div style="position:absolute;top:6px;left:6px;background:#c62828;color:#fff;border-radius:10px;padding:2px 7px;font-size:0.58rem;font-weight:800;">'+wrongNow+' weak</div>' : '';
+    var progBar = '<div style="margin-top:8px;height:4px;background:rgba(0,0,0,0.06);border-radius:3px;overflow:hidden;"><div style="height:100%;width:'+pct+'%;background:'+g.color+';transition:width 0.3s;"></div></div><div style="font-size:0.58rem;color:var(--text2);margin-top:3px;">'+remaining+' facts baaki</div>';
+
+    return '<div class="tgp-game-card" onclick="tgpOpenLevelSetup(\''+g.id+'\')" style="border-top:3px solid '+g.color+';position:relative;">'+progBadge+wrongBadge+'<span class="tgp-gc-emoji">'+g.emoji+'</span><div class="tgp-gc-name">'+g.name+'</div><div class="tgp-gc-desc">'+g.desc+'</div><div class="tgp-gc-stars">'+g.stars+'</div>'+progBar+'</div>';
   }).join('');
 }
+
+// ═══════════════════════════════════════════════════════
+// 🎯 LEVEL SETUP POPUP — quiz jaisa per-level question count + stats
+// ═══════════════════════════════════════════════════════
+window.tgpOpenLevelSetup = function(gameId){
+  var prog = _tgpGetGameProg(gameId);
+  var totalFacts = _tgp.facts.length;
+  var coveredCount = prog.coveredKeys.filter(function(k){
+    return _tgp.facts.some(function(f){ return _tgpFactKey(f) === k; });
+  }).length;
+  var uncovered = _tgpGetUncoveredFacts(gameId);
+  var wrongFacts = _tgpGetWrongFacts(gameId);
+  var remaining = uncovered.length;
+
+  var gameName = {lightning:'⚡ Lightning Quiz', fillin:'✏️ Fill in Blank', match:'🔗 Column Match'}[gameId] || gameId;
+  var defaultCount = Math.min(10, Math.max(1, remaining));
+  var maxCount = Math.max(1, remaining);
+
+  var hasWrong = wrongFacts.length > 0;
+  var hasNew = remaining > 0;
+  var noFactsLeft = !hasNew && !hasWrong;
+
+  var modeSelectorHtml = '';
+  if(hasWrong){
+    modeSelectorHtml =
+      '<div style="display:flex;gap:6px;margin-bottom:10px;">' +
+        '<button id="tgpModeNew" onclick="_tgpSwitchMode(\'new\')" style="flex:1;padding:8px;border-radius:8px;border:2px solid #1565c0;background:'+(hasNew?'#1565c0':'var(--surface)')+';color:'+(hasNew?'#fff':'#1565c0')+';font-size:0.72rem;font-weight:700;cursor:pointer;font-family:inherit;">🆕 Naye Facts ('+remaining+')</button>' +
+        '<button id="tgpModeWeak" onclick="_tgpSwitchMode(\'weak\')" style="flex:1;padding:8px;border-radius:8px;border:2px solid #c62828;background:'+(!hasNew?'#c62828':'var(--surface)')+';color:'+(!hasNew?'#fff':'#c62828')+';font-size:0.72rem;font-weight:700;cursor:pointer;font-family:inherit;">🔴 Weak Practice ('+wrongFacts.length+')</button>' +
+      '</div>';
+  }
+
+  var startMode = hasNew ? 'new' : (hasWrong ? 'weak' : 'new');
+  var startMaxCount = startMode==='weak' ? Math.max(1, wrongFacts.length) : maxCount;
+  var startDefault = Math.min(10, startMaxCount);
+
+  var setupHtml =
+    '<div id="tgpSetupOverlay" style="position:fixed;inset:0;background:rgba(13,27,42,0.6);z-index:21000;display:flex;align-items:center;justify-content:center;padding:20px;font-family:inherit;" onclick="if(event.target===this)_tgpCloseSetup()">' +
+      '<div style="background:var(--surface);border-radius:16px;padding:18px;max-width:340px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,0.3);max-height:90vh;overflow-y:auto;">' +
+        '<div style="font-size:1rem;font-weight:800;color:var(--text);margin-bottom:4px;">'+gameName+' — Naya Level</div>' +
+        '<div style="font-size:0.7rem;color:var(--text2);margin-bottom:12px;">Question count chuno aur level start karo</div>' +
+
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px;">' +
+          '<div style="background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;padding:8px 4px;text-align:center;">' +
+            '<div style="font-size:1.05rem;font-weight:900;color:var(--accent);">'+totalFacts+'</div>' +
+            '<div style="font-size:0.6rem;color:var(--text2);">Total Facts</div>' +
+          '</div>' +
+          '<div style="background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;padding:8px 4px;text-align:center;">' +
+            '<div style="font-size:1.05rem;font-weight:900;color:#2e7d32;">'+coveredCount+'</div>' +
+            '<div style="font-size:0.6rem;color:var(--text2);">Attempted</div>' +
+          '</div>' +
+          '<div style="background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;padding:8px 4px;text-align:center;">' +
+            '<div style="font-size:1.05rem;font-weight:900;color:#e65100;">'+remaining+'</div>' +
+            '<div style="font-size:0.6rem;color:var(--text2);">Baaki</div>' +
+          '</div>' +
+        '</div>' +
+
+        modeSelectorHtml +
+
+        (noFactsLeft
+          ? '<div style="background:#fff8e1;border:1.5px solid #ffd54f;border-radius:10px;padding:10px;text-align:center;font-size:0.75rem;color:#e65100;font-weight:700;margin-bottom:10px;">🎉 Sare facts cover ho gaye! Reset karke naya cycle shuru karo.</div>' +
+            '<button onclick="_tgpResetAndReopen(\''+gameId+'\')" style="width:100%;padding:11px;border-radius:10px;border:none;background:#1565c0;color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:8px;">🔄 Progress Reset Karke Naya Cycle</button>'
+          : '<div style="font-size:0.72rem;color:var(--text2);margin-bottom:6px;font-weight:700;">Kitne questions chahiye is level mein?</div>' +
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
+              '<input type="number" id="tgpLevelCount" value="'+startDefault+'" min="1" max="'+startMaxCount+'" style="flex:1;padding:11px;border:2px solid var(--accent);border-radius:10px;font-size:1rem;font-weight:800;text-align:center;font-family:inherit;background:var(--surface);color:var(--text);">' +
+            '</div>' +
+            '<div style="font-size:0.65rem;color:var(--text2);margin-bottom:12px;">Max <strong style="color:var(--accent);" id="tgpLevelMaxLbl">'+startMaxCount+'</strong> questions ban sakte hain</div>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">' +
+              [5,10,15,20,startMaxCount].filter(function(v,i,a){return v<=startMaxCount && a.indexOf(v)===i && v>=1;}).map(function(v){
+                return '<button onclick="document.getElementById(\'tgpLevelCount\').value='+v+'" style="flex:1;min-width:50px;padding:6px;border-radius:8px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-size:0.7rem;font-weight:700;cursor:pointer;font-family:inherit;">'+v+'</button>';
+              }).join('') +
+            '</div>' +
+            '<button onclick="_tgpStartLevelFromSetup(\''+gameId+'\')" style="width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.88rem;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:8px;">🚀 Level Shuru Karo</button>'
+        ) +
+
+        '<button onclick="_tgpCloseSetup()" style="width:100%;padding:9px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text2);font-size:0.74rem;font-weight:700;cursor:pointer;font-family:inherit;">✕ Cancel</button>' +
+      '</div>' +
+    '</div>';
+
+  var old = document.getElementById('tgpSetupOverlay'); if(old) old.remove();
+  document.body.insertAdjacentHTML('beforeend', setupHtml);
+  window._tgpSetupMode = startMode;
+  window._tgpSetupGameId = gameId;
+};
+
+window._tgpSwitchMode = function(mode){
+  window._tgpSetupMode = mode;
+  var gameId = window._tgpSetupGameId;
+  var maxCount = mode==='weak' ? _tgpGetWrongFacts(gameId).length : _tgpGetUncoveredFacts(gameId).length;
+  maxCount = Math.max(1, maxCount);
+  var input = document.getElementById('tgpLevelCount');
+  if(input){
+    input.max = maxCount;
+    if(parseInt(input.value)>maxCount) input.value = maxCount;
+  }
+  var lbl = document.getElementById('tgpLevelMaxLbl'); if(lbl) lbl.textContent = maxCount;
+  var btnNew  = document.getElementById('tgpModeNew');
+  var btnWeak = document.getElementById('tgpModeWeak');
+  if(btnNew && btnWeak){
+    if(mode==='new'){
+      btnNew.style.background='#1565c0'; btnNew.style.color='#fff';
+      btnWeak.style.background='var(--surface)'; btnWeak.style.color='#c62828';
+    } else {
+      btnWeak.style.background='#c62828'; btnWeak.style.color='#fff';
+      btnNew.style.background='var(--surface)'; btnNew.style.color='#1565c0';
+    }
+  }
+};
+
+window._tgpCloseSetup = function(){
+  var el = document.getElementById('tgpSetupOverlay'); if(el) el.remove();
+};
+
+window._tgpResetAndReopen = function(gameId){
+  _tgpResetGameProg(gameId);
+  _tgpCloseSetup();
+  _tgpShowLobby();
+  setTimeout(function(){ tgpOpenLevelSetup(gameId); }, 150);
+};
+
+window._tgpStartLevelFromSetup = function(gameId){
+  var input = document.getElementById('tgpLevelCount');
+  var count = Math.max(1, parseInt(input ? input.value : 10) || 10);
+  var mode = window._tgpSetupMode || 'new';
+
+  var pool = mode==='weak' ? _tgpGetWrongFacts(gameId) : _tgpGetUncoveredFacts(gameId);
+  if(pool.length === 0){
+    if(typeof showToast==='function') showToast('Is mode ke liye facts nahi bache!','error');
+    return;
+  }
+  var levelFacts = _tgpShuffle(pool.slice()).slice(0, Math.min(count, pool.length));
+
+  window._tgpPendingLevelFacts = levelFacts;
+  window._tgpPendingLevelMode  = mode;
+
+  _tgpCloseSetup();
+  tgpStartGame(gameId);
+};
 
 function _tgpShowGameArea(html){
   document.getElementById('tgpLobby').style.display='none';
@@ -51316,17 +51553,26 @@ function tgpNextStep(){
 // ═══════════════════════════════════════════════════════
 function _tgpStartLightning(){
   var gs=_tgp.gameState;
-  var trueFacts=_tgp.facts.filter(function(f){return f.isTrue!==false&&f.term&&f.detail;});
-  // Build MCQ questions — all facts, sequential order (level 1 = first 10, level 2 = next 10...)
+  // If a setup-driven level is pending, use only those facts; otherwise fallback to all facts
+  var pendingFacts = window._tgpPendingLevelFacts;
+  var allFactsPool = _tgp.facts.filter(function(f){return f.isTrue!==false&&f.term&&f.detail;});
+  var trueFacts = pendingFacts && pendingFacts.length
+    ? pendingFacts.filter(function(f){return f.isTrue!==false&&f.term&&f.detail;})
+    : allFactsPool;
+  // For wrong options, draw from the FULL pool (more variety) but never the same fact
+  var distractorPool = allFactsPool.length >= 4 ? allFactsPool : trueFacts;
   var allQ=trueFacts.map(function(f,idx,arr){
-    var wrong=_tgpShuffle(arr.filter(function(x){return x!==f;})).slice(0,3).map(function(x){return x.detail;});
+    var wrong=_tgpShuffle(distractorPool.filter(function(x){return x!==f && x.detail!==f.detail;})).slice(0,3).map(function(x){return x.detail;});
     return{q:f.term,correct:f.detail,options:_tgpShuffle([f.detail].concat(wrong)),fact:f};
   });
   gs.levels=_tgpBuildLevels(allQ,(_tgp._wrongLog.lightning||[]).map(function(f){
-    var arr=trueFacts;
-    var wrong=_tgpShuffle(arr.filter(function(x){return x!==f;})).slice(0,3).map(function(x){return x.detail;});
+    var wrong=_tgpShuffle(distractorPool.filter(function(x){return x!==f && x.detail!==f.detail;})).slice(0,3).map(function(x){return x.detail;});
     return{q:f.term,correct:f.detail,options:_tgpShuffle([f.detail].concat(wrong)),fact:f};
   }));
+  gs._levelMode = window._tgpPendingLevelMode || 'all';
+  gs._levelFactsAtStart = trueFacts.slice();  // remember for progress-marking on completion
+  window._tgpPendingLevelFacts = null;        // consume
+  window._tgpPendingLevelMode = null;
   gs.levelIdx=0;gs.current=0;gs.correct=0;gs.levelWrong=0;
   _tgpRenderLQQuestion();
 }
@@ -51398,9 +51644,11 @@ function _tgpNextLQQuestion(){_tgpRenderLQQuestion();}
 // ═══════════════════════════════════════════════════════
 function _tgpStartFillIn(){
   var gs=_tgp.gameState;
-  var trueFacts=_tgp.facts.filter(function(f){return f.isTrue!==false&&f.fibSentence&&f.fibAnswer&&f.fibOptions;});
+  var pendingFacts = window._tgpPendingLevelFacts;
+  var sourcePool = pendingFacts && pendingFacts.length ? pendingFacts : _tgp.facts;
+  var trueFacts=sourcePool.filter(function(f){return f.isTrue!==false&&f.fibSentence&&f.fibAnswer&&f.fibOptions;});
   if(trueFacts.length<3){
-    trueFacts=_tgp.facts.filter(function(f){return f.isTrue!==false&&f.term&&f.detail;}).map(function(f){
+    trueFacts=sourcePool.filter(function(f){return f.isTrue!==false&&f.term&&f.detail;}).map(function(f){
       var yr=f.detail.match(/\d{3,4}/),blk=yr?yr[0]:(f.term.split(/\s+/).filter(function(w){return w.length>3;}).pop()||f.term.split(/\s+/).pop());
       var sent=yr?f.detail.replace(yr[0],'___'):f.detail.replace(new RegExp(blk.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'),'___');
       if(!sent.includes('___'))sent=f.term+': ___';
@@ -51413,6 +51661,10 @@ function _tgpStartFillIn(){
   gs.levels=_tgpBuildLevels(allQ,(_tgp._wrongLog.fillin||[]).map(function(f){
     return{sentence:f.fibSentence||f.term+': ___',answer:f.fibAnswer||f.term,options:_tgpShuffle((f.fibOptions||[f.fibAnswer||f.term,'a','b','c']).slice()),fact:f};
   }));
+  gs._levelMode = window._tgpPendingLevelMode || 'all';
+  gs._levelFactsAtStart = trueFacts.slice();
+  window._tgpPendingLevelFacts = null;
+  window._tgpPendingLevelMode = null;
   gs.levelIdx=0;gs.current=0;gs.correct=0;gs.levelWrong=0;
   _tgpRenderFIBQuestion();
 }
@@ -51470,19 +51722,20 @@ function _tgpNextFIBQuestion(){_tgpRenderFIBQuestion();}
 // ═══════════════════════════════════════════════════════
 function _tgpStartMatch(){
   var gs=_tgp.gameState;
-  var trueFacts=_tgp.facts.filter(function(f){return f.isTrue!==false&&f.term&&f.detail;});
-  // Build match rounds: sequential order — level 1 = first 5 pairs, level 2 = next 5...
+  var pendingFacts = window._tgpPendingLevelFacts;
+  var sourcePool = pendingFacts && pendingFacts.length ? pendingFacts : _tgp.facts;
+  var trueFacts=sourcePool.filter(function(f){return f.isTrue!==false&&f.term&&f.detail;});
+  // Build match rounds: groups of 5 pairs each
   var allPairs=trueFacts.map(function(f){return{left:f.term,right:f.detail,fact:f};});
-  // Pack into level-groups of 5 pairs each
   var rounds=[];
   for(var i=0;i<allPairs.length;i+=5){rounds.push(allPairs.slice(i,i+5));}
+  if(rounds.length===0)rounds=[allPairs];
   gs.rounds=rounds;
-  // Build levels — total count for better label
   var totalMatchLvls=rounds.length;
-  gs.levels=rounds.map(function(r,i){return{label:'Level '+(i+1)+'/'+totalMatchLvls,pairs:r,isMaster:false,done:false};});
-  // Master levels from wrong log — deduplicated
+  gs.levels=rounds.map(function(r,i){return{label:'Round '+(i+1)+'/'+totalMatchLvls,pairs:r,isMaster:false,done:false};});
+  // Master levels from in-session wrong log (kept for backward compat with practice flow)
   var wrongFacts=_tgp._wrongLog.match||[];
-  if(wrongFacts.length>0){
+  if(wrongFacts.length>0 && (!pendingFacts || pendingFacts.length===0)){
     var seenWrong={};
     var uniqueWrongM=wrongFacts.filter(function(f){if(seenWrong[f.term])return false;seenWrong[f.term]=true;return true;});
     var wp=_tgpShuffle(uniqueWrongM.map(function(f){return{left:f.term,right:f.detail,fact:f};}));
@@ -51492,6 +51745,10 @@ function _tgpStartMatch(){
       masterNum++;
     }
   }
+  gs._levelMode = window._tgpPendingLevelMode || 'all';
+  gs._levelFactsAtStart = trueFacts.slice();
+  window._tgpPendingLevelFacts = null;
+  window._tgpPendingLevelMode = null;
   gs.levelIdx=0;gs.matchState={};
   _tgpStartMatchLevel();
 }
@@ -51605,6 +51862,24 @@ function _tgpLevelComplete(gameId){
   var wrongCount=gs.levelWrong||0;
   var gameWrong=(_tgp._wrongLog[gameId]||[]);
 
+  // ── PERSIST PROGRESS — quiz jaisa fact coverage tracking ──
+  // Mark facts from THIS just-completed level as covered + record wrong-of-this-level
+  if(lv && !lv.isMaster){
+    var levelFacts = [];
+    if(lv.questions){
+      lv.questions.forEach(function(q){ if(q && q.fact) levelFacts.push(q.fact); });
+    } else if(lv.pairs){
+      lv.pairs.forEach(function(p){ if(p && p.fact) levelFacts.push(p.fact); });
+    }
+    // Wrong facts logged during this level (filter to only those facts that were in this level)
+    var levelFactKeys = {};
+    levelFacts.forEach(function(f){ levelFactKeys[_tgpFactKey(f)] = true; });
+    var levelWrongFacts = gameWrong.filter(function(f){ return levelFactKeys[_tgpFactKey(f)]; });
+    if(levelFacts.length > 0){
+      _tgpMarkFactsCovered(gameId, levelFacts, levelWrongFacts);
+    }
+  }
+
   // Check if more regular levels exist (after current)
   var nextRegularIdx=gs.levelIdx+1;
   // Find next non-done level
@@ -51635,10 +51910,23 @@ function _tgpLevelComplete(gameId){
   var totalFacts=gs.levels.filter(function(l){return!l.isMaster;}).reduce(function(s,l){return s+(l.questions?l.questions.length:(l.pairs?l.pairs.length:0));},0);
   var coveredFacts=gs.levels.filter(function(l){return l.done&&!l.isMaster;}).reduce(function(s,l){return s+(l.questions?l.questions.length:(l.pairs?l.pairs.length:0));},0);
 
+  // Persistent overall progress (across all sessions for this game)
+  var overallProg = _tgpGetGameProg(gameId);
+  var overallCovered = overallProg.coveredKeys.filter(function(k){
+    return _tgp.facts.some(function(f){ return _tgpFactKey(f) === k; });
+  }).length;
+  var overallTotal = _tgp.facts.length;
+  var overallRemaining = Math.max(0, overallTotal - overallCovered);
+  var overallStatsHtml = '<div style="background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;padding:8px;margin:8px 0;font-size:0.7rem;color:var(--text2);">' +
+    '🎯 <strong style="color:var(--accent);">Overall:</strong> '+overallCovered+'/'+overallTotal+' facts cover ho chuke hain — <strong style="color:#e65100;">'+overallRemaining+'</strong> baaki' +
+    '</div>';
+
   // Buttons
   var nextBtn=hasNextLevel
     ? '<button onclick="_tgpGoNextLevel(\''+gameId+'\')" style="width:100%;padding:13px 20px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.85rem;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:10px;">'+nextLvInfo+'</button>'
-    : '<button onclick="_tgpGameResult(\''+gameId+'\')" style="width:100%;padding:13px 20px;border-radius:12px;border:none;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;font-size:0.88rem;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:10px;">🏆 Sab Facts Cover Ho Gaye! Result Dekho</button>';
+    : (overallRemaining > 0
+        ? '<button onclick="tgpBackToLobby();setTimeout(function(){tgpOpenLevelSetup(\''+gameId+'\')},150);" style="width:100%;padding:13px 20px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.85rem;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:10px;">➡️ Naya Level Banao ('+overallRemaining+' facts baaki)</button>'
+        : '<button onclick="_tgpGameResult(\''+gameId+'\')" style="width:100%;padding:13px 20px;border-radius:12px;border:none;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;font-size:0.88rem;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:10px;">🏆 Sab Facts Cover Ho Gaye! Result Dekho</button>');
 
   var wrongBtn='';
   if(gameWrong.length>0){
@@ -51654,7 +51942,8 @@ function _tgpLevelComplete(gameId){
       ${wrongCount===0
         ?'<div style="font-size:0.78rem;color:#2e7d32;font-weight:700;margin-bottom:6px;">✨ Sab sahi! Kamaal hai!</div>'
         :'<div style="font-size:0.78rem;color:#e65100;font-weight:700;margin-bottom:6px;">'+wrongCount+' galat — koi baat nahi, practice karo!</div>'}
-      <div style="font-size:0.72rem;color:var(--text2);margin-bottom:10px;">📊 Progress: <strong>${coveredFacts}/${totalFacts}</strong> facts cover ho gaye</div>
+      <div style="font-size:0.72rem;color:var(--text2);margin-bottom:6px;">📊 Is session: <strong>${coveredFacts}/${totalFacts}</strong> facts cover ho gaye</div>
+      ${overallStatsHtml}
       ${wrongSummaryHtml}
       <div style="margin-top:14px;font-size:0.78rem;font-weight:700;color:var(--text2);margin-bottom:10px;">${gameWrong.length>0?'⬇️ Aage kya karna hai choose karo:':'⬇️ Aage badhte hain:'}</div>
       <div style="display:flex;flex-direction:column;align-items:stretch;gap:0;">
