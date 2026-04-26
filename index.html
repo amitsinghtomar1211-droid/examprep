@@ -51153,20 +51153,9 @@ async function _tgpEnrichFactsForLevel(facts, gameId){
     return 'FACT-'+(n+1)+'. '+(f._raw || f.detail || f.term || '');
   }).join('\n');
 
-  // ── Topic content (quiz jaisa context) — limited like quiz ──
-  var topicContent = '';
-  try{
-    if(_tgp && _tgp.facts && _tgp.facts.length){
-      topicContent = _tgp.facts.map(function(f){ return f._raw || f.detail || f.term || ''; })
-                               .filter(function(s){ return s && s.length>3; })
-                               .join('\n');
-    }
-  }catch(e){}
-  // Quiz-jaisa content limit (model ke hisab se)
-  var _gModel = S.model || '';
-  var _contentLimit = _gModel.indexOf('8b')>=0 ? 4000 : 14000;
-  if(topicContent.length > _contentLimit) topicContent = topicContent.substring(0, _contentLimit);
-
+  // ⛔ FULL TOPIC CONTENT REMOVED — sirf given FACT-N lines hi AI ko jaani chahiye.
+  // Pehle full content (14000 chars tak) bhi context me jaata tha jisse AI bahar ke
+  // facts/options bhi pick kar leta tha. Ab strict source-lock: sirf factsBlock.
   var topicLabel = (_tgp && _tgp.topicName) ? _tgp.topicName : 'Topic';
   var count = factsForThisLevel.length;
 
@@ -51176,19 +51165,19 @@ async function _tgpEnrichFactsForLevel(facts, gameId){
     prompt =
 'Tu EXPERT exam fact-question maker hai. EDUCATIONAL fill-in-the-blank questions banana hai (Hindi).\n\n'+
 'TOPIC: '+topicLabel+'\n\n'+
-'FULL CONTENT (context ke liye — sirf reference):\n'+topicContent+'\n\n'+
-'✅ IN '+count+' FACTS SE FILL-IN-BLANK BANAO (ek FACT = ek question, exactly):\n'+factsBlock+'\n\n'+
+'⚠️ SOURCE LOCK — YE HI EKMATRA SOURCE HAI. INKE BAHAR KA KOI BHI SHABD/NUMBER/NAAM/JAGAH USE NAHI KARNA:\n'+factsBlock+'\n\n'+
+'✅ IN '+count+' FACTS SE FILL-IN-BLANK BANAO (ek FACT = ek question, exactly).\n\n'+
 'TASK: HAR FACT-N ke liye ek fill-in-the-blank question banao.\n\n'+
 'STRICT RULES:\n'+
-'1. Sirf diye gaye FACT-N content se question banao — bahar se kuch nahi\n'+
+'1. ❗ Question, blank ka answer, aur poora detail SIRF usi FACT-N ki line ke andar mojud shabdon/numbers se banane hain. FACT-N me jo nahi likha hai, woh kabhi mat banao — apni general knowledge, training data, internet, ya kisi aur fact ki line se kuch bhi mat lo.\n'+
 '2. fibSentence = original fact ka sentence jisme SABSE EXAM-CRITICAL ek word/number ___ se replace ho\n'+
-'3. fibAnswer = wahi exact word/number jo blank fill karta hai\n'+
-'4. fibOptions = EXACTLY 4 options (1 sahi = fibAnswer + 3 plausible galat). Galat options bhi same category ke ho (date hai to date, name hai to name)\n'+
-'5. term = chhota exam-style question label (max 10 words) — fact ka essence\n'+
-'6. detail = poora answer sentence (1 line, complete fact)\n'+
-'7. examNote = 1-line kyun yeh exam ke liye important hai\n'+
-'8. relatedTerms = 1-3 keyword array\n'+
-'9. EXACTLY '+count+' objects — kam ya zyada NAHI\n'+
+'3. fibAnswer = wahi exact word/number jo blank fill karta hai (FACT-N me likha hua)\n'+
+'4. fibOptions = EXACTLY 4 options (1 sahi = fibAnswer + 3 plausible galat). Galat 3 options same category ke ho (date hai to fake date, name hai to fake name) — ye plausible decoys hain. Lekin koi bhi option aisa NAHI ho jo asli duniya ka koi alag verified fact ho aur student ko confuse kare. Decoys made-up plausible rakho.\n'+
+'5. term = chhota exam-style question label (max 10 words) — sirf is FACT-N ka essence\n'+
+'6. detail = poora answer sentence (1 line, complete fact) — FACT-N ki hi line, paraphrase ok par naya information add MAT karo\n'+
+'7. examNote = 1-line kyun yeh exam ke liye important hai (sirf is FACT ke baare me, kisi aur fact ka zikr nahi)\n'+
+'8. relatedTerms = 1-3 keyword array (sirf FACT-N me se)\n'+
+'9. EXACTLY '+count+' objects — kam ya zyada NAHI. Agar FACT-N choti hai to ussi me se koi bhi shabd/number blank kar do — par bahar ka shabd MAT laao.\n'+
 '10. Hindi mein likho (terms/proper nouns English ok)\n'+
 '11. JSON ke alawa KUCH MAT LIKHO\n\n'+
 'RESPONSE FORMAT (strict JSON):\n'+
@@ -51198,11 +51187,11 @@ async function _tgpEnrichFactsForLevel(facts, gameId){
     prompt =
 'Tu EXPERT exam fact-question maker hai. Column-Match pairs banana hai (Hindi).\n\n'+
 'TOPIC: '+topicLabel+'\n\n'+
-'FULL CONTENT (context ke liye):\n'+topicContent+'\n\n'+
-'✅ IN '+count+' FACTS SE PAIRS BANAO (ek FACT = ek pair, exactly):\n'+factsBlock+'\n\n'+
+'⚠️ SOURCE LOCK — YE HI EKMATRA SOURCE HAI. INKE BAHAR KA KUCH NAHI USE KARNA:\n'+factsBlock+'\n\n'+
+'✅ IN '+count+' FACTS SE PAIRS BANAO (ek FACT = ek pair, exactly).\n\n'+
 'TASK: HAR FACT-N ke liye ek term ↔ detail pair banao jo column match game me use ho.\n\n'+
 'STRICT RULES:\n'+
-'1. Sirf diye gaye FACT-N content se — bahar ka knowledge nahi\n'+
+'1. ❗ Term aur detail dono SIRF usi FACT-N ki line ke shabdon se nikalne hain. Apni training/general knowledge ka use STRICTLY mana hai. FACT-N me jo nahi hai, woh pair me bhi nahi aana chahiye.\n'+
 '2. term = LEFT column item — short, distinct (2-6 words). Person/Place/Year/Concept/Event\n'+
 '3. detail = RIGHT column item — uska accurate description/answer (1 line, complete)\n'+
 '4. term aur detail ek hi fact ke do hisse hone chahiye — pair clearly matchable ho\n'+
@@ -51222,11 +51211,11 @@ async function _tgpEnrichFactsForLevel(facts, gameId){
     prompt =
 'Tu EXPERT MCQ question maker hai. EDUCATIONAL questions banana hai (Hindi). Lightning Quiz game ke liye.\n\n'+
 'TOPIC: '+topicLabel+'\n\n'+
-'FULL CONTENT (INHI SE QUESTIONS BANANA HAI):\n'+topicContent+'\n\n'+
-'✅ IN '+count+' FACTS SE MCQ BANAO (ek FACT = ek question, exactly):\n'+factsBlock+'\n\n'+
+'⚠️ SOURCE LOCK — YE HI EKMATRA SOURCE HAI. INKE BAHAR KA KOI BHI FACT/NAAM/SANKHYA USE NAHI KARNA:\n'+factsBlock+'\n\n'+
+'✅ IN '+count+' FACTS SE MCQ BANAO (ek FACT = ek question, exactly).\n\n'+
 'TASK: EXACTLY '+count+' MCQ banao — har FACT-N ke liye strict ek MCQ.\n\n'+
 'STRICT RULES:\n'+
-'1. Sirf diye gaye FACT-N content se questions banao — bahar ka data NAHI\n'+
+'1. ❗ Question text, sahi answer, aur explanation SIRF usi FACT-N ki line ke andar likhe content se nikalne hain. Apni training/general knowledge se kuch bhi mat add karo. Agar FACT-N me kisi cheez ka zikr nahi hai, to woh question/answer/explanation me NAHI aana chahiye.\n'+
 '2. Har question BILKUL ALAG fact pe — ek FACT = ek question\n'+
 '3. term = MCQ ka question text (max 14 words, exam-style, Hindi)\n'+
 '4. fibOptions = EXACTLY 4 options array (1 sahi + 3 plausible galat). Galat options same category ke (year/name/place/concept)\n'+
@@ -51673,71 +51662,94 @@ function _tgpShowInfoCard(fact){
   var card=document.createElement('div');
   card.id='tgpInfoCard';card.className='tgp-info-card';
 
-  // ── Find related facts from full facts pool ──────────────
-  var allFacts=_tgp.facts||[];
-  // Use term keywords + relatedTerms field for matching
-  var termWords=(fact.term||'').toLowerCase().split(/\s+/).filter(function(w){return w.length>3;});
-  var relTerms=(fact.relatedTerms||[]).map(function(t){return t.toLowerCase();});
-  var searchWords=termWords.concat(relTerms).filter(function(w,i,a){return a.indexOf(w)===i;});
-
-  var relatedFacts=allFacts.filter(function(f){
-    if(f===fact||f.term===fact.term)return false;
-    var combined=(f.term+' '+f.detail+' '+(f.relatedTerms||[]).join(' ')).toLowerCase();
-    return searchWords.some(function(w){return w.length>3&&combined.indexOf(w)!==-1;});
-  }).slice(0,8); // max 8 related facts
-
-  // ── Build consolidated context paragraph ─────────────────
-  // Merge: main fact detail + related facts' details → one flowing paragraph
-  var contextParts=[fact.detail];
-  relatedFacts.forEach(function(f){
-    // Only add if it adds new info (not already substring of main detail)
-    if(fact.detail.toLowerCase().indexOf(f.detail.toLowerCase().substring(0,20))===-1){
-      contextParts.push(f.detail);
-    }
-  });
-  // Join into a flowing paragraph with connectors
-  var consolidatedContext=contextParts.join(' | ');
-
-  // ── Build insight HTML ───────────────────────────────────
-  var html='<div class="tgp-info-label">📚 Exam Insight — Puri Jankari</div>';
+  // ── Build insight HTML — SIRF IS FACT ki jaankari ──
+  // Pehle yahan poore topic ke related facts dump ho rahe the. Ab SIRF
+  // current fact ka detail + examNote dikhega, aur AI se is FACT ke baare
+  // me extra deeper jaankari (cached) fetch karke usi se related extra
+  // knowledge dikhayi jayegi — kisi aur fact ka content nahi.
+  var html='<div class="tgp-info-label">📚 Exam Insight — Is Fact Ki Jankari</div>';
 
   // Main fact box — prominent
   html+='<div style="margin-bottom:10px;padding:10px 12px;background:rgba(21,101,192,0.09);border-radius:10px;border-left:4px solid var(--accent);">';
-  html+='<div style="font-weight:800;color:var(--accent);font-size:0.82rem;margin-bottom:4px;">🎯 '+_tgpEsc(fact.term)+'</div>';
-  html+='<div style="color:var(--text);font-size:0.8rem;line-height:1.75;font-weight:500;">'+_tgpEsc(fact.detail)+'</div>';
+  html+='<div style="font-weight:800;color:var(--accent);font-size:0.82rem;margin-bottom:4px;">🎯 '+_tgpEsc(fact.term||'')+'</div>';
+  html+='<div style="color:var(--text);font-size:0.8rem;line-height:1.75;font-weight:500;">'+_tgpEsc(fact.detail||'')+'</div>';
   if(fact.examNote)html+='<div style="color:var(--accent3);font-size:0.72rem;margin-top:5px;font-style:italic;padding:4px 6px;background:rgba(25,118,210,0.07);border-radius:5px;">💡 <strong>Exam Note:</strong> '+_tgpEsc(fact.examNote)+'</div>';
   html+='</div>';
 
-  // Consolidated context block — all related info merged together
-  if(relatedFacts.length>0){
-    html+='<div style="margin-bottom:8px;padding:10px 12px;background:rgba(0,105,92,0.07);border-radius:10px;border-left:4px solid var(--teal);">';
-    html+='<div style="font-size:0.7rem;font-weight:800;color:var(--teal);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">📖 Is Topic Ki Puri Jankari (Content Se)</div>';
-
-    // Consolidated paragraph — all related details merged
-    html+='<div style="color:var(--text);font-size:0.77rem;line-height:1.8;">';
-    // Show each related fact as a mini sentence inline, separated by dots
-    var inlineParts=relatedFacts.map(function(f){
-      return '<span style="display:inline;"><strong style="color:var(--purple);font-size:0.72rem;">'+_tgpEsc(f.term)+':</strong> '+_tgpEsc(f.detail)+'</span>';
-    });
-    html+=inlineParts.join('<span style="color:var(--border);margin:0 4px;font-size:0.8rem;">•</span>');
-    html+='</div>';
-
-    // If any related fact has an examNote, show them grouped at bottom
-    var relExamNotes=relatedFacts.filter(function(f){return f.examNote;});
-    if(relExamNotes.length>0){
-      html+='<div style="margin-top:7px;padding:5px 8px;background:rgba(106,27,154,0.07);border-radius:7px;border-left:2px solid var(--purple);">';
-      html+='<div style="font-size:0.65rem;font-weight:800;color:var(--purple);margin-bottom:3px;">💡 Exam Tips (Related):</div>';
-      relExamNotes.forEach(function(f){
-        html+='<div style="font-size:0.68rem;color:var(--text2);line-height:1.6;margin-bottom:2px;">• <em>'+_tgpEsc(f.examNote)+'</em></div>';
-      });
-      html+='</div>';
-    }
-    html+='</div>';
-  }
+  // Placeholder for AI-fetched extra info about THIS fact only
+  html+='<div id="tgpFactExtraBox" style="margin-bottom:6px;padding:10px 12px;background:rgba(0,105,92,0.07);border-radius:10px;border-left:4px solid var(--teal);">';
+  html+='<div style="font-size:0.7rem;font-weight:800;color:var(--teal);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">🔎 Is Fact Ke Baare Me Extra Jankari</div>';
+  html+='<div id="tgpFactExtraBody" style="color:var(--text);font-size:0.77rem;line-height:1.8;">⏳ Loading…</div>';
+  html+='</div>';
 
   card.innerHTML=html;
   area.appendChild(card);
   setTimeout(function(){card.scrollIntoView({behavior:'smooth',block:'nearest'});},100);
+
+  // ── Async: AI se is FACT ke baare me extra info fetch (cached) ──
+  _tgpFetchFactInsight(fact);
+}
+
+// Per-fact insight cache (localStorage) — kisi ek fact ki extra jaankari dobara fetch nahi hoti
+function _tgpInsightCacheKey(){
+  return 'tgp_insight_v1_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||'');
+}
+function _tgpReadInsightCache(){
+  try{ var raw=localStorage.getItem(_tgpInsightCacheKey()); return raw?(JSON.parse(raw)||{}):{};}catch(e){return {};}
+}
+function _tgpWriteInsightCache(c){
+  try{ localStorage.setItem(_tgpInsightCacheKey(), JSON.stringify(c||{})); }catch(e){}
+}
+
+async function _tgpFetchFactInsight(fact){
+  var body=document.getElementById('tgpFactExtraBody');
+  if(!body)return;
+  var key=_tgpFactKey(fact);
+  var cache=_tgpReadInsightCache();
+  if(cache[key]){
+    body.innerHTML=cache[key];
+    return;
+  }
+
+  // API guard
+  var apiKey=(typeof S!=='undefined' && S.apiKey)?S.apiKey:'';
+  if(!apiKey || apiKey.length<10 || typeof callGroq!=='function'){
+    body.innerHTML='<em style="color:var(--text2);">Extra jankari ke liye Settings me API key add karo.</em>';
+    return;
+  }
+
+  // STRICT prompt — sirf is FACT ke baare me deeper info, kisi aur fact ka zikr nahi
+  var factLine = (fact.detail || fact.term || '').replace(/\n/g,' ').trim();
+  var prompt =
+'Tu ek expert Indian competitive-exam teacher hai. Niche ek SINGLE fact diya gaya hai.\n'+
+'Tera kaam: SIRF is ek fact ke baare me 2-4 line ki short, exam-relevant DEEPER jaankari Hindi me batana.\n\n'+
+'FACT: "'+factLine+'"\n\n'+
+'STRICT RULES:\n'+
+'1. ❗ Sirf is fact ke specific subject (jo iske andar mention hai — naam/jagah/sankhya/scheme/event) ke baare me extra background, importance, ya useful related context batao.\n'+
+'2. ❌ Kisi DOOSRE fact, doosri jagah, doosre vyakti, ya doosre topic ka zikr MAT karo.\n'+
+'3. ❌ Pure topic ka summary mat do — sirf is ek fact pe focus.\n'+
+'4. ✅ Apni general knowledge / web-style knowledge se extra detail add kar sakte ho — par sab is fact ke MAIN subject se directly related ho.\n'+
+'5. ✅ Hindi, max 4 lines, exam student ke kaam ki baat (date/significance/PYQ angle/common confusion).\n'+
+'6. ❌ JSON nahi, koi heading nahi — sirf 2-4 line plain Hindi text (HTML tags <b>, <em>, <br> use kar sakte ho lightly).\n'+
+'7. Agar fact itna self-contained hai ki extra kuch valid jaankari nahi de sakte, to sirf 1 line me iska exam-importance batao — bana-bana kar mat likho.';
+
+  try{
+    var text = await callGroq(prompt, 600, false);
+    if(!text || !text.trim()){
+      body.innerHTML='<em style="color:var(--text2);">Is fact ke liye extra jankari uplabdh nahi.</em>';
+      return;
+    }
+    var clean = String(text).trim()
+      .replace(/^```[a-z]*\s*/i,'').replace(/```\s*$/,'')
+      .replace(/^json\s*/i,'');
+    // Basic safety: only allow b/strong/em/i/br tags
+    var safe = clean.replace(/<(?!\/?(b|strong|em|i|br)\b)[^>]*>/gi,'');
+    body.innerHTML = safe;
+    cache[key] = safe;
+    _tgpWriteInsightCache(cache);
+  }catch(e){
+    body.innerHTML='<em style="color:var(--text2);">Extra jankari fetch nahi ho saki ('+_tgpEsc((e&&e.message||'error').substring(0,60))+').</em>';
+  }
 }
 
 function _tgpTrackWrong(gameId,fact){
