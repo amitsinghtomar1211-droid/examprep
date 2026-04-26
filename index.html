@@ -50876,6 +50876,167 @@ var _tgp = {
 var LEVEL_SIZE = 10; // default questions per level (user can override per level)
 
 // ═══════════════════════════════════════════════════════
+// 🧠 TOPIC UNDERSTANDING + USER PREP CONTEXT (v1)
+// One-time AI read of full topic → cached summary/themes/exam-focus.
+// User prep purpose → asked once per topic (first game ever).
+// Both injected into every question-generation + insight prompt so AI
+// acts like a guided educator (NOT a free generator).
+// ═══════════════════════════════════════════════════════
+function _tgpUnderstandKey(){ return 'tgp_understand_v1_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||''); }
+function _tgpPrepKey(){ return 'tgp_prep_v1_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||''); }
+function _tgpReadUnderstand(){
+  try{ var r=localStorage.getItem(_tgpUnderstandKey()); return r?(JSON.parse(r)||null):null; }catch(e){ return null; }
+}
+function _tgpWriteUnderstand(o){
+  try{ localStorage.setItem(_tgpUnderstandKey(), JSON.stringify(o||{})); }catch(e){}
+}
+function _tgpReadPrep(){
+  try{ var r=localStorage.getItem(_tgpPrepKey()); return r?(JSON.parse(r)||null):null; }catch(e){ return null; }
+}
+function _tgpWritePrep(o){
+  try{ localStorage.setItem(_tgpPrepKey(), JSON.stringify(o||{})); }catch(e){}
+}
+
+// Has user already played ANY game on this topic? (any covered fact in any game)
+function _tgpHasAnyProgress(){
+  var games=['lightning','fillin','match'];
+  for(var i=0;i<games.length;i++){
+    var p=_tgpGetGameProg(games[i]);
+    if(p && p.coveredKeys && p.coveredKeys.length>0) return true;
+  }
+  return false;
+}
+
+// Build a short "guidance block" injected into every AI prompt.
+function _tgpBuildGuidanceBlock(){
+  var u=_tgpReadUnderstand();
+  var p=_tgpReadPrep();
+  if(!u && !p) return '';
+  var lines=[];
+  lines.push('🧭 GUIDANCE CONTEXT (background — DO NOT use as new facts source, sirf samajhne ke liye):');
+  if(u){
+    if(u.contentType) lines.push('• Content type: '+u.contentType);
+    if(u.summary)     lines.push('• Topic summary: '+u.summary);
+    if(u.keyThemes && u.keyThemes.length) lines.push('• Key themes: '+u.keyThemes.slice(0,6).join(', '));
+    if(u.examFocus)   lines.push('• Exam-focus angle: '+u.examFocus);
+  }
+  if(p){
+    if(p.exam)    lines.push('• User ka target exam: '+p.exam);
+    if(p.purpose) lines.push('• User kya seekhna chahta hai: '+p.purpose);
+    if(p.level)   lines.push('• User ka prep level: '+p.level);
+  }
+  lines.push('⚠️ Yeh sirf orientation hai. Question/option/answer/insight ka CONTENT phir bhi STRICT SOURCE LOCK (FACT-N) se hi banega — guidance se naye facts MAT lo.');
+  return lines.join('\n')+'\n\n';
+}
+
+// One-time topic understanding generation (full notes → AI → cached JSON)
+async function _tgpEnsureTopicUnderstanding(){
+  var existing=_tgpReadUnderstand();
+  if(existing && existing.summary) return existing;
+  var apiKey=(typeof S!=='undefined' && S.apiKey)?S.apiKey:'';
+  if(!apiKey || apiKey.length<10 || typeof callGroq!=='function') return null;
+  var content='';
+  try{ content=_tgpExtractTopicContent(_tgp.sid,_tgp.secid,_tgp.tid)||''; }catch(e){ content=''; }
+  if(!content || content.trim().length<60) return null;
+  // Trim to keep payload safe
+  var trimmed=content.length>14000 ? content.substring(0,14000) : content;
+  var topicLabel=(_tgp && _tgp.topicName)?_tgp.topicName:'Topic';
+  var prompt =
+'Tu ek expert Indian competitive-exam educator/guide hai. Niche ek student ke notes ka POORA content diya hai. '+
+'Tera kaam: in notes ko ek baar dhyan se padhna aur ek SHORT structured understanding return karna, taki baad me '+
+'ban-ne wale questions aur insights guided rahein — bahar ke random facts na ghuse.\n\n'+
+'TOPIC: '+topicLabel+'\n\n'+
+'NOTES CONTENT (read-only background):\n"""\n'+trimmed+'\n"""\n\n'+
+'Strict JSON return karo, kuch aur mat likho:\n'+
+'{\n'+
+'  "contentType": "1 line — kis tarah ka content hai (e.g. UP GK — झीलें/बांध/वन्यजीव factual list, NCERT history concept, current affairs etc.)",\n'+
+'  "summary": "2-3 line Hindi me — yeh topic asal me kis baare me hai",\n'+
+'  "keyThemes": ["max 6 short Hindi keywords/phrases jo notes ka core capture karein"],\n'+
+'  "examFocus": "1-2 line — is content se exam me kis tarah ke questions aam tor pe aate hain (factual recall / map-based / date-event / comparison etc.)",\n'+
+'  "suggestedPrep": "1 line — student ko is topic se kya cheez sabse pehle yaad karni chahiye"\n'+
+'}\n\n'+
+'RULES:\n'+
+'- Sirf in notes ke andar mojud information pe based ho.\n'+
+'- Apni training se naye facts/numbers MAT add karo.\n'+
+'- Hindi mein likho (proper nouns English ok). JSON ke alawa kuch nahi.';
+  try{
+    var raw=await callGroq(prompt, 700, false);
+    if(!raw) return null;
+    var clean=String(raw).trim().replace(/^```[a-z]*\s*/i,'').replace(/```\s*$/,'').replace(/^json\s*/i,'');
+    var jsonStart=clean.indexOf('{'); var jsonEnd=clean.lastIndexOf('}');
+    if(jsonStart<0||jsonEnd<0) return null;
+    var parsed=JSON.parse(clean.substring(jsonStart, jsonEnd+1));
+    var obj={
+      contentType:String(parsed.contentType||'').trim(),
+      summary:String(parsed.summary||'').trim(),
+      keyThemes:Array.isArray(parsed.keyThemes)?parsed.keyThemes.map(function(s){return String(s||'').trim();}).filter(Boolean):[],
+      examFocus:String(parsed.examFocus||'').trim(),
+      suggestedPrep:String(parsed.suggestedPrep||'').trim(),
+      _at:Date.now()
+    };
+    if(!obj.summary && !obj.keyThemes.length) return null;
+    _tgpWriteUnderstand(obj);
+    return obj;
+  }catch(e){ return null; }
+}
+
+// Prep purpose modal — show only when:
+//   • no saved prep yet, AND
+//   • user has NOT played any game on this topic before (fresh topic).
+// If user has previous progress but no prep saved, we silently skip
+// (per user's instruction: guide later levels using whatever we have).
+function _tgpMaybeAskPrepPurpose(onDone){
+  var existing=_tgpReadPrep();
+  if(existing && (existing.exam||existing.purpose)){ if(onDone) onDone(existing); return; }
+  if(_tgpHasAnyProgress()){ if(onDone) onDone(null); return; }
+  // Build modal
+  var old=document.getElementById('tgpPrepOverlay'); if(old) old.remove();
+  var u=_tgpReadUnderstand();
+  var hint = u && u.suggestedPrep ? ('<div style="font-size:0.7rem;color:var(--text2);margin-top:6px;line-height:1.55;">💡 <em>Tip from notes:</em> '+_tgpEsc(u.suggestedPrep)+'</div>') : '';
+  var html=''+
+'<div id="tgpPrepOverlay" style="position:fixed;inset:0;background:rgba(13,27,42,0.6);z-index:21500;display:flex;align-items:center;justify-content:center;padding:20px;font-family:inherit;">'+
+  '<div style="background:var(--surface);border-radius:16px;padding:18px;max-width:340px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,0.3);max-height:90vh;overflow-y:auto;">'+
+    '<div style="font-size:1rem;font-weight:800;color:var(--text);margin-bottom:4px;">🎯 Prep Goal Set Karo</div>'+
+    '<div style="font-size:0.72rem;color:var(--text2);margin-bottom:12px;line-height:1.6;">AI is topic ke questions generate karne se pehle samjhna chahta hai ki <strong>aap kis exam aur kis angle se</strong> tayari kar rahe ho — taki questions accurate aur kaam ke banein.</div>'+
+    hint+
+    '<div style="margin-top:10px;">'+
+      '<label style="display:block;font-size:0.72rem;font-weight:700;color:var(--text);margin-bottom:4px;">📚 Target Exam</label>'+
+      '<input id="tgpPrepExam" type="text" placeholder="e.g. UPSSSC Lekhpal, UPSC Prelims, UP GK" style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:0.82rem;font-family:inherit;background:var(--surface);color:var(--text);box-sizing:border-box;">'+
+    '</div>'+
+    '<div style="margin-top:10px;">'+
+      '<label style="display:block;font-size:0.72rem;font-weight:700;color:var(--text);margin-bottom:4px;">🧠 Aap kya seekhna/yaad karna chahte ho?</label>'+
+      '<textarea id="tgpPrepPurpose" rows="2" placeholder="e.g. झीलें aur unke जिले yaad karne hain, dates pakki karni hain" style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:0.78rem;font-family:inherit;background:var(--surface);color:var(--text);box-sizing:border-box;resize:vertical;"></textarea>'+
+    '</div>'+
+    '<div style="margin-top:10px;">'+
+      '<label style="display:block;font-size:0.72rem;font-weight:700;color:var(--text);margin-bottom:4px;">📊 Tumhara level</label>'+
+      '<select id="tgpPrepLevel" style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:0.8rem;font-family:inherit;background:var(--surface);color:var(--text);">'+
+        '<option value="Beginner">Beginner — abhi shuru kiya</option>'+
+        '<option value="Revision" selected>Revision — padh chuka, dohra raha</option>'+
+        '<option value="Mock-ready">Mock-ready — final touch</option>'+
+      '</select>'+
+    '</div>'+
+    '<div style="display:flex;gap:8px;margin-top:14px;">'+
+      '<button id="tgpPrepSkip" style="flex:1;padding:10px;border-radius:9px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text2);font-size:0.78rem;font-weight:700;cursor:pointer;font-family:inherit;">Skip</button>'+
+      '<button id="tgpPrepSave" style="flex:2;padding:10px;border-radius:9px;border:none;background:var(--accent);color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;font-family:inherit;">✅ Save & Start</button>'+
+    '</div>'+
+  '</div>'+
+'</div>';
+  var wrap=document.createElement('div'); wrap.innerHTML=html; document.body.appendChild(wrap.firstChild);
+  var close=function(payload){ var el=document.getElementById('tgpPrepOverlay'); if(el) el.remove(); if(onDone) onDone(payload); };
+  document.getElementById('tgpPrepSkip').onclick=function(){ close(null); };
+  document.getElementById('tgpPrepSave').onclick=function(){
+    var obj={
+      exam:(document.getElementById('tgpPrepExam').value||'').trim(),
+      purpose:(document.getElementById('tgpPrepPurpose').value||'').trim(),
+      level:(document.getElementById('tgpPrepLevel').value||'').trim(),
+      _at:Date.now()
+    };
+    if(obj.exam || obj.purpose) _tgpWritePrep(obj);
+    close(obj);
+  };
+}
+
+// ═══════════════════════════════════════════════════════
 // 🎯 GAME FACT PROGRESS — quiz jaisa per-game coverage tracking
 // Per (topic + gameId) covered/wrong facts persist hote hain (localStorage)
 // User naya level banayega → uncovered facts se utne questions milenge
@@ -51079,6 +51240,17 @@ window.openTopicGameMode = async function(sid,secid,tid,topicName){
   try{
     _tgpLoadFactsFromCurrentTopic(true);
   }catch(e){_tgpShowError('Error: '+(e.message||'Notes load nahi ho sake.'));}
+
+  // ── Background guidance setup (non-blocking for facts UI) ──
+  // 1) Ek baar full topic AI ko padhwao → cached understanding
+  // 2) Agar pehli baar khel raha hai, prep purpose pucho
+  try{
+    _tgpEnsureTopicUnderstanding().then(function(){
+      _tgpMaybeAskPrepPurpose(function(){ /* saved or skipped */ });
+    }).catch(function(){
+      _tgpMaybeAskPrepPurpose(function(){});
+    });
+  }catch(e){ /* ignore */ }
 };
 
 // ── Regenerate — re-read notes (line-split) ───────────
@@ -51091,9 +51263,12 @@ window._tgpRegenMissed=function(){
 window._tgpRegenFresh=function(){
   _tgpClearCache();
   _tgp._wrongLog={lightning:[],fillin:[],match:[]};
+  // Guidance bhi reset — naya understanding banwao
+  try{ localStorage.removeItem(_tgpUnderstandKey()); }catch(e){}
   var el=document.getElementById('tgpRegenOptions'); if(el) el.style.display='none';
   try{
     _tgpLoadFactsFromCurrentTopic(true);
+    _tgpEnsureTopicUnderstanding().catch(function(){});
   }catch(e){_tgpShowError('Error: '+(e.message||'Dobara try karo.'));}
 };
 
@@ -51159,11 +51334,16 @@ async function _tgpEnrichFactsForLevel(facts, gameId){
   var topicLabel = (_tgp && _tgp.topicName) ? _tgp.topicName : 'Topic';
   var count = factsForThisLevel.length;
 
+  // ── Guidance block: cached topic understanding + user prep purpose ──
+  // (Background, NOT a new fact source — strict source lock still applies)
+  var guidance = _tgpBuildGuidanceBlock();
+
   // ── Per-game prompt — quiz ke style me ──
   var prompt = '';
   if(gameId === 'fillin'){
     prompt =
 'Tu EXPERT exam fact-question maker hai. EDUCATIONAL fill-in-the-blank questions banana hai (Hindi).\n\n'+
+guidance+
 'TOPIC: '+topicLabel+'\n\n'+
 '⚠️ SOURCE LOCK — YE HI EKMATRA SOURCE HAI. INKE BAHAR KA KOI BHI SHABD/NUMBER/NAAM/JAGAH USE NAHI KARNA:\n'+factsBlock+'\n\n'+
 '✅ IN '+count+' FACTS SE FILL-IN-BLANK BANAO (ek FACT = ek question, exactly).\n\n'+
@@ -51186,6 +51366,7 @@ async function _tgpEnrichFactsForLevel(facts, gameId){
   else if(gameId === 'match'){
     prompt =
 'Tu EXPERT exam fact-question maker hai. Column-Match pairs banana hai (Hindi).\n\n'+
+guidance+
 'TOPIC: '+topicLabel+'\n\n'+
 '⚠️ SOURCE LOCK — YE HI EKMATRA SOURCE HAI. INKE BAHAR KA KUCH NAHI USE KARNA:\n'+factsBlock+'\n\n'+
 '✅ IN '+count+' FACTS SE PAIRS BANAO (ek FACT = ek pair, exactly).\n\n'+
@@ -51210,6 +51391,7 @@ async function _tgpEnrichFactsForLevel(facts, gameId){
   else { // lightning (MCQ) — DEFAULT
     prompt =
 'Tu EXPERT MCQ question maker hai. EDUCATIONAL questions banana hai (Hindi). Lightning Quiz game ke liye.\n\n'+
+guidance+
 'TOPIC: '+topicLabel+'\n\n'+
 '⚠️ SOURCE LOCK — YE HI EKMATRA SOURCE HAI. INKE BAHAR KA KOI BHI FACT/NAAM/SANKHYA USE NAHI KARNA:\n'+factsBlock+'\n\n'+
 '✅ IN '+count+' FACTS SE MCQ BANAO (ek FACT = ek question, exactly).\n\n'+
@@ -51720,15 +51902,17 @@ async function _tgpFetchFactInsight(fact){
 
   // STRICT prompt — sirf is FACT ke baare me deeper info, kisi aur fact ka zikr nahi
   var factLine = (fact.detail || fact.term || '').replace(/\n/g,' ').trim();
+  var guidance = _tgpBuildGuidanceBlock();
   var prompt =
 'Tu ek expert Indian competitive-exam teacher hai. Niche ek SINGLE fact diya gaya hai.\n'+
 'Tera kaam: SIRF is ek fact ke baare me 2-4 line ki short, exam-relevant DEEPER jaankari Hindi me batana.\n\n'+
+guidance+
 'FACT: "'+factLine+'"\n\n'+
 'STRICT RULES:\n'+
 '1. ❗ Sirf is fact ke specific subject (jo iske andar mention hai — naam/jagah/sankhya/scheme/event) ke baare me extra background, importance, ya useful related context batao.\n'+
 '2. ❌ Kisi DOOSRE fact, doosri jagah, doosre vyakti, ya doosre topic ka zikr MAT karo.\n'+
 '3. ❌ Pure topic ka summary mat do — sirf is ek fact pe focus.\n'+
-'4. ✅ Apni general knowledge / web-style knowledge se extra detail add kar sakte ho — par sab is fact ke MAIN subject se directly related ho.\n'+
+'4. ✅ Apni general knowledge / web-style knowledge se extra detail add kar sakte ho — par sab is fact ke MAIN subject se directly related ho. Agar guidance me user ka target exam diya hai to extra info usi exam ke angle se prefer karo (PYQ trend, common confusion, mnemonic).\n'+
 '5. ✅ Hindi, max 4 lines, exam student ke kaam ki baat (date/significance/PYQ angle/common confusion).\n'+
 '6. ❌ JSON nahi, koi heading nahi — sirf 2-4 line plain Hindi text (HTML tags <b>, <em>, <br> use kar sakte ho lightly).\n'+
 '7. Agar fact itna self-contained hai ki extra kuch valid jaankari nahi de sakte, to sirf 1 line me iska exam-importance batao — bana-bana kar mat likho.';
