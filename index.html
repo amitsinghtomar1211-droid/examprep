@@ -51892,7 +51892,7 @@ function _tgpShowInfoCard(fact){
   // Placeholder for AI-fetched extra info about THIS fact only
   html+='<div id="tgpFactExtraBox" style="margin-bottom:6px;padding:10px 12px;background:rgba(0,105,92,0.07);border-radius:10px;border-left:4px solid var(--teal);">';
   html+='<div style="font-size:0.7rem;font-weight:800;color:var(--teal);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">🔎 Is Fact Ke Baare Me Extra Jankari</div>';
-  html+='<div id="tgpFactExtraBody" style="color:var(--text);font-size:0.77rem;line-height:1.8;">⏳ Loading…</div>';
+  html+='<div id="tgpFactExtraBody" style="color:var(--text);font-size:0.77rem;line-height:1.8;">⏳ Web/source context check karke textbook-style analysis ban raha hai…</div>';
   html+='</div>';
 
   card.innerHTML=html;
@@ -51905,13 +51905,55 @@ function _tgpShowInfoCard(fact){
 
 // Per-fact insight cache (localStorage) — kisi ek fact ki extra jaankari dobara fetch nahi hoti
 function _tgpInsightCacheKey(){
-  return 'tgp_insight_v1_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||'');
+  return 'tgp_insight_v2_textbook_'+(_tgp.sid||'')+'_'+(_tgp.secid||'')+'_'+(_tgp.tid||'');
 }
 function _tgpReadInsightCache(){
   try{ var raw=localStorage.getItem(_tgpInsightCacheKey()); return raw?(JSON.parse(raw)||{}):{};}catch(e){return {};}
 }
 function _tgpWriteInsightCache(c){
   try{ localStorage.setItem(_tgpInsightCacheKey(), JSON.stringify(c||{})); }catch(e){}
+}
+
+function _tgpInsightOptionContext(fact){
+  try{
+    var ans = (fact && fact.fibAnswer) ? String(fact.fibAnswer).trim() : '';
+    var opts = (fact && Array.isArray(fact.fibOptions)) ? fact.fibOptions.map(function(o){return String(o||'').trim();}).filter(Boolean) : [];
+    var unique = [];
+    opts.forEach(function(o){ if(unique.indexOf(o)===-1) unique.push(o); });
+    if(!unique.length && fact && fact.relatedTerms) unique = fact.relatedTerms.slice(0,4);
+    if(!unique.length) return '';
+    return 'QUESTION OPTIONS CONTEXT (textbook-style Additional Information ke liye):\nCorrect answer: '+(ans||'given fact answer')+'\nAll options / related terms: '+unique.join(' | ')+'\nInstruction: Key Points correct answer par do; Additional Information me galat options/related terms par short exam-useful facts do, lekin fact se direct relation bana rahe.\n\n';
+  }catch(e){ return ''; }
+}
+
+async function _tgpGetInsightWebContext(factLine, fact){
+  try{
+    if(!S || !S.serperKey || typeof aeSerperSearch!=='function') return '';
+    var term = (fact && fact.term ? String(fact.term) : '').trim();
+    var ans = (fact && fact.fibAnswer ? String(fact.fibAnswer) : '').trim();
+    var opts = (fact && Array.isArray(fact.fibOptions)) ? fact.fibOptions.map(function(o){return String(o||'').trim();}).filter(Boolean) : [];
+    var queries = [];
+    var base = (term || ans || factLine).slice(0,140);
+    queries.push(base + ' important facts competitive exams UPSC SSC State PCS');
+    queries.push((ans || base) + ' history geography polity exam key points PYQ');
+    queries.push(base + ' previous year question PYQ exam');
+    opts.slice(0,4).forEach(function(o){ if(o && queries.length<7) queries.push(o + ' exam important facts'); });
+    var seen = {}, blocks = [];
+    for(var i=0;i<queries.length;i++){
+      var q = queries[i];
+      if(!q || seen[q]) continue;
+      seen[q]=true;
+      var res = await aeSerperSearch(q);
+      if(res && res.length){
+        blocks.push('QUERY: '+q+'\n'+res.slice(0,4).map(function(item,idx){
+          return '• '+(item.title||'Result')+' — '+(item.snippet||'')+(item.link?' ['+item.link+']':'');
+        }).join('\n'));
+      }
+      await new Promise(function(r){ setTimeout(r, 140); });
+    }
+    if(!blocks.length) return '';
+    return '─── REAL WEB / SEARCH CONTEXT (sirf grounding ke liye; fake source/year mat banana) ───\n'+blocks.join('\n\n')+'\n─── END WEB CONTEXT ───\n\n';
+  }catch(e){ return ''; }
 }
 
 async function _tgpFetchFactInsight(fact){
@@ -51931,49 +51973,48 @@ async function _tgpFetchFactInsight(fact){
     return;
   }
 
-  // STRICT prompt — sirf is FACT ke baare me deeper info, kisi aur fact ka zikr nahi
+  // STRICT prompt — textbook solution style: correct answer key points + related options additional info
   var factLine = (fact.detail || fact.term || '').replace(/\n/g,' ').trim();
   var guidance = _tgpBuildGuidanceBlock();
+  var optionContext = _tgpInsightOptionContext(fact);
+  var webContext = await _tgpGetInsightWebContext(factLine, fact);
   var prompt =
-'Tu ek expert Indian competitive-exam mentor hai. Tere paas UPSC CSE, UPPSC, BPSC, MPPSC, RPSC, UKPSC, JPSC, CGPSC, HPSC, sabhi State PCS, SSC CGL/CHSL/MTS, Railway NTPC/Group D, Banking (IBPS/SBI/RBI), NDA, CDS, CAPF aur any other one-day exams ka detailed knowledge hai.\n\n'+
-'Niche ek **SINGLE FACT** diya gaya hai. Is FACT ke baare mein tu ek "Exam Insight" tayyar karega jo student ko us fact ki poori pakad de.\n\n'+
-'─── GUIDANCE (user ka target exam / prep purpose — agar diya hai to PYQ aur examples isi exam ko priority dekar do) ───\n'+
-guidance+
-'─── FACT (issi ke baare mein insight chahiye) ───\n'+
+'Tu ek expert Indian competitive-exam mentor aur textbook-solution analyst hai. Tere paas UPSC CSE, UPPSC, BPSC, MPPSC, RPSC, UKPSC, JPSC, CGPSC, HPSC, State PCS, SSC CGL/CHSL/MTS, Railway NTPC/Group D, Banking, NDA, CDS, CAPF aur one-day exams ka detailed knowledge hai.\n\n'+
+'Niche ek **SINGLE FACT / QUESTION FACT** diya gaya hai. Iska insight bilkul textbook quiz-solution jaisa banana hai: pehle correct answer ka analysis, fir us fact se directly related additional information.\n\n'+
+'─── GUIDANCE (user ka target exam / prep purpose — PYQ aur tips me ise priority do) ───\n'+
+guidance+'\n'+
+'─── FACT (sirf isi ke baare mein insight chahiye) ───\n'+
 factLine+'\n\n'+
+optionContext+
+webContext+
 '─── OUTPUT FORMAT (HTML safe, Hindi me, simple tags) ───\n'+
-'Tu apna insight **exactly** is structure me likh:\n\n'+
-'<b>📌 Fact ka Exam Context</b><br>\n'+
-'• Background / Importance kya hai? (date, place, person, scheme, event – jo bhi is fact se directly juda ho)<br>\n'+
-'• Kyo exam me important hai?\n\n'+
-'<b>📜 Real PYQ Examples (jahan tak yaad ho)</b><br>\n'+
-'• [Exam Name – Year] : "_____ ke baare mein pucha tha..."<br>\n'+
-'• [Exam Name – Year] : "_____ wala ayya tha..."<br>\n'+
-'(Agar saal/paper paka yaad nahi, toh general likho: "UPSC Prelims mein aaya hai", "SSC CGL Tier-1 mein pucha gaya", wagairah. Galat year kabhi MAT likho.)\n\n'+
-'<b>🔮 Possible Future Questions (2-3 naye angles)</b><br>\n'+
-'• "_____ ka dusra naam / location / samay kya hai?"<br>\n'+
-'• "_____ ke baare mein konsa statement sahi/galat hai?"<br>\n'+
-'• "_____ ko _____ se kaise alag karein?"\n\n'+
-'<b>⚠️ Common Confusion / Trick / Mnemonic</b><br>\n'+
-'• Students kahan galti karte hain? (example: "____" vs "____" confuse hota hai)<br>\n'+
-'• Yaad rakhne ki trick / mnemonic / short story.\n\n'+
-'<b>💡 Exam Tip</b><br>\n'+
-'• Is fact ko exam me kaise yaad rakhna hai? Kiske saath link karein? Aage ke preparation me kya dhyan dena hai?\n\n'+
+'Exactly ye structure follow karo:\n\n'+
+'<b>✅ Correct Answer / Main Fact</b><br>\n'+
+'• Is fact ka seedha sahi answer ya central point kya hai, 1 line me likho.<br>\n\n'+
+'<b>🔑 Key Points</b><br>\n'+
+'• Correct answer se judi 2-4 exam-useful baatein do: place/date/person/discovery/feature/cause-effect jo bhi directly relevant ho.<br>\n'+
+'• Agar fact archaeological/history/geography/polity type hai to exact location, discoverer, period, river/state/article/scheme objective jaise concrete details do.<br>\n\n'+
+'<b>📝 Additional Information</b><br>\n'+
+'• Agar options/related terms diye gaye hain, unme se har important wrong option/related term par 1-2 short bullets do — jaise textbook solution me hota hai.<br>\n'+
+'• Agar options nahi hain, to isi fact ke aas-paas ke 2-3 directly connected micro-facts do, unrelated topic summary nahi.<br>\n\n'+
+'<b>📜 PYQ / Exam Pattern Angle</b><br>\n'+
+'• Is fact ya iske aas-paas exam me kis tarah pucha ja sakta hai / pucha gaya hai. Galat year kabhi mat do; sure na ho to general exam naam likho.<br>\n\n'+
+'<b>⚠️ Trick / Confusion / Mnemonic</b><br>\n'+
+'• Common confusion aur yaad rakhne ki short trick do.\n\n'+
 '─── STRICT RULES ───\n'+
-'1. Sirf is fact ke specific subject (usme mention naam/jagah/sankhya/scheme/event) par focus karo. Doosre fact ya pure topic summary nahi dena.\n'+
-'2. PYQ examples **maximum 3-4** do, alag-alag exams se. Agar guidance me target exam diya hai (jaise UPSC ya SSC) to usi exam ke PYQ ko pehle priority do, fir doosre exams.\n'+
-'3. Future questions **2-3** banao – different dimensions (date, place, person, cause-effect, reverse statement, trick).\n'+
-'4. Mnemonic ya trick **jaroor** do agar possible ho.\n'+
-'5. Apni general knowledge se related micro-details add kar sakte ho (scheme objectives, article provisions, related persons/locations) – lekin woh sirf us fact ke directly connected ho. Doosre topic ya unrelated facts kabhi MAT lao.\n'+
-'6. Format: Hindi me, English technical terms allowed. <b>bold</b>, <em>italic</em>, <br> tags use kar sakte ho.\n'+
-'7. Agar fact numerical (year, budget, article) hai toh uska surrounding context bhi do. Example: "यह Article 370 nahi hai, Article 371A है – Sikkim ke liye special provision".\n'+
-'8. Jhootha exam year / paper kabhi mat likho – agar yaad nahi toh "UPSC Prelims mein aaya" jaise general likho. Confidence na ho to PYQ section general rakho.\n'+
-'9. Poora insight 150-250 words me hona chahiye – detailed lekin concise. Har section me 1-2 bullet, lambi paragraph nahi.\n'+
-'10. Only plain text HTML return karo, JSON nahi, markdown code-fence nahi.\n\n'+
-'Ab in rules ke mutabiq, diye gaye FACT ke liye "Exam Insight" likho.';
+'1. Sirf is fact ke specific subject par focus karo; doosre fact ya pure topic summary nahi dena.\n'+
+'2. Agar REAL WEB / SEARCH CONTEXT diya hai to usko primary grounding maana; web context se bahar ka claim tabhi add karo jab confidently common verified GK ho.\n'+
+'3. Web data na ho to apni knowledge use kar sakte ho, par uncertain claim ko definitive mat likho. Fake web source, fake PYQ year, fake examiner data kabhi mat banana.\n'+
+'4. Textbook-style answer chahiye: concise bullets, headings clear, no long essay.\n'+
+'5. Additional Information me wrong options/related terms ko explain karo, lekin har info ka relation current fact/question se direct hona chahiye.\n'+
+'6. PYQ section me max 2-3 exam-pattern angles; exact year sirf tab jab 100% sure ho.\n'+
+'7. Hindi simple rakho, English technical terms allowed. Sirf <b>, <strong>, <em>, <i>, <br> tags use karo.\n'+
+'8. 180-300 words me detailed but concise insight do.\n'+
+'9. Only plain text HTML return karo, JSON/markdown/code-fence nahi.\n\n'+
+'Ab diye gaye FACT ke liye textbook-style Exam Insight likho.';
 
   try{
-    var text = await callGroq(prompt, 1100, false);
+    var text = await callGroq(prompt, 1600, false);
     if(!text || !text.trim()){
       body.innerHTML='<em style="color:var(--text2);">Is fact ke liye extra jankari uplabdh nahi.</em>';
       return;
