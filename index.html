@@ -11130,6 +11130,109 @@ async function deleteFromVault(quizId){
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// 🎮 GAME MODE — Firebase save / load / live cross-device sync
+// (mirrors the quizVault pattern so game sessions persist + sync live)
+// ═══════════════════════════════════════════════════════════════════════
+window._gameVaultListener = null;
+
+// One game session entry shape:
+// { gameId, sid, secid, tid, topicName, score, correct, totalQ, levelsPlayed,
+//   wrongFacts:[{term,detail}], facts:[{term,detail,fibSentence,fibAnswer,fibOptions,examNote,insightHTML?}],
+//   playedAt, dateRaw, gameKey }
+async function _saveGameSessionToFirebase(entry){
+  if(!_db || !_currentUser || !entry || !entry.gameKey) return;
+  // Local mirror
+  S.gameVault = S.gameVault || [];
+  // Replace any existing session with same gameKey (latest wins)
+  S.gameVault = S.gameVault.filter(function(g){ return g.gameKey !== entry.gameKey; });
+  S.gameVault.unshift(entry);
+  if(S.gameVault.length > 200) S.gameVault = S.gameVault.slice(0,200);
+  try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+  try{
+    var uid = _currentUser.uid;
+    var clean = (typeof _fsClean==='function') ? _fsClean(entry) : entry;
+    if(clean && firebase && firebase.firestore && firebase.firestore.FieldValue){
+      clean.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+    }
+    await _db.collection('users').doc(uid).collection('gameVault').doc(entry.gameKey).set(clean);
+  }catch(e){
+    console.warn('gameVault save error:', e && e.message);
+  }
+}
+
+// Save partial enrichment (cached AI questions + insights for a topic+game)
+// so other devices can re-use the generated questions instantly without re-paying tokens.
+async function _saveGameEnrichmentToFirebase(sid, secid, tid, gameId, payload){
+  if(!_db || !_currentUser) return;
+  try{
+    var uid = _currentUser.uid;
+    var key = 'enrich_'+sid+'_'+secid+'_'+tid+'_'+gameId;
+    var doc = {
+      sid:String(sid), secid:String(secid), tid:String(tid),
+      gameId:gameId,
+      payload: (typeof _fsClean==='function') ? _fsClean(payload||{}) : (payload||{}),
+      updatedAt: (firebase && firebase.firestore && firebase.firestore.FieldValue)
+        ? firebase.firestore.FieldValue.serverTimestamp() : Date.now()
+    };
+    await _db.collection('users').doc(uid).collection('gameEnrich').doc(key).set(doc);
+  }catch(e){
+    console.warn('gameEnrich save error:', e && e.message);
+  }
+}
+
+async function _loadGameVaultFromFirebase(){
+  if(!_db || !_currentUser) return;
+  try{
+    var uid = _currentUser.uid;
+    var snap = await _db.collection('users').doc(uid).collection('gameVault')
+                        .orderBy('dateRaw','desc').limit(300).get();
+    if(snap.empty){ S.gameVault = S.gameVault || []; return; }
+    var loaded = [];
+    snap.forEach(function(d){ loaded.push(d.data()); });
+    S.gameVault = loaded;
+    try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+  }catch(e){
+    console.warn('gameVault load error:', e && e.message);
+  }
+}
+
+// Pull cached enrichment for a topic+game (used by game generator to skip AI call
+// if another device already generated the questions/insights for the same topic).
+async function _loadGameEnrichmentFromFirebase(sid, secid, tid, gameId){
+  if(!_db || !_currentUser) return null;
+  try{
+    var uid = _currentUser.uid;
+    var key = 'enrich_'+sid+'_'+secid+'_'+tid+'_'+gameId;
+    var d = await _db.collection('users').doc(uid).collection('gameEnrich').doc(key).get();
+    if(!d.exists) return null;
+    return d.data() && d.data().payload ? d.data().payload : null;
+  }catch(e){
+    console.warn('gameEnrich load error:', e && e.message);
+    return null;
+  }
+}
+
+// Live sync: when another device finishes a game / generates questions, this
+// device's gameVault & badge update automatically.
+function _attachGameVaultRealtimeListener(){
+  if(!_db || !_currentUser) return;
+  if(window._gameVaultListener){ try{ window._gameVaultListener(); }catch(e){} window._gameVaultListener=null; }
+  var uid = _currentUser.uid;
+  window._gameVaultListener = _db.collection('users').doc(uid).collection('gameVault')
+    .orderBy('dateRaw','desc').limit(300)
+    .onSnapshot(function(snap){
+      var loaded = [];
+      snap.forEach(function(d){ loaded.push(d.data()); });
+      S.gameVault = loaded;
+      try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+      // If the user is currently on a game-mode lobby/result screen, refresh it
+      try{
+        if(typeof _tgpRefreshGameVaultUI === 'function') _tgpRefreshGameVaultUI();
+      }catch(e){}
+    }, function(err){ console.warn('gameVault listener error:', err && err.message); });
+}
+
 function updateVaultQFlag(qKey, flag, val){
   if(!S.questionVault)return;
   S.questionVault.forEach(v=>{
@@ -26225,6 +26328,8 @@ async function loadFromFirebase(){
 
     // quizVault alag collection se load karo (permanent storage)
     _loadQuizVaultFromFirebase();
+    _loadGameVaultFromFirebase();
+    _attachGameVaultRealtimeListener();
 
     // Agar purana format tha to naye format mein re-save karo
     if(!isV2){ setTimeout(function(){ saveToFirebase(); }, 2000); }
@@ -26308,6 +26413,8 @@ async function pullFromCloud(){
     renderExamsList(); updateQuizSelects(); renderStats(); updateModePill();
     updateHistBadge(); updateSavedBadge(); updateVaultBadge(); checkPausedQuiz();
     _loadQuizVaultFromFirebase();
+    _loadGameVaultFromFirebase();
+    _attachGameVaultRealtimeListener();
     showToast('✅ Latest notes aa gaye!', 'success');
   } catch(e) {
     console.error('[PULL] Error:', e.code, e.message, e);
@@ -51131,7 +51238,7 @@ function _tgpMarkFactsCovered(gameId, factsUsed, wrongFacts){
 // ── Cache ─────────────────────────────────────────────
 // v4 = line-split system (Quiz jaisa) — no LLM call for fact extraction
 function _tgpCacheKey(s,sec,t){return 'tgp_v4_'+s+'_'+sec+'_'+t;}
-function _tgpEnrichCacheKey(){return 'tgp_enrich_v1_'+_tgp.sid+'_'+_tgp.secid+'_'+_tgp.tid;}
+function _tgpEnrichCacheKey(){return 'tgp_enrich_v2_topper_'+_tgp.sid+'_'+_tgp.secid+'_'+_tgp.tid;}
 function _tgpSaveCache(facts){try{if(_tgp._cacheKey)localStorage.setItem(_tgp._cacheKey,JSON.stringify({facts:facts,ts:Date.now()}));}catch(e){}}
 function _tgpLoadCache(){try{var k=_tgp._cacheKey;if(!k)return null;var r=localStorage.getItem(k);if(!r)return null;var o=JSON.parse(r);if(Date.now()-o.ts>30*86400000){localStorage.removeItem(k);return null;}return o.facts||null;}catch(e){return null;}}
 function _tgpClearCache(){try{if(_tgp._cacheKey)localStorage.removeItem(_tgp._cacheKey);try{localStorage.removeItem(_tgpEnrichCacheKey());}catch(e2){}}catch(e){}}
@@ -51341,25 +51448,32 @@ async function _tgpEnrichFactsForLevel(facts, gameId){
   // ── Per-game prompt — quiz ke style me ──
   var prompt = '';
   if(gameId === 'fillin'){
-    prompt =
-'Tu EXPERT exam fact-question maker hai. EDUCATIONAL fill-in-the-blank questions banana hai (Hindi).\n\n'+
+     prompt =
+'Tu EXPERT competitive-exam (UPSC/SSC/State PCS/Railway/Banking) fact-question maker hai. MODERATE-to-TOUGH level fill-in-the-blank questions banana hai (Hindi) jo ek HOSHIYAR/TOPPER student ko challenge kare.\n\n'+
 guidance+
 'TOPIC: '+topicLabel+'\n\n'+
 '⚠️ SOURCE LOCK — YE HI EKMATRA SOURCE HAI. INKE BAHAR KA KOI BHI SHABD/NUMBER/NAAM/JAGAH USE NAHI KARNA:\n'+factsBlock+'\n\n'+
 '✅ IN '+count+' FACTS SE FILL-IN-BLANK BANAO (ek FACT = ek question, exactly).\n\n'+
-'TASK: HAR FACT-N ke liye ek fill-in-the-blank question banao.\n\n'+
+'TASK: HAR FACT-N ke liye ek MODERATE-to-TOUGH fill-in-the-blank question banao jisme exam ki MAIN/CORE factual jaankari poochhi gayi ho — wahi cheez jo aksar examiner exam me poochhta hai.\n\n'+
+'DIFFICULTY & FACT-SELECTION:\n'+
+'• Blank wahi word/number ho jo FACT-N ki SABSE exam-critical jaankari ho (year, founder, article number, scheme launch year, capital, river, battle date, committee, ratio, %, first/last/largest, ministry, organisation HQ, ruler, period, treaty, act, section). Easy/throwaway shabd (jaise "tha", "ka", "me", "aur") blank MAT karo.\n'+
+'• Question ka level moderate-to-tough ho — surface-level nahi; aisa fact pick karo jo PYQ-style competitive exam me poochha jata ho.\n\n'+
 'STRICT RULES:\n'+
-'1. ❗ Question, blank ka answer, aur poora detail SIRF usi FACT-N ki line ke andar mojud shabdon/numbers se banane hain. FACT-N me jo nahi likha hai, woh kabhi mat banao — apni general knowledge, training data, internet, ya kisi aur fact ki line se kuch bhi mat lo.\n'+
-'2. fibSentence = original fact ka sentence jisme SABSE EXAM-CRITICAL ek word/number ___ se replace ho\n'+
-'3. fibAnswer = wahi exact word/number jo blank fill karta hai (FACT-N me likha hua)\n'+
-'4. fibOptions = EXACTLY 4 options ka array. ❗❗ ATI-MAHATVAPURNA: in 4 options me se EK option BILKUL EXACTLY fibAnswer ke barabar (same spelling, same matra, same spaces) hona CHAHIYE — koi modify/variant nahi. Agar fibAnswer “एकसींगी बैल” hai to ek option exactly “एकसींगी बैल” hi likho — “एकसींगी शेर”/“दोसींगी बैल” jaise mismatch NAHI. Baki 3 options plausible galat decoys (same category — date/name/place/concept), made-up but believable.\n'+
-'5. term = chhota exam-style question label (max 10 words) — sirf is FACT-N ka essence\n'+
-'6. detail = poora answer sentence (1 line, complete fact) — FACT-N ki hi line, paraphrase ok par naya information add MAT karo\n'+
-'7. examNote = 1-line kyun yeh exam ke liye important hai (sirf is FACT ke baare me, kisi aur fact ka zikr nahi)\n'+
-'8. relatedTerms = 1-3 keyword array (sirf FACT-N me se)\n'+
-'9. EXACTLY '+count+' objects — kam ya zyada NAHI. Agar FACT-N choti hai to ussi me se koi bhi shabd/number blank kar do — par bahar ka shabd MAT laao.\n'+
-'10. Hindi mein likho (terms/proper nouns English ok)\n'+
-'11. JSON ke alawa KUCH MAT LIKHO\n\n'+
+'1. ❗ Question, blank ka answer, aur poora detail SIRF usi FACT-N ki line ke andar mojud shabdon/numbers se banane hain. FACT-N me jo nahi likha hai, woh kabhi mat banao.\n'+
+'2. fibSentence = original fact ka sentence jisme SABSE EXAM-CRITICAL ek word/number ___ se replace ho.\n'+
+'3. fibAnswer = wahi exact word/number jo blank fill karta hai (FACT-N me likha hua, copy-paste exact).\n'+
+'4. fibOptions = EXACTLY 4 options ka array. ❗❗ ATI-MAHATVAPURNA NIYAM:\n'+
+'   (a) In 4 options me se EK option BILKUL EXACTLY fibAnswer ke barabar (same spelling, same matra, same spaces, same case) hona CHAHIYE — koi variant/synonym/translation/modify NAHI.\n'+
+'   (b) Agar fibAnswer "1857" hai to ek option exactly "1857" — "1858"/"सन् 1857" mismatch NAHI.\n'+
+'   (c) Baki 3 options plausible galat decoys (same category — same type of date/name/place/concept) jo ek topper ko bhi confuse kar sakein, par 100% galat ho.\n'+
+'   (d) Self-check: JSON return karne se pehle khud verify karo ki fibOptions me fibAnswer hai. Agar nahi hai to question regenerate karo.\n'+
+'5. term = chhota exam-style question label (max 10 words) — sirf is FACT-N ka essence.\n'+
+'6. detail = poora answer sentence (1 line, complete fact) jisme fibAnswer apni jagah ho (NA ki ___). FACT-N ki hi line, paraphrase ok par naya info add MAT karo. detail aur fibOptions me wahi exact answer ho — mismatch NAHI.\n'+
+'7. examNote = 1-line kyun yeh exam ke liye important hai.\n'+
+'8. relatedTerms = 1-3 keyword array (sirf FACT-N me se).\n'+
+'9. EXACTLY '+count+' objects — kam ya zyada NAHI.\n'+
+'10. Hindi mein likho (terms/proper nouns English ok).\n'+
+'11. JSON ke alawa KUCH MAT LIKHO.\n\n'+
 'RESPONSE FORMAT (strict JSON):\n'+
 '{"facts":[{"idx":1,"term":"...","detail":"...","fibSentence":"... ___ ...","fibAnswer":"...","fibOptions":["...","...","...","..."],"examNote":"...","relatedTerms":["..."]}]}';
   }
@@ -51390,25 +51504,32 @@ guidance+
   }
   else { // lightning (MCQ) — DEFAULT
     prompt =
-'Tu EXPERT MCQ question maker hai. EDUCATIONAL questions banana hai (Hindi). Lightning Quiz game ke liye.\n\n'+
+'Tu EXPERT competitive-exam MCQ question maker hai (UPSC/SSC/State PCS/Railway/Banking). Lightning Quiz ke liye MODERATE-to-TOUGH MCQ banana hai (Hindi) jo ek HOSHIYAR/TOPPER student ko bhi sochne par majboor kare.\n\n'+
 guidance+
 'TOPIC: '+topicLabel+'\n\n'+
 '⚠️ SOURCE LOCK — YE HI EKMATRA SOURCE HAI. INKE BAHAR KA KOI BHI FACT/NAAM/SANKHYA USE NAHI KARNA:\n'+factsBlock+'\n\n'+
 '✅ IN '+count+' FACTS SE MCQ BANAO (ek FACT = ek question, exactly).\n\n'+
-'TASK: EXACTLY '+count+' MCQ banao — har FACT-N ke liye strict ek MCQ.\n\n'+
+'TASK: EXACTLY '+count+' MCQ banao — har FACT-N ke liye strict ek MCQ. Difficulty MODERATE-to-TOUGH ho.\n\n'+
+'FACT-PICKING / DIFFICULTY:\n'+
+'• Question wahi cheez poochhe jo FACT-N ki SABSE exam-critical jaankari hai — wahi factual point jo aksar examiner exam me poochhta hai (year, founder, article, ministry, scheme launch, treaty, battle date, committee, ratio, %, first/last/largest, capital, river, ruler, period, act/section, organisation HQ, etc.).\n'+
+'• Surface-level / "kya ye sentence sahi hai" type easy MCQ MAT banao.\n\n'+
 'STRICT RULES:\n'+
-'1. ❗ Question text, sahi answer, aur explanation SIRF usi FACT-N ki line ke andar likhe content se nikalne hain. Apni training/general knowledge se kuch bhi mat add karo. Agar FACT-N me kisi cheez ka zikr nahi hai, to woh question/answer/explanation me NAHI aana chahiye.\n'+
-'2. Har question BILKUL ALAG fact pe — ek FACT = ek question\n'+
-'3. term = MCQ ka question text (max 14 words, exam-style, Hindi)\n'+
-'4. fibOptions = EXACTLY 4 options array. ❗ EK option BILKUL EXACTLY fibAnswer ke barabar hona CHAHIYE (same spelling/spaces/matra). Baki 3 plausible galat decoys (same category — year/name/place/concept), made-up but believable.\n'+
-'5. fibAnswer = sahi option ka exact text (fibOptions me se ek)\n'+
-'6. detail = poora answer + short explanation (kyun sahi)\n'+
-'7. fibSentence = detail ka sentence jisme key word ___ se replace (backup FIB ke liye)\n'+
-'8. examNote = 1-line kyun important\n'+
-'9. relatedTerms = 1-3 keyword array\n'+
-'10. EXACTLY '+count+' objects — kam/zyada NAHI\n'+
-'11. Sahi answer ki position randomly vary karo (sab ek option pe NAHI)\n'+
-'12. Hindi mein likho, JSON ke alawa kuch nahi\n\n'+
+'1. ❗ Question text, sahi answer, aur explanation SIRF usi FACT-N ki line ke andar likhe content se nikalne hain. General knowledge / outside data zero.\n'+
+'2. Har question BILKUL ALAG fact pe — ek FACT = ek question.\n'+
+'3. term = MCQ ka question text (max 14 words, exam-style, Hindi). Direct factual question — "Kab", "Kaun", "Kahan", "Kis Article me", "Konsi scheme", etc.\n'+
+'4. fibOptions = EXACTLY 4 options array. ❗❗ HARD CONSTRAINT:\n'+
+'   (a) In 4 options me se EK option BILKUL EXACTLY fibAnswer ke barabar (same spelling/spaces/matra/case) hona CHAHIYE.\n'+
+'   (b) Koi variant ya synonym mismatch NAHI — character-by-character match hona chahiye.\n'+
+'   (c) Baki 3 plausible galat decoys (same category — year/name/place/article number/scheme) jo topper ko bhi confuse kar sakein, par 100% galat ho.\n'+
+'   (d) Self-check before output: fibAnswer ∈ fibOptions ho — agar nahi to question dobara likho.\n'+
+'5. fibAnswer = sahi option ka EXACT text (fibOptions me jo likha wahi).\n'+
+'6. detail = poora answer + 1-line short explanation (kyun sahi). detail me bhi wahi exact answer aaye, fibOptions / fibAnswer / detail teeno me answer mismatch NAHI.\n'+
+'7. fibSentence = detail ka sentence jisme key word ___ se replace (backup FIB ke liye).\n'+
+'8. examNote = 1-line kyun important.\n'+
+'9. relatedTerms = 1-3 keyword array.\n'+
+'10. EXACTLY '+count+' objects — kam/zyada NAHI.\n'+
+'11. Sahi answer ki position randomly vary karo (sab ek option pe NAHI).\n'+
+'12. Hindi mein likho, JSON ke alawa kuch nahi.\n\n'+
 'RESPONSE FORMAT (strict JSON):\n'+
 '{"facts":[{"idx":1,"term":"...","detail":"...","fibSentence":"... ___ ...","fibAnswer":"...","fibOptions":["...","...","...","..."],"examNote":"...","relatedTerms":["..."]}]}';
   }
@@ -51479,6 +51600,12 @@ guidance+
       };
     });
     try{ localStorage.setItem(_tgpEnrichCacheKey(), JSON.stringify(cache)); }catch(e3){}
+    // Cloud sync: cache enrichment so other devices reuse same questions
+    try{
+      if(typeof _saveGameEnrichmentToFirebase==='function'){
+        _saveGameEnrichmentToFirebase(_tgp.sid,_tgp.secid,_tgp.tid,gameId,cache);
+      }
+    }catch(eFb){}
   }catch(err){
     console.warn('Game enrich (quiz-style) failed:', err && err.message);
     if(typeof showToast==='function'){
@@ -52693,6 +52820,40 @@ function _tgpBuildMasterLevels(gameId,wrongFacts){
 // 🏁 RESULT SCREEN
 // ═══════════════════════════════════════════════════════
 function _tgpGameResult(gameId){
+  // ── Cloud save: persist this game session + sync across devices ──
+  try{
+    if(typeof _saveGameSessionToFirebase==='function' && _tgp && _tgp.tid){
+      var _gs = _tgp.gameState || {};
+      var _totalQ = _gs.levels ? _gs.levels.filter(function(l){return !l.isMaster;})
+        .reduce(function(s,l){ return s + (l.questions?l.questions.length:(l.pairs?l.pairs.length:0)); },0) : 0;
+      var _correct = _gs.correct || 0;
+      var _wrong = (_tgp._wrongLog && _tgp._wrongLog[gameId]) ? _tgp._wrongLog[gameId] : [];
+      var _factsOut = (_tgp.facts||[]).map(function(f){
+        return {
+          term:f.term, detail:f.detail,
+          fibSentence:f.fibSentence, fibAnswer:f.fibAnswer,
+          fibOptions:f.fibOptions, examNote:f.examNote,
+          relatedTerms:f.relatedTerms,
+          insightHTML:f.insightHTML || (f._insight && f._insight.html) || ''
+        };
+      });
+      var _entry = {
+        gameKey: gameId+'_'+_tgp.sid+'_'+_tgp.secid+'_'+_tgp.tid+'_'+Date.now(),
+        gameId: gameId,
+        sid: String(_tgp.sid||''), secid: String(_tgp.secid||''), tid: String(_tgp.tid||''),
+        topicName: _tgp.topicName || '',
+        score: _tgp.score || 0,
+        correct: _correct, totalQ: _totalQ,
+        levelsPlayed: _gs.levels ? _gs.levels.filter(function(l){return l.done;}).length : 0,
+        wrongFacts: _wrong.map(function(f){ return {term:f.term, detail:f.detail}; }),
+        facts: _factsOut,
+        playedAt: new Date().toISOString(),
+        dateRaw: Date.now()
+      };
+      _saveGameSessionToFirebase(_entry);
+    }
+  }catch(eSave){ console.warn('game session save failed:', eSave && eSave.message); }
+
   var gs=_tgp.gameState;
   var score=_tgp.score;
   var totalQ=gs.levels?gs.levels.filter(function(l){return!l.isMaster;}).reduce(function(sum,l){return sum+(l.questions?l.questions.length:l.pairs?l.pairs.length:0);},0):0;
