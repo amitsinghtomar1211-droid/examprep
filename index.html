@@ -50758,12 +50758,12 @@ document.addEventListener('ne_editor_closed', function() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;" id="tgpGameGrid"></div>
     <!-- Regenerate -->
     <div style="margin-top:14px;">
-      <button onclick="_tgpShowRegenOptions()" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px dashed var(--border);background:var(--surface2);color:var(--text2);font-size:0.76rem;font-weight:700;cursor:pointer;font-family:inherit;">🔄 Questions Regenerate Karo</button>
+      <button onclick="_tgpShowRegenOptions()" style="width:100%;padding:10px 14px;border-radius:10px;border:1.5px dashed var(--border);background:var(--surface2);color:var(--text2);font-size:0.76rem;font-weight:700;cursor:pointer;font-family:inherit;">🔄 Facts/Questions Dobara Fetch Karo</button>
     </div>
     <div id="tgpRegenOptions" style="display:none;margin-top:10px;padding:12px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;">
-      <div style="font-size:0.78rem;font-weight:700;color:var(--text);margin-bottom:10px;">Regenerate kaise karna hai?</div>
+      <div style="font-size:0.78rem;font-weight:700;color:var(--text);margin-bottom:10px;">Dobara fetch kaise karna hai?</div>
       <button onclick="_tgpRegenMissed()" style="width:100%;margin-bottom:8px;padding:10px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#e65100,#f4511e);color:#fff;font-size:0.78rem;font-weight:700;cursor:pointer;font-family:inherit;">📌 Chhute hue facts se nayi questions</button>
-      <button onclick="_tgpRegenFresh()" style="width:100%;padding:10px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.78rem;font-weight:700;cursor:pointer;font-family:inherit;">✨ Bilkul fresh — sab naye questions</button>
+      <button onclick="_tgpRegenFresh()" style="width:100%;padding:10px 14px;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-size:0.78rem;font-weight:700;cursor:pointer;font-family:inherit;">✨ Quiz jaisa fresh fact fetch</button>
       <button onclick="document.getElementById('tgpRegenOptions').style.display='none'" style="width:100%;margin-top:6px;padding:8px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font-size:0.72rem;cursor:pointer;font-family:inherit;">Raho nahi</button>
     </div>
     <div style="margin-top:12px;padding:10px 12px;background:rgba(21,101,192,0.07);border-radius:10px;font-size:0.72rem;color:var(--text2);line-height:1.6;border:1px solid rgba(21,101,192,0.15);">
@@ -50977,31 +50977,30 @@ function _tgpClearCache(){try{if(_tgp._cacheKey)localStorage.removeItem(_tgp._ca
 
 // ── Build facts directly from notes lines (Quiz jaisa) — NO LLM ──
 function _tgpBuildFactsFromContent(content){
-  // Quiz-style line split
-  var lines = String(content||'').split(/\r?\n/)
-    .map(function(l){return l.trim();})
-    .filter(function(l){
-      return l.length > 12
-        && !l.startsWith('===')
-        && !l.startsWith('###')
-        && !l.startsWith('---')
-        && !l.startsWith('//');
-    });
-  // Dedup
+  // EXACT quiz-style fact extraction: qfExtractFacts() hi use karo, AI call nahi.
+  var lines = [];
+  if (typeof qfExtractFacts === 'function') {
+    lines = qfExtractFacts(String(content||''));
+  } else {
+    lines = String(content||'').split('\n')
+      .map(function(l){return l.trim();})
+      .filter(function(l){return l.length > 12 && !l.startsWith('===') && !l.startsWith('###') && !l.startsWith('---') && !l.startsWith('//');});
+  }
+
+  // Dedup same as quiz comparison — normalized line key
   var seen = {}, out = [];
   lines.forEach(function(l){
-    var k = l.toLowerCase().replace(/\s+/g,' ').trim();
-    if(!seen[k]){ seen[k]=true; out.push(l); }
+    var k = (typeof qfNorm === 'function') ? qfNorm(l) : l.toLowerCase().replace(/\s+/g,' ').trim();
+    if(k && !seen[k]){ seen[k]=true; out.push(l); }
   });
-  // Convert each line into a minimal fact object
-  // term/detail same line — game-specific fields will be enriched at level start
+
+  // Fact fetch yahin complete hai; AI sirf level start par in selected facts se questions banayega.
   return out.map(function(line, i){
     return {
       term: line.length > 80 ? line.substring(0,80).trim()+'…' : line,
       detail: line,
       _raw: line,
       _idx: i,
-      // placeholders so existing UI doesn't break before enrichment
       fibSentence: '',
       fibAnswer: '',
       fibOptions: [],
@@ -51012,37 +51011,73 @@ function _tgpBuildFactsFromContent(content){
   });
 }
 
-// ── Open — INSTANT load via line-split (Quiz jaisa, no Groq call) ──
-window.openTopicGameMode = async function(sid,secid,tid,topicName){
-  _tgp.sid=sid;_tgp.secid=secid;_tgp.tid=tid;
-  _tgp.topicName=topicName||'Topic';
-  _tgp.score=0;_tgp.facts=[];
-  _tgp._cacheKey=_tgpCacheKey(sid,secid,tid);
-  _tgp._wrongLog={lightning:[],fillin:[],match:[]};
+function _tgpPlainTextKeepLines(html){
+  return String(html||'')
+    .replace(/<br\s*\/?\s*>/gi,'\n')
+    .replace(/<\/\s*(p|div|li|h1|h2|h3|h4|h5|h6|tr|section|article)\s*>/gi,'\n')
+    .replace(/<[^>]+>/g,' ')
+    .replace(/&nbsp;/g,' ')
+    .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+    .replace(/[ \t]+/g,' ')
+    .replace(/\n[ \t]+/g,'\n')
+    .replace(/[ \t]+\n/g,'\n')
+    .replace(/\n{3,}/g,'\n\n')
+    .trim();
+}
 
-  var panel=document.getElementById('topicGamePanel');
-  panel.style.display='flex';
-  document.getElementById('tgpTopicName').textContent='🎮 '+_tgp.topicName;
+function _tgpResetLoadingUI(subText){
+  var l=document.getElementById('tgpLoading');
+  if(!l)return;
+  l.innerHTML = '<div style="font-size:2.5rem;animation:tgpSpin 1s linear infinite;display:inline-block;">🎮</div>'+
+    '<div style="font-size:0.9rem;font-weight:700;color:var(--accent);" id="tgpLoadText">Topic content load ho raha hai...</div>'+
+    '<div style="width:260px;height:6px;background:var(--bg2);border-radius:6px;overflow:hidden;">'+
+      '<div id="tgpLoadBar" style="height:100%;background:linear-gradient(90deg,#1565c0,#6a1b9a);width:0%;transition:width 0.5s;border-radius:6px;"></div>'+
+    '</div>'+
+    '<div style="font-size:0.72rem;color:var(--text2);text-align:center;max-width:260px;line-height:1.6;" id="tgpLoadSub">'+(subText||'Quiz jaisa line-split fact fetch ho raha hai — AI call nahi hogi.')+'</div>';
+}
+
+function _tgpLoadFactsFromCurrentTopic(showLobbyAfter){
+  _tgpResetLoadingUI('Quiz jaisa fact fetch: notes ki har useful line ek fact banegi.');
   document.getElementById('tgpLoading').style.display='flex';
   document.getElementById('tgpLobby').style.display='none';
   document.getElementById('tgpGameArea').style.display='none';
   document.getElementById('tgpGameNav').style.display='none';
   document.getElementById('tgpScoreBadge').style.display='none';
+  _tgpSetProgress(20,'Quiz-style facts fetch ho rahe hain...');
 
-  _tgpSetProgress(20,'Notes se facts nikal rahe hain...');
+  var content=_tgpExtractTopicContent(_tgp.sid,_tgp.secid,_tgp.tid);
+  if(!content||content.trim().length<30){
+    _tgpShowError('Is topic mein quiz source jaisa content nahi mila. Pehle notes/canvas/summary mein content add karo.');
+    return false;
+  }
+
+  var facts = _tgpBuildFactsFromContent(content);
+  if(!facts || facts.length < 3){
+    _tgpShowError('Notes se kafi facts nahi mile! Quiz ki tarah har important baat alag line mein rakho, fir 🔄 Dobara Fetch dabao.');
+    return false;
+  }
+
+  _tgp.facts = facts;
+  _tgpSaveCache(facts);
+  _tgpSetProgress(100, facts.length+' facts fetched — ab AI level start par questions banayega! 🎉');
+  if(showLobbyAfter!==false)setTimeout(_tgpShowLobby, 250);
+  return true;
+}
+
+// ── Open — INSTANT load via line-split (Quiz jaisa, no Groq call) ──
+window.openTopicGameMode = async function(sid,secid,tid,topicName){
+  _tgp.sid=String(sid);_tgp.secid=String(secid);_tgp.tid=String(tid);
+  _tgp.topicName=topicName||'Topic';
+  _tgp.score=0;_tgp.facts=[];
+  _tgp._cacheKey=_tgpCacheKey(_tgp.sid,_tgp.secid,_tgp.tid);
+  _tgp._wrongLog={lightning:[],fillin:[],match:[]};
+
+  var panel=document.getElementById('topicGamePanel');
+  panel.style.display='flex';
+  document.getElementById('tgpTopicName').textContent='🎮 '+_tgp.topicName;
+
   try{
-    var content=_tgpExtractTopicContent(sid,secid,tid);
-    if(!content||content.trim().length<50){_tgpShowError('Is topic mein abhi notes nahi hain! Pehle notes add karo.');return;}
-
-    var facts = _tgpBuildFactsFromContent(content);
-    if(!facts || facts.length < 3){
-      _tgpShowError('Notes se kafi facts nahi mile! Notes zyada detail mein likho (har line ek fact ban-ti hai).');
-      return;
-    }
-    _tgp.facts = facts;
-    _tgpSaveCache(facts);
-    _tgpSetProgress(100, facts.length+' facts ready! 🎉');
-    setTimeout(_tgpShowLobby, 250);
+    _tgpLoadFactsFromCurrentTopic(true);
   }catch(e){_tgpShowError('Error: '+(e.message||'Notes load nahi ho sake.'));}
 };
 
@@ -51057,16 +51092,8 @@ window._tgpRegenFresh=function(){
   _tgpClearCache();
   _tgp._wrongLog={lightning:[],fillin:[],match:[]};
   var el=document.getElementById('tgpRegenOptions'); if(el) el.style.display='none';
-  document.getElementById('tgpLobby').style.display='none';
-  document.getElementById('tgpLoading').style.display='flex';
-  document.getElementById('tgpLoadSub').textContent='Notes dobara scan ho rahe hain...';
-  _tgpSetProgress(20,'Fresh load...');
   try{
-    var content=_tgpExtractTopicContent(_tgp.sid,_tgp.secid,_tgp.tid);
-    var facts=_tgpBuildFactsFromContent(content);
-    _tgp.facts=facts;_tgpSaveCache(facts);
-    _tgpSetProgress(100,facts.length+' facts ready!');
-    setTimeout(_tgpShowLobby,250);
+    _tgpLoadFactsFromCurrentTopic(true);
   }catch(e){_tgpShowError('Error: '+(e.message||'Dobara try karo.'));}
 };
 
@@ -51221,46 +51248,44 @@ function _tgpLocalEnrichFact(f){
   if(!f.examNote) f.examNote = 'Important fact';
 }
 
-// ── Extract content — NO character limit, all sources ───
+// ── Extract content — quiz source jaisa, line-breaks preserve karke ───
 function _tgpExtractTopicContent(sid,secid,tid){
-  var t=(typeof getTop==='function')?getTop(sid,secid,tid):null;
-  if(!t)return '';
   var parts=[];
-  // Raw notes (exclude summary)
-  (t.notes||[]).filter(function(n){return !n._isSummaryNote;}).forEach(function(n){
-    if(n.content&&n.content.trim())
-      parts.push(n.content.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
-  });
-  // finalNotes
-  if(t.finalNotes&&t.finalNotes.trim())
-    parts.push(t.finalNotes.replace(/%%NEW%%|%%DATE%%.*?%%ENDNEW%%|%%HIGHLIGHT%%|%%ENDHIGHLIGHT%%/g,'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
-  // AI smart notes
-  if(t.smartNotesAI&&t.smartNotesAI.trim())
-    parts.push(t.smartNotesAI.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
-  // Saved facts
-  (t.savedFacts||[]).forEach(function(f){if(f.text)parts.push(f.text);});
-  // Overview
-  if(t.overview&&t.overview.trim())parts.push(t.overview);
-  // Summary notes bhi add karo (game ke liye sab chahiye)
-  (t.notes||[]).filter(function(n){return n._isSummaryNote;}).forEach(function(n){
-    if(n.content&&n.content.trim())
-      parts.push(n.content.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
-  });
-  // Canvas slides
-  if(t.studyCanvas&&t.studyCanvas.slides&&t.studyCanvas.slides.length){
-    t.studyCanvas.slides.forEach(function(slide,si){
-      var slideTitle=slide.title||('Slide '+(si+1));
-      parts.push('=== '+slideTitle+' ===');
-      (slide.textBlocks||[]).forEach(function(blk){
-        var txt=blk.html
-          ?blk.html.replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ').trim()
-          :(blk.text||'').trim();
-        if(txt)parts.push(txt);
-      });
+
+  // Quiz module ka exact source extractor reuse karo. Raw + Summary + Canvas ko scan karte hain,
+  // par line-split qfExtractFacts() hi karega — no AI fact fetching.
+  if(typeof qfExtractContent === 'function'){
+    ['raw','summary','canvas'].forEach(function(src){
+      try{
+        var c = qfExtractContent(String(sid),String(secid),String(tid),src);
+        if(c && c.trim()) parts.push(c);
+      }catch(e){}
     });
   }
-  // NO substring — return full content
-  return parts.join('\n\n');
+
+  // Extra saved game/topic fields bhi add karo, but line breaks preserve rakho.
+  var t=(typeof getTop==='function')?getTop(sid,secid,tid):null;
+  if(t){
+    if(t.finalNotes&&t.finalNotes.trim())
+      parts.push(_tgpPlainTextKeepLines(t.finalNotes.replace(/%%NEW%%|%%DATE%%.*?%%ENDNEW%%|%%HIGHLIGHT%%|%%ENDHIGHLIGHT%%/g,'')));
+    (t.notes||[]).forEach(function(n){
+      if(n.content&&n.content.trim()) parts.push(_tgpPlainTextKeepLines(n.content));
+    });
+    if(t.smartNotesAI&&t.smartNotesAI.trim()) parts.push(_tgpPlainTextKeepLines(t.smartNotesAI));
+    (t.savedFacts||[]).forEach(function(f){if(f.text)parts.push(String(f.text).trim());});
+    if(t.overview&&t.overview.trim()) parts.push(_tgpPlainTextKeepLines(t.overview));
+    if(t.studyCanvas&&t.studyCanvas.slides&&t.studyCanvas.slides.length){
+      t.studyCanvas.slides.forEach(function(slide,si){
+        parts.push('=== '+(slide.title||('Slide '+(si+1)))+' ===');
+        (slide.textBlocks||[]).forEach(function(blk){
+          var txt=blk.html?_tgpPlainTextKeepLines(blk.html):_tgpPlainTextKeepLines(blk.text||'');
+          if(txt)parts.push(txt);
+        });
+      });
+    }
+  }
+
+  return parts.filter(function(x){return x&&String(x).trim();}).join('\n\n---\n\n');
 }
 
 // ── Split content into chunks for multi-pass extraction ──
@@ -51363,7 +51388,7 @@ async function _tgpGenerateFacts(content,topicName,mode){
 
 // ── UI Helpers ────────────────────────────────────────
 function _tgpSetProgress(pct,text){var b=document.getElementById('tgpLoadBar'),t=document.getElementById('tgpLoadText');if(b)b.style.width=pct+'%';if(t)t.textContent=text;}
-function _tgpShowError(msg){var l=document.getElementById('tgpLoading');if(l)l.innerHTML='<div style="font-size:2rem;">😞</div><div style="font-size:0.88rem;font-weight:700;color:var(--red);text-align:center;padding:0 20px;line-height:1.6;">'+msg+'</div><button onclick="closeTopicGame()" style="margin-top:16px;padding:10px 24px;border-radius:10px;border:none;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;font-family:inherit;">← Wapas</button>';}
+function _tgpShowError(msg){var l=document.getElementById('tgpLoading');if(l)l.innerHTML='<div style="font-size:2rem;">😞</div><div style="font-size:0.88rem;font-weight:700;color:var(--red);text-align:center;padding:0 20px;line-height:1.6;">'+msg+'</div><div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;justify-content:center;"><button onclick="_tgpRegenFresh()" style="padding:10px 18px;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;font-weight:800;cursor:pointer;font-family:inherit;">🔄 Dobara Fetch</button><button onclick="closeTopicGame()" style="padding:10px 18px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text2);font-weight:700;cursor:pointer;font-family:inherit;">← Wapas</button></div>';}
 
 function _tgpShowLobby(){
   document.getElementById('tgpLoading').style.display='none';
