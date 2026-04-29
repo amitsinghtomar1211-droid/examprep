@@ -54172,5 +54172,307 @@ mark.nes-hl.nes-hl-active{
 })();
 </script>
 <!-- ══ END NOTE EDITOR SEARCH ══ -->
+<!-- ===== NOTE EDITOR SEARCH (NES) v2 ===== -->
+<style>
+#nesBar{position:sticky;top:0;z-index:99999;display:none;background:#fff;border-bottom:2px solid #4c6ef5;padding:6px 8px;box-shadow:0 2px 8px rgba(0,0,0,.12);font-family:system-ui,-apple-system,sans-serif}
+#nesBar.show{display:block}
+#nesRow{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+#nesInput{flex:1;min-width:120px;padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:14px;outline:none}
+#nesInput:focus{border-color:#4c6ef5}
+.nesBtn{background:#f1f3f5;border:1px solid #ced4da;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:14px;min-width:36px}
+.nesBtn:hover{background:#e7f5ff}
+.nesBtn.primary{background:#4c6ef5;color:#fff;border-color:#4c6ef5}
+#nesCount{font-size:12px;color:#666;min-width:46px;text-align:center}
+#nesHist{display:none;max-height:160px;overflow-y:auto;background:#f8f9fa;border-top:1px solid #e9ecef;margin-top:6px;border-radius:6px}
+#nesHist.show{display:block}
+.nesHistItem{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border-bottom:1px solid #e9ecef;cursor:pointer;font-size:13px}
+.nesHistItem:hover{background:#e7f5ff}
+.nesHistDel{background:none;border:none;color:#e03131;cursor:pointer;font-size:16px;padding:0 4px}
+.nes-hl{background:#fff3bf;border-radius:2px}
+.nes-hl.active{background:#ffa94d;color:#000;outline:2px solid #f76707}
+#nesToggleBtn{position:fixed;bottom:80px;right:14px;z-index:99998;width:48px;height:48px;border-radius:50%;background:#4c6ef5;color:#fff;border:none;font-size:20px;box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer;display:none}
+#nesToggleBtn.show{display:flex;align-items:center;justify-content:center}
+</style>
+
+<button id="nesToggleBtn" title="Search in note (Ctrl+F)">🔍</button>
+
+<script>
+(function(){
+  'use strict';
+  var HKEY='nesSearchHistoryV1', MAX_HIST=30;
+  var state={matches:[],idx:-1,query:''};
+
+  // Devanagari -> Roman map (rule based, no AI)
+  var DEV2ROM={
+    'अ':'a','आ':'aa','इ':'i','ई':'ii','उ':'u','ऊ':'uu','ऋ':'ri','ए':'e','ऐ':'ai','ओ':'o','औ':'au',
+    'क':'k','ख':'kh','ग':'g','घ':'gh','ङ':'n',
+    'च':'ch','छ':'chh','ज':'j','झ':'jh','ञ':'n',
+    'ट':'t','ठ':'th','ड':'d','ढ':'dh','ण':'n',
+    'त':'t','थ':'th','द':'d','ध':'dh','न':'n',
+    'प':'p','फ':'ph','ब':'b','भ':'bh','म':'m',
+    'य':'y','र':'r','ल':'l','व':'v','श':'sh','ष':'sh','स':'s','ह':'h',
+    'ा':'a','ि':'i','ी':'i','ु':'u','ू':'u','ृ':'ri','े':'e','ै':'ai','ो':'o','ौ':'au',
+    'ं':'n','ः':'h','ँ':'n','्':'','़':'','ज़':'z','फ़':'f','ड़':'d','ढ़':'dh','क़':'q','ख़':'kh','ग़':'g'
+  };
+  function devToRom(s){
+    var out='';
+    for(var i=0;i<s.length;i++){
+      var c=s[i];
+      out += (DEV2ROM[c]!==undefined)?DEV2ROM[c]:c;
+    }
+    return out;
+  }
+  function normalize(s){
+    if(!s) return '';
+    s=s.toLowerCase();
+    s=devToRom(s);
+    // collapse common variants
+    s=s.replace(/aa+/g,'a').replace(/ee+/g,'i').replace(/ii+/g,'i')
+       .replace(/oo+/g,'u').replace(/uu+/g,'u')
+       .replace(/ph/g,'f').replace(/v/g,'w').replace(/w/g,'v')
+       .replace(/kh/g,'k').replace(/gh/g,'g').replace(/th/g,'t').replace(/dh/g,'d').replace(/bh/g,'b').replace(/sh/g,'s').replace(/ch/g,'c')
+       .replace(/[^a-z0-9]/g,'');
+    return s;
+  }
+
+  function getHist(){try{return JSON.parse(localStorage.getItem(HKEY)||'[]');}catch(e){return [];}}
+  function saveHist(q){
+    if(!q||!q.trim())return;
+    q=q.trim();
+    var h=getHist().filter(function(x){return x!==q;});
+    h.unshift(q);
+    if(h.length>MAX_HIST)h=h.slice(0,MAX_HIST);
+    localStorage.setItem(HKEY,JSON.stringify(h));
+  }
+  function delHist(q){
+    var h=getHist().filter(function(x){return x!==q;});
+    localStorage.setItem(HKEY,JSON.stringify(h));
+    renderHist();
+  }
+  function clearAllHist(){localStorage.setItem(HKEY,'[]');renderHist();}
+
+  function ensureBar(){
+    var area=document.getElementById('noteEditableArea');
+    if(!area) return null;
+    var bar=document.getElementById('nesBar');
+    if(bar) return bar;
+    bar=document.createElement('div');
+    bar.id='nesBar';
+    bar.innerHTML=
+      '<div id="nesRow">'+
+        '<input id="nesInput" placeholder="Search... (Hindi/English/Hinglish)" autocomplete="off"/>'+
+        '<span id="nesCount">0/0</span>'+
+        '<button class="nesBtn" id="nesPrev" title="Previous">▲</button>'+
+        '<button class="nesBtn" id="nesNext" title="Next">▼</button>'+
+        '<button class="nesBtn" id="nesHistBtn" title="History">🕘</button>'+
+        '<button class="nesBtn" id="nesClose" title="Close">✕</button>'+
+      '</div>'+
+      '<div id="nesHist"></div>';
+    // insert before editable area parent
+    var parent=area.parentNode;
+    parent.insertBefore(bar, area);
+    bindBar();
+    return bar;
+  }
+
+  function bindBar(){
+    var inp=document.getElementById('nesInput');
+    document.getElementById('nesNext').onclick=function(){nav(1);};
+    document.getElementById('nesPrev').onclick=function(){nav(-1);};
+    document.getElementById('nesClose').onclick=hide;
+    document.getElementById('nesHistBtn').onclick=function(){
+      var h=document.getElementById('nesHist');
+      h.classList.toggle('show');
+      if(h.classList.contains('show')) renderHist();
+    };
+    var deb;
+    inp.addEventListener('input',function(){
+      clearTimeout(deb);
+      deb=setTimeout(function(){doSearch(inp.value);},150);
+    });
+    inp.addEventListener('keydown',function(e){
+      if(e.key==='Enter'){
+        e.preventDefault();
+        if(state.query!==inp.value){doSearch(inp.value);}
+        saveHist(inp.value);
+        nav(e.shiftKey?-1:1);
+      } else if(e.key==='Escape'){hide();}
+    });
+  }
+
+  function renderHist(){
+    var box=document.getElementById('nesHist'); if(!box) return;
+    var h=getHist();
+    if(!h.length){box.innerHTML='<div class="nesHistItem" style="color:#999">No history yet</div>';return;}
+    var html=h.map(function(q){
+      var safe=q.replace(/</g,'&lt;').replace(/"/g,'&quot;');
+      return '<div class="nesHistItem" data-q="'+safe+'"><span>'+safe+'</span><button class="nesHistDel" data-del="'+safe+'">🗑</button></div>';
+    }).join('');
+    html+='<div style="padding:6px 10px;text-align:center"><button class="nesBtn" id="nesClearAll" style="color:#e03131">Clear all</button></div>';
+    box.innerHTML=html;
+    Array.prototype.forEach.call(box.querySelectorAll('.nesHistItem'),function(el){
+      el.onclick=function(e){
+        if(e.target.classList.contains('nesHistDel')){delHist(e.target.getAttribute('data-del'));return;}
+        var q=el.getAttribute('data-q');
+        document.getElementById('nesInput').value=q;
+        doSearch(q);
+        box.classList.remove('show');
+      };
+    });
+    var ca=document.getElementById('nesClearAll'); if(ca) ca.onclick=clearAllHist;
+  }
+
+  function clearHL(){
+    var area=document.getElementById('noteEditableArea'); if(!area) return;
+    var marks=area.querySelectorAll('mark.nes-hl');
+    Array.prototype.forEach.call(marks,function(m){
+      var p=m.parentNode;
+      while(m.firstChild) p.insertBefore(m.firstChild,m);
+      p.removeChild(m);
+      p.normalize&&p.normalize();
+    });
+  }
+
+  function doSearch(q){
+    clearHL();
+    state.matches=[]; state.idx=-1; state.query=q||'';
+    var area=document.getElementById('noteEditableArea');
+    if(!area||!q||!q.trim()){updateCount();return;}
+    var nq=normalize(q);
+    if(!nq){updateCount();return;}
+
+    // Walk text nodes
+    var walker=document.createTreeWalker(area,NodeFilter.SHOW_TEXT,{
+      acceptNode:function(n){
+        if(!n.nodeValue||!n.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        var p=n.parentNode;
+        if(p && (p.tagName==='SCRIPT'||p.tagName==='STYLE')) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    var nodes=[],n;
+    while((n=walker.nextNode())) nodes.push(n);
+
+    nodes.forEach(function(node){
+      var txt=node.nodeValue;
+      // Build mapping of original char index -> normalized index
+      var normParts=[]; var origIdx=[]; // for each normalized char, original index
+      for(var i=0;i<txt.length;i++){
+        var nc=normalize(txt[i]);
+        for(var k=0;k<nc.length;k++){ normParts.push(nc[k]); origIdx.push(i); }
+      }
+      var normStr=normParts.join('');
+      if(!normStr) return;
+      var ranges=[];
+      var pos=0;
+      while(true){
+        var f=normStr.indexOf(nq,pos);
+        if(f<0) break;
+        var startOrig=origIdx[f];
+        var endOrig=(f+nq.length-1 < origIdx.length)?origIdx[f+nq.length-1]+1:txt.length;
+        ranges.push([startOrig,endOrig]);
+        pos=f+Math.max(1,nq.length);
+      }
+      if(!ranges.length) return;
+      // Wrap from end to start
+      ranges.reverse();
+      ranges.forEach(function(r){
+        try{
+          var range=document.createRange();
+          range.setStart(node,r[0]);
+          range.setEnd(node,r[1]);
+          var mark=document.createElement('mark');
+          mark.className='nes-hl';
+          range.surroundContents(mark);
+          state.matches.unshift(mark);
+        }catch(e){}
+      });
+    });
+    if(state.matches.length){state.idx=0;activateMatch();}
+    updateCount();
+  }
+
+  function activateMatch(){
+    state.matches.forEach(function(m){m.classList.remove('active');});
+    var m=state.matches[state.idx]; if(!m) return;
+    m.classList.add('active');
+    try{m.scrollIntoView({behavior:'smooth',block:'center'});}catch(e){}
+    try{
+      var sel=window.getSelection(); sel.removeAllRanges();
+      var r=document.createRange(); r.selectNodeContents(m); sel.addRange(r);
+    }catch(e){}
+  }
+  function nav(dir){
+    if(!state.matches.length) return;
+    state.idx=(state.idx+dir+state.matches.length)%state.matches.length;
+    activateMatch();
+    updateCount();
+  }
+  function updateCount(){
+    var c=document.getElementById('nesCount'); if(!c) return;
+    c.textContent=(state.matches.length?(state.idx+1):0)+'/'+state.matches.length;
+  }
+
+  function show(){
+    var bar=ensureBar(); if(!bar) return;
+    bar.classList.add('show');
+    setTimeout(function(){var i=document.getElementById('nesInput'); if(i){i.focus();i.select();}},50);
+  }
+  function hide(){
+    var bar=document.getElementById('nesBar'); if(bar) bar.classList.remove('show');
+    var h=document.getElementById('nesHist'); if(h) h.classList.remove('show');
+    clearHL(); state.matches=[]; state.idx=-1;
+  }
+
+  // Toggle button management
+  function showToggle(){var b=document.getElementById('nesToggleBtn'); if(b) b.classList.add('show');}
+  function hideToggle(){var b=document.getElementById('nesToggleBtn'); if(b) b.classList.remove('show'); hide();}
+
+  document.addEventListener('DOMContentLoaded',function(){
+    var btn=document.getElementById('nesToggleBtn');
+    if(btn) btn.onclick=show;
+  });
+
+  // Hook into editor open/close
+  var _origOpen=window.openNotesEditor;
+  if(typeof _origOpen==='function'){
+    window.openNotesEditor=function(){
+      var r=_origOpen.apply(this,arguments);
+      setTimeout(function(){ensureBar();showToggle();},300);
+      return r;
+    };
+  }
+  var _origClose=window.closeNotesEditor;
+  if(typeof _origClose==='function'){
+    window.closeNotesEditor=function(){
+      hideToggle();
+      return _origClose.apply(this,arguments);
+    };
+  }
+
+  // Ctrl+F / Cmd+F shortcut when editor open
+  document.addEventListener('keydown',function(e){
+    var area=document.getElementById('noteEditableArea');
+    var modal=document.getElementById('notesEditorModal');
+    var open=modal && (modal.style.display==='flex'||modal.style.display==='block'||modal.classList.contains('show'));
+    if(open && (e.ctrlKey||e.metaKey) && (e.key==='f'||e.key==='F')){
+      e.preventDefault(); show();
+    }
+  });
+
+  // Fallback: also poll for editor opening (in case hook miss)
+  setInterval(function(){
+    var modal=document.getElementById('notesEditorModal');
+    if(!modal) return;
+    var open=modal.style.display==='flex'||modal.style.display==='block';
+    var btn=document.getElementById('nesToggleBtn');
+    if(open){ if(btn && !btn.classList.contains('show')) btn.classList.add('show'); }
+    else   { if(btn && btn.classList.contains('show')) {btn.classList.remove('show'); hide();} }
+  },800);
+
+})();
+</script>
+<!-- ===== /NES ===== -->
+
 </body>
 </html>
