@@ -5943,6 +5943,9 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         style="width:36px;height:36px;border-radius:10px;border:1.5px solid rgba(21,101,192,0.4);background:rgba(21,101,192,0.08);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;font-size:1rem;box-shadow:0 2px 8px rgba(0,0,0,0.07);">🌐</button>
       <!-- AI Enhance Button in side panel -->
       <button id="neSidePanelAiBtn" onclick="openAiEnhancePanel()" title="✨ AI se Notes Enhance karo">✨</button>
+      <!-- 🔍 Search in note (find/highlight + prev/next nav) -->
+      <button onclick="neToggleSearchBar()" title="🔍 Note me text search karo (Ctrl+F)"
+        style="width:36px;height:36px;border-radius:10px;border:1.5px solid rgba(21,101,192,0.4);background:rgba(21,101,192,0.08);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;font-size:1rem;color:var(--accent);box-shadow:0 2px 8px rgba(0,0,0,0.07);">🔍</button>
       <!-- Hidden file input for editor image insert -->
       <input type="file" id="neImageFileInput" accept=".jpg,.jpeg,.png,.gif,.webp,.svg" multiple style="display:none;" onchange="neHandleImageInsert(this)">
 
@@ -5962,6 +5965,17 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <!-- Progress bar -->
     <div style="height:2px;background:var(--bg2);flex-shrink:0;">
       <div id="neProgressFill" style="height:100%;background:var(--accent);width:0%;transition:width 0.15s;"></div>
+    </div>
+
+    <!-- 🔍 Find-in-note search bar (toggle from side panel 🔍 button) -->
+    <div id="neSearchBar" style="display:none;position:sticky;top:0;z-index:200;background:linear-gradient(135deg,rgba(21,101,192,0.12),rgba(21,101,192,0.04));border-bottom:1.5px solid rgba(21,101,192,0.25);padding:6px 10px;align-items:center;gap:6px;flex-wrap:wrap;backdrop-filter:blur(8px);">
+      <span style="font-size:0.95rem;color:var(--accent);">🔍</span>
+      <input type="text" id="neSearchInput" placeholder="Note me dhundo..." oninput="neRunSearch()" onkeydown="neSearchKeydown(event)" style="flex:1;min-width:140px;padding:6px 10px;border-radius:8px;border:1.5px solid rgba(21,101,192,0.3);font-size:0.85rem;background:#fff;color:var(--text);outline:none;" />
+      <span id="neSearchCount" style="font-size:0.72rem;color:var(--text2);font-weight:700;min-width:55px;text-align:center;">0 / 0</span>
+      <button onclick="neSearchPrev()" title="Pichla" style="width:28px;height:28px;border-radius:7px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:0.85rem;font-weight:800;">↑</button>
+      <button onclick="neSearchNext()" title="Agla" style="width:28px;height:28px;border-radius:7px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:0.85rem;font-weight:800;">↓</button>
+      <label style="font-size:0.7rem;color:var(--text2);font-weight:700;display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" id="neSearchCase" onchange="neRunSearch()" style="margin:0;"/>Aa</label>
+      <button onclick="neToggleSearchBar()" title="Band karo" style="width:28px;height:28px;border-radius:7px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:0.8rem;color:#c62828;font-weight:800;">✕</button>
     </div>
 
     <!-- BODY -->
@@ -6997,6 +7011,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 
     // Sirf downward swipe block karo (dy > 0 = neeche finger ja raha)
     if(dy <= 0) return;
+    // FIX: small jitter ko ignore karo — warna single-finger scroll break hota hai
+    if(dy < 24) return;
 
     // Find the actual scrollable element under the touch
     var el = e.target;
@@ -7004,7 +7020,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     while(el && el !== document.body) {
       var style = window.getComputedStyle(el);
       var overflow = style.overflowY || style.overflow;
-      if(overflow === 'auto' || overflow === 'scroll') {
+      if((overflow === 'auto' || overflow === 'scroll') && el.scrollHeight > el.clientHeight) {
         scrollable = el;
         break;
       }
@@ -7013,6 +7029,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 
     // Agar koi scrollable container hai aur woh top par nahi hai -- allow karo
     if(scrollable && scrollable.scrollTop > 0) return;
+    // Agar koi sahi scrollable mila hi nahi (sab non-scrollable), block mat karo
+    if(!scrollable) return;
 
     // Agar top par hai aur neeche swipe -- yeh PTR hoga, block karo
     if(e.cancelable) {
@@ -10452,6 +10470,73 @@ function quizToggleInsight(idx){
   }
 }
 
+// ── INSIGHT EDIT / SAVE / CANCEL ─────────────────────────────────
+// User Edit dabakar insight ko correct kar sakta hai aur Save kar sakta hai.
+// Saved version cache (localStorage) me jata hai, agli baar wahi load hoga.
+function quizInsightEdit(idx){
+  var bodyEl=document.getElementById('quizInsightBody-'+idx);
+  if(!bodyEl) return;
+  // Snapshot original for cancel
+  bodyEl.dataset.snapshot = bodyEl.innerHTML;
+  bodyEl.contentEditable = 'true';
+  bodyEl.style.outline = '2px dashed var(--teal)';
+  bodyEl.style.background = 'rgba(0,150,136,0.04)';
+  bodyEl.style.padding = '8px';
+  bodyEl.style.borderRadius = '8px';
+  bodyEl.focus();
+  var eb=document.getElementById('quizInsightEditBtn-'+idx);
+  var sb=document.getElementById('quizInsightSaveBtn-'+idx);
+  var cb=document.getElementById('quizInsightCancelBtn-'+idx);
+  if(eb) eb.style.display='none';
+  if(sb) sb.style.display='inline-block';
+  if(cb) cb.style.display='inline-block';
+}
+function quizInsightCancel(idx){
+  var bodyEl=document.getElementById('quizInsightBody-'+idx);
+  if(!bodyEl) return;
+  if(bodyEl.dataset.snapshot != null) bodyEl.innerHTML = bodyEl.dataset.snapshot;
+  _quizInsightExitEdit(idx, bodyEl);
+}
+function quizInsightSave(idx){
+  var cq=window._cq; if(!cq) return;
+  var q=cq.questions[idx]; if(!q) return;
+  var bodyEl=document.getElementById('quizInsightBody-'+idx);
+  if(!bodyEl) return;
+  var html=bodyEl.innerHTML.trim();
+  if(!html){ showToast('Khali insight save nahi ho sakti','error'); return; }
+  q.insightHTML = html;
+  // Cache me bhi update karo — taaki dobara generate na ho
+  try{
+    if(typeof _quizReadInsightCache==='function' && typeof _quizWriteInsightCache==='function' && typeof _quizInsightFactKey==='function'){
+      var cache=_quizReadInsightCache();
+      cache[_quizInsightFactKey(q)] = html;
+      _quizWriteInsightCache(cache);
+    }
+  }catch(e){ console.warn('insight cache write fail', e); }
+  // Vault me bhi sync (history me dikhane ke liye)
+  try{
+    var key2=makeQKey(q.question);
+    if(typeof updateVaultQFlag==='function') updateVaultQFlag(key2,'insightHTML',html);
+  }catch(e){}
+  if(typeof save==='function') save();
+  _quizInsightExitEdit(idx, bodyEl);
+  showToast('Insight save ho gaya ✓','success');
+}
+function _quizInsightExitEdit(idx, bodyEl){
+  bodyEl.contentEditable = 'false';
+  bodyEl.style.outline = '';
+  bodyEl.style.background = '';
+  bodyEl.style.padding = '';
+  bodyEl.style.borderRadius = '';
+  delete bodyEl.dataset.snapshot;
+  var eb=document.getElementById('quizInsightEditBtn-'+idx);
+  var sb=document.getElementById('quizInsightSaveBtn-'+idx);
+  var cb=document.getElementById('quizInsightCancelBtn-'+idx);
+  if(eb) eb.style.display='inline-block';
+  if(sb) sb.style.display='none';
+  if(cb) cb.style.display='none';
+}
+
 async function startQuiz(){
   if(!S.apiKey){showToast('Pehle API Key daalo!','error');return;}
   const sid=document.getElementById('quizSubject').value;
@@ -10797,7 +10882,14 @@ function showQ(idx){
       <div style="margin-top:10px;">
         <button class="btn btn-outline btn-sm" style="font-size:0.78rem;padding:6px 12px;border-radius:8px;" onclick="quizToggleInsight(${idx})">💡 Textbook-Style Insight ${q.insightHTML?'dekho':'(load karo)'}</button>
         <div id="quizInsightBox-${idx}" style="display:none;margin-top:10px;padding:14px 16px;background:linear-gradient(135deg,rgba(0,105,92,0.09),rgba(0,150,136,0.03));border-radius:12px;border-left:5px solid var(--teal);box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-          <div style="font-size:0.78rem;font-weight:800;color:var(--teal);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">🔎 Exam Insight — Key Points + Related Facts</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:6px;flex-wrap:wrap;">
+            <div style="font-size:0.78rem;font-weight:800;color:var(--teal);text-transform:uppercase;letter-spacing:0.8px;">🔎 Exam Insight — Key Points + Related Facts</div>
+            <div id="quizInsightTools-${idx}" style="display:flex;gap:5px;">
+              <button class="btn btn-xs btn-outline" id="quizInsightEditBtn-${idx}" onclick="quizInsightEdit(${idx})" style="font-size:0.66rem;padding:3px 8px;">✏️ Edit</button>
+              <button class="btn btn-xs btn-primary" id="quizInsightSaveBtn-${idx}" onclick="quizInsightSave(${idx})" style="display:none;font-size:0.66rem;padding:3px 8px;">💾 Save</button>
+              <button class="btn btn-xs btn-outline" id="quizInsightCancelBtn-${idx}" onclick="quizInsightCancel(${idx})" style="display:none;font-size:0.66rem;padding:3px 8px;">✖ Cancel</button>
+            </div>
+          </div>
           <div id="quizInsightBody-${idx}" class="tgp-insight-body" data-loaded="${q.insightHTML?'1':'0'}" style="color:var(--text);font-size:0.92rem;line-height:1.95;font-weight:450;">${q.insightHTML||'<em style="color:var(--text2);">Click karo to load…</em>'}</div>
         </div>
       </div>`:''}
@@ -10871,7 +10963,14 @@ function selOpt(sel){
         wrap.innerHTML =
           '<button class="btn btn-outline btn-sm" style="font-size:0.78rem;padding:6px 12px;border-radius:8px;" onclick="quizToggleInsight('+idx+')">💡 Textbook-Style Insight '+(hasInsight?'dekho':'(load karo)')+'</button>'+
           '<div id="quizInsightBox-'+idx+'" style="display:none;margin-top:10px;padding:14px 16px;background:linear-gradient(135deg,rgba(0,105,92,0.09),rgba(0,150,136,0.03));border-radius:12px;border-left:5px solid var(--teal);box-shadow:0 1px 3px rgba(0,0,0,0.04);">'+
-            '<div style="font-size:0.78rem;font-weight:800;color:var(--teal);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">🔎 Exam Insight — Key Points + Related Facts</div>'+
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:6px;flex-wrap:wrap;">'+
+              '<div style="font-size:0.78rem;font-weight:800;color:var(--teal);text-transform:uppercase;letter-spacing:0.8px;">🔎 Exam Insight — Key Points + Related Facts</div>'+
+              '<div id="quizInsightTools-'+idx+'" style="display:flex;gap:5px;">'+
+                '<button class="btn btn-xs btn-outline" id="quizInsightEditBtn-'+idx+'" onclick="quizInsightEdit('+idx+')" style="font-size:0.66rem;padding:3px 8px;">✏️ Edit</button>'+
+                '<button class="btn btn-xs btn-primary" id="quizInsightSaveBtn-'+idx+'" onclick="quizInsightSave('+idx+')" style="display:none;font-size:0.66rem;padding:3px 8px;">💾 Save</button>'+
+                '<button class="btn btn-xs btn-outline" id="quizInsightCancelBtn-'+idx+'" onclick="quizInsightCancel('+idx+')" style="display:none;font-size:0.66rem;padding:3px 8px;">✖ Cancel</button>'+
+              '</div>'+
+            '</div>'+
             '<div id="quizInsightBody-'+idx+'" class="tgp-insight-body" data-loaded="'+(hasInsight?'1':'0')+'" style="color:var(--text);font-size:0.92rem;line-height:1.95;font-weight:450;">'+(q.insightHTML||'<em style="color:var(--text2);">Click karo to load…</em>')+'</div>'+
           '</div>';
         explEl.parentNode.insertBefore(wrap, explEl.nextSibling);
@@ -10950,7 +11049,31 @@ function showResults(){
   const msg=pct>=80?'🏆 Excellent!':pct>=60?'👍 Achha!':pct>=40?'📚 Practice karo':'💪 Weak topics dobara padho';
   document.getElementById('resultMsg').textContent=`${pct}% -- ${msg}`;
   const entry={id:cq.qid,date:new Date().toLocaleDateString('hi-IN'),time:new Date().toLocaleTimeString('hi-IN',{hour:'2-digit',minute:'2-digit'}),examId:cq.examId,examName:cq.examName||'Free Mode',label:cq.label,score,total:tot,pct,questions:cq.questions,sid:cq.sid,secid:cq.secid,tid:cq.tid,qtype:cq.qtype};
-  S.quizHistory.unshift(entry); if(S.quizHistory.length>60)S.quizHistory=S.quizHistory.slice(0,60);
+  // Re-attempt: overwrite original entry instead of creating a new one
+  if(cq._reattemptOf){
+    const existIdx = S.quizHistory.findIndex(h => h.id === cq._reattemptOf);
+    if(existIdx >= 0){
+      // Preserve original date/time but mark a re-attempt counter
+      const orig = S.quizHistory[existIdx];
+      entry.id = orig.id;
+      entry.label = orig.label; // keep original label
+      entry.firstDate = orig.firstDate || orig.date;
+      entry.firstTime = orig.firstTime || orig.time;
+      entry.attemptCount = (orig.attemptCount || 1) + 1;
+      entry.lastDate = entry.date;
+      entry.lastTime = entry.time;
+      S.quizHistory.splice(existIdx, 1, entry);
+      // Move updated entry to top
+      const updated = S.quizHistory.splice(existIdx, 1)[0];
+      S.quizHistory.unshift(updated);
+      if(S.quizHistory.length>60)S.quizHistory=S.quizHistory.slice(0,60);
+      showToast('Re-attempt save ho gaya — purana overwrite ✓','success');
+    } else {
+      S.quizHistory.unshift(entry); if(S.quizHistory.length>60)S.quizHistory=S.quizHistory.slice(0,60);
+    }
+  } else {
+    S.quizHistory.unshift(entry); if(S.quizHistory.length>60)S.quizHistory=S.quizHistory.slice(0,60);
+  }
   trackActivity('quiz', { label: entry.label, pct: entry.pct, score: entry.score, total: entry.total });
   // Clear paused quiz since this one is done
   if(S.pausedQuiz&&S.pausedQuiz.cq&&S.pausedQuiz.cq.qid===cq.qid){S.pausedQuiz=null;}
@@ -11172,10 +11295,13 @@ function reAttemptQuiz(qid, shuffleQ, shuffleOpts) {
   window._cq = {
     questions: qs,
     current:0, score:0,
-    label: original.label + ' (Re-attempt)',
+    label: original.label,
     examId: original.examId, examName: original.examName,
-    qid: 'q_' + Date.now(),
-    sid: original.sid||'all', secid: original.secid||'all', tid: original.tid||'all'
+    qid: original.id,
+    _reattemptOf: original.id,
+    _origLabel: original.label,
+    sid: original.sid||'all', secid: original.secid||'all', tid: original.tid||'all',
+    qtype: original.qtype
   };
   showPage('quiz', document.querySelector('[data-page=quiz]'));
   closeModal('quizDetailModal');
@@ -12098,11 +12224,11 @@ function renderHistory(){
   const dateOrder=document.getElementById('histFilterDate')?.value||'new';
   const progressSort=document.getElementById('histFilterProgress')?.value||'none';
 
-  // Filter
+  // Filter (FIX: ek-saath sab filters apply ho — pehle sirf pehla filter chalta tha)
   let list=S.quizHistory.filter(h=>{
-    if(tid!=='all') return h.tid==tid;
-    if(secid!=='all') return h.secid==secid;
-    if(sid!=='all') return h.sid==sid;
+    if(sid!=='all'  && String(h.sid)   !== String(sid))   return false;
+    if(secid!=='all'&& String(h.secid) !== String(secid)) return false;
+    if(tid!=='all'  && String(h.tid)   !== String(tid))   return false;
     return true;
   });
 
@@ -12163,9 +12289,9 @@ function showDetail(qid){
         <div style="font-size:0.72rem;color:var(--text2);margin-top:2px;">💡 ${q.explanation||''}</div>
       </div>
       <div class="res-q-actions">
-        <button class="btn btn-xs btn-outline" onclick="markResQ('${h.id}',${qi},'easy');showDetail('${h.id}')">😊 Easy</button>
-        <button class="btn btn-xs btn-outline" onclick="markResQ('${h.id}',${qi},'tough');showDetail('${h.id}')">😓 Tough</button>
-        <button class="btn btn-xs btn-outline" onclick="markResQ('${h.id}',${qi},'doubt');showDetail('${h.id}')">🤔 Doubt</button>
+        <button class="btn btn-xs btn-outline" onclick="markResQInPlace('${h.id}',${qi},'easy',this)">😊 Easy</button>
+        <button class="btn btn-xs btn-outline" onclick="markResQInPlace('${h.id}',${qi},'tough',this)">😓 Tough</button>
+        <button class="btn btn-xs btn-outline" onclick="markResQInPlace('${h.id}',${qi},'doubt',this)">🤔 Doubt</button>
         <button class="save-status-btn ${isSaved?'saved':'unsaved'}" onclick="toggleResultSave('${h.id}',${qi},'${qKey}',this)">${isSaved?'📌 Saved ✓':'📌 Save'}</button>
         <button class="wrong-status-btn ${isWronged?'wronged':'not-wronged'}" onclick="toggleResultWrong('${h.id}',${qi},'${qKey}',this)">${isWronged?'✓ Wronged':'❌ Mark'}</button>
         <button class="btn btn-xs" style="background:rgba(21,101,192,0.1);color:var(--accent);border:1px solid rgba(21,101,192,0.2);border-radius:8px;" onclick="openAiChatQuestion('${q.question.replace(/'/g,"\\'").replace(/\n/g,' ')}','${(q.options[q.correct]||'').replace(/'/g,"\\'")}','${(q.explanation||'').replace(/'/g,"\\'").substring(0,100).replace(/\n/g,' ')}')">🤖 Chat</button>
@@ -12210,6 +12336,35 @@ function toggleAllHistModalAns(btn){
   allAns.forEach(el=>{if(allHidden)el.classList.remove('ans-hidden-block');else el.classList.add('ans-hidden-block');});
   btn.textContent=allHidden?'🙈 Sab Chhupao':'👁️ Sab Dikhao';
   if(allHidden)btn.classList.remove('hiding'); else btn.classList.add('hiding');
+}
+
+// FIX: Easy/Tough/Doubt mark karne pr poora modal re-render mat karo —
+// taaki "Sab Chhupao" wali state break na ho. Sirf affected card update karo.
+function markResQInPlace(qid, qi, type, btn){
+  // Save the change in state
+  if(typeof markResQ==='function') markResQ(qid, qi, type);
+  const h = S.quizHistory.find(x=>x.id===qid);
+  if(!h) return;
+  const q = h.questions[qi];
+  // Update tags inline (find the title block)
+  const card = btn.closest('.res-q-card');
+  if(!card) return;
+  const titleDiv = card.querySelector('div[style*="font-weight:700"]');
+  if(titleDiv){
+    // Strip existing tag spans
+    titleDiv.querySelectorAll('.tough-tag,.easy-tag,.doubtful-tag').forEach(s=>s.remove());
+    if(q.difficulty==='tough'){
+      const s=document.createElement('span'); s.className='tough-tag'; s.innerHTML='🔴 Tough'; titleDiv.appendChild(s);
+    } else if(q.difficulty==='easy'){
+      const s=document.createElement('span'); s.className='easy-tag'; s.innerHTML='✅ Easy'; titleDiv.appendChild(s);
+    }
+    if(q.isDoubtful){
+      const s=document.createElement('span'); s.className='doubtful-tag'; s.innerHTML='🤔 Doubtful'; titleDiv.appendChild(s);
+    }
+  }
+  // Subtle pulse on the clicked button
+  btn.style.transform='scale(1.08)';
+  setTimeout(()=>{ btn.style.transform=''; }, 160);
 }
 
 // ==================== STATS ====================
@@ -12982,28 +13137,147 @@ function _showContextPastChats(contextType, tid, sid, secid) {
   });
 }
 
+// Per-question session ID — same question = same chat thread (overwrite, not duplicate)
+function _questionContextKey(question){
+  // Stable hash so same question always maps to same key
+  var s = String(question||'').trim().toLowerCase().replace(/\s+/g,' ');
+  var h = 5381;
+  for(var i=0; i<s.length; i++) h = ((h<<5)+h + s.charCodeAt(i))|0;
+  return 'qchat_' + (h>>>0).toString(36);
+}
 function openAiChatQuestion(question,correctAns,explanation){
   if(!S.apiKey){showToast('Pehle API Key daalo!','error');return;}
-  _aiChatHistory=[];
-  _aiChatContext={type:'question',question,correctAns,explanation};
+  var contextKey = _questionContextKey(question);
+  _aiChatContext={type:'question',question,correctAns,explanation,contextKey:contextKey,_useWebSearch:false};
+
+  // Try to restore previous session for THIS question
+  var prevSession = null;
+  if(S.aiChatSessions && S.aiChatSessions.length){
+    prevSession = S.aiChatSessions.find(function(s){ return s.contextKey === contextKey; });
+  }
+  if(prevSession){
+    _aiChatHistory = prevSession.messages ? prevSession.messages.slice() : [];
+    _aiChatSessionId = prevSession.id;
+  } else {
+    _aiChatHistory = [];
+    _aiChatSessionId = null;
+  }
+
   document.getElementById('aiChatContext').textContent=`❓ Q: ${question.substring(0,55)}...`;
-  document.getElementById('aiChatMessages').innerHTML=`
-    <div class="ai-msg bot">Is question ke baare mein kuchh bhi puchho! 🤖</div>
+  var msgsEl = document.getElementById('aiChatMessages');
+  msgsEl.innerHTML = `
     <div class="ai-msg bot" style="background:rgba(46,125,50,0.07);border-color:rgba(46,125,50,0.2);">
       <strong>Q:</strong> ${question}<br>
       <strong style="color:var(--green);">✅ Sahi:</strong> ${correctAns}${explanation?`<br><strong>💡</strong> ${explanation}`:''}
     </div>`;
+  if(_aiChatHistory.length){
+    // Replay saved conversation
+    _aiChatHistory.forEach(function(m){
+      var div = document.createElement('div');
+      div.className = 'ai-msg ' + (m.role==='user'?'user':'bot');
+      div.innerHTML = (m.text||'').replace(/\n/g,'<br>');
+      msgsEl.appendChild(div);
+    });
+    var info = document.createElement('div');
+    info.className='ai-msg bot';
+    info.style.cssText='background:rgba(255,193,7,0.08);border-color:rgba(255,193,7,0.3);font-size:0.78rem;';
+    info.innerHTML = '🔄 Pichli baatcheet load ho gayi (' + _aiChatHistory.filter(function(m){return m.role==='user';}).length + ' messages). Continue karo ya naya chat shuru karne ke liye 🆕 New dabao.';
+    msgsEl.appendChild(info);
+  } else {
+    var greet = document.createElement('div');
+    greet.className='ai-msg bot';
+    greet.innerHTML='Is question ke baare mein kuchh bhi puchho! 🤖';
+    msgsEl.appendChild(greet);
+  }
+
   const sugs=['Iska detail explanation do','Is topic ke related aur facts batao','Web se latest jankari do','Exam mein kaise poochha ja sakta hai?'];
-  document.getElementById('aiChatSuggestions').innerHTML=sugs.map(s=>`<button class="ai-chat-sug" onclick="useSuggestion('${s}')">${s}</button>`).join('');
+  var sugsHTML = sugs.map(s=>`<button class="ai-chat-sug" onclick="useSuggestion('${s}')">${s}</button>`).join('');
+  // Web search toggle + New chat button
+  sugsHTML = '<button class="ai-chat-sug" id="qchatWebToggle" onclick="qchatToggleWebSearch(this)" title="Serper API se live web data fetch karo" style="background:rgba(21,101,192,0.06);">🌐 Web Search OFF</button>'+
+             '<button class="ai-chat-sug" onclick="qchatNewSession()" style="background:rgba(230,81,0,0.07);border-color:rgba(230,81,0,0.25);color:var(--accent2);">🆕 New chat</button>'+
+             sugsHTML;
+  document.getElementById('aiChatSuggestions').innerHTML=sugsHTML;
+
   document.getElementById('aiChatOverlay').classList.add('show');
+  // Back button support — pushState taaki Android back se chat band ho
+  try{
+    if(!history.state || history.state.aiChat !== true){
+      history.pushState({aiChat:true}, '', location.href);
+    }
+    if(!window._aiChatPopHandlerAttached){
+      window._aiChatPopHandlerAttached = true;
+      window.addEventListener('popstate', function(){
+        var ov = document.getElementById('aiChatOverlay');
+        if(ov && ov.classList.contains('show')){
+          // Mark as popping so closeAiChat doesn't try to history.back() again
+          window._aiChatPopping = true;
+          closeAiChat();
+          setTimeout(function(){ window._aiChatPopping = false; }, 80);
+        }
+      });
+    }
+  }catch(_){}
   setTimeout(()=>document.getElementById('aiChatInput').focus(),300);
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+}
+
+// Web Search toggle for question chat
+function qchatToggleWebSearch(btn){
+  if(!_aiChatContext) return;
+  if(!S.serperKey){
+    showToast('Pehle Settings me Serper API key daalo!','error');
+    return;
+  }
+  _aiChatContext._useWebSearch = !_aiChatContext._useWebSearch;
+  if(_aiChatContext._useWebSearch){
+    btn.innerHTML='🌐 Web Search ON';
+    btn.style.background='rgba(46,125,50,0.15)';
+    btn.style.borderColor='rgba(46,125,50,0.4)';
+    btn.style.color='var(--green)';
+    showToast('Web search ON — questions me live data milega','success');
+  } else {
+    btn.innerHTML='🌐 Web Search OFF';
+    btn.style.background='rgba(21,101,192,0.06)';
+    btn.style.borderColor='';
+    btn.style.color='';
+  }
+}
+
+// Naya chat shuru karo (same question ke liye purana keep raho)
+function qchatNewSession(){
+  if(!_aiChatContext || _aiChatContext.type!=='question') return;
+  if(_aiChatHistory.length && !confirm('Pichli baatcheet remove hokar naya chat start ho jayega. Sure?')) return;
+  var ctx = _aiChatContext;
+  // Delete old session for this contextKey from saved sessions
+  if(S.aiChatSessions && ctx.contextKey){
+    S.aiChatSessions = S.aiChatSessions.filter(function(s){ return s.contextKey !== ctx.contextKey; });
+    save();
+  }
+  _aiChatHistory=[];
+  _aiChatSessionId=null;
+  // Reload UI
+  openAiChatQuestion(ctx.question, ctx.correctAns, ctx.explanation);
 }
 
 function openAiChatStats(){openAiChat('stats','Meri Progress',null,null,null);}
 function useSuggestion(text){document.getElementById('aiChatInput').value=text;sendAiChat();}
 function closeAiChat(){
-  document.getElementById('aiChatOverlay').classList.remove('show');
-  document.getElementById('aiChatOverlay').classList.remove('canvas-alongside');
+  var ov = document.getElementById('aiChatOverlay');
+  var wasOpen = ov && ov.classList.contains('show');
+  if(ov){
+    ov.classList.remove('show');
+    ov.classList.remove('canvas-alongside');
+  }
+  // Agar manually band kiya gaya (back button se nahi) to history state pop karo
+  if(wasOpen){
+    try{
+      if(history.state && history.state.aiChat === true && !window._aiChatPopping){
+        window._aiChatPopping = true;
+        history.back();
+        setTimeout(function(){ window._aiChatPopping = false; }, 80);
+      }
+    }catch(_){}
+  }
   // Canvas band nahi karo — user canvas use karta rehta hai
 }
 
@@ -13043,15 +13317,20 @@ function _saveAiChatSession() {
 
   const ctx = _aiChatContext;
   const sessionId = _aiChatSessionId || (_aiChatSessionId = 'acs_' + Date.now());
-  const title = ctx ? (ctx.name || 'AI Chat') : 'AI Chat';
+  // For question chats use the question text as the title for easy lookup
+  const title = ctx ? (ctx.type==='question' && ctx.question ? ('Q: '+ctx.question.substring(0,60)) : (ctx.name || 'AI Chat')) : 'AI Chat';
   const date = new Date().toLocaleDateString('hi-IN');
   // contextKey: unique identifier for this context (topic/section/question etc.)
-  const contextKey = ctx ? [ctx.type, ctx.tid, ctx.sid, ctx.secid].filter(Boolean).join('_') : 'general';
+  // For question chats prefer the stable per-question hash so re-opens find the right thread
+  const contextKey = (ctx && ctx.contextKey) ? ctx.contextKey
+                   : (ctx ? [ctx.type, ctx.tid, ctx.sid, ctx.secid].filter(Boolean).join('_') : 'general');
 
   const existing = S.aiChatSessions.find(s => s.id === sessionId);
   if(existing) {
     existing.messages = _aiChatHistory.slice();
     existing.lastUpdated = date;
+    existing.contextKey = contextKey; // keep up to date
+    existing.title = title.substring(0,50);
   } else {
     S.aiChatSessions.unshift({
       id: sessionId,
@@ -13120,6 +13399,36 @@ async function sendAiChat(){
   }
   const wantsWeb=/(web|latest|nayi|recent|2024|2025|aaj|news)/i.test(userMsg);
   if(wantsWeb)ctx+='\nUser web se nayi information chahta hai -- apni knowledge se relevant facts clearly do.';
+
+  // 🌐 SERPER LIVE WEB SEARCH — agar question chat me Web Search ON hai, real-time data fetch karo
+  var _doWebFetch = false;
+  if(_aiChatContext && _aiChatContext._useWebSearch && S.serperKey && typeof aeSerperSearch === 'function'){
+    _doWebFetch = true;
+  } else if(wantsWeb && S.serperKey && typeof aeSerperSearch === 'function' && _aiChatContext && _aiChatContext.type==='question'){
+    // Auto-trigger if user clearly asks for latest data
+    _doWebFetch = true;
+  }
+  if(_doWebFetch){
+    try{
+      var query = userMsg;
+      if(_aiChatContext && _aiChatContext.type==='question' && _aiChatContext.question){
+        query = userMsg + ' — ' + _aiChatContext.question.substring(0,100);
+      }
+      addChatMsg('bot','🌐 Web par search kar raha hoon...', 'qchat-web-loading');
+      var results = await aeSerperSearch(query);
+      var loadingEl = document.getElementById('qchat-web-loading');
+      if(loadingEl) loadingEl.remove();
+      if(results && results.length){
+        var webBlock = '\n\n=== LIVE WEB SEARCH RESULTS (Serper API) ===\n';
+        results.slice(0,6).forEach(function(r,i){
+          webBlock += (i+1) + '. ' + (r.title||'') + '\n   ' + (r.snippet||'').substring(0,250) + '\n';
+          if(r.link) webBlock += '   Source: ' + r.link + '\n';
+        });
+        webBlock += '=== END WEB RESULTS ===\nIn results ka use karke sahi factual answer do. Sources cite karo jahan zaroori ho.';
+        ctx += webBlock;
+      }
+    }catch(_we){ console.warn('serper search fail', _we); }
+  }
 
   // Build messages array
   const msgs=[{role:'system',content:ctx},..._aiChatHistory.slice(-6).map(m=>({role:m.role==='user'?'user':'assistant',content:m.text})),{role:'user',content:userMsg}];
@@ -18326,6 +18635,148 @@ function neToggleSidePanel() {
   _neSidePanelOpen = !_neSidePanelOpen;
   var sp = document.getElementById('neSidePanel');
   if(sp) sp.style.display = _neSidePanelOpen ? 'flex' : 'none';
+}
+
+// ==================== 🔍 NOTE FIND-IN-PAGE ====================
+// Highlight matching text in the editor and let user navigate prev/next.
+// Edits ke time matlab khud hi clear ho jate hain (replaceAllRanges via DOM).
+var _neSearchState = { matches: [], current: -1, query: '', caseSensitive: false };
+
+function neToggleSearchBar(){
+  var bar = document.getElementById('neSearchBar');
+  if(!bar) return;
+  var open = bar.style.display === 'flex';
+  if(open){
+    bar.style.display = 'none';
+    neSearchClear();
+  } else {
+    bar.style.display = 'flex';
+    var inp = document.getElementById('neSearchInput');
+    if(inp){ inp.focus(); inp.select(); }
+  }
+}
+function neSearchKeydown(e){
+  if(e.key === 'Enter'){
+    e.preventDefault();
+    if(e.shiftKey) neSearchPrev(); else neSearchNext();
+  } else if(e.key === 'Escape'){
+    neToggleSearchBar();
+  }
+}
+function neSearchClear(){
+  // Remove all <mark class="ne-find-mark"> wrappers
+  var area = document.getElementById('noteEditableArea');
+  if(!area) return;
+  var marks = area.querySelectorAll('mark.ne-find-mark');
+  marks.forEach(function(m){
+    var parent = m.parentNode;
+    while(m.firstChild) parent.insertBefore(m.firstChild, m);
+    parent.removeChild(m);
+    parent.normalize && parent.normalize();
+  });
+  _neSearchState = { matches: [], current: -1, query: '', caseSensitive: false };
+  var c = document.getElementById('neSearchCount');
+  if(c) c.textContent = '0 / 0';
+}
+function neRunSearch(){
+  var inp = document.getElementById('neSearchInput');
+  var caseEl = document.getElementById('neSearchCase');
+  var area = document.getElementById('noteEditableArea');
+  if(!inp || !area) return;
+  // Pehle purane marks clear karo
+  var oldMarks = area.querySelectorAll('mark.ne-find-mark');
+  oldMarks.forEach(function(m){
+    var parent = m.parentNode;
+    while(m.firstChild) parent.insertBefore(m.firstChild, m);
+    parent.removeChild(m);
+    parent.normalize && parent.normalize();
+  });
+  var q = inp.value || '';
+  _neSearchState.query = q;
+  _neSearchState.caseSensitive = !!(caseEl && caseEl.checked);
+  _neSearchState.matches = [];
+  _neSearchState.current = -1;
+  var countEl = document.getElementById('neSearchCount');
+  if(!q){ if(countEl) countEl.textContent = '0 / 0'; return; }
+
+  // Walk text nodes and wrap matches in <mark>
+  var qLower = _neSearchState.caseSensitive ? q : q.toLowerCase();
+  var qLen = q.length;
+  var walker = document.createTreeWalker(area, NodeFilter.SHOW_TEXT, {
+    acceptNode: function(n){
+      // Skip text inside existing search marks (shouldn't be any after clear)
+      var p = n.parentNode;
+      while(p && p !== area){
+        if(p.nodeName === 'SCRIPT' || p.nodeName === 'STYLE') return NodeFilter.FILTER_REJECT;
+        if(p.classList && p.classList.contains('ne-find-mark')) return NodeFilter.FILTER_REJECT;
+        p = p.parentNode;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  var textNodes = [];
+  var n;
+  while((n = walker.nextNode())) textNodes.push(n);
+
+  textNodes.forEach(function(node){
+    var text = node.nodeValue || '';
+    var compare = _neSearchState.caseSensitive ? text : text.toLowerCase();
+    var idx = compare.indexOf(qLower);
+    if(idx === -1) return;
+    var positions = [];
+    while(idx !== -1){
+      positions.push(idx);
+      idx = compare.indexOf(qLower, idx + qLen);
+    }
+    // Split node and wrap each match (right-to-left to keep offsets stable)
+    for(var i = positions.length - 1; i >= 0; i--){
+      var start = positions[i];
+      var end = start + qLen;
+      var rest = node.splitText(start);
+      var matchNode = rest.splitText(qLen);
+      // rest is now the matched text node (length = qLen)
+      var mark = document.createElement('mark');
+      mark.className = 'ne-find-mark';
+      mark.style.cssText = 'background:#fff59d;color:#000;border-radius:3px;padding:0 1px;box-shadow:0 0 0 1px #fbc02d;';
+      rest.parentNode.replaceChild(mark, rest);
+      mark.appendChild(rest);
+      _neSearchState.matches.unshift(mark);
+    }
+  });
+
+  if(_neSearchState.matches.length){
+    _neSearchState.current = 0;
+    _neSearchHighlightCurrent();
+  }
+  if(countEl){
+    countEl.textContent = (_neSearchState.matches.length ? (_neSearchState.current + 1) : 0) + ' / ' + _neSearchState.matches.length;
+  }
+}
+function _neSearchHighlightCurrent(){
+  _neSearchState.matches.forEach(function(m, i){
+    if(i === _neSearchState.current){
+      m.style.background = '#ff9800';
+      m.style.color = '#fff';
+      m.style.boxShadow = '0 0 0 2px #e65100';
+      try{ m.scrollIntoView({block:'center', behavior:'smooth'}); }catch(_){ m.scrollIntoView(); }
+    } else {
+      m.style.background = '#fff59d';
+      m.style.color = '#000';
+      m.style.boxShadow = '0 0 0 1px #fbc02d';
+    }
+  });
+  var countEl = document.getElementById('neSearchCount');
+  if(countEl) countEl.textContent = (_neSearchState.matches.length ? (_neSearchState.current + 1) : 0) + ' / ' + _neSearchState.matches.length;
+}
+function neSearchNext(){
+  if(!_neSearchState.matches.length) return;
+  _neSearchState.current = (_neSearchState.current + 1) % _neSearchState.matches.length;
+  _neSearchHighlightCurrent();
+}
+function neSearchPrev(){
+  if(!_neSearchState.matches.length) return;
+  _neSearchState.current = (_neSearchState.current - 1 + _neSearchState.matches.length) % _neSearchState.matches.length;
+  _neSearchHighlightCurrent();
 }
 
 // Compat wrappers — old code still calls these
