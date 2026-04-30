@@ -7004,35 +7004,36 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
   }, { passive: true });
 
   document.addEventListener('touchmove', function(e) {
+    // FIX (scroll bug): Sirf tab block karo jab clearly pull-to-refresh ho.
+    // Pehle ka logic kisi bhi single-finger downward swipe ko top-of-page par
+    // block kar deta tha — isse Quiz History jaise list pages me pehla touch
+    // scroll hi nahi hota tha. Naya logic strict hai:
+    //  - root document scroll top par hona zaroori
+    //  - target ke kisi bhi parent me apna scroll hona NAHI chahiye
+    //  - dy threshold bhi bada (60px) taaki normal scroll free rahe
     if(!_ptrActive || e.touches.length !== 1) return;
-
     var curY = e.touches[0].clientY;
     var dy   = curY - _ptrStartY;
+    if(dy < 60) return; // chhota gesture = normal scroll, kabhi block mat karo
 
-    // Sirf downward swipe block karo (dy > 0 = neeche finger ja raha)
-    if(dy <= 0) return;
-    // FIX: small jitter ko ignore karo — warna single-finger scroll break hota hai
-    if(dy < 24) return;
-
-    // Find the actual scrollable element under the touch
+    // Agar koi bhi parent scrollable hai aur scroll possible hai -- allow karo
     var el = e.target;
-    var scrollable = null;
-    while(el && el !== document.body) {
-      var style = window.getComputedStyle(el);
-      var overflow = style.overflowY || style.overflow;
-      if((overflow === 'auto' || overflow === 'scroll') && el.scrollHeight > el.clientHeight) {
-        scrollable = el;
-        break;
-      }
+    while(el && el !== document.body && el !== document.documentElement) {
+      try {
+        var style = window.getComputedStyle(el);
+        var oy = style.overflowY || style.overflow;
+        if((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 1) {
+          // Iss container me scroll possible hai -- browser ko karne do
+          return;
+        }
+      } catch(_) {}
       el = el.parentElement;
     }
 
-    // Agar koi scrollable container hai aur woh top par nahi hai -- allow karo
-    if(scrollable && scrollable.scrollTop > 0) return;
-    // Agar koi sahi scrollable mila hi nahi (sab non-scrollable), block mat karo
-    if(!scrollable) return;
+    // Sirf jab document/body khud top par ho aur kahin scroll na ho -- tab PTR
+    var rootTop = (window.scrollY || document.documentElement.scrollTop || 0);
+    if(rootTop > 0) return;
 
-    // Agar top par hai aur neeche swipe -- yeh PTR hoga, block karo
     if(e.cancelable) {
       e.preventDefault();
     }
@@ -12175,13 +12176,49 @@ function toggleVaultWrong(quizId, qIdx, qKey, btn){
 function updateHistBadge(){const b=document.getElementById('histBadge');if(S.quizHistory.length){b.style.display='inline';b.textContent=S.quizHistory.length;}else b.style.display='none';}
 
 function initHistFilters(){
+  // FIX (filter cascade bug): pehle yeh function har renderHistory ke andar
+  // call hota tha aur subject ke alawa section/topic ki selection wipe ho
+  // jaati thi. Ab teeno dropdowns ki current value preserve karte hain.
   const ss=document.getElementById('histFilterSubject');
   if(!ss)return;
-  const prev=ss.value;
+  const prevSubj = ss.value || 'all';
+  const prevSec  = (document.getElementById('histFilterSection')||{}).value || 'all';
+  const prevTop  = (document.getElementById('histFilterTopic')||{}).value   || 'all';
+
+  // Subject options rebuild
   ss.innerHTML='<option value="all">Saare Subjects</option>';
   S.subjects.forEach(s=>{ss.innerHTML+=`<option value="${s.id}">${s.name}</option>`;});
-  if(prev)ss.value=prev;
-  onHistFilterSubjectChange(true);
+  ss.value = prevSubj;
+
+  // Section options rebuild (jis subject ke liye option valid ho)
+  const secEl = document.getElementById('histFilterSection');
+  if(secEl){
+    secEl.innerHTML='<option value="all">Saare Sections</option>';
+    if(prevSubj!=='all'){
+      const s = getSubj(parseInt(prevSubj));
+      if(s) s.sections.forEach(sec=>{
+        secEl.innerHTML += `<option value="${sec.id}">${sec.name}</option>`;
+      });
+    }
+    // Sirf preserve karo agar option ab bhi maujood hai
+    if([...secEl.options].some(o=>o.value===prevSec)) secEl.value = prevSec;
+    else secEl.value = 'all';
+  }
+
+  // Topic options rebuild
+  const topEl = document.getElementById('histFilterTopic');
+  if(topEl){
+    topEl.innerHTML='<option value="all">Saare Topics</option>';
+    const curSec = secEl ? secEl.value : 'all';
+    if(prevSubj!=='all' && curSec!=='all'){
+      const sec = getSec(parseInt(prevSubj), parseInt(curSec));
+      if(sec) sec.topics.forEach(t=>{
+        topEl.innerHTML += `<option value="${t.id}">${t.name}</option>`;
+      });
+    }
+    if([...topEl.options].some(o=>o.value===prevTop)) topEl.value = prevTop;
+    else topEl.value = 'all';
+  }
 }
 
 function onHistFilterSubjectChange(skipRender){
@@ -12215,8 +12252,12 @@ function renderHistory(){
   const el=document.getElementById('historyList');
   if(!S.quizHistory.length){el.innerHTML='<div class="empty"><div class="empty-icon">📜</div><p>Koi history nahi. Quiz do!</p></div>';return;}
 
-  // Init filters if needed
-  initHistFilters();
+  // Init filters if needed — sirf jab subject dropdown abhi tak populate
+  // nahi hua. Warna har render pe selection reset ho jaata hai.
+  (function(){
+    const ss = document.getElementById('histFilterSubject');
+    if(ss && ss.options.length <= 1) initHistFilters();
+  })();
 
   const sid=document.getElementById('histFilterSubject')?.value||'all';
   const secid=document.getElementById('histFilterSection')?.value||'all';
@@ -19189,10 +19230,14 @@ window.addEventListener('popstate',function(e){
     }
     return;
   }
-  const openModal=document.querySelector('.modal-overlay.show');
-  if(openModal){openModal.classList.remove('show');return;}
+  // FIX (back button bug): AI chat hamesha modal ke UPAR khulta hai
+  // (e.g. quiz detail modal ke andar se openAiChatQuestion). Isliye back press
+  // pehle AI chat band kare, fir modal. Pehle order ulta tha -> back se modal
+  // band ho jata tha aur AI chat khula reh jata.
   const aiChat=document.getElementById('aiChatOverlay');
   if(aiChat&&aiChat.classList.contains('show')){closeAiChat();return;}
+  const openModal=document.querySelector('.modal-overlay.show');
+  if(openModal){openModal.classList.remove('show');return;}
   const sidebar=document.getElementById('sidebar');
   if(sidebar&&sidebar.classList.contains('open')){
     sidebar.classList.remove('open');
