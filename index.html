@@ -471,6 +471,7 @@ textarea{width:100%;background:var(--surface2);border:1.5px solid var(--border);
 textarea:focus{border-color:var(--accent);background:var(--surface);}
 .inp{width:100%;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:8px 11px;color:var(--text);font-family:'Noto Sans Devanagari',sans-serif;font-size:0.84rem;outline:none;transition:border 0.2s;}
 .inp:focus{border-color:var(--accent);}
+.inp:disabled{opacity:0.45;cursor:not-allowed;background:var(--bg2);}
 .field-group{margin-bottom:10px;}
 .field-label{display:block;font-size:0.76rem;color:var(--text2);font-weight:700;margin-bottom:4px;}
 
@@ -5217,14 +5218,12 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
   </div>
 </div>
 
-<div class="modal-overlay" id="quizDetailModal">
-  <div class="modal">
-    <div class="modal-title" id="modalTitle">Quiz Detail</div>
-    <div id="modalContent"></div>
-    <div class="modal-actions">
-      <button class="btn btn-outline btn-sm" onclick="closeModal('quizDetailModal')">✕</button>
-    </div>
+<div id="quizDetailModal" style="display:none;position:fixed;inset:0;z-index:400;background:var(--bg);flex-direction:column;overflow:hidden;">
+  <div style="background:var(--surface);border-bottom:1.5px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+    <button onclick="closeModal('quizDetailModal')" style="background:none;border:none;cursor:pointer;font-size:1.3rem;color:var(--accent);padding:4px 8px;border-radius:8px;line-height:1;font-weight:700;">&#8249;</button>
+    <div id="modalTitle" style="font-size:0.95rem;font-weight:800;color:var(--accent);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Quiz Detail</div>
   </div>
+  <div id="modalContent" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px;overscroll-behavior:contain;"></div>
 </div>
 
 <div class="modal-overlay" id="topicViewModal">
@@ -7004,36 +7003,35 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
   }, { passive: true });
 
   document.addEventListener('touchmove', function(e) {
-    // FIX (scroll bug): Sirf tab block karo jab clearly pull-to-refresh ho.
-    // Pehle ka logic kisi bhi single-finger downward swipe ko top-of-page par
-    // block kar deta tha — isse Quiz History jaise list pages me pehla touch
-    // scroll hi nahi hota tha. Naya logic strict hai:
-    //  - root document scroll top par hona zaroori
-    //  - target ke kisi bhi parent me apna scroll hona NAHI chahiye
-    //  - dy threshold bhi bada (60px) taaki normal scroll free rahe
     if(!_ptrActive || e.touches.length !== 1) return;
+
     var curY = e.touches[0].clientY;
     var dy   = curY - _ptrStartY;
-    if(dy < 60) return; // chhota gesture = normal scroll, kabhi block mat karo
 
-    // Agar koi bhi parent scrollable hai aur scroll possible hai -- allow karo
+    // Sirf downward swipe block karo (dy > 0 = neeche finger ja raha)
+    if(dy <= 0) return;
+    // FIX: small jitter ko ignore karo — warna single-finger scroll break hota hai
+    if(dy < 24) return;
+
+    // Find the actual scrollable element under the touch
     var el = e.target;
-    while(el && el !== document.body && el !== document.documentElement) {
-      try {
-        var style = window.getComputedStyle(el);
-        var oy = style.overflowY || style.overflow;
-        if((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 1) {
-          // Iss container me scroll possible hai -- browser ko karne do
-          return;
-        }
-      } catch(_) {}
+    var scrollable = null;
+    while(el && el !== document.body) {
+      var style = window.getComputedStyle(el);
+      var overflow = style.overflowY || style.overflow;
+      if((overflow === 'auto' || overflow === 'scroll') && el.scrollHeight > el.clientHeight) {
+        scrollable = el;
+        break;
+      }
       el = el.parentElement;
     }
 
-    // Sirf jab document/body khud top par ho aur kahin scroll na ho -- tab PTR
-    var rootTop = (window.scrollY || document.documentElement.scrollTop || 0);
-    if(rootTop > 0) return;
+    // Agar koi scrollable container hai aur woh top par nahi hai -- allow karo
+    if(scrollable && scrollable.scrollTop > 0) return;
+    // Agar koi sahi scrollable mila hi nahi (sab non-scrollable), block mat karo
+    if(!scrollable) return;
 
+    // Agar top par hai aur neeche swipe -- yeh PTR hoga, block karo
     if(e.cancelable) {
       e.preventDefault();
     }
@@ -12176,58 +12174,38 @@ function toggleVaultWrong(quizId, qIdx, qKey, btn){
 function updateHistBadge(){const b=document.getElementById('histBadge');if(S.quizHistory.length){b.style.display='inline';b.textContent=S.quizHistory.length;}else b.style.display='none';}
 
 function initHistFilters(){
-  // FIX (filter cascade bug): pehle yeh function har renderHistory ke andar
-  // call hota tha aur subject ke alawa section/topic ki selection wipe ho
-  // jaati thi. Ab teeno dropdowns ki current value preserve karte hain.
   const ss=document.getElementById('histFilterSubject');
   if(!ss)return;
-  const prevSubj = ss.value || 'all';
-  const prevSec  = (document.getElementById('histFilterSection')||{}).value || 'all';
-  const prevTop  = (document.getElementById('histFilterTopic')||{}).value   || 'all';
-
-  // Subject options rebuild
+  const prev=ss.value;
   ss.innerHTML='<option value="all">Saare Subjects</option>';
   S.subjects.forEach(s=>{ss.innerHTML+=`<option value="${s.id}">${s.name}</option>`;});
-  ss.value = prevSubj;
-
-  // Section options rebuild (jis subject ke liye option valid ho)
-  const secEl = document.getElementById('histFilterSection');
-  if(secEl){
-    secEl.innerHTML='<option value="all">Saare Sections</option>';
-    if(prevSubj!=='all'){
-      const s = getSubj(parseInt(prevSubj));
-      if(s) s.sections.forEach(sec=>{
-        secEl.innerHTML += `<option value="${sec.id}">${sec.name}</option>`;
-      });
-    }
-    // Sirf preserve karo agar option ab bhi maujood hai
-    if([...secEl.options].some(o=>o.value===prevSec)) secEl.value = prevSec;
-    else secEl.value = 'all';
-  }
-
-  // Topic options rebuild
-  const topEl = document.getElementById('histFilterTopic');
-  if(topEl){
-    topEl.innerHTML='<option value="all">Saare Topics</option>';
-    const curSec = secEl ? secEl.value : 'all';
-    if(prevSubj!=='all' && curSec!=='all'){
-      const sec = getSec(parseInt(prevSubj), parseInt(curSec));
-      if(sec) sec.topics.forEach(t=>{
-        topEl.innerHTML += `<option value="${t.id}">${t.name}</option>`;
-      });
-    }
-    if([...topEl.options].some(o=>o.value===prevTop)) topEl.value = prevTop;
-    else topEl.value = 'all';
-  }
+  if(prev)ss.value=prev;
+  // Section aur topic dropdowns ki initial state
+  const secEl=document.getElementById('histFilterSection');
+  const topEl=document.getElementById('histFilterTopic');
+  if(secEl && ss.value==='all') secEl.disabled=true;
+  if(topEl) topEl.disabled=true;
+  onHistFilterSubjectChange(true);
 }
 
 function onHistFilterSubjectChange(skipRender){
   const sid=document.getElementById('histFilterSubject')?.value||'all';
   const sel=document.getElementById('histFilterSection');
+  const selTopic=document.getElementById('histFilterTopic');
   if(!sel)return;
+  // Section reset karo
   sel.innerHTML='<option value="all">Saare Sections</option>';
-  if(sid!=='all'){const s=getSubj(parseInt(sid));if(s)s.sections.forEach(sec=>{sel.innerHTML+=`<option value="${sec.id}">${sec.name}</option>`;});}
-  onHistFilterSectionChange(skipRender);
+  sel.disabled = (sid==='all');
+  if(sid!=='all'){
+    const s=getSubj(parseInt(sid));
+    if(s) s.sections.forEach(sec=>{sel.innerHTML+=`<option value="${sec.id}">${sec.name}</option>`;});
+  }
+  // Topic bhi reset karo
+  if(selTopic){
+    selTopic.innerHTML='<option value="all">Saare Topics</option>';
+    selTopic.disabled = true;
+  }
+  if(!skipRender) renderHistory();
 }
 
 function onHistFilterSectionChange(skipRender){
@@ -12236,13 +12214,22 @@ function onHistFilterSectionChange(skipRender){
   const sel=document.getElementById('histFilterTopic');
   if(!sel)return;
   sel.innerHTML='<option value="all">Saare Topics</option>';
-  if(sid!=='all'&&secid!=='all'){const sec=getSec(parseInt(sid),parseInt(secid));if(sec)sec.topics.forEach(t=>{sel.innerHTML+=`<option value="${t.id}">${t.name}</option>`;});}
+  sel.disabled = (secid==='all');
+  if(sid!=='all'&&secid!=='all'){
+    const sec=getSec(parseInt(sid),parseInt(secid));
+    if(sec) sec.topics.forEach(t=>{sel.innerHTML+=`<option value="${t.id}">${t.name}</option>`;});
+  }
   if(!skipRender)renderHistory();
 }
 
 function resetHistFilters(){
   const ids=['histFilterSubject','histFilterSection','histFilterTopic','histFilterDate','histFilterProgress'];
   ids.forEach(id=>{const el=document.getElementById(id);if(el)el.value=id==='histFilterDate'?'new':id==='histFilterProgress'?'none':'all';});
+  // Disabled state reset karo
+  const secEl=document.getElementById('histFilterSection');
+  const topEl=document.getElementById('histFilterTopic');
+  if(secEl) secEl.disabled=true;
+  if(topEl) topEl.disabled=true;
   onHistFilterSubjectChange(true);
   renderHistory();
   showToast('Filters reset ho gaye','success');
@@ -12252,12 +12239,8 @@ function renderHistory(){
   const el=document.getElementById('historyList');
   if(!S.quizHistory.length){el.innerHTML='<div class="empty"><div class="empty-icon">📜</div><p>Koi history nahi. Quiz do!</p></div>';return;}
 
-  // Init filters if needed — sirf jab subject dropdown abhi tak populate
-  // nahi hua. Warna har render pe selection reset ho jaata hai.
-  (function(){
-    const ss = document.getElementById('histFilterSubject');
-    if(ss && ss.options.length <= 1) initHistFilters();
-  })();
+  // Init filters if needed
+  initHistFilters();
 
   const sid=document.getElementById('histFilterSubject')?.value||'all';
   const secid=document.getElementById('histFilterSection')?.value||'all';
@@ -12367,7 +12350,31 @@ function showDetail(qid){
     <div class="divider"></div>
     <div style="font-size:0.82rem;font-weight:800;color:var(--green);margin-bottom:6px;">✅ Sahi (${right.length}):</div>
     ${right.map((q,i)=>renderHQ(q,i,false)).join('')}`;
-  document.getElementById('quizDetailModal').classList.add('show');
+  // Full-screen page ke roop mein kholo
+  var modal = document.getElementById('quizDetailModal');
+  modal.style.display = 'flex';
+  var content = document.getElementById('modalContent');
+  if(content) content.scrollTop = 0;
+  // Back button support (Android)
+  try{
+    if(!history.state || history.state.quizDetail !== true){
+      history.pushState({quizDetail:true, qid:qid}, '', location.href);
+    }
+    if(!window._quizDetailPopHandlerAttached){
+      window._quizDetailPopHandlerAttached = true;
+      window.addEventListener('popstate', function(){
+        // Agar AI chat khula hai to quiz detail band mat karo — AI chat apna state handle karega
+        var aiOv = document.getElementById('aiChatOverlay');
+        if(aiOv && aiOv.classList.contains('show')) return;
+        var m = document.getElementById('quizDetailModal');
+        if(m && m.style.display === 'flex' && !window._quizDetailPopping){
+          window._quizDetailPopping = true;
+          m.style.display = 'none';
+          setTimeout(function(){ window._quizDetailPopping = false; }, 80);
+        }
+      });
+    }
+  }catch(_){}
 }
 
 function toggleAllHistModalAns(btn){
@@ -13314,7 +13321,20 @@ function closeAiChat(){
     try{
       if(history.state && history.state.aiChat === true && !window._aiChatPopping){
         window._aiChatPopping = true;
+        // Yaad rakho quiz detail khuli thi ki nahi
+        var quizDetailWasOpen = (function(){
+          var m = document.getElementById('quizDetailModal');
+          return m && m.style.display === 'flex';
+        })();
         history.back();
+        // Agar quiz detail page khuli thi, ensure karo wo wapas khuli rahe
+        if(quizDetailWasOpen){
+          setTimeout(function(){
+            var m = document.getElementById('quizDetailModal');
+            if(m && m.style.display !== 'flex') m.style.display = 'flex';
+            window._quizDetailPopping = false;
+          }, 100);
+        }
         setTimeout(function(){ window._aiChatPopping = false; }, 80);
       }
     }catch(_){}
@@ -18987,7 +19007,22 @@ async function performWebSearch(query, topicName) {
 
 // ==================== MODAL ====================
 function closeModal(id){
-  document.getElementById(id).classList.remove('show');
+  var el = document.getElementById(id);
+  if(!el) return;
+  // quizDetailModal ab full-screen page hai — flex se display:none
+  if(id === 'quizDetailModal'){
+    el.style.display = 'none';
+    // history state pop karo agar pushed tha
+    try{
+      if(history.state && history.state.quizDetail === true && !window._quizDetailPopping){
+        window._quizDetailPopping = true;
+        history.back();
+        setTimeout(function(){ window._quizDetailPopping = false; }, 80);
+      }
+    }catch(_){}
+    return;
+  }
+  el.classList.remove('show');
   // ── Canvas panel z-index restore karo ──
   if(id === 'topicViewModal') {
     var _cp = document.getElementById('studyCanvasPanel');
@@ -19230,14 +19265,10 @@ window.addEventListener('popstate',function(e){
     }
     return;
   }
-  // FIX (back button bug): AI chat hamesha modal ke UPAR khulta hai
-  // (e.g. quiz detail modal ke andar se openAiChatQuestion). Isliye back press
-  // pehle AI chat band kare, fir modal. Pehle order ulta tha -> back se modal
-  // band ho jata tha aur AI chat khula reh jata.
-  const aiChat=document.getElementById('aiChatOverlay');
-  if(aiChat&&aiChat.classList.contains('show')){closeAiChat();return;}
   const openModal=document.querySelector('.modal-overlay.show');
   if(openModal){openModal.classList.remove('show');return;}
+  const aiChat=document.getElementById('aiChatOverlay');
+  if(aiChat&&aiChat.classList.contains('show')){closeAiChat();return;}
   const sidebar=document.getElementById('sidebar');
   if(sidebar&&sidebar.classList.contains('open')){
     sidebar.classList.remove('open');
@@ -54236,7 +54267,7 @@ mark.nes-hl.nes-hl-active{
       if(DEV2ROM[one] !== undefined){
         out += DEV2ROM[one];
         // After a consonant, if next is NOT a matra/halant, add inherent 'a'
-        var isConsonant = /[क-हक़-य़]/.test(one);
+        var isConsonant = /[क-ह]/.test(one) || one === 'क़' || one === 'ख़' || one === 'ग़' || one === 'ज़' || one === 'ड़' || one === 'ढ़' || one === 'फ़' || one === 'य़';
         if(isConsonant){
           var next = str[i+1] || '';
           var isMatra = /[ािीुूृेैोौंःँ़्]/.test(next);
