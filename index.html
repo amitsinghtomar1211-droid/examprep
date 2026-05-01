@@ -12605,9 +12605,19 @@ function showDetail(qid){
     if(!window._quizDetailPopHandlerAttached){
       window._quizDetailPopHandlerAttached = true;
       window.addEventListener('popstate', function(){
-        // Agar AI chat khula hai to quiz detail band mat karo — AI chat apna state handle karega
+        // Agar AI chat close button ne history.back() call kiya tha to kuch mat karo
+        if(window._aiChatCloseCalledByHistBack){
+          window._aiChatCloseCalledByHistBack = false;
+          return;
+        }
+        // Agar AI chat khula hai to isko band karo (quiz modal wapas dikhega)
         var aiOv = document.getElementById('aiChatOverlay');
-        if(aiOv && aiOv.classList.contains('show')) return;
+        if(aiOv && aiOv.classList.contains('show')){
+          window._aiChatClosingViaPopstate = true;
+          closeAiChat();
+          window._aiChatClosingViaPopstate = false;
+          return;
+        }
         var m = document.getElementById('quizDetailModal');
         if(m && m.style.display === 'flex' && !window._quizDetailPopping){
           window._quizDetailPopping = true;
@@ -13494,6 +13504,11 @@ function openAiChatQuestion(question,correctAns,explanation){
     _qModal.setAttribute('data-was-open','1');
   }
   document.getElementById('aiChatOverlay').classList.add('show');
+  // History state push karo — taaki Android back button aur browser back se AI chat band ho
+  try{
+    window._aiChatHistoryPushed = true;
+    history.pushState({aiChatOpen:true}, '', location.href);
+  }catch(_){}
   setTimeout(()=>document.getElementById('aiChatInput').focus(),300);
   msgsEl.scrollTop = msgsEl.scrollHeight;
 }
@@ -13540,6 +13555,7 @@ function openAiChatStats(){openAiChat('stats','Meri Progress',null,null,null);}
 function useSuggestion(text){document.getElementById('aiChatInput').value=text;sendAiChat();}
 function closeAiChat(){
   var ov = document.getElementById('aiChatOverlay');
+  var wasShowing = ov && ov.classList.contains('show');
   if(ov){
     ov.classList.remove('show');
     ov.classList.remove('canvas-alongside');
@@ -13549,6 +13565,16 @@ function closeAiChat(){
   if(quizModal && quizModal.getAttribute('data-was-open') === '1'){
     quizModal.style.display = 'flex';
     quizModal.removeAttribute('data-was-open');
+  }
+  // Agar AI chat ne apna history state push kiya tha aur close BUTTON se band ho raha hai
+  // (popstate se nahi — kyunki popstate mein _aiChatClosingViaPopstate=true hoga)
+  // to history.back() call karo taaki woh extra state pop ho jaye
+  if(wasShowing && window._aiChatHistoryPushed && !window._aiChatClosingViaPopstate){
+    window._aiChatHistoryPushed = false;
+    window._aiChatCloseCalledByHistBack = true;
+    try{ history.back(); }catch(_){}
+  } else {
+    window._aiChatHistoryPushed = false;
   }
   // Canvas band nahi karo — user canvas use karta rehta hai
 }
