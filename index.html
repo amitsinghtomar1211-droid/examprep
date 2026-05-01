@@ -905,7 +905,7 @@ textarea:focus{border-color:var(--accent);background:var(--surface);}
    — Selected text drag to canvas
    ════════════════════════════════════════════ */
 .ai-chat-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:502;display:none;align-items:flex-end;justify-content:center;padding:0;}
-.ai-chat-overlay.show{display:flex;}
+.ai-chat-overlay.show{display:flex !important;visibility:visible !important;opacity:1 !important;pointer-events:auto !important;}
 
 /* When canvas is open alongside AI chat */
 .ai-chat-overlay.canvas-alongside {
@@ -13556,10 +13556,12 @@ function openAiChatStats(){openAiChat('stats','Meri Progress',null,null,null);}
 function useSuggestion(text){document.getElementById('aiChatInput').value=text;sendAiChat();}
 function closeAiChat(){
   var ov = document.getElementById('aiChatOverlay');
-  var wasShowing = ov && ov.classList.contains('show');
   if(ov){
+    // Class remove ke saath FORCEFULLY display:none bhi set karo
+    // taaki bfcache ya koi bhi CSS conflict se overlay wapas na aaye
     ov.classList.remove('show');
     ov.classList.remove('canvas-alongside');
+    ov.style.display = 'none';
   }
   // Quiz detail modal agar khuli thi to wapas show karo
   var quizModal = document.getElementById('quizDetailModal');
@@ -13567,16 +13569,8 @@ function closeAiChat(){
     quizModal.style.display = 'flex';
     quizModal.removeAttribute('data-was-open');
   }
-  // Agar AI chat ne apna history state push kiya tha aur close BUTTON se band ho raha hai
-  // (popstate se nahi — kyunki popstate mein _aiChatClosingViaPopstate=true hoga)
-  // to history.back() call karo taaki woh extra state pop ho jaye
-  if(wasShowing && window._aiChatHistoryPushed && !window._aiChatClosingViaPopstate){
-    window._aiChatHistoryPushed = false;
-    window._aiChatCloseCalledByHistBack = true;
-    try{ history.back(); }catch(_){}
-  } else {
-    window._aiChatHistoryPushed = false;
-  }
+  // Flag reset karo — history.back() BILKUL NAHI karana (bfcache se overlay wapas aa jaati thi)
+  window._aiChatHistoryPushed = false;
   // Canvas band nahi karo — user canvas use karta rehta hai
 }
 
@@ -13585,81 +13579,63 @@ function closeAiChatToQuiz(){
   try {
     console.log('[closeAiChatToQuiz] Called. Context:', JSON.stringify(window._aiChatContext||{}));
 
-    // Step 1: AI chat overlay ko hide karo
+    // ── Step 1: AI chat overlay ko FORCEFULLY hide karo ──
+    // history.back() NAHI karana — bfcache se overlay wapas aa jaati thi
     var ov = document.getElementById('aiChatOverlay');
     if(!ov){
-      var msg = '[closeAiChatToQuiz] ERROR: #aiChatOverlay element nahi mila!';
-      console.error(msg);
+      console.error('[closeAiChatToQuiz] ERROR: #aiChatOverlay element nahi mila!');
       if(typeof showToast==='function') showToast('❌ AI Chat close nahi hui: overlay missing', 'error');
       return;
     }
-    var wasShowing = ov.classList.contains('show');
-    console.log('[closeAiChatToQuiz] overlay wasShowing='+wasShowing);
+    // Teehra protection: class hata do + inline style bhi none karo + visibility bhi
     ov.classList.remove('show');
     ov.classList.remove('canvas-alongside');
+    ov.style.display = 'none';
+    ov.style.visibility = 'hidden';
+    ov.style.pointerEvents = 'none';
+    ov.style.opacity = '0';
+    window._aiChatHistoryPushed = false;
 
-    // Verify: overlay sach mein hide hua?
-    if(ov.classList.contains('show')){
-      var errMsg = '[closeAiChatToQuiz] ERROR: overlay hide nahi hua — class remove fail!';
-      console.error(errMsg);
+    // Verify karo ki overlay sach mein band hui
+    var stillVisible = ov.classList.contains('show') || (ov.style.display !== 'none');
+    if(stillVisible){
+      console.error('[closeAiChatToQuiz] ERROR: overlay hide nahi hua! class='+ov.className+' display='+ov.style.display);
       if(typeof showToast==='function') showToast('❌ AI Chat hide nahi hui, dobara try karo', 'error');
       return;
     }
-    console.log('[closeAiChatToQuiz] overlay successfully hidden.');
+    console.log('[closeAiChatToQuiz] overlay successfully hidden (display:none + visibility:hidden).');
 
-    // Step 2: Quiz Detail Modal dhundho aur dikhao
+    // ── Step 2: Quiz Detail Modal dhundho aur dikhao ──
     var quizModal = document.getElementById('quizDetailModal');
     if(!quizModal){
-      var msg2 = '[closeAiChatToQuiz] ERROR: #quizDetailModal element nahi mila!';
-      console.error(msg2);
+      console.error('[closeAiChatToQuiz] ERROR: #quizDetailModal element nahi mila!');
       if(typeof showToast==='function') showToast('❌ Quiz details page nahi mili', 'error');
       return;
     }
 
-    // data-was-open flag check karo
     var wasOpen = quizModal.getAttribute('data-was-open') === '1';
-    console.log('[closeAiChatToQuiz] quizModal.data-was-open='+wasOpen+' | current display='+quizModal.style.display);
+    console.log('[closeAiChatToQuiz] quizModal.data-was-open='+wasOpen+' | display='+quizModal.style.display);
 
-    if(wasOpen){
-      quizModal.style.display = 'flex';
-      quizModal.removeAttribute('data-was-open');
-      console.log('[closeAiChatToQuiz] quizModal restored to display:flex via data-was-open flag.');
-    } else if(quizModal.style.display === 'flex'){
-      // Modal pehle se visible hai — kuch mat karo
-      console.log('[closeAiChatToQuiz] quizModal already visible (display:flex). No change needed.');
-    } else {
-      // Modal hide thi aur flag bhi nahi — scroll top pe jao aur history.back karo
-      var warnMsg = '[closeAiChatToQuiz] WARN: quizModal display='+quizModal.style.display+' aur data-was-open=false. History back karne ki koshish...'
-      console.warn(warnMsg);
-      if(typeof showToast==='function') showToast('⚠️ Quiz page nahi mili, wapas ja rahe hain...', 'error');
-      try{ history.back(); }catch(e){ console.error('[closeAiChatToQuiz] history.back() fail:', e); }
-      return;
-    }
+    // Modal ko display:flex karo — chahe flag ho ya na ho, hum directly dikhayenge
+    quizModal.style.display = 'flex';
+    quizModal.removeAttribute('data-was-open');
+    console.log('[closeAiChatToQuiz] quizModal forcefully set to display:flex.');
 
-    // Verify: quiz modal visible hai?
+    // Verify karo
     if(quizModal.style.display !== 'flex'){
-      var err3 = '[closeAiChatToQuiz] ERROR: quizModal display set karne ke baad bhi flex nahi hua! Current: '+quizModal.style.display;
-      console.error(err3);
+      console.error('[closeAiChatToQuiz] ERROR: quizModal flex nahi hua! display='+quizModal.style.display);
       if(typeof showToast==='function') showToast('❌ Quiz details restore nahi hui', 'error');
       return;
     }
 
-    // Step 3: Modal ke content ko top pe scroll karo
+    // ── Step 3: Content scroll top pe ──
     var content = document.getElementById('modalContent');
     if(content) content.scrollTop = 0;
-    console.log('[closeAiChatToQuiz] SUCCESS — quiz detail modal visible, content scrolled to top.');
-
-    // Step 4: History state sync — agar AI chat ka history state push tha to pop karo
-    if(window._aiChatHistoryPushed){
-      window._aiChatHistoryPushed = false;
-      window._aiChatCloseCalledByHistBack = true;
-      try{ history.back(); }catch(e){ console.warn('[closeAiChatToQuiz] history.back() for state cleanup fail:', e); }
-    }
+    console.log('[closeAiChatToQuiz] SUCCESS — quiz modal visible, scrolled to top.');
 
   } catch(err) {
-    var catchMsg = '[closeAiChatToQuiz] UNCAUGHT ERROR: ' + (err && err.message ? err.message : String(err));
-    console.error(catchMsg, err);
-    if(typeof showToast==='function') showToast('❌ Kuch galat hua: ' + (err && err.message ? err.message : 'unknown error'), 'error');
+    console.error('[closeAiChatToQuiz] UNCAUGHT ERROR:', err);
+    if(typeof showToast==='function') showToast('❌ Kuch galat hua: ' + (err && err.message ? err.message : 'unknown'), 'error');
   }
 }
 
