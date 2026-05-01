@@ -905,7 +905,7 @@ textarea:focus{border-color:var(--accent);background:var(--surface);}
    — Selected text drag to canvas
    ════════════════════════════════════════════ */
 .ai-chat-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:502;display:none;align-items:flex-end;justify-content:center;padding:0;}
-.ai-chat-overlay.show{display:flex !important;visibility:visible !important;opacity:1 !important;pointer-events:auto !important;}
+.ai-chat-overlay.show{display:flex !important;visibility:visible !important;opacity:1 !important;pointer-events:auto !important;background:rgba(0,0,0,0.5) !important;}
 
 /* When canvas is open alongside AI chat */
 .ai-chat-overlay.canvas-alongside {
@@ -13614,49 +13614,66 @@ function _aiChatForceHide(restoreQuiz){
   var panel = document.getElementById('aiChatPanel');
   window._aiChatHistoryPushed = false;
 
-  function _doHide(){
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STEP 1 — TURANT (animation se pehle):
+  // Overlay ke pointer events band karo taaki quiz pe touch kaam kare
+  // aur overlay ka background transparent karo
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if(ov){
+    ov.style.pointerEvents = 'none';       // Touches seedha quiz tak jayenge
+    ov.style.background    = 'transparent'; // Overlay ka dark background hatao
+    ov.classList.remove('canvas-alongside');
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STEP 2 — TURANT: Quiz modal restore karo
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if(restoreQuiz){
+    var qm = document.getElementById('quizDetailModal');
+    if(qm){
+      qm.style.display = 'flex';
+      qm.removeAttribute('data-was-open');
+      var c = document.getElementById('modalContent');
+      if(c) c.scrollTop = 0;
+      console.log('[aiChat] quiz modal restored (immediate)');
+    } else {
+      console.error('[aiChat] #quizDetailModal not found!');
+      if(typeof showToast==='function') showToast('❌ Quiz details nahi mili', 'error');
+    }
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STEP 3 — Animation: Panel neeche slide karo
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  function _finalCleanup(){
+    // Overlay completely hide karo (display:none)
     if(ov){
       ov.classList.remove('show');
-      ov.classList.remove('canvas-alongside');
-      // Inline style se bhi forcefully none set karo
-      // Note: CSS class me .show ke saath !important rules hain jo reopen pe override kar denge
       ov.style.display       = 'none';
       ov.style.visibility    = 'hidden';
-      ov.style.opacity       = '0';
+      ov.style.background    = ''; // Reset for next open
       ov.style.pointerEvents = 'none';
+      ov.style.opacity       = '0';
     }
     if(panel){
       panel.classList.remove('sliding-out');
       panel.style.transform = '';
       panel.style.opacity   = '';
     }
-    if(restoreQuiz){
-      var qm = document.getElementById('quizDetailModal');
-      if(qm){
-        qm.style.display = 'flex';
-        qm.removeAttribute('data-was-open');
-        var c = document.getElementById('modalContent');
-        if(c) c.scrollTop = 0;
-        console.log('[aiChat] quiz detail modal restored to display:flex');
-      } else {
-        console.error('[aiChat] #quizDetailModal not found!');
-        if(typeof showToast==='function') showToast('❌ Quiz details nahi mili', 'error');
-      }
-    }
+    console.log('[aiChat] overlay completely hidden (display:none)');
   }
 
   if(panel){
     panel.classList.add('sliding-out');
-    // Animation ke baad (300ms) hide karo
     var done = false;
     panel.addEventListener('animationend', function onEnd(){
       panel.removeEventListener('animationend', onEnd);
-      if(!done){ done=true; _doHide(); }
+      if(!done){ done=true; _finalCleanup(); }
     }, {once:true});
-    // Fallback: agar animationend fire na ho (e.g. reduced motion) to 320ms baad bhi hide karo
-    setTimeout(function(){ if(!done){ done=true; _doHide(); } }, 320);
+    // Fallback after 350ms
+    setTimeout(function(){ if(!done){ done=true; _finalCleanup(); } }, 350);
   } else {
-    _doHide();
+    _finalCleanup();
   }
 }
 
