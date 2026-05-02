@@ -20305,20 +20305,76 @@ function initFirebase(){
               const uData = uDoc.data();
               if(uData.blocked){
                 showToast('❌ Aapka access revoke kar diya gaya hai. Admin se contact karo.','error');
+                _eppKeyPassed = false; _pendingUserKey = '';
                 setTimeout(()=>_auth.signOut(), 2500);
                 return;
               }
-              if(!uData.approved){
-                // Not approved — show key gate
+              if(uData.approved){
+                // Already approved — seedha andar, key gate skip
+                _eppKeyPassed = true;
+              } else {
+                // Not approved — _pendingUserKey se verify karo (ab login ho chuka hai)
+                if(_pendingUserKey){
+                  let keyOk = false;
+                  try {
+                    const keyDoc = await _db.collection('appConfig').doc('accessKey').get();
+                    if(keyDoc.exists && keyDoc.data().key){
+                      keyOk = (_pendingUserKey === keyDoc.data().key.toUpperCase());
+                    }
+                  } catch(ke){ /* ignore */ }
+                  if(keyOk){
+                    // Key sahi — approve karo
+                    await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+                    showToast('✅ Key verified! Welcome — Read-Only access mil gaya.','success');
+                    _pendingUserKey = '';
+                  } else {
+                    // Key galat — wapas key gate
+                    showToast('❌ Galat key! Admin se sahi key maango aur dobara try karo.','error');
+                    _eppKeyPassed = false; _pendingUserKey = '';
+                    await _auth.signOut();
+                    _showKeyGateFull();
+                    const ki = document.getElementById('keyGateInput');
+                    if(ki){ ki.value = ''; ki.focus(); }
+                    _showKeyGateErr('❌ Galat key! Admin se sahi key maango.');
+                    return;
+                  }
+                } else {
+                  // Koi pending key nahi — post-login key gate dikhao
+                  hideLoginScreen();
+                  showKeyGate(user);
+                  return;
+                }
+              }
+            } else {
+              // First time user — _pendingUserKey se verify karo
+              if(_pendingUserKey){
+                let keyOk = false;
+                try {
+                  const keyDoc = await _db.collection('appConfig').doc('accessKey').get();
+                  if(keyDoc.exists && keyDoc.data().key){
+                    keyOk = (_pendingUserKey === keyDoc.data().key.toUpperCase());
+                  }
+                } catch(ke){ /* ignore */ }
+                if(keyOk){
+                  await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+                  showToast('✅ Key verified! Welcome — Read-Only access mil gaya.','success');
+                  _pendingUserKey = '';
+                } else {
+                  showToast('❌ Galat key! Admin se sahi key maango aur dobara try karo.','error');
+                  _eppKeyPassed = false; _pendingUserKey = '';
+                  await _auth.signOut();
+                  _showKeyGateFull();
+                  const ki = document.getElementById('keyGateInput');
+                  if(ki){ ki.value = ''; ki.focus(); }
+                  _showKeyGateErr('❌ Galat key! Admin se sahi key maango.');
+                  return;
+                }
+              } else {
+                // First time, no pending key — post-login key gate
                 hideLoginScreen();
                 showKeyGate(user);
                 return;
               }
-            } else {
-              // First time — show key gate
-              hideLoginScreen();
-              showKeyGate(user);
-              return;
             }
           } catch(e){ /* ignore */ }
         }
@@ -20337,8 +20393,9 @@ function initFirebase(){
         if(window._tsQuizListener){ try{ window._tsQuizListener(); }catch(e){} window._tsQuizListener = null; }
         if(window._tsAttemptListener){ try{ window._tsAttemptListener(); }catch(e){} window._tsAttemptListener = null; }
         // Logout par key gate reset — dobara key daalni padegi
-        _eppKeyPassed  = false;
-        _eppKeyIsAdmin = false;
+        _eppKeyPassed   = false;
+        _eppKeyIsAdmin  = false;
+        _pendingUserKey = '';
         _showKeyGateFull();
         updateUserUI(null);
       }
@@ -20379,15 +20436,16 @@ function showLoginError(msg){
 // ══════════════════════════════════════════════════════════════
 // PRE-LOGIN KEY GATE — App ka pehla darwaza
 // ══════════════════════════════════════════════════════════════
-// _eppKeyPassed: kya is session mein key verify ho chuki hai
-var _eppKeyPassed = false;
-// _eppKeyIsAdmin: kya yeh admin key thi
-var _eppKeyIsAdmin = false;
+// _eppKeyPassed  : kya is session mein key gate cross ho chuki hai
+// _eppKeyIsAdmin : kya admin master key thi
+// _pendingUserKey: user ne jo key daali — login ke baad Firestore se verify hogi
+var _eppKeyPassed   = false;
+var _eppKeyIsAdmin  = false;
+var _pendingUserKey = '';   // login ke baad verify hogi (unauthenticated Firestore read nahi chalti)
 
 function _showKeyGateFull(){
   var el = document.getElementById('keyGateScreen');
   if(el){ el.classList.add('show'); }
-  // Login screen chhupaao
   var ls = document.getElementById('loginScreen');
   if(ls) ls.style.display = 'none';
 }
@@ -20408,46 +20466,36 @@ async function preLoginVerifyKey(){
   var entered = inp ? inp.value.trim().toUpperCase() : '';
   if(!entered){ _showKeyGateErr('Key daalo!'); return; }
 
-  // ── STEP 1: Admin master key check (local, instant) ──
+  // ── STEP 1: Admin master key — local check (instant, no Firebase needed) ──
   if(entered === ADMIN_MASTER_KEY.toUpperCase()){
     _eppKeyPassed   = true;
     _eppKeyIsAdmin  = true;
+    _pendingUserKey = '';
     _hideKeyGateFull();
     showLoginScreen();
-    showToast('👑 Admin key verified! Ab apni Gmail se login karo.','success');
+    showToast('👑 Admin key sahi hai! Ab apni Gmail se login karo.','success');
     return;
   }
 
-  // ── STEP 2: Firestore se user key check ──
-  if(!_fbReady || !_db){
-    // Firebase ready nahi — Firebase config zaruri hai
-    _showKeyGateErr('Firebase setup nahi hai. Config set karo phir try karo.');
+  // ── STEP 2: User key — basic format check (EPP- prefix) ──
+  // Firestore read login ke BAAD hogi (unauthenticated read Firestore allow nahi karta)
+  // Isliye: key memory mein store karo, login screen dikhao, login ke baad verify
+  if(!_fbReady){
+    _showKeyGateErr('Firebase setup nahi hai. Pehle Firebase config set karo.');
     return;
   }
-  if(btn){ btn.disabled = true; btn.textContent = '⏳ Verify ho rahi hai...'; }
-  document.getElementById('keyGateError').classList.remove('show');
-  try {
-    var keyDoc = await _db.collection('appConfig').doc('accessKey').get();
-    if(!keyDoc.exists || !keyDoc.data().key){
-      _showKeyGateErr('Admin ne abhi koi key generate nahi ki. Admin se contact karo.');
-      if(btn){ btn.disabled = false; btn.textContent = '🔓 Key Verify Karo'; }
-      return;
-    }
-    var correctKey = keyDoc.data().key.toUpperCase();
-    if(entered === correctKey){
-      _eppKeyPassed   = true;
-      _eppKeyIsAdmin  = false;
-      _hideKeyGateFull();
-      showLoginScreen();
-      showToast('✅ Key sahi hai! Ab apni Gmail ya Email se login karo.','success');
-    } else {
-      _showKeyGateErr('❌ Galat key! Admin se sahi key maango.');
-      if(inp){ inp.value = ''; inp.focus(); }
-    }
-  } catch(e){
-    _showKeyGateErr('Error: ' + e.message);
+  // Key format: kam se kam 4 characters honi chahiye
+  if(entered.length < 4){
+    _showKeyGateErr('Key bahut choti hai! Sahi key daalo.');
+    return;
   }
-  if(btn){ btn.disabled = false; btn.textContent = '🔓 Key Verify Karo'; }
+  // Key memory mein store karo — Firestore verify login ke baad hogi
+  _pendingUserKey = entered;
+  _eppKeyPassed   = true;
+  _eppKeyIsAdmin  = false;
+  _hideKeyGateFull();
+  showLoginScreen();
+  showToast('🔑 Key noted! Ab apni Gmail/Email se login karo — key verify hogi.','info');
 }
 // ══════════════════════════════════════════════════════════════
 
@@ -20510,8 +20558,9 @@ function useWithoutLogin(){
 async function logoutUser(){
   if(!confirm('Logout karna hai?')) return;
   try{
-    _eppKeyPassed  = false;
-    _eppKeyIsAdmin = false;
+    _eppKeyPassed   = false;
+    _eppKeyIsAdmin  = false;
+    _pendingUserKey = '';
     await _auth.signOut();
     showToast('Logout ho gaya!','success');
     _showKeyGateFull();
@@ -57026,8 +57075,9 @@ async function verifyAccessKey(){
 
 async function logoutFromKeyGate(){
   hideKeyGate();
-  _eppKeyPassed  = false;
-  _eppKeyIsAdmin = false;
+  _eppKeyPassed   = false;
+  _eppKeyIsAdmin  = false;
+  _pendingUserKey = '';
   try { if(_auth) await _auth.signOut(); } catch(e){}
   _showKeyGateFull();
 }
