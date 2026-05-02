@@ -5844,24 +5844,32 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
       <div class="card" style="margin-bottom:14px;background:linear-gradient(135deg,rgba(46,125,50,0.08),rgba(46,125,50,0.03));border-color:rgba(46,125,50,0.2);">
         <div class="card-title">🔑 Access Key Management</div>
         <div style="font-size:0.78rem;color:var(--text2);margin-bottom:12px;line-height:1.6;">
-          Naya key generate karo aur dosto ko share karo. Woh isse apni first login par enter karenge.
+          Har key <strong>sirf ek Gmail</strong> ke liye hoti hai. Key generate karte waqt us user ki Gmail daalo — woh key us Gmail se LOCK ho jaayegi. Koi aur us key se login nahi kar sakega.
         </div>
 
         <!-- Current key display -->
         <div style="background:var(--surface2);border:2px dashed var(--border);border-radius:12px;padding:14px;text-align:center;margin-bottom:12px;">
           <div style="font-size:0.7rem;color:var(--text2);margin-bottom:4px;font-weight:700;">CURRENT ACCESS KEY</div>
-          <div id="currentKeyDisplay" style="font-size:1.6rem;font-weight:900;letter-spacing:6px;color:var(--accent);font-family:monospace;">
-            ——
-          </div>
-          <div id="keyCreatedAt" style="font-size:0.65rem;color:var(--text2);margin-top:4px;"></div>
+          <div id="currentKeyDisplay" style="font-size:1.6rem;font-weight:900;letter-spacing:6px;color:var(--accent);font-family:monospace;">——</div>
+          <div id="keyBoundEmailDisplay" style="font-size:0.72rem;margin-top:5px;font-weight:600;color:var(--text2);"></div>
+          <div id="keyCreatedAt" style="font-size:0.65rem;color:var(--text2);margin-top:2px;"></div>
+        </div>
+
+        <!-- Gmail input for new key -->
+        <div style="margin-bottom:10px;">
+          <label style="font-size:0.74rem;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">👤 Kiske liye key banani hai? (Gmail daalo — ZAROORI)</label>
+          <input type="email" id="newKeyTargetGmail"
+            placeholder="user@gmail.com"
+            style="width:100%;padding:10px 12px;border:2px solid var(--border);border-radius:10px;font-size:0.85rem;outline:none;background:var(--surface);color:var(--text);transition:border 0.2s;font-family:inherit;"
+            onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
         </div>
 
         <div class="btn-row">
-          <button class="btn btn-green btn-sm" onclick="generateNewKey()">⚡ Naya Key Generate Karo</button>
+          <button class="btn btn-green btn-sm" onclick="generateNewKey()">⚡ Key Generate Karo (Gmail ke liye)</button>
           <button class="btn btn-outline btn-sm" onclick="copyAccessKey()">📋 Key Copy Karo</button>
         </div>
         <div style="font-size:0.72rem;color:var(--text2);margin-top:8px;padding:8px;background:var(--surface2);border-radius:8px;line-height:1.6;">
-          ⚠️ <strong>Note:</strong> Key change karne par purane approved users ko dobara key nahi deni hoti — unka access bana rehta hai. Sirf naye users ko naya key share karo.
+          ⚠️ <strong>Note:</strong> Naya key generate hone par purana key invalid ho jaata hai. Naye user ke liye naya key banao — purane approved users ka access bana rehta hai.
         </div>
       </div>
 
@@ -20326,25 +20334,24 @@ function initFirebase(){
                   } catch(ke){ /* ignore */ }
                   if(keyOk){
                     const _ue = (user.email||'').toLowerCase();
+                    // Key-Gmail lock check — admin ne pehle se Gmail lock ki hogi
                     if(_boundEmail && _boundEmail !== _ue){
-                      // Key dusri Gmail se lock hai — reject
-                      showToast('❌ Yeh key pehle se ' + _boundEmail + ' ke liye lock hai. Admin se NAYA key maango.','error');
+                      showToast('❌ Yeh key ' + _boundEmail + ' ke liye lock hai. Apni sahi Gmail se login karo ya admin se naya key maango.','error');
                       _eppKeyPassed = false; _pendingUserKey = '';
                       await _auth.signOut();
                       _showKeyGateFull();
                       const ki = document.getElementById('keyGateInput');
                       if(ki){ ki.value = ''; ki.focus(); }
-                      _showKeyGateErr('❌ Yeh key kisi aur Gmail se lock hai. Admin se naya key maango.');
+                      _showKeyGateErr('❌ Yeh key is Gmail ke liye nahi hai. Admin se apni Gmail ke liye key maango.');
                       return;
                     }
-                    // Key sahi — approve + bind karo
-                    await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
                     if(!_boundEmail){
-                      await _db.collection('appConfig').doc('accessKey').update({ boundEmail: _ue, boundAt: firebase.firestore.FieldValue.serverTimestamp() });
-                      showToast('✅ Key verified! Yeh key ab sirf ' + user.email + ' ke liye lock ho gayi.','success');
-                    } else {
-                      showToast('✅ Key verified! Welcome — Read-Only access mil gaya.','success');
+                      // Admin ne Gmail specify nahi ki — free key (rare case)
+                      showToast('⚠️ Key verify hui lekin Gmail locked nahi — Admin se keh ke apni Gmail ke liye dobara key banwao.','success');
                     }
+                    // Approve karo
+                    await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+                    showToast('✅ Key verified! Welcome — Read-Only access mil gaya.','success');
                     _pendingUserKey = '';
                   } else {
                     // Key galat — wapas key gate
@@ -20378,23 +20385,22 @@ function initFirebase(){
                 } catch(ke){ /* ignore */ }
                 if(keyOk2){
                   const _ue2 = (user.email||'').toLowerCase();
+                  // Key-Gmail lock check
                   if(_boundEmail2 && _boundEmail2 !== _ue2){
-                    showToast('❌ Yeh key pehle se ' + _boundEmail2 + ' ke liye lock hai. Admin se NAYA key maango.','error');
+                    showToast('❌ Yeh key ' + _boundEmail2 + ' ke liye lock hai. Apni sahi Gmail se login karo ya admin se naya key maango.','error');
                     _eppKeyPassed = false; _pendingUserKey = '';
                     await _auth.signOut();
                     _showKeyGateFull();
                     const ki = document.getElementById('keyGateInput');
                     if(ki){ ki.value = ''; ki.focus(); }
-                    _showKeyGateErr('❌ Yeh key kisi aur Gmail se lock hai. Admin se naya key maango.');
+                    _showKeyGateErr('❌ Yeh key is Gmail ke liye nahi hai. Admin se apni Gmail ke liye key maango.');
                     return;
                   }
-                  await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
                   if(!_boundEmail2){
-                    await _db.collection('appConfig').doc('accessKey').update({ boundEmail: _ue2, boundAt: firebase.firestore.FieldValue.serverTimestamp() });
-                    showToast('✅ Key verified! Yeh key ab sirf ' + user.email + ' ke liye lock ho gayi.','success');
-                  } else {
-                    showToast('✅ Key verified! Welcome — Read-Only access mil gaya.','success');
+                    showToast('⚠️ Key verify hui lekin Gmail locked nahi — Admin se keh ke apni Gmail ke liye dobara key banwao.','success');
                   }
+                  await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+                  showToast('✅ Key verified! Welcome — Read-Only access mil gaya.','success');
                   _pendingUserKey = '';
                 } else {
                   showToast('❌ Galat key! Admin se sahi key maango aur dobara try karo.','error');
@@ -57021,25 +57027,37 @@ async function loadCurrentKey(){
 
 async function generateNewKey(){
   if(!_isAdmin || !_db){ showToast('Admin access nahi hai!','error'); return; }
-  // Generate random 8-char alphanumeric key
+  // Gmail input padhna — ZAROORI
+  const gmailInp = document.getElementById('newKeyTargetGmail');
+  const targetGmail = gmailInp ? gmailInp.value.trim().toLowerCase() : '';
+  if(!targetGmail || !targetGmail.includes('@')){
+    showToast('❌ Pehle us user ki Gmail daalo jiske liye key bana rahe ho!','error');
+    if(gmailInp){ gmailInp.style.borderColor='#c62828'; gmailInp.focus(); }
+    return;
+  }
+  // Generate random 6-char alphanumeric key
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let key = 'EPP-';
   for(let i=0; i<6; i++) key += chars[Math.floor(Math.random()*chars.length)];
-  if(!confirm('Naya key generate karna hai?\nNaya key: ' + key + '\n\n⚠️ Purana key INVALID ho jayega aur uski Gmail LOCK bhi RESET hogi.\nNaye user ke liye yeh naya key share karo.')) return;
+  if(!confirm('Key generate karna hai?\n\nKey: ' + key + '\nKe liye: ' + targetGmail + '\n\n✅ Yeh key SIRF is Gmail se login karne par kaam karegi.\n⚠️ Purana key invalid ho jaayega.')) return;
   try {
+    // Admin write karta hai — boundEmail pehle se set hogi (user nahi likh sakta)
     await _db.collection('appConfig').doc('accessKey').set({
       key: key,
+      boundEmail: targetGmail,
+      boundAt: firebase.firestore.FieldValue.serverTimestamp(),
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      createdBy: _currentUser.uid,
-      boundEmail: '',
-      boundAt: null
+      createdBy: _currentUser.uid
     });
     _currentAccessKey = key;
     const el = document.getElementById('currentKeyDisplay');
     const atEl = document.getElementById('keyCreatedAt');
+    const bndEl = document.getElementById('keyBoundEmailDisplay');
     if(el) el.textContent = key;
     if(atEl) atEl.textContent = 'Abhi generate kiya';
-    showToast('✅ Naya Access Key: ' + key + ' — Dosto ko share karo!', 'success');
+    if(bndEl) bndEl.textContent = '🔒 Locked: ' + targetGmail;
+    if(gmailInp){ gmailInp.value = ''; gmailInp.style.borderColor='var(--border)'; }
+    showToast('✅ Key: ' + key + ' — Sirf ' + targetGmail + ' ke liye locked! Unhe share karo.', 'success');
   } catch(e){
     showToast('Error: ' + e.message, 'error');
   }
@@ -57100,21 +57118,19 @@ async function verifyAccessKey(){
       const _bound3 = (keyDoc.data().boundEmail||'').toLowerCase();
       // Key-Gmail binding check
       if(_bound3 && _bound3 !== _ue3){
-        showKeyGateError('❌ Yeh key ' + _bound3 + ' ke liye lock hai. Admin se naya key maango.');
+        showKeyGateError('❌ Yeh key ' + _bound3 + ' ke liye lock hai. Apni sahi Gmail se login karo ya admin se naya key maango.');
         if(inp) inp.value = '';
         if(btn){ btn.disabled = false; btn.textContent = '🔓 Key Verify Karo'; }
         return;
+      }
+      if(!_bound3){
+        // Admin ne Gmail specify nahi ki — free key
       }
       await _db.collection('appUsers').doc(_currentUser.uid).set({
         approved: true,
         approvedAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
-      if(!_bound3){
-        await _db.collection('appConfig').doc('accessKey').update({ boundEmail: _ue3, boundAt: firebase.firestore.FieldValue.serverTimestamp() });
-        showToast('✅ Key verified! Yeh key ab sirf tumhari Gmail ke liye lock ho gayi. (Read-Only)','success');
-      } else {
-        showToast('🎉 Welcome! App access mil gaya. (Read-Only Mode)','success');
-      }
+      showToast('🎉 Welcome! App access mil gaya. (Read-Only Mode)','success');
       hideKeyGate();
       applyAccessMode();
       updateUserUI(_currentUser);
