@@ -4754,7 +4754,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
       <div style="width:8px;height:8px;border-radius:50%;background:#1565c0;animation:pendingPulse 1.2s ease-in-out 0.4s infinite;"></div>
       <div style="width:8px;height:8px;border-radius:50%;background:#1565c0;animation:pendingPulse 1.2s ease-in-out 0.8s infinite;"></div>
     </div>
-    <button onclick="checkApprovalStatus()" style="width:100%;padding:11px;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border:none;border-radius:10px;font-size:0.85rem;font-weight:700;cursor:pointer;margin-bottom:8px;font-family:inherit;">🔄 Status Check Karo</button>
+    <button id="pendingCheckBtn" onclick="checkApprovalStatus()" style="width:100%;padding:11px;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border:none;border-radius:10px;font-size:0.85rem;font-weight:700;cursor:pointer;margin-bottom:8px;font-family:inherit;">🔄 Status Check Karo</button>
     <button onclick="logoutFromPending()" style="width:100%;padding:9px;background:none;border:1px solid #ddd;border-radius:10px;font-size:0.78rem;color:#888;cursor:pointer;font-family:inherit;">← Logout Karo</button>
     <div style="font-size:0.68rem;color:#aaa;margin-top:10px;">Refresh karo ya thodi der baad wapas aao — admin approve karte hi access milega.</div>
   </div>
@@ -20283,7 +20283,7 @@ function initFirebase(){
               updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             });
           } catch(e) { /* ignore */ }
-          _registerAppUser(user, true);
+          await _registerAppUser(user, true);
         } else {
           // Regular user: admin ka UID fetch karo, phir approval check
           try {
@@ -20295,35 +20295,35 @@ function initFirebase(){
               _effectiveUID = user.uid;
             }
           } catch(e){ _effectiveUID = user.uid; }
-          _registerAppUser(user, false);
+          await _registerAppUser(user, false);
           // ── Approval Check (new system) ──
+          let _isApproved = false;
+          let _isBlocked  = false;
           try {
             const uDoc = await _db.collection('appUsers').doc(user.uid).get();
             if(uDoc.exists){
               const uData = uDoc.data();
-              if(uData.blocked){
-                hideLoginScreen();
-                showToast('🚫 Aapka access block kar diya gaya hai. Admin se contact karo.','error');
-                setTimeout(()=>_auth.signOut(), 3000);
-                return;
-              }
-              if(uData.approved){
-                // Approved — seedha andar
-              } else {
-                // Not approved — pending screen dikhao, request save karo
-                await _savePendingRequest(user);
-                hideLoginScreen();
-                showPendingScreen(user);
-                return;
-              }
-            } else {
-              // First time login — pending request save karo
-              await _savePendingRequest(user);
-              hideLoginScreen();
-              showPendingScreen(user);
-              return;
+              _isApproved = !!uData.approved;
+              _isBlocked  = !!uData.blocked;
             }
-          } catch(e){ /* ignore network errors */ }
+          } catch(e){
+            // Firestore read failed (permissions/network) — treat as pending for safety
+            _isApproved = false;
+          }
+          if(_isBlocked){
+            hideLoginScreen();
+            showToast('🚫 Aapka access block kar diya gaya hai. Admin se contact karo.','error');
+            setTimeout(()=>_auth.signOut(), 3000);
+            return;
+          }
+          if(!_isApproved){
+            // Pending — request save karo, waiting screen dikhao
+            _savePendingRequest(user); // fire-and-forget (permissions may vary)
+            hideLoginScreen();
+            showPendingScreen(user);
+            return;
+          }
+          // Approved — fall through to applyAccessMode() below
         }
 
         applyAccessMode();
@@ -20445,9 +20445,9 @@ async function loadPendingRequests(){
   if(!el) return;
   el.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text2);">⏳ Loading...</div>';
   try{
-    const snap = await _db.collection('pendingRequests').where('status','==','pending').get();
+    const snap = await _db.collection('pendingRequests').get();
     _pendingCache = [];
-    snap.forEach(doc => _pendingCache.push({id:doc.id,...doc.data()}));
+    snap.forEach(doc => { const d = doc.data(); if(!d.status || d.status==='pending') _pendingCache.push({id:doc.id,...d}); });
     _renderPendingRequests();
   }catch(e){
     el.innerHTML = '<div style="color:var(--red);padding:10px;font-size:0.8rem;">❌ Error: ' + e.message + '</div>';
@@ -20520,8 +20520,7 @@ async function rejectUserRequest(idx){
   }catch(e){ showToast('Error: '+e.message,'error'); }
 }
 async function loadAdminPanel(){
-  loadPendingRequests();
-  loadAdminUsers();
+  await Promise.all([loadPendingRequests(), loadAdminUsers()]);
   loadEmailConfig();
 }
 // ══════════════════════════════════════════════════════════════
@@ -20619,20 +20618,34 @@ async function logoutFromPending(){
 }
 async function checkApprovalStatus(){
   if(!_currentUser || !_db){ showToast('Logged out ho gaye. Dobara login karo.','error'); return; }
+  const btn = document.getElementById('pendingCheckBtn');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Check ho raha hai...'; }
   try{
     const uDoc = await _db.collection('appUsers').doc(_currentUser.uid).get();
-    if(uDoc.exists && uDoc.data().approved && !uDoc.data().blocked){
-      hidePendingScreen();
-      applyAccessMode();
-      hideLoginScreen();
-      updateUserUI(_currentUser);
-      await loadFromFirebase();
-      _attachRealtimeListener();
-      showToast('🎉 Access mil gaya! Welcome!','success');
-    } else {
-      showToast('⏳ Abhi pending hai. Admin se contact karo.','info');
+    if(uDoc.exists){
+      const d = uDoc.data();
+      if(d.blocked){
+        showToast('🚫 Aapka access block kar diya gaya hai.','error');
+        setTimeout(()=>_auth.signOut(),2000);
+        return;
+      }
+      if(d.approved){
+        hidePendingScreen();
+        applyAccessMode();
+        hideLoginScreen();
+        updateUserUI(_currentUser);
+        await loadFromFirebase();
+        _attachRealtimeListener();
+        showToast('🎉 Access mil gaya! Welcome!','success');
+        return;
+      }
     }
-  }catch(e){ showToast('Error: '+e.message,'error'); }
+    showToast('⏳ Abhi pending hai. Admin approve kare tab tak wait karo.','info');
+  }catch(e){
+    showToast('⏳ Check nahi ho saka — Thodi der baad try karo.','info');
+  } finally {
+    if(btn){ btn.disabled=false; btn.textContent='🔄 Status Check Karo'; }
+  }
 }
 async function _savePendingRequest(user){
   if(!_db) return;
@@ -56997,7 +57010,7 @@ function updateAdminPageInfo(){
   const rulesEl = document.getElementById('fbRulesBlock');
   if(uidEl && _effectiveUID) uidEl.textContent = _effectiveUID;
   if(rulesEl && _effectiveUID){
-    rulesEl.textContent = "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /users/" + _effectiveUID + "/{document=**} {\n      allow read: if request.auth != null;\n      allow write: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n    }\n    match /appConfig/{doc} {\n      allow read: if request.auth != null;\n      allow write: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n    }\n    match /appUsers/{userId} {\n      allow read: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n      allow write: if request.auth != null && (request.auth.uid == userId || request.auth.uid == '" + _effectiveUID + "');\n    }\n  }\n}";
+    rulesEl.textContent = "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    // Admin ka data — sirf admin padh/likh sakta hai\n    match /users/" + _effectiveUID + "/{document=**} {\n      allow read, write: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n    }\n    // App config — padh sakta hai koi bhi login user, likh sakta hai sirf admin\n    match /appConfig/{doc} {\n      allow read: if request.auth != null;\n      allow write: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n    }\n    // User records — user apna doc padh/likh sakta hai, admin sab padh/likh sakta hai\n    match /appUsers/{userId} {\n      allow read: if request.auth != null && (request.auth.uid == userId || request.auth.uid == '" + _effectiveUID + "');\n      allow write: if request.auth != null && (request.auth.uid == userId || request.auth.uid == '" + _effectiveUID + "');\n    }\n    // Pending requests — user apna doc likh sakta hai, admin sab padh/likh/delete kar sakta hai\n    match /pendingRequests/{userId} {\n      allow read: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n      allow write: if request.auth != null && (request.auth.uid == userId || request.auth.uid == '" + _effectiveUID + "');\n      allow delete: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n    }\n  }\n}";
   }
   // Load current access key
   loadCurrentKey();
