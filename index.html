@@ -28,6 +28,7 @@
 <script src="https://www.gstatic.com/firebasejs/11.6.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/11.6.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 
 <!-- PWA Manifest -->
 <link rel="manifest" href="manifest.json">
@@ -4738,31 +4739,28 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 
 
 <!-- ===== KEY GATE SCREEN (Access Key verification for new users) ===== -->
-<div id="keyGateScreen" class="show">
-  <div class="key-gate-box">
-    <div class="key-gate-icon">🔐</div>
-    <div class="key-gate-title">Exam Prep Pro</div>
-    <div class="key-gate-sub">
-      App mein enter karne ke liye <strong>Access Key</strong> daalo.<br>
-      <span style="color:var(--accent);font-weight:700;font-size:0.78rem;">
-        👑 Admin: apni private key daalo &nbsp;|&nbsp; 👤 User: admin se key maango
-      </span>
+<!-- ===== PENDING APPROVAL SCREEN ===== -->
+<div id="pendingApprovalScreen" style="position:fixed;inset:0;background:linear-gradient(135deg,#0d2644 0%,#1565c0 60%,#1976d2 100%);z-index:10000;display:none;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:#fff;border-radius:20px;padding:32px 24px;width:100%;max-width:380px;box-shadow:0 20px 60px rgba(0,0,0,0.3);text-align:center;">
+    <div style="font-size:3rem;margin-bottom:8px;">⏳</div>
+    <div style="font-family:'Baloo 2',sans-serif;font-size:1.3rem;font-weight:800;color:#1565c0;margin-bottom:8px;">Approval Pending</div>
+    <div style="font-size:0.82rem;color:#555;margin-bottom:6px;line-height:1.6;">
+      Aapki access request admin ko bhej di gayi hai.<br>
+      <strong>Admin approve karne ke baad aapko email aayega.</strong>
     </div>
-    <div class="key-gate-error" id="keyGateError"></div>
-    <input type="text" class="key-gate-inp" id="keyGateInput"
-      placeholder="EPP-XXXXXX"
-      onkeydown="if(event.key==='Enter')preLoginVerifyKey()"
-      oninput="this.value=this.value.toUpperCase();document.getElementById('keyGateError').classList.remove('show')"
-      autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" />
-    <button class="login-btn-primary" id="keyGateBtn" onclick="preLoginVerifyKey()" style="margin-bottom:10px;">
-      🔓 Key Verify Karo
-    </button>
-    <div style="font-size:0.7rem;color:var(--text2);margin-top:4px;line-height:1.5;">
-      Key nahi pata? Admin se contact karo.
+    <div id="pendingUserEmail" style="background:rgba(21,101,192,0.08);border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#1565c0;font-weight:700;margin-bottom:18px;word-break:break-all;"></div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:16px;">
+      <div style="width:8px;height:8px;border-radius:50%;background:#1565c0;animation:pendingPulse 1.2s ease-in-out infinite;"></div>
+      <div style="width:8px;height:8px;border-radius:50%;background:#1565c0;animation:pendingPulse 1.2s ease-in-out 0.4s infinite;"></div>
+      <div style="width:8px;height:8px;border-radius:50%;background:#1565c0;animation:pendingPulse 1.2s ease-in-out 0.8s infinite;"></div>
     </div>
+    <button onclick="checkApprovalStatus()" style="width:100%;padding:11px;background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;border:none;border-radius:10px;font-size:0.85rem;font-weight:700;cursor:pointer;margin-bottom:8px;font-family:inherit;">🔄 Status Check Karo</button>
+    <button onclick="logoutFromPending()" style="width:100%;padding:9px;background:none;border:1px solid #ddd;border-radius:10px;font-size:0.78rem;color:#888;cursor:pointer;font-family:inherit;">← Logout Karo</button>
+    <div style="font-size:0.68rem;color:#aaa;margin-top:10px;">Refresh karo ya thodi der baad wapas aao — admin approve karte hi access milega.</div>
   </div>
 </div>
-<!-- ===== /KEY GATE SCREEN ===== -->
+<style>@keyframes pendingPulse{0%,100%{opacity:0.3;transform:scale(0.8);}50%{opacity:1;transform:scale(1.2);}}</style>
+<!-- ===== /PENDING APPROVAL SCREEN ===== -->
 
 <div class="app-shell">
 
@@ -5822,9 +5820,9 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
       <div class="page-header">
         <div>
           <div class="page-title">👑 Admin Panel</div>
-          <div class="page-subtitle">Sirf Admin dekh sakta hai — User management</div>
+          <div class="page-subtitle">User requests approve karo, block/delete manage karo</div>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="loadAdminUsers()">🔄 Refresh</button>
+        <button class="btn btn-primary btn-sm" onclick="loadAdminPanel()">🔄 Refresh</button>
       </div>
 
       <!-- Admin info card -->
@@ -5832,44 +5830,40 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         <div class="card-title">🔐 Admin Info</div>
         <div style="font-size:0.82rem;color:var(--text2);line-height:1.8;">
           <div>👑 <strong>Admin Email:</strong> <span id="adminEmailDisplay" style="color:var(--accent);font-weight:700;">amitsinghtomar1211@gmail.com</span></div>
-          <div>🆔 <strong>Admin UID:</strong> <span id="adminUidDisplay" style="font-size:0.7rem;color:var(--text2);font-family:monospace;">Login karo to dikhega</span></div>
-          <div style="margin-top:8px;padding:8px;background:var(--surface2);border-radius:8px;font-size:0.74rem;">
-            💡 <strong>Workflow:</strong> HTML file share karo → User app khole → <strong>Key Gate</strong> aayega → Tumse key maange → Aap Admin Panel se key generate karke share karo → Woh daale → App access milega (read-only)<br><br>
-            👑 <strong>Admin Login:</strong> App kholte hi Key Gate aata hai → Apna <strong>Admin Master Key</strong> daalo (code mein <code>ADMIN_MASTER_KEY</code> variable) → Seedha login screen aata hai → Gmail se login karo
+          <div>🆔 <strong>Admin UID:</strong> <span id="adminUidDisplay" style="font-size:0.7rem;font-family:monospace;">—</span></div>
+          <div style="margin-top:8px;padding:8px;background:rgba(46,125,50,0.08);border-radius:8px;font-size:0.74rem;color:var(--green);">
+            ✅ <strong>New Flow:</strong> User apni Gmail se login kare → Request admin panel mein aayegi → Admin approve kare → Auto email jaayega user ko → User access mil jaayega (Read-Only)
           </div>
         </div>
       </div>
 
-      <!-- 🔑 Access Key Management -->
-      <div class="card" style="margin-bottom:14px;background:linear-gradient(135deg,rgba(46,125,50,0.08),rgba(46,125,50,0.03));border-color:rgba(46,125,50,0.2);">
-        <div class="card-title">🔑 Access Key Management</div>
-        <div style="font-size:0.78rem;color:var(--text2);margin-bottom:12px;line-height:1.6;">
-          Har key <strong>sirf ek Gmail</strong> ke liye hoti hai. Key generate karte waqt us user ki Gmail daalo — woh key us Gmail se LOCK ho jaayegi. Koi aur us key se login nahi kar sakega.
+      <!-- 📧 EmailJS Config -->
+      <div class="card" style="margin-bottom:14px;background:linear-gradient(135deg,rgba(230,81,0,0.06),rgba(230,81,0,0.02));border-color:rgba(230,81,0,0.2);">
+        <div class="card-title">📧 Email Setup (EmailJS)</div>
+        <div style="font-size:0.74rem;color:var(--text2);margin-bottom:10px;line-height:1.6;">
+          Approval email bhejne ke liye <a href="https://www.emailjs.com" target="_blank" style="color:var(--accent);">emailjs.com</a> pe free account banao.<br>
+          Service ID, Template ID aur Public Key neeche daalo. Template variables: <code>{{to_email}}</code>, <code>{{to_name}}</code>, <code>{{member_code}}</code>, <code>{{message}}</code>
         </div>
-
-        <!-- Current key display -->
-        <div style="background:var(--surface2);border:2px dashed var(--border);border-radius:12px;padding:14px;text-align:center;margin-bottom:12px;">
-          <div style="font-size:0.7rem;color:var(--text2);margin-bottom:4px;font-weight:700;">CURRENT ACCESS KEY</div>
-          <div id="currentKeyDisplay" style="font-size:1.6rem;font-weight:900;letter-spacing:6px;color:var(--accent);font-family:monospace;">——</div>
-          <div id="keyBoundEmailDisplay" style="font-size:0.72rem;margin-top:5px;font-weight:600;color:var(--text2);"></div>
-          <div id="keyCreatedAt" style="font-size:0.65rem;color:var(--text2);margin-top:2px;"></div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;">
+          <input type="text" id="ejsServiceId" placeholder="Service ID (jaise: service_abc123)" class="inp" style="font-size:0.8rem;" />
+          <input type="text" id="ejsTemplateId" placeholder="Template ID (jaise: template_xyz456)" class="inp" style="font-size:0.8rem;" />
+          <input type="text" id="ejsPublicKey" placeholder="Public Key (jaise: AbCdEfGhIjKlMn)" class="inp" style="font-size:0.8rem;" />
         </div>
-
-        <!-- Gmail input for new key -->
-        <div style="margin-bottom:10px;">
-          <label style="font-size:0.74rem;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">👤 Kiske liye key banani hai? (Gmail daalo — ZAROORI)</label>
-          <input type="email" id="newKeyTargetGmail"
-            placeholder="user@gmail.com"
-            style="width:100%;padding:10px 12px;border:2px solid var(--border);border-radius:10px;font-size:0.85rem;outline:none;background:var(--surface);color:var(--text);transition:border 0.2s;font-family:inherit;"
-            onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
-        </div>
-
         <div class="btn-row">
-          <button class="btn btn-green btn-sm" onclick="generateNewKey()">⚡ Key Generate Karo (Gmail ke liye)</button>
-          <button class="btn btn-outline btn-sm" onclick="copyAccessKey()">📋 Key Copy Karo</button>
+          <button class="btn btn-primary btn-sm" onclick="saveEmailConfig()">💾 Save Email Config</button>
+          <button class="btn btn-outline btn-sm" onclick="testEmailConfig()">🧪 Test Email Bhejo</button>
         </div>
-        <div style="font-size:0.72rem;color:var(--text2);margin-top:8px;padding:8px;background:var(--surface2);border-radius:8px;line-height:1.6;">
-          ⚠️ <strong>Note:</strong> Naya key generate hone par purana key invalid ho jaata hai. Naye user ke liye naya key banao — purane approved users ka access bana rehta hai.
+        <div id="emailConfigStatus" style="font-size:0.72rem;margin-top:8px;color:var(--text2);"></div>
+      </div>
+
+      <!-- ⏳ Pending Requests -->
+      <div class="card" style="margin-bottom:14px;background:linear-gradient(135deg,rgba(230,81,0,0.06),rgba(230,81,0,0.02));border-color:rgba(230,81,0,0.2);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div class="card-title" style="margin-bottom:0;">⏳ Pending Requests <span id="pendingCountBadge" style="background:#e65100;color:#fff;border-radius:12px;padding:1px 8px;font-size:0.68rem;margin-left:6px;display:none;"></span></div>
+          <button class="btn btn-outline btn-xs" onclick="loadPendingRequests()">🔄</button>
+        </div>
+        <div id="pendingRequestsList">
+          <div style="text-align:center;padding:16px;color:var(--text2);font-size:0.82rem;">Load karo requests dekhne ke liye</div>
         </div>
       </div>
 
@@ -5881,15 +5875,11 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         <button class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="copyFbRules()">📋 Copy Rules</button>
       </div>
 
-      <!-- Users list -->
+      <!-- ✅ Approved Users -->
       <div class="card">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-          <div class="card-title" style="margin-bottom:0;">👥 Users</div>
+          <div class="card-title" style="margin-bottom:0;">👥 Approved Users</div>
           <button class="btn btn-outline btn-xs" onclick="loadAdminUsers()">🔄 Refresh</button>
-        </div>
-        <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">
-          <span style="font-size:0.7rem;background:rgba(46,125,50,0.12);color:var(--green);border-radius:6px;padding:2px 8px;font-weight:700;">✅ Approved = key enter kar chuke</span>
-          <span style="font-size:0.7rem;background:rgba(230,81,0,0.1);color:#e65100;border-radius:6px;padding:2px 8px;font-weight:700;">⏳ Pending = key nahi dala abhi</span>
         </div>
         <div id="adminUserList">
           <div style="text-align:center;padding:20px;color:var(--text2);">
@@ -8042,7 +8032,7 @@ function showPage(p,el,_skipHistory){
     if(area)area.innerHTML=showInstallOption();
   }
   if(p==='testseries')tsRenderHome();
-  if(p==='admin'){ if(_isAdmin){ loadAdminUsers(); updateAdminPageInfo(); } else { showToast('❌ Admin access nahi hai!','error'); showPage('library',document.querySelector('[data-page=library]')); } }
+  if(p==='admin'){ if(_isAdmin){ loadAdminPanel(); updateAdminPageInfo(); } else { showToast('❌ Admin access nahi hai!','error'); showPage('library',document.querySelector('[data-page=library]')); } }
   if(window.innerWidth<=768){document.getElementById('sidebar').classList.remove('open');document.getElementById('sidebarOverlay').classList.remove('show');}
   if(!_skipHistory){history.pushState({type:'page',page:p},'');}
 }
@@ -20189,7 +20179,7 @@ var ADMIN_EMAIL = 'amitsinghtomar1211@gmail.com'; // 👑 Admin Gmail
 // ⚠️  ADMIN KA SECRET MASTER KEY — sirf admin jaanta hai, code mein fixed hai
 //     Yeh kabhi Firestore mein nahi jaata — sirf local check hota hai
 //     Change karna ho to yahan edit karo aur naya HTML upload karo
-var ADMIN_MASTER_KEY = 'ADMIN-EPP-9X7K2'; // 👑 Admin ka permanent private key
+// Admin ka master key (legacy — naya system request-based hai)
 var _isAdmin = false;
 var _effectiveUID = null;   // Admin ke liye: khud ka UID; Friend ke liye: admin ka UID
 var ADMIN_UID_STORED = '';  // Firestore se fetch hoga
@@ -20295,131 +20285,45 @@ function initFirebase(){
           } catch(e) { /* ignore */ }
           _registerAppUser(user, true);
         } else {
-          // Friend/Guest: admin ka UID fetch karo taki admin ka data dikhe
+          // Regular user: admin ka UID fetch karo, phir approval check
           try {
             const adminDoc = await _db.collection('appConfig').doc('admin').get();
             if(adminDoc.exists && adminDoc.data().uid){
               ADMIN_UID_STORED = adminDoc.data().uid;
               _effectiveUID = ADMIN_UID_STORED;
             } else {
-              _effectiveUID = user.uid; // fallback
+              _effectiveUID = user.uid;
             }
           } catch(e){ _effectiveUID = user.uid; }
           _registerAppUser(user, false);
-          // Blocked + approval check
+          // ── Approval Check (new system) ──
           try {
             const uDoc = await _db.collection('appUsers').doc(user.uid).get();
             if(uDoc.exists){
               const uData = uDoc.data();
               if(uData.blocked){
-                showToast('❌ Aapka access revoke kar diya gaya hai. Admin se contact karo.','error');
-                _eppKeyPassed = false; _pendingUserKey = '';
-                setTimeout(()=>_auth.signOut(), 2500);
+                hideLoginScreen();
+                showToast('🚫 Aapka access block kar diya gaya hai. Admin se contact karo.','error');
+                setTimeout(()=>_auth.signOut(), 3000);
                 return;
               }
               if(uData.approved){
-                // Already approved — seedha andar, key gate skip
-                _eppKeyPassed = true;
+                // Approved — seedha andar
               } else {
-                // Not approved — _pendingUserKey se verify karo (ab login ho chuka hai)
-                if(_pendingUserKey){
-                  let keyOk = false;
-                  let _boundEmail = '';
-                  try {
-                    const keyDoc = await _db.collection('appConfig').doc('accessKey').get();
-                    if(keyDoc.exists && keyDoc.data().key){
-                      keyOk = (_pendingUserKey === keyDoc.data().key.toUpperCase());
-                      _boundEmail = (keyDoc.data().boundEmail || '').toLowerCase();
-                    }
-                  } catch(ke){ /* ignore */ }
-                  if(keyOk){
-                    const _ue = (user.email||'').toLowerCase();
-                    // Key-Gmail lock check — admin ne pehle se Gmail lock ki hogi
-                    if(_boundEmail && _boundEmail !== _ue){
-                      showToast('❌ Yeh key ' + _boundEmail + ' ke liye lock hai. Apni sahi Gmail se login karo ya admin se naya key maango.','error');
-                      _eppKeyPassed = false; _pendingUserKey = '';
-                      await _auth.signOut();
-                      _showKeyGateFull();
-                      const ki = document.getElementById('keyGateInput');
-                      if(ki){ ki.value = ''; ki.focus(); }
-                      _showKeyGateErr('❌ Yeh key is Gmail ke liye nahi hai. Admin se apni Gmail ke liye key maango.');
-                      return;
-                    }
-                    if(!_boundEmail){
-                      // Admin ne Gmail specify nahi ki — free key (rare case)
-                      showToast('⚠️ Key verify hui lekin Gmail locked nahi — Admin se keh ke apni Gmail ke liye dobara key banwao.','success');
-                    }
-                    // Approve karo
-                    await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-                    showToast('✅ Key verified! Welcome — Read-Only access mil gaya.','success');
-                    _pendingUserKey = '';
-                  } else {
-                    // Key galat — wapas key gate
-                    showToast('❌ Galat key! Admin se sahi key maango aur dobara try karo.','error');
-                    _eppKeyPassed = false; _pendingUserKey = '';
-                    await _auth.signOut();
-                    _showKeyGateFull();
-                    const ki = document.getElementById('keyGateInput');
-                    if(ki){ ki.value = ''; ki.focus(); }
-                    _showKeyGateErr('❌ Galat key! Admin se sahi key maango.');
-                    return;
-                  }
-                } else {
-                  // Koi pending key nahi — post-login key gate dikhao
-                  hideLoginScreen();
-                  showKeyGate(user);
-                  return;
-                }
-              }
-            } else {
-              // First time user — _pendingUserKey se verify karo
-              if(_pendingUserKey){
-                let keyOk2 = false;
-                let _boundEmail2 = '';
-                try {
-                  const keyDoc2 = await _db.collection('appConfig').doc('accessKey').get();
-                  if(keyDoc2.exists && keyDoc2.data().key){
-                    keyOk2 = (_pendingUserKey === keyDoc2.data().key.toUpperCase());
-                    _boundEmail2 = (keyDoc2.data().boundEmail || '').toLowerCase();
-                  }
-                } catch(ke){ /* ignore */ }
-                if(keyOk2){
-                  const _ue2 = (user.email||'').toLowerCase();
-                  // Key-Gmail lock check
-                  if(_boundEmail2 && _boundEmail2 !== _ue2){
-                    showToast('❌ Yeh key ' + _boundEmail2 + ' ke liye lock hai. Apni sahi Gmail se login karo ya admin se naya key maango.','error');
-                    _eppKeyPassed = false; _pendingUserKey = '';
-                    await _auth.signOut();
-                    _showKeyGateFull();
-                    const ki = document.getElementById('keyGateInput');
-                    if(ki){ ki.value = ''; ki.focus(); }
-                    _showKeyGateErr('❌ Yeh key is Gmail ke liye nahi hai. Admin se apni Gmail ke liye key maango.');
-                    return;
-                  }
-                  if(!_boundEmail2){
-                    showToast('⚠️ Key verify hui lekin Gmail locked nahi — Admin se keh ke apni Gmail ke liye dobara key banwao.','success');
-                  }
-                  await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-                  showToast('✅ Key verified! Welcome — Read-Only access mil gaya.','success');
-                  _pendingUserKey = '';
-                } else {
-                  showToast('❌ Galat key! Admin se sahi key maango aur dobara try karo.','error');
-                  _eppKeyPassed = false; _pendingUserKey = '';
-                  await _auth.signOut();
-                  _showKeyGateFull();
-                  const ki = document.getElementById('keyGateInput');
-                  if(ki){ ki.value = ''; ki.focus(); }
-                  _showKeyGateErr('❌ Galat key! Admin se sahi key maango.');
-                  return;
-                }
-              } else {
-                // First time, no pending key — post-login key gate
+                // Not approved — pending screen dikhao, request save karo
+                await _savePendingRequest(user);
                 hideLoginScreen();
-                showKeyGate(user);
+                showPendingScreen(user);
                 return;
               }
+            } else {
+              // First time login — pending request save karo
+              await _savePendingRequest(user);
+              hideLoginScreen();
+              showPendingScreen(user);
+              return;
             }
-          } catch(e){ /* ignore */ }
+          } catch(e){ /* ignore network errors */ }
         }
 
         applyAccessMode();
@@ -20435,11 +20339,8 @@ function initFirebase(){
         if(_realtimeListener){ _realtimeListener(); _realtimeListener = null; }
         if(window._tsQuizListener){ try{ window._tsQuizListener(); }catch(e){} window._tsQuizListener = null; }
         if(window._tsAttemptListener){ try{ window._tsAttemptListener(); }catch(e){} window._tsAttemptListener = null; }
-        // Logout par key gate reset — dobara key daalni padegi
-        _eppKeyPassed   = false;
-        _eppKeyIsAdmin  = false;
-        _pendingUserKey = '';
-        _showKeyGateFull();
+        hidePendingScreen();
+        showLoginScreen();
         updateUserUI(null);
       }
     });
@@ -20476,74 +20377,156 @@ function showLoginError(msg){
   el.classList.add('show');
 }
 
-// ══════════════════════════════════════════════════════════════
-// PRE-LOGIN KEY GATE — App ka pehla darwaza
-// ══════════════════════════════════════════════════════════════
-// _eppKeyPassed  : kya is session mein key gate cross ho chuki hai
-// _eppKeyIsAdmin : kya admin master key thi
-// _pendingUserKey: user ne jo key daali — login ke baad Firestore se verify hogi
-var _eppKeyPassed   = false;
-var _eppKeyIsAdmin  = false;
-var _pendingUserKey = '';   // login ke baad verify hogi (unauthenticated Firestore read nahi chalti)
-
-function _showKeyGateFull(){
-  var el = document.getElementById('keyGateScreen');
-  if(el){ el.classList.add('show'); }
-  var ls = document.getElementById('loginScreen');
-  if(ls) ls.style.display = 'none';
+// ── EmailJS Config ──
+var _ejsInited = false;
+function _initEmailJS(pubKey){
+  if(!pubKey) return;
+  try{ emailjs.init({ publicKey: pubKey }); _ejsInited = true; }catch(e){}
 }
-
-function _hideKeyGateFull(){
-  var el = document.getElementById('keyGateScreen');
-  if(el){ el.classList.remove('show'); }
+function loadEmailConfig(){
+  if(!_isAdmin||!_db) return;
+  _db.collection('appConfig').doc('emailConfig').get().then(function(doc){
+    if(!doc.exists) return;
+    const d = doc.data();
+    const si = document.getElementById('ejsServiceId');
+    const ti = document.getElementById('ejsTemplateId');
+    const pi = document.getElementById('ejsPublicKey');
+    if(si) si.value = d.serviceId||'';
+    if(ti) ti.value = d.templateId||'';
+    if(pi) pi.value = d.publicKey||'';
+    if(d.publicKey) _initEmailJS(d.publicKey);
+    const st = document.getElementById('emailConfigStatus');
+    if(st) st.textContent = d.serviceId ? '✅ Email config saved hai.' : '';
+  }).catch(function(){});
 }
-
-function _showKeyGateErr(msg){
-  var el = document.getElementById('keyGateError');
-  if(el){ el.textContent = msg; el.classList.add('show'); }
+async function saveEmailConfig(){
+  if(!_isAdmin||!_db){ showToast('Admin access chahiye!','error'); return; }
+  const si = (document.getElementById('ejsServiceId')||{}).value||'';
+  const ti = (document.getElementById('ejsTemplateId')||{}).value||'';
+  const pi = (document.getElementById('ejsPublicKey')||{}).value||'';
+  if(!si||!ti||!pi){ showToast('Teeno fields zaroori hain!','error'); return; }
+  await _db.collection('appConfig').doc('emailConfig').set({ serviceId:si, templateId:ti, publicKey:pi });
+  _initEmailJS(pi);
+  document.getElementById('emailConfigStatus').textContent = '✅ Saved!';
+  showToast('✅ Email config save ho gaya!','success');
 }
-
-async function preLoginVerifyKey(){
-  var inp = document.getElementById('keyGateInput');
-  var btn = document.getElementById('keyGateBtn');
-  var entered = inp ? inp.value.trim().toUpperCase() : '';
-  if(!entered){ _showKeyGateErr('Key daalo!'); return; }
-
-  // ── STEP 1: Admin master key — local check (instant, no Firebase needed) ──
-  if(entered === ADMIN_MASTER_KEY.toUpperCase()){
-    _eppKeyPassed   = true;
-    _eppKeyIsAdmin  = true;
-    _pendingUserKey = '';
-    _hideKeyGateFull();
-    showLoginScreen();
-    showToast('👑 Admin key sahi hai! Ab apni Gmail se login karo.','success');
+async function testEmailConfig(){
+  if(!_currentUser){ showToast('Login karo pehle','error'); return; }
+  const si = (document.getElementById('ejsServiceId')||{}).value||'';
+  const ti = (document.getElementById('ejsTemplateId')||{}).value||'';
+  const pi = (document.getElementById('ejsPublicKey')||{}).value||'';
+  if(!si||!ti||!pi){ showToast('Pehle config save karo!','error'); return; }
+  if(!_ejsInited) _initEmailJS(pi);
+  try{
+    await emailjs.send(si, ti, { to_email: _currentUser.email, to_name: 'Admin Test', member_code: 'TEST-CODE', message: 'Yeh ek test email hai Exam Prep Pro se.' });
+    showToast('✅ Test email bhej diya: ' + _currentUser.email,'success');
+  }catch(e){ showToast('❌ Email error: ' + (e.text||e.message||JSON.stringify(e)),'error'); }
+}
+async function sendApprovalEmail(toEmail, toName, memberCode){
+  if(!_ejsInited){ showToast('EmailJS config set nahi hai — email nahi gaya.','error'); return false; }
+  const si = (document.getElementById('ejsServiceId')||{}).value||'';
+  const ti = (document.getElementById('ejsTemplateId')||{}).value||'';
+  if(!si||!ti) return false;
+  try{
+    await emailjs.send(si, ti, {
+      to_email: toEmail,
+      to_name: toName,
+      member_code: memberCode,
+      message: 'Aapka Exam Prep Pro access approve ho gaya! Ab apni Gmail se login karo. Tumhara Member Code: ' + memberCode
+    });
+    return true;
+  }catch(e){ showToast('Email error: ' + (e.text||e.message||JSON.stringify(e)),'error'); return false; }
+}
+// ── Pending Requests ──
+var _pendingCache = [];
+async function loadPendingRequests(){
+  if(!_isAdmin||!_db) return;
+  const el = document.getElementById('pendingRequestsList');
+  if(!el) return;
+  el.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text2);">⏳ Loading...</div>';
+  try{
+    const snap = await _db.collection('pendingRequests').where('status','==','pending').get();
+    _pendingCache = [];
+    snap.forEach(doc => _pendingCache.push({id:doc.id,...doc.data()}));
+    _renderPendingRequests();
+  }catch(e){
+    el.innerHTML = '<div style="color:var(--red);padding:10px;font-size:0.8rem;">❌ Error: ' + e.message + '</div>';
+  }
+}
+function _renderPendingRequests(){
+  const el = document.getElementById('pendingRequestsList');
+  const badge = document.getElementById('pendingCountBadge');
+  if(!el) return;
+  if(badge){
+    if(_pendingCache.length>0){ badge.style.display='inline'; badge.textContent=_pendingCache.length; }
+    else { badge.style.display='none'; }
+  }
+  if(!_pendingCache.length){
+    el.innerHTML = '<div style="text-align:center;padding:16px;color:var(--text2);font-size:0.82rem;">🎉 Koi pending request nahi hai.</div>';
     return;
   }
-
-  // ── STEP 2: User key — basic format check (EPP- prefix) ──
-  // Firestore read login ke BAAD hogi (unauthenticated read Firestore allow nahi karta)
-  // Isliye: key memory mein store karo, login screen dikhao, login ke baad verify
-  if(!_fbReady){
-    _showKeyGateErr('Firebase setup nahi hai. Pehle Firebase config set karo.');
-    return;
+  el.innerHTML = _pendingCache.map(function(u,idx){
+    const initials = (u.name||'?').substring(0,2).toUpperCase();
+    const t = u.requestedAt ? (u.requestedAt.toDate ? u.requestedAt.toDate().toLocaleDateString('hi-IN') : new Date(u.requestedAt).toLocaleDateString('hi-IN')) : '—';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">'
+      +'<div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#e65100,#bf360c);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:0.9rem;flex-shrink:0;">'+initials+'</div>'
+      +'<div style="flex:1;min-width:0;">'
+      +'<div style="font-weight:800;font-size:0.84rem;">'+escHtml(u.name||'Unknown')+'</div>'
+      +'<div style="font-size:0.72rem;color:var(--text2);">'+escHtml(u.email||'No email')+'</div>'
+      +'<div style="font-size:0.65rem;color:var(--text2);">Requested: '+t+'</div>'
+      +'</div>'
+      +'<div style="display:flex;flex-direction:column;gap:4px;">'
+      +'<button class="btn btn-green btn-xs" onclick="approveUserRequest('+idx+')">✅ Approve</button>'
+      +'<button class="btn btn-danger btn-xs" onclick="rejectUserRequest('+idx+')">❌ Reject</button>'
+      +'</div>'
+      +'</div>';
+  }).join('');
+}
+function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+async function approveUserRequest(idx){
+  const u = _pendingCache[idx];
+  if(!u||!_db) return;
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = '⏳';
+  // Generate member code
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let mc = 'EPP-';
+  for(let i=0;i<6;i++) mc += chars[Math.floor(Math.random()*chars.length)];
+  try{
+    // Approve in Firestore
+    await _db.collection('appUsers').doc(u.id).set({ approved:true, approvedAt:firebase.firestore.FieldValue.serverTimestamp(), memberCode:mc }, {merge:true});
+    await _db.collection('pendingRequests').doc(u.id).update({ status:'approved', approvedAt:firebase.firestore.FieldValue.serverTimestamp() });
+    // Send email
+    const emailSent = await sendApprovalEmail(u.email, u.name, mc);
+    _pendingCache.splice(idx,1);
+    _renderPendingRequests();
+    loadAdminUsers();
+    showToast('✅ ' + u.name + ' approve ho gaya! Member Code: ' + mc + (emailSent ? ' | Email bhi bhej diya ✉️' : ' | Email config set karo to email bhi jaayega'),'success');
+  }catch(e){
+    showToast('Error: '+e.message,'error');
+    btn.disabled=false; btn.textContent='✅ Approve';
   }
-  // Key format: kam se kam 4 characters honi chahiye
-  if(entered.length < 4){
-    _showKeyGateErr('Key bahut choti hai! Sahi key daalo.');
-    return;
-  }
-  // Key memory mein store karo — Firestore verify login ke baad hogi
-  _pendingUserKey = entered;
-  _eppKeyPassed   = true;
-  _eppKeyIsAdmin  = false;
-  _hideKeyGateFull();
-  showLoginScreen();
-  showToast('🔑 Key noted! Ab apni Gmail/Email se login karo — key verify hogi.','info');
+}
+async function rejectUserRequest(idx){
+  const u = _pendingCache[idx];
+  if(!u||!_db) return;
+  if(!confirm('"'+u.name+'" ('+u.email+') ki request reject karna hai?')) return;
+  try{
+    await _db.collection('pendingRequests').doc(u.id).update({ status:'rejected', rejectedAt:firebase.firestore.FieldValue.serverTimestamp() });
+    await _db.collection('appUsers').doc(u.id).set({ blocked:true }, {merge:true});
+    _pendingCache.splice(idx,1);
+    _renderPendingRequests();
+    showToast('❌ Request reject kar di — user blocked.','success');
+  }catch(e){ showToast('Error: '+e.message,'error'); }
+}
+async function loadAdminPanel(){
+  loadPendingRequests();
+  loadAdminUsers();
+  loadEmailConfig();
 }
 // ══════════════════════════════════════════════════════════════
 
 async function loginWithGoogle(){
-  if(!_eppKeyPassed){ _showKeyGateFull(); showToast('Pehle Access Key daalo!','error'); return; }
   if(!_fbReady){ showToast('Pehle Firebase config set karo!','error'); openFbConfig(); return; }
   try{
     const provider = new firebase.auth.GoogleAuthProvider();
@@ -20554,7 +20537,6 @@ async function loginWithGoogle(){
 }
 
 async function loginWithEmail(){
-  if(!_eppKeyPassed){ _showKeyGateFull(); showToast('Pehle Access Key daalo!','error'); return; }
   if(!_fbReady){ showToast('Pehle Firebase config set karo!','error'); openFbConfig(); return; }
   const email = document.getElementById('loginEmail').value.trim();
   const pass = document.getElementById('loginPassword').value;
@@ -20574,7 +20556,6 @@ async function loginWithEmail(){
 }
 
 async function signupWithEmail(){
-  if(!_eppKeyPassed){ _showKeyGateFull(); showToast('Pehle Access Key daalo!','error'); return; }
   if(!_fbReady){ showToast('Pehle Firebase config set karo!','error'); openFbConfig(); return; }
   const email = document.getElementById('loginEmail').value.trim();
   const pass = document.getElementById('loginPassword').value;
@@ -20601,12 +20582,9 @@ function useWithoutLogin(){
 async function logoutUser(){
   if(!confirm('Logout karna hai?')) return;
   try{
-    _eppKeyPassed   = false;
-    _eppKeyIsAdmin  = false;
-    _pendingUserKey = '';
+    hidePendingScreen();
     await _auth.signOut();
     showToast('Logout ho gaya!','success');
-    _showKeyGateFull();
   }catch(e){
     showToast('Logout error: '+e.message,'error');
   }
@@ -20614,11 +20592,7 @@ async function logoutUser(){
 
 // ---- UI FUNCTIONS ----
 function showLoginScreen(){
-  // Key gate pass hona zaroori hai pehle
-  if(!_eppKeyPassed){
-    _showKeyGateFull();
-    return;
-  }
+  hidePendingScreen();
   const ls = document.getElementById('loginScreen');
   if(ls) ls.style.display = 'flex';
 }
@@ -20626,6 +20600,52 @@ function showLoginScreen(){
 function hideLoginScreen(){
   const ls = document.getElementById('loginScreen');
   if(ls) ls.style.display = 'none';
+}
+
+// ── Pending Screen ──
+function showPendingScreen(user){
+  const el = document.getElementById('pendingApprovalScreen');
+  const emailEl = document.getElementById('pendingUserEmail');
+  if(el) el.style.display = 'flex';
+  if(emailEl) emailEl.textContent = '📧 ' + (user.email || user.displayName || 'Unknown');
+}
+function hidePendingScreen(){
+  const el = document.getElementById('pendingApprovalScreen');
+  if(el) el.style.display = 'none';
+}
+async function logoutFromPending(){
+  hidePendingScreen();
+  try{ if(_auth) await _auth.signOut(); } catch(e){}
+}
+async function checkApprovalStatus(){
+  if(!_currentUser || !_db){ showToast('Logged out ho gaye. Dobara login karo.','error'); return; }
+  try{
+    const uDoc = await _db.collection('appUsers').doc(_currentUser.uid).get();
+    if(uDoc.exists && uDoc.data().approved && !uDoc.data().blocked){
+      hidePendingScreen();
+      applyAccessMode();
+      hideLoginScreen();
+      updateUserUI(_currentUser);
+      await loadFromFirebase();
+      _attachRealtimeListener();
+      showToast('🎉 Access mil gaya! Welcome!','success');
+    } else {
+      showToast('⏳ Abhi pending hai. Admin se contact karo.','info');
+    }
+  }catch(e){ showToast('Error: '+e.message,'error'); }
+}
+async function _savePendingRequest(user){
+  if(!_db) return;
+  try{
+    await _db.collection('pendingRequests').doc(user.uid).set({
+      uid: user.uid,
+      email: user.email || '',
+      name: user.displayName || (user.email ? user.email.split('@')[0] : 'User'),
+      photoURL: user.photoURL || null,
+      requestedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status: 'pending'
+    });
+  }catch(e){ /* ignore */ }
 }
 
 function updateUserUI(user){
@@ -57148,11 +57168,8 @@ async function verifyAccessKey(){
 
 async function logoutFromKeyGate(){
   hideKeyGate();
-  _eppKeyPassed   = false;
-  _eppKeyIsAdmin  = false;
-  _pendingUserKey = '';
+  hidePendingScreen();
   try { if(_auth) await _auth.signOut(); } catch(e){}
-  _showKeyGateFull();
 }
 
 async function loadAdminUsers(){
@@ -57199,11 +57216,14 @@ function renderAdminUserList(users){
     html += '<div style="font-size:0.68rem;color:var(--text2);margin-top:1px;">Last login: ' + lastLogin + '</div>';
     html += '</div>';
     if(!u.isAdmin){
+      html += '<div style="display:flex;flex-direction:column;gap:3px;">';
       if(isBlocked){
         html += '<button class="btn btn-green btn-xs" data-uidx="' + idx + '" onclick="adminToggleBlock(this,false)">✅ Unblock</button>';
       } else {
         html += '<button class="btn btn-danger btn-xs" data-uidx="' + idx + '" onclick="adminToggleBlock(this,true)">🚫 Block</button>';
       }
+      html += '<button class="btn btn-outline btn-xs" style="color:var(--red);border-color:var(--red);" data-uidx="' + idx + '" onclick="adminDeleteUser(this)">🗑️ Delete</button>';
+      html += '</div>';
     }
     html += '</div>';
     return html;
@@ -57222,12 +57242,30 @@ async function toggleUserBlock(uid, email, block){
   const action = block ? 'block' : 'unblock';
   if(!confirm('"' + email + '" ko ' + action + ' karna hai?')) return;
   try {
-    await _db.collection('appUsers').doc(uid).update({ blocked: block });
-    showToast((block ? '🚫 User blocked!' : '✅ User unblocked!') + ' Refresh karo.','success');
+    await _db.collection('appUsers').doc(uid).update({ blocked: block, approved: !block });
+    showToast((block ? '🚫 User blocked!' : '✅ User unblocked!'),'success');
     loadAdminUsers();
   } catch(e){
     showToast('Error: ' + e.message,'error');
   }
+}
+
+function adminDeleteUser(btn){
+  const idx = parseInt(btn.getAttribute('data-uidx'));
+  const u = _adminUsersCache[idx];
+  if(!u) return;
+  deleteUserAccess(u.id, u.email||'');
+}
+async function deleteUserAccess(uid, email){
+  if(!_isAdmin || !_db) return;
+  if(!confirm('"' + email + '" ka access PERMANENTLY delete karna hai?
+(Woh dobara login kar ke request bhejna chahein to kar sakte hain)')) return;
+  try{
+    await _db.collection('appUsers').doc(uid).delete();
+    await _db.collection('pendingRequests').doc(uid).delete().catch(()=>{});
+    showToast('🗑️ User delete ho gaya!','success');
+    loadAdminUsers();
+  }catch(e){ showToast('Error: '+e.message,'error'); }
 }
 
 // ========================================================================
