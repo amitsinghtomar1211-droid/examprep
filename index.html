@@ -20316,16 +20316,35 @@ function initFirebase(){
                 // Not approved — _pendingUserKey se verify karo (ab login ho chuka hai)
                 if(_pendingUserKey){
                   let keyOk = false;
+                  let _boundEmail = '';
                   try {
                     const keyDoc = await _db.collection('appConfig').doc('accessKey').get();
                     if(keyDoc.exists && keyDoc.data().key){
                       keyOk = (_pendingUserKey === keyDoc.data().key.toUpperCase());
+                      _boundEmail = (keyDoc.data().boundEmail || '').toLowerCase();
                     }
                   } catch(ke){ /* ignore */ }
                   if(keyOk){
-                    // Key sahi — approve karo
+                    const _ue = (user.email||'').toLowerCase();
+                    if(_boundEmail && _boundEmail !== _ue){
+                      // Key dusri Gmail se lock hai — reject
+                      showToast('❌ Yeh key pehle se ' + _boundEmail + ' ke liye lock hai. Admin se NAYA key maango.','error');
+                      _eppKeyPassed = false; _pendingUserKey = '';
+                      await _auth.signOut();
+                      _showKeyGateFull();
+                      const ki = document.getElementById('keyGateInput');
+                      if(ki){ ki.value = ''; ki.focus(); }
+                      _showKeyGateErr('❌ Yeh key kisi aur Gmail se lock hai. Admin se naya key maango.');
+                      return;
+                    }
+                    // Key sahi — approve + bind karo
                     await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-                    showToast('✅ Key verified! Welcome — Read-Only access mil gaya.','success');
+                    if(!_boundEmail){
+                      await _db.collection('appConfig').doc('accessKey').update({ boundEmail: _ue, boundAt: firebase.firestore.FieldValue.serverTimestamp() });
+                      showToast('✅ Key verified! Yeh key ab sirf ' + user.email + ' ke liye lock ho gayi.','success');
+                    } else {
+                      showToast('✅ Key verified! Welcome — Read-Only access mil gaya.','success');
+                    }
                     _pendingUserKey = '';
                   } else {
                     // Key galat — wapas key gate
@@ -20348,16 +20367,34 @@ function initFirebase(){
             } else {
               // First time user — _pendingUserKey se verify karo
               if(_pendingUserKey){
-                let keyOk = false;
+                let keyOk2 = false;
+                let _boundEmail2 = '';
                 try {
-                  const keyDoc = await _db.collection('appConfig').doc('accessKey').get();
-                  if(keyDoc.exists && keyDoc.data().key){
-                    keyOk = (_pendingUserKey === keyDoc.data().key.toUpperCase());
+                  const keyDoc2 = await _db.collection('appConfig').doc('accessKey').get();
+                  if(keyDoc2.exists && keyDoc2.data().key){
+                    keyOk2 = (_pendingUserKey === keyDoc2.data().key.toUpperCase());
+                    _boundEmail2 = (keyDoc2.data().boundEmail || '').toLowerCase();
                   }
                 } catch(ke){ /* ignore */ }
-                if(keyOk){
+                if(keyOk2){
+                  const _ue2 = (user.email||'').toLowerCase();
+                  if(_boundEmail2 && _boundEmail2 !== _ue2){
+                    showToast('❌ Yeh key pehle se ' + _boundEmail2 + ' ke liye lock hai. Admin se NAYA key maango.','error');
+                    _eppKeyPassed = false; _pendingUserKey = '';
+                    await _auth.signOut();
+                    _showKeyGateFull();
+                    const ki = document.getElementById('keyGateInput');
+                    if(ki){ ki.value = ''; ki.focus(); }
+                    _showKeyGateErr('❌ Yeh key kisi aur Gmail se lock hai. Admin se naya key maango.');
+                    return;
+                  }
                   await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-                  showToast('✅ Key verified! Welcome — Read-Only access mil gaya.','success');
+                  if(!_boundEmail2){
+                    await _db.collection('appConfig').doc('accessKey').update({ boundEmail: _ue2, boundAt: firebase.firestore.FieldValue.serverTimestamp() });
+                    showToast('✅ Key verified! Yeh key ab sirf ' + user.email + ' ke liye lock ho gayi.','success');
+                  } else {
+                    showToast('✅ Key verified! Welcome — Read-Only access mil gaya.','success');
+                  }
                   _pendingUserKey = '';
                 } else {
                   showToast('❌ Galat key! Admin se sahi key maango aur dobara try karo.','error');
@@ -56966,6 +57003,9 @@ async function loadCurrentKey(){
     if(doc.exists && doc.data().key){
       _currentAccessKey = doc.data().key;
       if(el) el.textContent = _currentAccessKey;
+      const bndEl = document.getElementById('keyBoundEmailDisplay');
+      const bndVal = doc.data().boundEmail || '';
+      if(bndEl) bndEl.textContent = bndVal ? ('🔒 Locked: ' + bndVal) : '🟢 Free — abhi kisi se bind nahi';
       if(atEl && doc.data().createdAt){
         const d = doc.data().createdAt.toDate ? doc.data().createdAt.toDate() : new Date(doc.data().createdAt);
         atEl.textContent = 'Generated: ' + d.toLocaleDateString('hi-IN');
@@ -56973,6 +57013,8 @@ async function loadCurrentKey(){
     } else {
       if(el) el.textContent = '—— Key Set Nahi ——';
       if(atEl) atEl.textContent = 'Abhi generate karo';
+      const bndEl = document.getElementById('keyBoundEmailDisplay');
+      if(bndEl) bndEl.textContent = '';
     }
   } catch(e){ /* ignore */ }
 }
@@ -56983,12 +57025,14 @@ async function generateNewKey(){
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let key = 'EPP-';
   for(let i=0; i<6; i++) key += chars[Math.floor(Math.random()*chars.length)];
-  if(!confirm('Naya key generate karna hai?\nNaya key: ' + key + '\n\nPurana key invalid ho jayega (lekin approved users ka access banega rahega).')) return;
+  if(!confirm('Naya key generate karna hai?\nNaya key: ' + key + '\n\n⚠️ Purana key INVALID ho jayega aur uski Gmail LOCK bhi RESET hogi.\nNaye user ke liye yeh naya key share karo.')) return;
   try {
     await _db.collection('appConfig').doc('accessKey').set({
       key: key,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      createdBy: _currentUser.uid
+      createdBy: _currentUser.uid,
+      boundEmail: '',
+      boundAt: null
     });
     _currentAccessKey = key;
     const el = document.getElementById('currentKeyDisplay');
@@ -57052,17 +57096,30 @@ async function verifyAccessKey(){
     }
     const correctKey = keyDoc.data().key.toUpperCase();
     if(enteredKey === correctKey){
-      // Approve user
+      const _ue3 = (_currentUser.email||'').toLowerCase();
+      const _bound3 = (keyDoc.data().boundEmail||'').toLowerCase();
+      // Key-Gmail binding check
+      if(_bound3 && _bound3 !== _ue3){
+        showKeyGateError('❌ Yeh key ' + _bound3 + ' ke liye lock hai. Admin se naya key maango.');
+        if(inp) inp.value = '';
+        if(btn){ btn.disabled = false; btn.textContent = '🔓 Key Verify Karo'; }
+        return;
+      }
       await _db.collection('appUsers').doc(_currentUser.uid).set({
         approved: true,
         approvedAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
+      if(!_bound3){
+        await _db.collection('appConfig').doc('accessKey').update({ boundEmail: _ue3, boundAt: firebase.firestore.FieldValue.serverTimestamp() });
+        showToast('✅ Key verified! Yeh key ab sirf tumhari Gmail ke liye lock ho gayi. (Read-Only)','success');
+      } else {
+        showToast('🎉 Welcome! App access mil gaya. (Read-Only Mode)','success');
+      }
       hideKeyGate();
       applyAccessMode();
       updateUserUI(_currentUser);
       await loadFromFirebase();
       _attachRealtimeListener();
-      showToast('🎉 Welcome! App access mil gaya. (Read-Only Mode)','success');
     } else {
       showKeyGateError('❌ Galat key! Admin se sahi key maango.');
       if(inp) inp.value = '';
