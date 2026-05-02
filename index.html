@@ -7652,6 +7652,8 @@ function load(){
     S.wrongedQuestions=d.wrongedQuestions||[];
     S.quizFactProgress=d.quizFactProgress||{};
     S.hlQuizProgress=d.hlQuizProgress||{};
+    S.testSeries=d.testSeries||[];
+    S.tsAttempts=d.tsAttempts||[];
 
     var _needsClean = false;
     S.subjects.forEach(s=>{
@@ -28007,6 +28009,8 @@ async function loadFromFirebase(){
     if(!metaDoc.exists){
       // Pehli baar — local upload karo
       if(localTopicCount > 0){ await saveToFirebase(); showToast('Data cloud pe save ho gaya! ☁️','success'); }
+      // Test series bhi load karo (agar kisi aur collection mein pehle se hai)
+      if(typeof tsLoadFromCloud === 'function') tsLoadFromCloud();
       setSyncStatus('synced'); return;
     }
 
@@ -28133,6 +28137,8 @@ async function loadFromFirebase(){
     _loadQuizVaultFromFirebase();
     _loadGameVaultFromFirebase();
     _attachGameVaultRealtimeListener();
+    // Test series quizzes + attempts load karo
+    if(typeof tsLoadFromCloud === 'function') tsLoadFromCloud();
 
     // Agar purana format tha to naye format mein re-save karo
     if(!isV2){ setTimeout(function(){ saveToFirebase(); }, 2000); }
@@ -28218,6 +28224,7 @@ async function pullFromCloud(){
     _loadQuizVaultFromFirebase();
     _loadGameVaultFromFirebase();
     _attachGameVaultRealtimeListener();
+    if(typeof tsLoadFromCloud === 'function') tsLoadFromCloud();
     showToast('✅ Latest notes aa gaye!', 'success');
   } catch(e) {
     console.error('[PULL] Error:', e.code, e.message, e);
@@ -55631,23 +55638,71 @@ function tsGetAttempts() { return S.tsAttempts || (S.tsAttempts = []); }
 function tsSave() { if(typeof save === 'function') save(); }
 
 // --- Firestore sync helpers ---
-var _tsDb = null;
 function tsGetDb() {
-  if(_tsDb) return _tsDb;
-  try { _tsDb = firebase.firestore(); } catch(e) {}
-  return _tsDb;
+  if(typeof _db !== 'undefined' && _db) return _db;
+  return null;
 }
 function tsCloudSaveQuiz(quiz) {
-  var db = tsGetDb(); if(!db || !S.user) return;
-  db.collection('users').doc(S.user.uid).collection('ts_quizzes').doc(String(quiz.id)).set(quiz).catch(function(){});
+  var db = tsGetDb();
+  if(!db || !_currentUser) return;
+  db.collection('users').doc(_currentUser.uid).collection('ts_quizzes').doc(String(quiz.id)).set(quiz).catch(function(e){ console.warn('tsCloudSaveQuiz error:', e); });
 }
 function tsCloudDeleteQuiz(quizId) {
-  var db = tsGetDb(); if(!db || !S.user) return;
-  db.collection('users').doc(S.user.uid).collection('ts_quizzes').doc(String(quizId)).delete().catch(function(){});
+  var db = tsGetDb();
+  if(!db || !_currentUser) return;
+  db.collection('users').doc(_currentUser.uid).collection('ts_quizzes').doc(String(quizId)).delete().catch(function(e){ console.warn('tsCloudDeleteQuiz error:', e); });
 }
 function tsCloudSaveAttempt(attempt) {
-  var db = tsGetDb(); if(!db || !S.user) return;
-  db.collection('users').doc(S.user.uid).collection('ts_attempts').doc(String(attempt.id)).set(attempt).catch(function(){});
+  var db = tsGetDb();
+  if(!db || !_currentUser) return;
+  db.collection('users').doc(_currentUser.uid).collection('ts_attempts').doc(String(attempt.id)).set(attempt).catch(function(e){ console.warn('tsCloudSaveAttempt error:', e); });
+}
+
+// Load all quizzes + attempts from Firebase → merge into S
+async function tsLoadFromCloud() {
+  var db = tsGetDb();
+  if(!db || !_currentUser) return;
+  try {
+    var uid = _currentUser.uid;
+    // Load quizzes
+    var qSnap = await db.collection('users').doc(uid).collection('ts_quizzes').get();
+    var cloudQuizzes = [];
+    qSnap.forEach(function(d){ if(d.exists) cloudQuizzes.push(d.data()); });
+    // Load attempts
+    var aSnap = await db.collection('users').doc(uid).collection('ts_attempts').get();
+    var cloudAttempts = [];
+    aSnap.forEach(function(d){ if(d.exists) cloudAttempts.push(d.data()); });
+
+    var changed = false;
+    // Merge quizzes: cloud has them → add any missing ones locally
+    if(cloudQuizzes.length > 0) {
+      var localIds = new Set((S.testSeries||[]).map(function(q){ return String(q.id); }));
+      cloudQuizzes.forEach(function(q) {
+        if(!localIds.has(String(q.id))) { (S.testSeries = S.testSeries||[]).push(q); changed = true; }
+        else {
+          // Update existing quiz (questions may have been added on another device)
+          var idx = (S.testSeries||[]).findIndex(function(x){ return String(x.id) === String(q.id); });
+          if(idx !== -1) {
+            // Keep whichever has more questions
+            if((q.questions||[]).length >= ((S.testSeries[idx].questions)||[]).length) {
+              S.testSeries[idx] = q; changed = true;
+            }
+          }
+        }
+      });
+    }
+    // Merge attempts: add missing
+    if(cloudAttempts.length > 0) {
+      var localAIds = new Set((S.tsAttempts||[]).map(function(a){ return String(a.id); }));
+      cloudAttempts.forEach(function(a) {
+        if(!localAIds.has(String(a.id))) { (S.tsAttempts = S.tsAttempts||[]).push(a); changed = true; }
+      });
+    }
+    if(changed) {
+      save();
+      if(typeof tsRenderHome === 'function') tsRenderHome();
+    }
+  } catch(e) { console.warn('tsLoadFromCloud error:', e); }
 }
 
 // ============================================================
