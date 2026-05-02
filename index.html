@@ -4701,9 +4701,25 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
   <div class="login-box">
     <div class="login-logo">📚</div>
     <div class="login-title">Exam Prep Pro</div>
-    <div class="login-sub">Login karo — saara data cloud mein safe rahega<br>Koi bhi device pe access karo!</div>
-    <div id="loginReadOnlyNote" style="background:rgba(46,125,50,0.08);border:1.5px solid rgba(46,125,50,0.25);border-radius:10px;padding:10px 12px;font-size:0.75rem;color:var(--green);margin-bottom:12px;line-height:1.6;">
-      🔑 <strong>Shared App:</strong> Login karo — phir admin se <strong>Access Key</strong> maango aur enter karo. Key sahi hogi to app read-only mode mein open ho jayega.
+    <div class="login-sub">Smart Exam Preparation — AI Quiz, Notes & Progress</div>
+
+    <!-- ── ACCESS KEY GATE (required for all non-admin users) ── -->
+    <div id="preLoginKeyBox" style="background:linear-gradient(135deg,rgba(21,101,192,0.10),rgba(106,27,154,0.07));border:2px solid rgba(21,101,192,0.30);border-radius:14px;padding:14px 16px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px;">
+        <span style="font-size:1.2rem;">🔑</span>
+        <span style="font-size:0.85rem;font-weight:800;color:var(--accent);">Access Key Required</span>
+      </div>
+      <div style="font-size:0.74rem;color:var(--text2);margin-bottom:10px;line-height:1.55;">
+        Pehle admin se <strong>Access Key</strong> lo aur neeche daalo — tabhi login hoga.<br>
+        <span style="color:var(--accent);font-weight:700;">Admin hi key share karta hai.</span>
+      </div>
+      <input type="text" id="preLoginKeyInput"
+        class="login-inp"
+        placeholder="EPP-XXXXXX  (Admin se key lo)"
+        autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false"
+        oninput="this.value=this.value.toUpperCase();_preLoginKeyReset()"
+        style="margin-bottom:0;font-weight:800;letter-spacing:2px;font-size:0.92rem;text-align:center;border-color:rgba(21,101,192,0.35);" />
+      <div id="preLoginKeyStatus" style="font-size:0.72rem;color:var(--red);margin-top:5px;min-height:16px;font-weight:700;"></div>
     </div>
 
     <!-- Google Login -->
@@ -4724,12 +4740,6 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 
     <div class="login-toggle" id="loginToggle">
       Account nahi hai? <span onclick="toggleAuthMode()">Register karo</span>
-    </div>
-
-    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
-      <button class="login-toggle" onclick="useWithoutLogin()" style="color:var(--text2);font-size:0.74rem;">
-        ��� Bina login ke use karo (data sirf is device pe)
-      </button>
     </div>
 
     <!-- Firebase Config -->
@@ -20277,6 +20287,7 @@ function initFirebase(){
           // Admin: apna UID use karo, Firestore mein save karo
           _effectiveUID = user.uid;
           ADMIN_UID_STORED = user.uid;
+          sessionStorage.setItem('_eppKeyOK','1'); // Admin ko key nahi chahiye
           try {
             await _db.collection('appConfig').doc('admin').set({
               uid: user.uid, email: user.email,
@@ -20371,8 +20382,71 @@ function showLoginError(msg){
   el.classList.add('show');
 }
 
+// ── Pre-login Access Key check (blocks login for non-admin) ──────────────────
+function _preLoginKeyReset(){
+  const s = document.getElementById('preLoginKeyStatus');
+  if(s) s.textContent = '';
+}
+
+function _preLoginKeySetStatus(msg, isError){
+  const s = document.getElementById('preLoginKeyStatus');
+  if(!s) return;
+  s.textContent = msg;
+  s.style.color = isError ? 'var(--red)' : 'var(--green)';
+}
+
+// Returns true if key is OK to proceed, false otherwise
+async function _checkPreLoginKey(emailForAdminBypass){
+  // If email is the admin email, skip key check entirely
+  if(emailForAdminBypass && emailForAdminBypass.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase()){
+    return true;
+  }
+  // If already verified this browser session, allow
+  if(sessionStorage.getItem('_eppKeyOK') === '1') return true;
+
+  const inp = document.getElementById('preLoginKeyInput');
+  const enteredKey = inp ? inp.value.trim().toUpperCase() : '';
+
+  if(!enteredKey){
+    _preLoginKeySetStatus('❌ Pehle Access Key daalo! Admin se key maango.', true);
+    if(inp) inp.focus();
+    return false;
+  }
+  if(!_fbReady || !_db){
+    _preLoginKeySetStatus('❌ Firebase connect nahi hai. Config check karo.', true);
+    return false;
+  }
+  _preLoginKeySetStatus('⏳ Key verify ho rahi hai...', false);
+  try {
+    const keyDoc = await _db.collection('appConfig').doc('accessKey').get();
+    if(!keyDoc.exists || !keyDoc.data().key){
+      // Admin ne key set nahi ki abhi — allow login (no key enforced yet)
+      sessionStorage.setItem('_eppKeyOK','1');
+      _preLoginKeySetStatus('✅ Key verified!', false);
+      return true;
+    }
+    const correctKey = keyDoc.data().key.toUpperCase();
+    if(enteredKey === correctKey){
+      sessionStorage.setItem('_eppKeyOK','1');
+      _preLoginKeySetStatus('✅ Key verified!', false);
+      return true;
+    } else {
+      _preLoginKeySetStatus('❌ Galat key! Admin se sahi key maango.', true);
+      if(inp){ inp.value=''; inp.focus(); }
+      return false;
+    }
+  } catch(e){
+    _preLoginKeySetStatus('❌ Error: ' + e.message, true);
+    return false;
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function loginWithGoogle(){
   if(!_fbReady){ showToast('Pehle Firebase config set karo!','error'); openFbConfig(); return; }
+  // Key check (Google login = unknown email before popup, so pass null — non-admin path)
+  const keyOK = await _checkPreLoginKey(null);
+  if(!keyOK) return;
   try{
     const provider = new firebase.auth.GoogleAuthProvider();
     await _auth.signInWithPopup(provider);
@@ -20386,6 +20460,9 @@ async function loginWithEmail(){
   const email = document.getElementById('loginEmail').value.trim();
   const pass = document.getElementById('loginPassword').value;
   if(!email || !pass){ showLoginError('Email aur password daalo!'); return; }
+  // Key check — admin email bypasses it
+  const keyOK = await _checkPreLoginKey(email);
+  if(!keyOK) return;
   const btn = document.getElementById('loginBtn');
   btn.disabled = true; btn.textContent = '⏳ Login ho raha hai...';
   try{
@@ -20406,6 +20483,9 @@ async function signupWithEmail(){
   const pass = document.getElementById('loginPassword').value;
   if(!email || !pass){ showLoginError('Email aur password daalo!'); return; }
   if(pass.length < 6){ showLoginError('Password kam se kam 6 characters ka hona chahiye!'); return; }
+  // Key check — admin email bypasses it
+  const keyOK = await _checkPreLoginKey(email);
+  if(!keyOK) return;
   const btn = document.getElementById('signupBtn');
   btn.disabled = true; btn.textContent = '⏳ Account ban raha hai...';
   try{
@@ -20420,13 +20500,14 @@ async function signupWithEmail(){
 }
 
 function useWithoutLogin(){
-  document.getElementById('loginScreen').style.display = 'none';
-  showToast('Bina login ke use kar rahe ho -- data sirf is device pe rahega','success');
+  // Disabled — access key system requires login
+  showToast('❌ Bina login ke access allowed nahi hai. Admin se key lo aur login karo.','error');
 }
 
 async function logoutUser(){
   if(!confirm('Logout karna hai?')) return;
   try{
+    sessionStorage.removeItem('_eppKeyOK');
     await _auth.signOut();
     showToast('Logout ho gaya!','success');
   }catch(e){
@@ -56917,6 +56998,7 @@ async function verifyAccessKey(){
         approved: true,
         approvedAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
+      sessionStorage.setItem('_eppKeyOK','1');
       hideKeyGate();
       applyAccessMode();
       updateUserUI(_currentUser);
@@ -56934,6 +57016,7 @@ async function verifyAccessKey(){
 }
 
 async function logoutFromKeyGate(){
+  sessionStorage.removeItem('_eppKeyOK');
   hideKeyGate();
   try { if(_auth) await _auth.signOut(); } catch(e){}
   showLoginScreen();
