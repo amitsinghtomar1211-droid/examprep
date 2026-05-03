@@ -5656,7 +5656,10 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
           <div class="page-title">❓ Quiz Questions</div>
           <div class="page-subtitle" id="tsQQSubtitle">Add/Manage Questions</div>
         </div>
-        <button class="btn btn-outline btn-sm" onclick="tsShowCreate()">← Back</button>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-outline btn-sm" onclick="tsShuffleAllQuestions()" title="Questions ko shuffle karo">🔀 Shuffle</button>
+          <button class="btn btn-outline btn-sm" onclick="tsShowCreate()">← Back</button>
+        </div>
       </div>
 
       <!-- Quiz Info Bar -->
@@ -5675,7 +5678,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 
       <!-- Add Question Form -->
       <div class="card" id="tsAddQForm">
-        <div class="card-title">➕ Question Add Karo</div>
+        <div class="card-title" id="tsAddQFormTitle">➕ Question Add Karo</div>
+        <input type="hidden" id="tsEditQId" value="">
         <div class="field-group">
           <label class="field-label">Question:</label>
           <textarea class="inp" id="tsQText" rows="3" placeholder="Question likhao..."></textarea>
@@ -5699,8 +5703,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
           </div>
         </div>
         <div class="btn-row">
-          <button class="btn btn-primary" onclick="tsAddSingleQuestion()">➕ Add Question</button>
-          <button class="btn btn-outline btn-sm" onclick="tsClearQForm()">Clear</button>
+          <button class="btn btn-primary" id="tsAddQBtn" onclick="tsAddOrUpdateQuestion()">➕ Add Question</button>
+          <button class="btn btn-outline btn-sm" onclick="tsCancelEditQ()">Cancel</button>
         </div>
       </div>
 
@@ -5743,45 +5747,68 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <!-- ===== TS ATTEMPT ===== -->
     <div id="page-ts-attempt" class="page" style="padding:0;">
       <!-- Attempt Header -->
-      <div style="position:sticky;top:0;z-index:100;background:var(--surface);border-bottom:1.5px solid var(--border);padding:10px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+      <div style="position:sticky;top:0;z-index:100;background:var(--surface);border-bottom:1.5px solid var(--border);padding:10px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
         <div style="flex:1;min-width:0;">
           <div style="font-weight:800;font-size:0.88rem;color:var(--accent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" id="tsAttemptTitle">Quiz</div>
           <div style="font-size:0.7rem;color:var(--text2);" id="tsAttemptProgress">Q 1 / 10</div>
         </div>
         <!-- Timer display -->
-        <div id="tsAttemptTimer" style="display:none;background:linear-gradient(135deg,#e65100,#ff8f00);color:#fff;padding:4px 12px;border-radius:20px;font-weight:900;font-size:0.85rem;font-family:monospace;">
+        <div id="tsAttemptTimer" style="display:none;background:linear-gradient(135deg,#e65100,#ff8f00);color:#fff;padding:4px 10px;border-radius:20px;font-weight:900;font-size:0.82rem;font-family:monospace;white-space:nowrap;">
           ⏱ <span id="tsTimerDisplay">60:00</span>
         </div>
-        <button onclick="tsConfirmSubmit()" style="padding:6px 12px;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;border:none;border-radius:8px;font-weight:800;font-size:0.78rem;cursor:pointer;flex-shrink:0;">Submit</button>
+        <button onclick="tsConfirmSubmit()" style="padding:6px 12px;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;border:none;border-radius:8px;font-weight:800;font-size:0.78rem;cursor:pointer;flex-shrink:0;white-space:nowrap;">Submit</button>
       </div>
 
-      <!-- Question Area -->
-      <div style="padding:14px;">
+      <!-- Question Area — fixed layout, no layout shift -->
+      <div style="padding:12px 14px;">
         <!-- Progress bar -->
-        <div style="height:4px;background:var(--bg2);border-radius:4px;margin-bottom:14px;overflow:hidden;">
+        <div style="height:4px;background:var(--bg2);border-radius:4px;margin-bottom:12px;overflow:hidden;">
           <div id="tsAttemptBar" style="height:100%;background:var(--accent);width:0%;transition:width 0.3s;border-radius:4px;"></div>
         </div>
 
-        <!-- Question card -->
-        <div class="card" id="tsCurrentQCard">
-          <div style="font-size:0.7rem;font-weight:800;color:var(--text2);margin-bottom:8px;" id="tsQNum">Question 1</div>
-          <div style="font-size:0.92rem;font-weight:700;color:var(--text);line-height:1.6;margin-bottom:16px;" id="tsQBody"></div>
-          <div id="tsOptions" style="display:flex;flex-direction:column;gap:8px;"></div>
-          <div id="tsPerQTimer" style="display:none;margin-top:10px;text-align:center;font-size:0.8rem;font-weight:800;color:#e65100;">⏱ <span id="tsPerQTimerDisplay">30</span>s</div>
+        <!-- Question card — fixed min-height so layout stays stable -->
+        <div class="card" id="tsCurrentQCard" style="min-height:320px;display:flex;flex-direction:column;">
+          <!-- Q number + mark badge row -->
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-shrink:0;">
+            <div style="font-size:0.7rem;font-weight:800;color:var(--text2);" id="tsQNum">Question 1</div>
+            <div id="tsMarkBadge" style="display:none;background:rgba(255,152,0,0.18);border:1px solid rgba(255,152,0,0.5);color:#e65100;border-radius:20px;padding:2px 10px;font-size:0.68rem;font-weight:800;">🔖 Marked</div>
+          </div>
+          <!-- Question text — fixed area, scrollable if very long -->
+          <div style="font-size:0.92rem;font-weight:700;color:var(--text);line-height:1.65;margin-bottom:14px;flex-shrink:0;word-break:break-word;" id="tsQBody"></div>
+          <!-- Options — each option same height via min-height -->
+          <div id="tsOptions" style="display:flex;flex-direction:column;gap:8px;flex:1;"></div>
+          <!-- Per-Q timer -->
+          <div id="tsPerQTimer" style="display:none;margin-top:10px;text-align:center;font-size:0.82rem;font-weight:800;color:#e65100;flex-shrink:0;">⏱ <span id="tsPerQTimerDisplay">30</span>s bache hain</div>
+        </div>
+
+        <!-- Action buttons row: Skip + Mark for Review -->
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+          <button onclick="tsSkipQuestion()" id="tsSkipBtn" style="flex:1;min-width:100px;padding:8px 10px;background:var(--surface2);border:1.5px solid var(--border);border-radius:9px;font-size:0.78rem;font-weight:700;color:var(--text2);cursor:pointer;">⏩ Skip</button>
+          <button onclick="tsMarkForReview()" id="tsMarkBtn" style="flex:1;min-width:130px;padding:8px 10px;background:rgba(255,152,0,0.08);border:1.5px solid rgba(255,152,0,0.35);border-radius:9px;font-size:0.78rem;font-weight:700;color:#e65100;cursor:pointer;">🔖 Mark for Review</button>
         </div>
 
         <!-- Navigation -->
-        <div style="display:flex;gap:10px;justify-content:space-between;margin-top:12px;">
-          <button class="btn btn-outline btn-sm" onclick="tsNavQ(-1)" id="tsPrevBtn">← Pichla</button>
-          <button class="btn btn-outline btn-sm" onclick="tsOpenQOverview()">📋 Overview</button>
-          <button class="btn btn-primary btn-sm" onclick="tsNavQ(1)" id="tsNextBtn">Agla →</button>
+        <div style="display:flex;gap:8px;justify-content:space-between;margin-top:8px;">
+          <button class="btn btn-outline btn-sm" onclick="tsNavQ(-1)" id="tsPrevBtn" style="flex:1;">← Pichla</button>
+          <button class="btn btn-outline btn-sm" onclick="tsOpenQOverview()" style="flex:0 0 auto;padding:6px 10px;">📋</button>
+          <button class="btn btn-primary btn-sm" onclick="tsNavQ(1)" id="tsNextBtn" style="flex:1;">Agla →</button>
         </div>
 
         <!-- Q Overview Panel -->
         <div id="tsQOverviewPanel" style="display:none;margin-top:12px;">
           <div class="card">
             <div class="card-title">📋 Question Overview</div>
+            <!-- Legend -->
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;font-size:0.68rem;color:var(--text2);">
+              <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:rgba(46,125,50,0.25);border:1.5px solid var(--green);margin-right:3px;vertical-align:middle;"></span>Answered</span>
+              <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:rgba(255,152,0,0.2);border:1.5px solid #e65100;margin-right:3px;vertical-align:middle;"></span>Marked</span>
+              <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:rgba(198,40,40,0.12);border:1.5px solid var(--red);margin-right:3px;vertical-align:middle;"></span>Skipped</span>
+              <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:var(--surface2);border:1.5px solid var(--border);margin-right:3px;vertical-align:middle;"></span>Not visited</span>
+            </div>
             <div id="tsQOverviewGrid" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+            <div style="margin-top:12px;">
+              <button onclick="tsConfirmSubmit()" style="width:100%;padding:10px;background:linear-gradient(135deg,#2e7d32,#388e3c);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:0.85rem;cursor:pointer;">✅ Submit Test</button>
+            </div>
           </div>
         </div>
       </div>
@@ -56588,6 +56615,16 @@ function tsGetQuizzes() { return S.testSeries || (S.testSeries = []); }
 function tsGetAttempts() { return S.tsAttempts || (S.tsAttempts = []); }
 function tsSave() { if(typeof save === 'function') save(); }
 
+// --- Fisher-Yates Shuffle ---
+function tsShuffle(arr) {
+  var a = arr.slice();
+  for(var i = a.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+  }
+  return a;
+}
+
 // --- Firestore sync helpers ---
 function tsGetDb() {
   if(typeof _db !== 'undefined' && _db) return _db;
@@ -56851,7 +56888,8 @@ function tsRenderCreateList() {
         '<div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0;">' +
           (bestPct !== null ? '<div style="background:' + (bestPct>=75?'rgba(46,125,50,0.12)':bestPct>=50?'rgba(230,81,0,0.1)':'rgba(198,40,40,0.1)') + ';border-radius:20px;padding:2px 10px;font-weight:900;font-size:0.82rem;color:' + (bestPct>=75?'var(--green)':bestPct>=50?'#e65100':'var(--red)') + ';text-align:center;">Best: ' + bestPct + '%</div>' : '') +
           '<button class="btn btn-primary btn-xs" onclick="tsOpenQuizQuestions(' + q.id + ')">✏️ Edit</button>' +
-          '<button class="btn btn-green btn-xs" onclick="tsStartAttempt(' + q.id + ')">▶ Attempt</button>' +
+          '<button class="btn btn-green btn-xs" onclick="tsStartAttempt(' + q.id + ',false)">▶ Attempt</button>' +
+          '<button class="btn btn-outline btn-xs" onclick="tsStartAttempt(' + q.id + ',true)" style="font-size:0.7rem;">🔀 Shuffled</button>' +
           '<button class="btn btn-outline btn-xs" style="color:var(--red);" onclick="tsDeleteQuiz(' + q.id + ')">🗑 Delete</button>' +
         '</div>' +
       '</div>' +
@@ -56907,27 +56945,137 @@ function tsRenderQuestionsList(quiz) {
     container.innerHTML = '<div class="card" style="text-align:center;color:var(--text2);padding:20px;">Koi question nahi. Upar form se add karo ya console se bulk import karo.</div>';
     return;
   }
-  container.innerHTML = '<div class="card"><div class="card-title">📋 Questions (' + qs.length + ')</div>' +
+  container.innerHTML = '<div class="card"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;"><div class="card-title" style="margin:0;">📋 Questions (' + qs.length + ')</div></div>' +
     qs.map(function(q, i) {
-      return '<div style="padding:10px 0;border-bottom:1px solid var(--border);">' +
+      return '<div style="padding:10px 0;border-bottom:1px solid var(--border);" id="tsQItem_' + q.id + '">' +
         '<div style="display:flex;align-items:flex-start;gap:8px;">' +
-          '<div style="background:var(--accent);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:0.7rem;font-weight:800;flex-shrink:0;">' + (i+1) + '</div>' +
+          '<div style="background:var(--accent);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:0.7rem;font-weight:800;flex-shrink:0;margin-top:2px;">' + (i+1) + '</div>' +
           '<div style="flex:1;min-width:0;">' +
-            '<div style="font-weight:700;font-size:0.84rem;line-height:1.5;">' + escHtml(q.q) + '</div>' +
+            '<div style="font-weight:700;font-size:0.84rem;line-height:1.5;word-break:break-word;">' + escHtml(q.q) + '</div>' +
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-top:6px;">' +
               q.options.map(function(opt, oi) {
                 var isCorrect = oi === q.correct;
-                return '<div style="font-size:0.74rem;padding:3px 6px;border-radius:5px;background:' + (isCorrect ? 'rgba(46,125,50,0.15)' : 'var(--surface2)') + ';color:' + (isCorrect ? 'var(--green)' : 'var(--text)') + ';font-weight:' + (isCorrect ? '800' : '400') + ';">' +
+                return '<div style="font-size:0.74rem;padding:3px 6px;border-radius:5px;background:' + (isCorrect ? 'rgba(46,125,50,0.15)' : 'var(--surface2)') + ';color:' + (isCorrect ? 'var(--green)' : 'var(--text)') + ';font-weight:' + (isCorrect ? '800' : '400') + ';word-break:break-word;">' +
                   String.fromCharCode(65+oi) + '. ' + escHtml(opt) + (isCorrect ? ' ✓' : '') +
                 '</div>';
               }).join('') +
             '</div>' +
             (q.explanation ? '<div style="font-size:0.72rem;color:#1565c0;margin-top:4px;font-style:italic;">💡 ' + escHtml(q.explanation) + '</div>' : '') +
           '</div>' +
-          '<button onclick="tsDeleteQuestion(' + q.id + ')" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:0.8rem;padding:2px 5px;flex-shrink:0;" title="Delete">🗑</button>' +
+          '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">' +
+            '<button onclick="tsEditQuestion(' + q.id + ')" style="background:rgba(21,101,192,0.1);border:1px solid rgba(21,101,192,0.25);color:var(--accent);border-radius:6px;padding:3px 8px;font-size:0.72rem;cursor:pointer;font-weight:700;" title="Edit">✏️</button>' +
+            '<button onclick="tsShuffleOptions(' + q.id + ')" style="background:rgba(106,27,154,0.1);border:1px solid rgba(106,27,154,0.25);color:var(--purple);border-radius:6px;padding:3px 8px;font-size:0.72rem;cursor:pointer;font-weight:700;" title="Options shuffle karo">🔀</button>' +
+            '<button onclick="tsMoveQ(' + q.id + ',-1)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text2);border-radius:6px;padding:3px 8px;font-size:0.72rem;cursor:pointer;" title="Upar le jao">↑</button>' +
+            '<button onclick="tsMoveQ(' + q.id + ',1)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text2);border-radius:6px;padding:3px 8px;font-size:0.72rem;cursor:pointer;" title="Neeche le jao">↓</button>' +
+            '<button onclick="tsDeleteQuestion(' + q.id + ')" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:0.8rem;padding:2px 5px;" title="Delete">🗑</button>' +
+          '</div>' +
         '</div>' +
       '</div>';
     }).join('') + '</div>';
+}
+
+// Shuffle only options of one question, keep correct answer tracking
+function tsShuffleOptions(qid) {
+  var quiz = tsGetQuizzes().find(function(q){ return q.id === _tsCurrentQuizId; });
+  if(!quiz) return;
+  var qObj = (quiz.questions||[]).find(function(q){ return q.id === qid; });
+  if(!qObj) return;
+  var correctText = qObj.options[qObj.correct];
+  var shuffled = tsShuffle(qObj.options);
+  qObj.options = shuffled;
+  qObj.correct = shuffled.indexOf(correctText);
+  tsSave();
+  tsCloudSaveQuiz(quiz);
+  tsRenderQuestionsPage();
+  showToast('✅ Options shuffle ho gaye!', 'success');
+}
+
+// Shuffle all questions order
+function tsShuffleAllQuestions() {
+  var quiz = tsGetQuizzes().find(function(q){ return q.id === _tsCurrentQuizId; });
+  if(!quiz || !(quiz.questions||[]).length) return;
+  if(!confirm('Saare questions ki order shuffle karni hai?')) return;
+  quiz.questions = tsShuffle(quiz.questions);
+  tsSave();
+  tsCloudSaveQuiz(quiz);
+  tsRenderQuestionsPage();
+  showToast('🔀 Questions shuffle ho gaye!', 'success');
+}
+
+// Move question up/down
+function tsMoveQ(qid, dir) {
+  var quiz = tsGetQuizzes().find(function(q){ return q.id === _tsCurrentQuizId; });
+  if(!quiz) return;
+  var qs = quiz.questions || [];
+  var idx = qs.findIndex(function(q){ return q.id === qid; });
+  if(idx < 0) return;
+  var newIdx = idx + dir;
+  if(newIdx < 0 || newIdx >= qs.length) return;
+  var tmp = qs[idx]; qs[idx] = qs[newIdx]; qs[newIdx] = tmp;
+  quiz.questions = qs;
+  tsSave();
+  tsCloudSaveQuiz(quiz);
+  tsRenderQuestionsPage();
+}
+
+// Edit question — fill form with existing data
+function tsEditQuestion(qid) {
+  var quiz = tsGetQuizzes().find(function(q){ return q.id === _tsCurrentQuizId; });
+  if(!quiz) return;
+  var qObj = (quiz.questions||[]).find(function(q){ return q.id === qid; });
+  if(!qObj) return;
+  document.getElementById('tsEditQId').value = qid;
+  document.getElementById('tsQText').value = qObj.q;
+  [0,1,2,3].forEach(function(i){ document.getElementById('tsOpt'+i).value = qObj.options[i] || ''; });
+  document.getElementById('tsCorrect').value = qObj.correct;
+  document.getElementById('tsExplanation').value = qObj.explanation || '';
+  var titleEl = document.getElementById('tsAddQFormTitle');
+  var btnEl = document.getElementById('tsAddQBtn');
+  if(titleEl) titleEl.textContent = '✏️ Question Edit Karo';
+  if(btnEl) btnEl.textContent = '💾 Update Question';
+  var form = document.getElementById('tsAddQForm');
+  if(form) form.scrollIntoView({behavior:'smooth'});
+}
+
+// Add OR update question based on edit state
+function tsAddOrUpdateQuestion() {
+  var editId = document.getElementById('tsEditQId').value;
+  if(editId) {
+    tsUpdateQuestion(parseInt(editId) || editId);
+  } else {
+    tsAddSingleQuestion();
+  }
+}
+
+function tsUpdateQuestion(qid) {
+  var qText = (document.getElementById('tsQText').value || '').trim();
+  if(!qText) { showToast('Question likhao!', 'error'); return; }
+  var opts = [0,1,2,3].map(function(i){ return (document.getElementById('tsOpt'+i).value||'').trim(); });
+  if(opts.some(function(o){ return !o; })) { showToast('Saare 4 options daalo!', 'error'); return; }
+  var correct = parseInt(document.getElementById('tsCorrect').value) || 0;
+  var explanation = (document.getElementById('tsExplanation').value || '').trim();
+  var quiz = tsGetQuizzes().find(function(q){ return q.id === _tsCurrentQuizId; });
+  if(!quiz) return;
+  var qObj = (quiz.questions||[]).find(function(q){ return q.id === qid; });
+  if(!qObj) { showToast('Question nahi mila!', 'error'); return; }
+  qObj.q = qText;
+  qObj.options = opts;
+  qObj.correct = correct;
+  qObj.explanation = explanation;
+  tsSave();
+  tsCloudSaveQuiz(quiz);
+  tsCancelEditQ();
+  tsRenderQuestionsPage();
+  showToast('✅ Question update ho gaya!', 'success');
+}
+
+function tsCancelEditQ() {
+  document.getElementById('tsEditQId').value = '';
+  tsClearQForm();
+  var titleEl = document.getElementById('tsAddQFormTitle');
+  var btnEl = document.getElementById('tsAddQBtn');
+  if(titleEl) titleEl.textContent = '➕ Question Add Karo';
+  if(btnEl) btnEl.textContent = '➕ Add Question';
 }
 
 function tsAddSingleQuestion() {
@@ -56946,7 +57094,7 @@ function tsAddSingleQuestion() {
   quiz.questions.push({ id: Date.now(), q: qText, options: opts, correct: correct, explanation: explanation });
   tsSave();
   tsCloudSaveQuiz(quiz);
-  tsClearQForm();
+  tsCancelEditQ();
   tsRenderQuestionsPage();
   showToast('✅ Question add ho gaya!', 'success');
 }
@@ -57092,7 +57240,8 @@ function tsPracticeFilter() {
         '</div>' +
         '<div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0;">' +
           (bestPct !== null ? '<div style="text-align:center;font-weight:900;font-size:0.88rem;color:' + (bestPct>=75?'var(--green)':bestPct>=50?'#e65100':'var(--red)') + ';">Best ' + bestPct + '%</div>' : '') +
-          '<button class="btn btn-primary btn-sm" onclick="tsStartAttempt(' + q.id + ')" ' + ((q.questions||[]).length === 0 ? 'disabled style="opacity:0.5;"' : '') + '>▶ Start</button>' +
+          '<button class="btn btn-primary btn-sm" onclick="tsStartAttempt(' + q.id + ',false)" ' + ((q.questions||[]).length === 0 ? 'disabled style="opacity:0.5;"' : '') + '>▶ Start</button>' +
+          '<button class="btn btn-outline btn-xs" onclick="tsStartAttempt(' + q.id + ',true)" ' + ((q.questions||[]).length === 0 ? 'disabled style="opacity:0.5;"' : '') + ' style="font-size:0.7rem;">🔀 Shuffled</button>' +
           (attempts.length ? '<button class="btn btn-outline btn-xs" onclick="tsViewLastResult(' + q.id + ')">📊 Results</button>' : '') +
         '</div>' +
       '</div>' +
@@ -57104,12 +57253,12 @@ function tsPracticeFilter() {
 // QUIZ ATTEMPT
 // ============================================================
 var _tsAttemptState = {
-  quizId: null, quiz: null, answers: [], currentQ: 0,
+  quizId: null, quiz: null, answers: [], marked: [], skipped: [], currentQ: 0,
   timer: null, timeLeft: 0, perQTimer: null, startTime: 0,
   submitted: false, timerPaused: false
 };
 
-function tsStartAttempt(quizId) {
+function tsStartAttempt(quizId, shuffleQs) {
   var quiz = tsGetQuizzes().find(function(q){ return q.id === quizId; });
   if(!quiz) { showToast('Quiz nahi mili!', 'error'); return; }
   if(!(quiz.questions||[]).length) { showToast('Is quiz mein koi question nahi!', 'error'); return; }
@@ -57118,10 +57267,24 @@ function tsStartAttempt(quizId) {
   if(_tsAttemptState.timer) clearInterval(_tsAttemptState.timer);
   if(_tsAttemptState.perQTimer) clearInterval(_tsAttemptState.perQTimer);
 
+  var quizCopy = JSON.parse(JSON.stringify(quiz));
+  if(shuffleQs) {
+    // Shuffle questions
+    quizCopy.questions = tsShuffle(quizCopy.questions);
+    // Also shuffle each question's options
+    quizCopy.questions.forEach(function(q) {
+      var correctText = q.options[q.correct];
+      q.options = tsShuffle(q.options);
+      q.correct = q.options.indexOf(correctText);
+    });
+  }
+
   _tsAttemptState = {
     quizId: quizId,
-    quiz: JSON.parse(JSON.stringify(quiz)), // deep copy
-    answers: quiz.questions.map(function(){ return null; }),
+    quiz: quizCopy,
+    answers: quizCopy.questions.map(function(){ return null; }),
+    marked: quizCopy.questions.map(function(){ return false; }),
+    skipped: quizCopy.questions.map(function(){ return false; }),
     currentQ: 0,
     timer: null,
     timeLeft: 0,
@@ -57175,30 +57338,59 @@ function tsRenderCurrentQuestion() {
 
   var total = qs.length;
   var answered = st.answers.filter(function(a){ return a !== null; }).length;
+  var markedCount = st.marked.filter(Boolean).length;
 
-  document.getElementById('tsAttemptProgress').textContent = 'Q ' + (st.currentQ+1) + ' / ' + total + ' | ' + answered + ' answered';
+  var progressText = 'Q ' + (st.currentQ+1) + ' / ' + total + ' | ' + answered + ' answered';
+  if(markedCount) progressText += ' | 🔖 ' + markedCount + ' marked';
+  document.getElementById('tsAttemptProgress').textContent = progressText;
   document.getElementById('tsAttemptBar').style.width = Math.round(((st.currentQ+1)/total)*100) + '%';
   document.getElementById('tsQNum').textContent = 'Question ' + (st.currentQ+1) + ' of ' + total;
   document.getElementById('tsQBody').textContent = q.q;
 
+  // Mark badge
+  var markBadge = document.getElementById('tsMarkBadge');
+  if(markBadge) markBadge.style.display = st.marked[st.currentQ] ? 'inline-block' : 'none';
+
+  // Mark button text
+  var markBtn = document.getElementById('tsMarkBtn');
+  if(markBtn) {
+    markBtn.textContent = st.marked[st.currentQ] ? '🔖 Unmark' : '🔖 Mark for Review';
+    markBtn.style.background = st.marked[st.currentQ] ? 'rgba(255,152,0,0.2)' : 'rgba(255,152,0,0.08)';
+  }
+
+  // Skip button — grey out if already skipped
+  var skipBtn = document.getElementById('tsSkipBtn');
+  if(skipBtn) {
+    if(st.skipped[st.currentQ] && st.answers[st.currentQ] === null) {
+      skipBtn.textContent = '⏩ Skipped';
+      skipBtn.style.opacity = '0.5';
+    } else {
+      skipBtn.textContent = '⏩ Skip';
+      skipBtn.style.opacity = '1';
+    }
+  }
+
+  // Options — fixed min-height per option so layout doesn't shift
   var optsEl = document.getElementById('tsOptions');
   optsEl.innerHTML = q.options.map(function(opt, i) {
     var isSelected = st.answers[st.currentQ] === i;
-    return '<div onclick="tsSelectOption(' + i + ')" style="cursor:pointer;padding:10px 14px;border-radius:10px;border:1.5px solid ' +
+    return '<div onclick="tsSelectOption(' + i + ')" style="cursor:pointer;padding:10px 14px;border-radius:10px;border:2px solid ' +
       (isSelected ? 'var(--accent)' : 'var(--border)') +
       ';background:' + (isSelected ? 'rgba(21,101,192,0.1)' : 'var(--surface2)') +
-      ';font-weight:' + (isSelected ? '800' : '400') +
-      ';font-size:0.85rem;color:var(--text);transition:all 0.15s;display:flex;align-items:center;gap:10px;">' +
-        '<div style="width:22px;height:22px;border-radius:50%;border:2px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + ';background:' + (isSelected ? 'var(--accent)' : 'transparent') + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+      ';font-weight:' + (isSelected ? '800' : '500') +
+      ';font-size:0.85rem;color:var(--text);display:flex;align-items:flex-start;gap:10px;min-height:44px;word-break:break-word;transition:border-color 0.15s,background 0.15s;">' +
+        '<div style="width:22px;height:22px;border-radius:50%;border:2px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + ';background:' + (isSelected ? 'var(--accent)' : 'transparent') + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;transition:all 0.15s;">' +
           (isSelected ? '<div style="width:8px;height:8px;border-radius:50%;background:#fff;"></div>' : '') +
         '</div>' +
-        '<span>' + String.fromCharCode(65+i) + '. ' + escHtml(opt) + '</span>' +
+        '<span style="flex:1;">' + String.fromCharCode(65+i) + '. ' + escHtml(opt) + '</span>' +
       '</div>';
   }).join('');
 
   // Prev/Next buttons
-  document.getElementById('tsPrevBtn').disabled = st.currentQ === 0;
-  document.getElementById('tsNextBtn').textContent = (st.currentQ === total-1) ? 'Finish →' : 'Agla →';
+  var prevBtn = document.getElementById('tsPrevBtn');
+  var nextBtn = document.getElementById('tsNextBtn');
+  if(prevBtn) prevBtn.disabled = st.currentQ === 0;
+  if(nextBtn) nextBtn.textContent = (st.currentQ === total-1) ? 'Finish →' : 'Agla →';
 
   // Per-question timer
   if(st.quiz.timer && st.quiz.timer.type === 'perQ') {
@@ -57214,7 +57406,6 @@ function tsRenderCurrentQuestion() {
       perQDisplay.textContent = perQLeft;
       if(perQLeft <= 0) {
         clearInterval(_tsAttemptState.perQTimer);
-        // Auto-move or auto-submit
         if(_tsAttemptState.currentQ < qs.length-1) {
           tsNavQ(1);
         } else {
@@ -57235,7 +57426,35 @@ function tsRenderCurrentQuestion() {
 function tsSelectOption(optIdx) {
   if(_tsAttemptState.submitted) return;
   _tsAttemptState.answers[_tsAttemptState.currentQ] = optIdx;
+  // If user selects an option, un-skip this question
+  _tsAttemptState.skipped[_tsAttemptState.currentQ] = false;
   tsRenderCurrentQuestion();
+}
+
+function tsSkipQuestion() {
+  if(_tsAttemptState.submitted) return;
+  var st = _tsAttemptState;
+  st.skipped[st.currentQ] = true;
+  st.answers[st.currentQ] = null; // clear any selection
+  showToast('⏩ Question skip ho gaya', 'info');
+  // Auto-move to next
+  var total = (st.quiz.questions||[]).length;
+  if(st.currentQ < total - 1) {
+    if(st.perQTimer) clearInterval(st.perQTimer);
+    st.currentQ++;
+    tsRenderCurrentQuestion();
+  } else {
+    tsRenderCurrentQuestion(); // just refresh badge
+  }
+}
+
+function tsMarkForReview() {
+  if(_tsAttemptState.submitted) return;
+  var st = _tsAttemptState;
+  st.marked[st.currentQ] = !st.marked[st.currentQ];
+  tsRenderCurrentQuestion();
+  if(st.marked[st.currentQ]) showToast('🔖 Question marked for review!', 'success');
+  else showToast('Unmark ho gaya', 'info');
 }
 
 function tsNavQ(dir) {
@@ -57257,12 +57476,24 @@ function tsOpenQOverview() {
   var grid = document.getElementById('tsQOverviewGrid');
   if(!panel || !grid) return;
   var qs = _tsAttemptState.quiz.questions;
+  var st = _tsAttemptState;
   grid.innerHTML = qs.map(function(q, i) {
-    var ans = _tsAttemptState.answers[i];
-    var color = ans !== null ? 'var(--green)' : 'var(--border)';
-    var bg = ans !== null ? 'rgba(46,125,50,0.12)' : 'var(--surface2)';
-    var isCurrent = i === _tsAttemptState.currentQ;
-    return '<div onclick="tsGoToQ(' + i + ')" style="width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:800;cursor:pointer;border:2px solid ' + (isCurrent ? 'var(--accent)' : color) + ';background:' + (isCurrent ? 'rgba(21,101,192,0.15)' : bg) + ';color:' + (isCurrent ? 'var(--accent)' : 'var(--text)') + ';">' + (i+1) + '</div>';
+    var ans = st.answers[i];
+    var isMarked = st.marked[i];
+    var isSkipped = st.skipped[i] && ans === null;
+    var isAnswered = ans !== null;
+    var isCurrent = i === st.currentQ;
+    var borderColor, bg, textColor;
+    if(isCurrent) { borderColor = 'var(--accent)'; bg = 'rgba(21,101,192,0.15)'; textColor = 'var(--accent)'; }
+    else if(isMarked && isAnswered) { borderColor = '#e65100'; bg = 'rgba(255,152,0,0.25)'; textColor = '#e65100'; }
+    else if(isMarked) { borderColor = '#e65100'; bg = 'rgba(255,152,0,0.15)'; textColor = '#e65100'; }
+    else if(isAnswered) { borderColor = 'var(--green)'; bg = 'rgba(46,125,50,0.14)'; textColor = 'var(--green)'; }
+    else if(isSkipped) { borderColor = 'var(--red)'; bg = 'rgba(198,40,40,0.1)'; textColor = 'var(--red)'; }
+    else { borderColor = 'var(--border)'; bg = 'var(--surface2)'; textColor = 'var(--text2)'; }
+    return '<div onclick="tsGoToQ(' + i + ')" style="width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:800;cursor:pointer;border:2px solid ' + borderColor + ';background:' + bg + ';color:' + textColor + ';position:relative;">' +
+      (i+1) +
+      (isMarked ? '<span style="position:absolute;top:-4px;right:-4px;font-size:0.5rem;">🔖</span>' : '') +
+    '</div>';
   }).join('');
   panel.style.display = 'block';
 }
@@ -57274,8 +57505,15 @@ function tsGoToQ(idx) {
 }
 
 function tsConfirmSubmit() {
-  var unanswered = _tsAttemptState.answers.filter(function(a){ return a === null; }).length;
-  if(unanswered > 0 && !confirm(unanswered + ' questions unanswered hain. Phir bhi submit karo?')) return;
+  var st = _tsAttemptState;
+  var unanswered = st.answers.filter(function(a){ return a === null; }).length;
+  var markedCount = st.marked.filter(Boolean).length;
+  var msgs = [];
+  if(unanswered > 0) msgs.push(unanswered + ' questions unanswered hain');
+  if(markedCount > 0) msgs.push(markedCount + ' questions marked for review hain');
+  if(msgs.length > 0) {
+    if(!confirm(msgs.join('\n') + '\n\nPhir bhi submit karo?')) return;
+  }
   tsSubmitAttempt(false);
 }
 
@@ -57736,7 +57974,13 @@ async function toggleUserBlock(uid, email, block){
   style.textContent = [
     '#page-testseries .card, #page-ts-create .card, #page-ts-questions .card, #page-ts-practice .card, #page-ts-result .card { box-shadow: 0 2px 10px rgba(0,0,0,0.06); }',
     '#page-ts-attempt { min-height: 100%; background: var(--bg); }',
-    '.ts-option:hover { border-color: var(--accent) !important; background: rgba(21,101,192,0.06) !important; }'
+    /* Fixed layout for attempt question card — no layout shift */
+    '#tsCurrentQCard { transition: none !important; }',
+    '#tsQBody { min-height: 48px; }',
+    '#tsOptions > div { min-height: 44px; align-items: flex-start; }',
+    '#tsOptions > div:active { transform: scale(0.98); }',
+    '.ts-option:hover { border-color: var(--accent) !important; background: rgba(21,101,192,0.06) !important; }',
+    '#tsSkipBtn:active, #tsMarkBtn:active { transform: scale(0.97); }',
   ].join('\n');
   document.head.appendChild(style);
 })();
