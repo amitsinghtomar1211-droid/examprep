@@ -19936,8 +19936,9 @@ let _deferredPrompt = null;
 // Service Worker Registration
 function registerSW(){
   if('serviceWorker' in navigator){
-    // Inline service worker as blob URL (no separate file needed!)
-    const swCode = `
+    // Blob URL GitHub Pages pe support nahi hota — gracefully skip karo
+    try {
+      const swCode = `
 const CACHE = 'examprep-v13';
 const ASSETS = [location.href];
 
@@ -19973,14 +19974,19 @@ self.addEventListener('fetch', e => {
   );
 });
 `;
-    const blob = new Blob([swCode], {type:'application/javascript'});
-    const swUrl = URL.createObjectURL(blob);
-    navigator.serviceWorker.register(swUrl, {scope:'/'})
-      .then(reg => {
-        console.log('SW registered');
-        reg.update();
-      })
-      .catch(err => console.log('SW registration failed (normal on localhost):', err));
+      const blob = new Blob([swCode], {type:'application/javascript'});
+      const swUrl = URL.createObjectURL(blob);
+      navigator.serviceWorker.register(swUrl, {scope:'/'})
+        .then(reg => {
+          console.log('SW registered');
+          reg.update();
+        })
+        .catch(err => {
+          // GitHub Pages pe blob SW fail hota hai — normal hai, ignore karo
+        });
+    } catch(e) {
+      // SW registration silently skip
+    }
   }
 }
 
@@ -20212,9 +20218,21 @@ let _syncInProgress = false;  // Full-reload guard
 let _activeEditTid = null;    // Currently editing topic (preserve its local data)
 
 // Firebase config localStorage se load karo
+// ✅ Hardcoded Firebase config — naye users ko manually setup nahi karna
+var _HARDCODED_FB_CONFIG = {
+  "apiKey": "AIzaSyAdpCa8daoZudozRdmS1tTWPMGwNgWt4Io",
+  "authDomain": "exampreppro-5ea20.firebaseapp.com",
+  "projectId": "exampreppro-5ea20",
+  "storageBucket": "exampreppro-5ea20.firebasestorage.app",
+  "messagingSenderId": "1018234999895",
+  "appId": "1:1018234999895:web:c930dec03885830a213f12"
+};
 function getFbConfig(){
-  try{ return JSON.parse(localStorage.getItem('fbConfig')||'null'); }
-  catch(e){ return null; }
+  try{
+    var stored = JSON.parse(localStorage.getItem('fbConfig')||'null');
+    return stored || _HARDCODED_FB_CONFIG;
+  }
+  catch(e){ return _HARDCODED_FB_CONFIG; }
 }
 
 function saveFbConfig(){
@@ -20247,10 +20265,14 @@ function openFbConfig(){
 }
 
 function initFirebase(){
+  // Agar firebase SDK abhi load nahi hua to retry karo
+  if(typeof firebase === 'undefined'){
+    setTimeout(initFirebase, 100);
+    return;
+  }
   const cfg = getFbConfig();
   if(!cfg){ 
     _fbReady = false;
-    // No Firebase config — key gate already showing (default state), kuch mat karo
     return;
   }
   try{
@@ -29262,8 +29284,9 @@ registerSW();
 initPWA();
 init();
 history.replaceState({type:'page',page:'library'},'');
-// Firebase init
-initFirebase();
+// Firebase init — DOMContentLoaded ke baad safely call karo
+// Firebase init — window.load ke baad call karo taaki sab scripts load ho jayein
+window.addEventListener('load', function(){ initFirebase(); });
 </script>
 
 <!-- SLIDING FACT COLLECTOR TAB -->
@@ -49798,7 +49821,7 @@ setTimeout(_hookCanvasMoveEnd, 3000);
 // FEATURE 6: FLASHCARD SYNC ON GENERATE
 // ═══════════════════════════════════════════════
 // Hook into flashcard generation to auto-sync to Firebase
-var _origLSSetItem = localStorage.setItem.bind(localStorage);
+var _origLSSetItem = (typeof localStorage !== 'undefined' && localStorage.setItem) ? localStorage.setItem.bind(localStorage) : function(){};
 var _lsProxy = new Proxy(localStorage, {
   set: function(target, prop, value) {
     target[prop] = value;
@@ -56022,10 +56045,10 @@ mark.nes-hl.nes-hl-active{
   }
 
   // ── Override console ──
-  var _origLog   = console.log.bind(console);
-  var _origWarn  = console.warn.bind(console);
-  var _origError = console.error.bind(console);
-  var _origInfo  = console.info.bind(console);
+  var _origLog   = (console.log   && console.log.bind)   ? console.log.bind(console)   : function(){};
+  var _origWarn  = (console.warn  && console.warn.bind)  ? console.warn.bind(console)  : function(){};
+  var _origError = (console.error && console.error.bind) ? console.error.bind(console) : function(){};
+  var _origInfo  = (console.info  && console.info.bind)  ? console.info.bind(console)  : function(){};
 
   console.log = function(){ _origLog.apply(console,arguments); _dcAddEntry('log',arguments); };
   console.warn = function(){ _origWarn.apply(console,arguments); _dcAddEntry('warn',arguments); };
