@@ -4861,6 +4861,11 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
       <span class="sb-label">Test Series</span>
       <span class="nav-badge" id="tsBadge" style="display:none;">0</span>
     </div>
+    <div class="nav-item" id="newUpdateNavItem" onclick="openUpdatesPanel()">
+      <span class="sb-icon">🔔</span>
+      <span class="sb-label">New Updates</span>
+      <span class="nav-badge red" id="updatesBadge" style="display:none;">0</span>
+    </div>
 
     <div class="sb-group-title">More</div>
     <div class="nav-item" id="adminNavItem" onclick="showPage('admin',this)" data-page="admin">
@@ -5873,6 +5878,60 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         <button class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="copyFbRules()">📋 Copy Rules</button>
       </div>
 
+      <!-- 🔔 NEW UPDATES — Admin Post Panel -->
+      <div class="card" id="adminUpdatesCard" style="margin-bottom:14px;background:linear-gradient(135deg,rgba(106,27,154,0.08),rgba(106,27,154,0.03));border-color:rgba(106,27,154,0.25);">
+        <div class="card-title" style="color:var(--purple);">🔔 New Updates — Users ko Notify Karo</div>
+        <div style="font-size:0.78rem;color:var(--text2);margin-bottom:12px;line-height:1.6;">
+          Yahan se users ko koi bhi update notification bhej sakte ho. Users sidebar mein 🔔 icon se dekh sakte hain aur seedha us page par ja sakte hain.
+        </div>
+
+        <!-- Recent posted updates list -->
+        <div id="adminRecentUpdates" style="margin-bottom:12px;"></div>
+
+        <!-- Post new update form -->
+        <div style="background:var(--surface2);border-radius:12px;padding:14px;border:1px solid rgba(106,27,154,0.15);">
+          <div style="font-size:0.8rem;font-weight:700;color:var(--purple);margin-bottom:10px;">✏️ Naya Update Post Karo</div>
+
+          <div style="margin-bottom:10px;">
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">📌 Update Type</label>
+            <select id="adminUpdateType" style="width:100%;padding:8px 10px;border-radius:8px;border:1.5px solid var(--border);font-size:0.82rem;background:var(--surface);color:var(--text);" onchange="_adminUpdateTypeChanged()">
+              <option value="notes">📙 New Notes / Topic</option>
+              <option value="quiz">❓ New Quiz Added</option>
+              <option value="feature">✨ New Feature</option>
+              <option value="content">📄 New Content / Update</option>
+              <option value="announcement">📢 General Announcement</option>
+            </select>
+          </div>
+
+          <div style="margin-bottom:10px;">
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">📝 Title (short)</label>
+            <input id="adminUpdateTitle" type="text" placeholder="e.g. New Topic: Photosynthesis added!" style="width:100%;padding:8px 10px;border-radius:8px;border:1.5px solid var(--border);font-size:0.82rem;box-sizing:border-box;">
+          </div>
+
+          <div style="margin-bottom:10px;">
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">💬 Description (optional)</label>
+            <textarea id="adminUpdateDesc" rows="2" placeholder="Thodi detail do — kya add hua, kahan hai, etc." style="width:100%;padding:8px 10px;border-radius:8px;border:1.5px solid var(--border);font-size:0.82rem;resize:vertical;box-sizing:border-box;"></textarea>
+          </div>
+
+          <div style="margin-bottom:12px;" id="adminUpdatePageWrap">
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text2);display:block;margin-bottom:4px;">🎯 Redirect Page (click par kahan jayega user)</label>
+            <select id="adminUpdatePage" style="width:100%;padding:8px 10px;border-radius:8px;border:1.5px solid var(--border);font-size:0.82rem;background:var(--surface);color:var(--text);">
+              <option value="library">📚 Library (Notes)</option>
+              <option value="quiz">❓ Quiz</option>
+              <option value="quizvault">🗄️ Quiz Vault</option>
+              <option value="smartnotes">🧠 Smart Notes</option>
+              <option value="testseries">📝 Test Series</option>
+              <option value="stats">📊 Stats</option>
+              <option value="gamevault">🎮 Game Vault</option>
+            </select>
+          </div>
+
+          <button class="btn btn-primary" style="width:100%;background:var(--purple);border-color:var(--purple);" onclick="adminPostUpdate()">
+            🚀 Update Post Karo — Users ko Notify Karo
+          </button>
+        </div>
+      </div>
+
       <!-- Users list -->
       <div class="card">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -5898,7 +5957,106 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 </div><!-- /main-content -->
 </div><!-- /app-shell -->
 
-<!-- MODALS -->
+<!-- ====== 🔔 NEW UPDATES PANEL ====== -->
+<style>
+#updatesOverlay {
+  position: fixed; inset: 0; z-index: 9990;
+  background: rgba(0,0,0,0.45);
+  display: none; align-items: flex-end; justify-content: center;
+  backdrop-filter: blur(2px);
+}
+#updatesOverlay.open { display: flex; }
+#updatesPanel {
+  width: 100%; max-width: 540px;
+  background: var(--surface);
+  border-radius: 22px 22px 0 0;
+  max-height: 82vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 -8px 40px rgba(106,27,154,0.18);
+  animation: slideUpPanel 0.3s cubic-bezier(.22,.68,0,1.2) forwards;
+  overflow: hidden;
+}
+@keyframes slideUpPanel {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+#updatesPanelBody {
+  overflow-y: auto;
+  flex: 1;
+  padding: 0 16px 20px;
+  -webkit-overflow-scrolling: touch;
+}
+.upd-card {
+  background: var(--surface2);
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  position: relative;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.upd-card:active { transform: scale(0.98); }
+.upd-card.unread {
+  border-color: rgba(106,27,154,0.35);
+  background: linear-gradient(135deg, rgba(106,27,154,0.06), var(--surface2));
+}
+.upd-card .upd-new-dot {
+  position: absolute; top: 14px; right: 14px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--purple); box-shadow: 0 0 0 3px rgba(106,27,154,0.2);
+  animation: pulseDot 1.5s infinite;
+}
+@keyframes pulseDot {
+  0%,100% { transform: scale(1); opacity:1; }
+  50% { transform: scale(1.4); opacity:0.7; }
+}
+.upd-card .upd-icon { font-size: 1.6rem; margin-bottom: 4px; }
+.upd-card .upd-title { font-size: 0.95rem; font-weight: 800; color: var(--text); margin-bottom: 3px; }
+.upd-card .upd-desc { font-size: 0.78rem; color: var(--text2); line-height: 1.5; margin-bottom: 8px; }
+.upd-card .upd-meta { font-size: 0.68rem; color: var(--text2); display: flex; align-items:center; justify-content:space-between; }
+.upd-card .upd-goto {
+  font-size: 0.73rem; font-weight: 800;
+  color: var(--purple); background: rgba(106,27,154,0.1);
+  border: 1px solid rgba(106,27,154,0.2);
+  border-radius: 20px; padding: 4px 12px;
+  white-space: nowrap;
+}
+.upd-empty {
+  text-align: center; padding: 40px 20px; color: var(--text2);
+}
+.upd-empty .upd-empty-icon { font-size: 3rem; margin-bottom: 10px; }
+</style>
+
+<div id="updatesOverlay" onclick="_updatesOverlayClick(event)">
+  <div id="updatesPanel">
+    <!-- Handle bar -->
+    <div style="display:flex;justify-content:center;padding:10px 0 0;">
+      <div style="width:40px;height:4px;border-radius:4px;background:var(--border);"></div>
+    </div>
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px 10px;">
+      <div>
+        <div style="font-size:1.05rem;font-weight:900;color:var(--purple);">🔔 New Updates</div>
+        <div style="font-size:0.72rem;color:var(--text2);" id="updatesSubtitle">Loading...</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button onclick="markAllUpdatesRead()" style="font-size:0.7rem;background:rgba(106,27,154,0.1);color:var(--purple);border:1px solid rgba(106,27,154,0.2);border-radius:20px;padding:5px 12px;font-weight:700;cursor:pointer;">✅ Sab Read</button>
+        <button onclick="closeUpdatesPanel()" style="background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;width:32px;height:32px;font-size:1.1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
+      </div>
+    </div>
+    <!-- Divider -->
+    <div style="height:1px;background:var(--border);margin:0 16px;"></div>
+    <!-- Body -->
+    <div id="updatesPanelBody">
+      <div style="height:12px;"></div>
+      <div id="updatesListEl">
+        <div class="upd-empty"><div class="upd-empty-icon">🔔</div><div>Koi update nahi abhi</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ====== /NEW UPDATES PANEL ====== -->
 <div class="modal-overlay" id="examTopicModal">
   <div class="modal">
     <div class="modal-title" id="examTopicModalTitle">Topics Select Karo</div>
@@ -8034,7 +8192,7 @@ function showPage(p,el,_skipHistory){
     if(area)area.innerHTML=showInstallOption();
   }
   if(p==='testseries')tsRenderHome();
-  if(p==='admin'){ if(_isAdmin){ loadAdminUsers(); updateAdminPageInfo(); } else { showToast('❌ Admin access nahi hai!','error'); showPage('library',document.querySelector('[data-page=library]')); } }
+  if(p==='admin'){ if(_isAdmin){ loadAdminUsers(); updateAdminPageInfo(); _adminLoadRecentUpdates(); } else { showToast('❌ Admin access nahi hai!','error'); showPage('library',document.querySelector('[data-page=library]')); } }
   if(window.innerWidth<=768){document.getElementById('sidebar').classList.remove('open');document.getElementById('sidebarOverlay').classList.remove('show');}
   if(!_skipHistory){history.pushState({type:'page',page:p},'');}
 }
@@ -8151,6 +8309,13 @@ function addTopic(){
   document.getElementById('selTopic').value=nt.id; onTopicChange();
   renderLibraryTree(); updateQuizSelects();
   showToast(`"${name}" topic add! 📙`,'success');
+  // 🔔 Auto-notify users: new topic added
+  if(_isAdmin && typeof _autoPostUpdate === 'function'){
+    const subj = S.subjects.find(s=>s.id===S.ui.sid);
+    const sec2 = subj ? subj.sections.find(s=>s.id===S.ui.secid) : null;
+    const context = [subj?subj.name:'', sec2?sec2.name:''].filter(Boolean).join(' → ');
+    _autoPostUpdate('notes', `📙 New Topic: "${name}"`, context ? `${context} mein add hua naya topic.` : 'Library mein naya topic add hua!', 'library');
+  }
 }
 
 // ==================== NOTES ====================
@@ -8591,6 +8756,10 @@ async function addNote(){
   document.getElementById('noteName').value = '';
   document.getElementById('noteFileStatus').style.display = 'none';
   showToast(`"${name}" save ho gaya! ✅`,'success');
+  // 🔔 Auto-notify users: new notes added
+  if(_isAdmin && typeof _autoPostUpdate === 'function'){
+    _autoPostUpdate('content', `📝 New Notes: "${name}"`, `Topic "${t.name}" mein naye notes add hue!`, 'library');
+  }
   if(hadFinalNotes){
     setTimeout(()=>{
       if(confirm(`"${t.name}" ke final notes pehle se hain. Naye notes se update karna hai? (Naye points highlighted rahenge, aapke highlights safe rahenge)`)){
@@ -12208,6 +12377,11 @@ function addToVault(questions, quizId, quizName, label, sid, secid, tid){
   save();
   // Firebase quizVault sub-collection mein permanently save karo
   _saveQuizToFirebaseVault(entry);
+  // 🔔 Auto-notify users: new quiz added
+  if(_isAdmin && typeof _autoPostUpdate === 'function'){
+    const qCount = questions ? questions.length : 0;
+    _autoPostUpdate('quiz', `❓ New Quiz: "${quizName||label||'Naya Quiz'}"`, `${qCount} questions add hue Quiz Vault mein!`, 'quizvault');
+  }
 }
 
 // ── Ek quiz ko Firebase quizVault sub-collection mein save karo ──
@@ -20452,6 +20626,10 @@ function initFirebase(){
         updateUserUI(user);
         loadFromFirebase().then(function(){
           _attachRealtimeListener();
+          // 🔔 Updates listener start karo — login ke baad
+          _initUpdatesListener();
+          // Admin hai to recent posts load karo
+          if(_isAdmin) setTimeout(_adminLoadRecentUpdates, 1500);
         });
       } else {
         _currentUser = null;
@@ -20460,6 +20638,8 @@ function initFirebase(){
         if(_realtimeListener){ _realtimeListener(); _realtimeListener = null; }
         if(window._tsQuizListener){ try{ window._tsQuizListener(); }catch(e){} window._tsQuizListener = null; }
         if(window._tsAttemptListener){ try{ window._tsAttemptListener(); }catch(e){} window._tsAttemptListener = null; }
+        // 🔔 Updates listener stop karo
+        if(typeof _stopUpdatesListener === 'function') _stopUpdatesListener();
         // Logout par key gate reset — dobara key daalni padegi
         _eppKeyPassed   = false;
         _eppKeyIsAdmin  = false;
@@ -29289,7 +29469,303 @@ function _clearActiveEditTid(){
   _activeEditTid = null;
 }
 
-// ==================== START ====================
+// ══════════════════════════════════════════════════════════════
+// 🔔 NEW UPDATES SYSTEM v1.0
+// Admin → Firestore 'appUpdates' collection → Users ko notify karo
+// ══════════════════════════════════════════════════════════════
+
+var _updatesListener      = null;  // Firestore listener unsubscribe
+var _allUpdates           = [];    // Firestore se aayi saari updates
+var _readUpdatesKey       = 'epp_read_updates';  // localStorage key
+
+// --- Read tracking helpers ---
+function _getReadIds(){
+  try{ return JSON.parse(localStorage.getItem(_readUpdatesKey) || '[]'); }
+  catch(e){ return []; }
+}
+function _saveReadIds(ids){
+  try{ localStorage.setItem(_readUpdatesKey, JSON.stringify(ids)); }
+  catch(e){}
+}
+function _isUpdateRead(id){
+  return _getReadIds().includes(String(id));
+}
+function _markRead(id){
+  var ids = _getReadIds();
+  if(!ids.includes(String(id))){ ids.push(String(id)); _saveReadIds(ids); }
+  _refreshUpdatesBadge();
+}
+
+// --- Badge update ---
+function _refreshUpdatesBadge(){
+  var badge = document.getElementById('updatesBadge');
+  if(!badge) return;
+  var unread = _allUpdates.filter(function(u){ return !_isUpdateRead(u.id); }).length;
+  if(unread > 0){
+    badge.style.display = '';
+    badge.textContent   = unread > 9 ? '9+' : String(unread);
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// --- Start Firestore listener (called after login) ---
+function _initUpdatesListener(){
+  if(!_db || !_currentUser) return;
+  if(_updatesListener){ _updatesListener(); _updatesListener = null; }
+
+  _updatesListener = _db.collection('appUpdates')
+    .orderBy('createdAt','desc')
+    .limit(50)
+    .onSnapshot(function(snap){
+      _allUpdates = [];
+      snap.forEach(function(doc){
+        var d = doc.data();
+        _allUpdates.push(Object.assign({ id: doc.id }, d));
+      });
+      _refreshUpdatesBadge();
+      // Agar panel khula hai to re-render
+      if(document.getElementById('updatesOverlay').classList.contains('open')){
+        _renderUpdatesPanel();
+      }
+    }, function(err){
+      // Network error — silently ignore
+    });
+}
+
+// --- Stop listener (logout par) ---
+function _stopUpdatesListener(){
+  if(_updatesListener){ _updatesListener(); _updatesListener = null; }
+  _allUpdates = [];
+  _refreshUpdatesBadge();
+}
+
+// --- Time format helper ---
+function _fmtUpdateTime(ts){
+  if(!ts) return '';
+  var d;
+  try{ d = ts.toDate ? ts.toDate() : new Date(ts); } catch(e){ return ''; }
+  var now   = new Date();
+  var diff  = Math.floor((now - d) / 1000);
+  if(diff < 60)   return 'Abhi abhi';
+  if(diff < 3600) return Math.floor(diff/60) + ' min pehle';
+  if(diff < 86400)return Math.floor(diff/3600) + ' ghante pehle';
+  return Math.floor(diff/86400) + ' din pehle';
+}
+
+// --- Icon mapping ---
+var _updTypeIcon = {
+  notes:        '📙',
+  quiz:         '❓',
+  feature:      '✨',
+  content:      '📄',
+  announcement: '📢'
+};
+
+// --- Render updates in panel ---
+function _renderUpdatesPanel(){
+  var el  = document.getElementById('updatesListEl');
+  var sub = document.getElementById('updatesSubtitle');
+  if(!el) return;
+
+  var unread = _allUpdates.filter(function(u){ return !_isUpdateRead(u.id); });
+  var read   = _allUpdates.filter(function(u){ return  _isUpdateRead(u.id); });
+
+  if(sub){
+    var total  = _allUpdates.length;
+    var unrCnt = unread.length;
+    sub.textContent = unrCnt > 0
+      ? unrCnt + ' naya update — click karo seedha jaane ke liye'
+      : (total > 0 ? 'Sab updates dekh liye ✅' : 'Koi update nahi abhi');
+  }
+
+  if(_allUpdates.length === 0){
+    el.innerHTML = '<div class="upd-empty"><div class="upd-empty-icon">🔔</div><div style="font-size:0.88rem;">Koi update nahi abhi.<br>Admin ne kuch add nahi kiya.</div></div>';
+    return;
+  }
+
+  var html = '';
+  // Unread first
+  unread.forEach(function(u){
+    html += _buildUpdateCard(u, true);
+  });
+  // Read updates (collapsed view)
+  if(read.length > 0){
+    html += '<div style="font-size:0.7rem;color:var(--text2);text-align:center;margin:8px 0 6px;font-weight:700;">── Pehle dekhe gaye ──</div>';
+    read.forEach(function(u){
+      html += _buildUpdateCard(u, false);
+    });
+  }
+  el.innerHTML = html;
+}
+
+function _buildUpdateCard(u, isUnread){
+  var icon     = u.icon || _updTypeIcon[u.type] || '🔔';
+  var timeStr  = _fmtUpdateTime(u.createdAt);
+  var pageLabel = {
+    library:'📚 Library', quiz:'❓ Quiz', quizvault:'🗄️ Quiz Vault',
+    smartnotes:'🧠 Smart Notes', testseries:'📝 Test Series',
+    stats:'📊 Stats', gamevault:'🎮 Game Vault'
+  }[u.targetPage] || '📚 Library';
+
+  return '<div class="upd-card ' + (isUnread ? 'unread' : '') + '" onclick="onUpdateClick(\'' + u.id + '\',\'' + (u.targetPage||'library') + '\')">'
+    + (isUnread ? '<div class="upd-new-dot"></div>' : '')
+    + '<div class="upd-icon">' + icon + '</div>'
+    + '<div class="upd-title">' + (u.title || 'New Update') + '</div>'
+    + (u.desc ? '<div class="upd-desc">' + u.desc + '</div>' : '')
+    + '<div class="upd-meta">'
+    +   '<span>🕐 ' + timeStr + '</span>'
+    +   '<span class="upd-goto">' + pageLabel + ' → Jaao</span>'
+    + '</div>'
+    + '</div>';
+}
+
+// --- Click on update card ---
+function onUpdateClick(id, targetPage){
+  _markRead(id);
+  closeUpdatesPanel();
+  // Navigate to target page
+  var navEl = document.querySelector('[data-page="' + targetPage + '"]');
+  showPage(targetPage, navEl);
+  showToast('🔔 ' + targetPage.charAt(0).toUpperCase() + targetPage.slice(1) + ' page par aa gaye!', 'success');
+}
+
+// --- Mark all as read ---
+function markAllUpdatesRead(){
+  var ids = _getReadIds();
+  _allUpdates.forEach(function(u){ if(!ids.includes(String(u.id))) ids.push(String(u.id)); });
+  _saveReadIds(ids);
+  _refreshUpdatesBadge();
+  _renderUpdatesPanel();
+  showToast('✅ Sab updates read mark ho gaye!', 'success');
+}
+
+// --- Panel open/close ---
+function openUpdatesPanel(){
+  // Sidebar close karo
+  var sb = document.getElementById('sidebar');
+  var so = document.getElementById('sidebarOverlay');
+  if(sb) sb.classList.remove('open');
+  if(so) so.classList.remove('show');
+
+  _renderUpdatesPanel();
+  document.getElementById('updatesOverlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeUpdatesPanel(){
+  document.getElementById('updatesOverlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function _updatesOverlayClick(e){
+  if(e.target === document.getElementById('updatesOverlay')) closeUpdatesPanel();
+}
+
+// ── ADMIN: Post update to Firestore ──
+
+function _adminUpdateTypeChanged(){
+  var type = document.getElementById('adminUpdateType').value;
+  var titleEl = document.getElementById('adminUpdateTitle');
+  var defaults = {
+    notes:        '📙 New Notes / Topic Add Hua!',
+    quiz:         '❓ New Quiz Questions Add Hue!',
+    feature:      '✨ New Feature Available!',
+    content:      '📄 Content Update Ho Gaya!',
+    announcement: '📢 Important Announcement'
+  };
+  if(titleEl && !titleEl.value) titleEl.placeholder = defaults[type] || '';
+}
+
+async function adminPostUpdate(){
+  if(!_isAdmin){ showToast('❌ Sirf admin post kar sakta hai!','error'); return; }
+  if(!_db){ showToast('❌ Firebase ready nahi!','error'); return; }
+
+  var type   = document.getElementById('adminUpdateType').value;
+  var title  = document.getElementById('adminUpdateTitle').value.trim();
+  var desc   = document.getElementById('adminUpdateDesc').value.trim();
+  var target = document.getElementById('adminUpdatePage').value;
+
+  if(!title){ showToast('❌ Title daalo!','error'); return; }
+
+  var icon = _updTypeIcon[type] || '🔔';
+  var entry = {
+    type:       type,
+    icon:       icon,
+    title:      title,
+    desc:       desc,
+    targetPage: target,
+    createdAt:  firebase.firestore.FieldValue.serverTimestamp(),
+    postedBy:   _currentUser ? _currentUser.email : 'admin'
+  };
+
+  try{
+    await _db.collection('appUpdates').add(entry);
+    showToast('✅ Update post ho gaya! Users ko notify ho gaya.','success');
+    // Clear form
+    document.getElementById('adminUpdateTitle').value = '';
+    document.getElementById('adminUpdateDesc').value  = '';
+    // Refresh recent list
+    _adminLoadRecentUpdates();
+  } catch(e){
+    showToast('❌ Error: ' + e.message,'error');
+  }
+}
+
+// Admin panel mein recent updates dikhao
+async function _adminLoadRecentUpdates(){
+  if(!_isAdmin || !_db) return;
+  var el = document.getElementById('adminRecentUpdates');
+  if(!el) return;
+  try{
+    var snap = await _db.collection('appUpdates').orderBy('createdAt','desc').limit(5).get();
+    if(snap.empty){ el.innerHTML = ''; return; }
+    var html = '<div style="font-size:0.75rem;font-weight:700;color:var(--purple);margin-bottom:8px;">📋 Recent Posts (last 5)</div>';
+    snap.forEach(function(doc){
+      var d = doc.data();
+      var icon = d.icon || _updTypeIcon[d.type] || '🔔';
+      var t = d.createdAt ? _fmtUpdateTime(d.createdAt) : '—';
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--surface);border-radius:10px;margin-bottom:6px;border:1px solid var(--border);">'
+        + '<span style="font-size:1.2rem;">' + icon + '</span>'
+        + '<div style="flex:1;min-width:0;">'
+        +   '<div style="font-size:0.8rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (d.title||'') + '</div>'
+        +   '<div style="font-size:0.66rem;color:var(--text2);">' + t + ' • ' + (d.targetPage||'library') + '</div>'
+        + '</div>'
+        + '<button onclick="_adminDeleteUpdate(\'' + doc.id + '\')" style="background:rgba(198,40,40,0.1);color:#c62828;border:none;border-radius:8px;padding:4px 8px;font-size:0.7rem;cursor:pointer;font-weight:700;">🗑️</button>'
+        + '</div>';
+    });
+    el.innerHTML = html;
+  } catch(e){ el.innerHTML = ''; }
+}
+
+async function _adminDeleteUpdate(id){
+  if(!_isAdmin || !_db) return;
+  if(!confirm('Yeh update delete karna hai?')) return;
+  try{
+    await _db.collection('appUpdates').doc(id).delete();
+    showToast('🗑️ Update delete ho gaya!','success');
+    _adminLoadRecentUpdates();
+  } catch(e){
+    showToast('❌ Error: ' + e.message,'error');
+  }
+}
+
+// ── AUTO-TRIGGER HELPERS (admin actions se auto-post) ──
+
+async function _autoPostUpdate(type, title, desc, targetPage){
+  if(!_isAdmin || !_db || !_currentUser) return;
+  var icon  = _updTypeIcon[type] || '🔔';
+  try{
+    await _db.collection('appUpdates').add({
+      type, icon, title, desc: desc||'', targetPage: targetPage||'library',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      postedBy:  _currentUser.email,
+      auto: true
+    });
+  } catch(e){ /* silently ignore auto-post errors */ }
+}
+
+// ══════════════════════════════════════════════════════════════
 injectManifest();
 registerSW();
 initPWA();
@@ -57005,7 +57481,7 @@ function updateAdminPageInfo(){
   const rulesEl = document.getElementById('fbRulesBlock');
   if(uidEl && _effectiveUID) uidEl.textContent = _effectiveUID;
   if(rulesEl && _effectiveUID){
-    rulesEl.textContent = "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /users/" + _effectiveUID + "/{document=**} {\n      allow read: if request.auth != null;\n      allow write: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n    }\n    match /appConfig/{doc} {\n      allow read: if request.auth != null;\n      allow write: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n    }\n    match /appUsers/{userId} {\n      allow read: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n      allow write: if request.auth != null && (request.auth.uid == userId || request.auth.uid == '" + _effectiveUID + "');\n    }\n  }\n}";
+    rulesEl.textContent = "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /users/" + _effectiveUID + "/{document=**} {\n      allow read: if request.auth != null;\n      allow write: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n    }\n    match /appConfig/{doc} {\n      allow read: if request.auth != null;\n      allow write: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n    }\n    match /appUsers/{userId} {\n      allow read: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n      allow write: if request.auth != null && (request.auth.uid == userId || request.auth.uid == '" + _effectiveUID + "');\n    }\n    match /appUpdates/{updateId} {\n      allow read: if request.auth != null;\n      allow write: if request.auth != null && request.auth.uid == '" + _effectiveUID + "';\n    }\n  }\n}";
   }
   // Load current access key
   loadCurrentKey();
