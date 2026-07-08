@@ -19211,26 +19211,68 @@ function downloadEditorContent() {
     return;
   }
 
-  // Off-screen render container (needs to be in DOM for html2canvas to measure it)
+  // IMPORTANT: many mobile browsers/webviews skip *painting* elements that
+  // are parked far outside the viewport (e.g. left:-9999px) as a perf
+  // optimisation — html2canvas then screenshots a still-blank layout,
+  // producing an empty PDF. So instead of hiding the content off-screen,
+  // we render it fully ON-SCREEN at a fixed pixel width (so text always
+  // wraps consistently) and cover it with an opaque loading overlay —
+  // the browser still paints it normally, the user just sees the overlay.
+  const exportWidth = Math.max(area.offsetWidth || 0, 320);
   wrapper.style.position = 'fixed';
-  wrapper.style.left = '-9999px';
+  wrapper.style.left = '0';
   wrapper.style.top = '0';
+  wrapper.style.width = exportWidth + 'px';
+  wrapper.style.zIndex = '1';
+  wrapper.style.background = '#ffffff';
   document.body.appendChild(wrapper);
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#0d1b2aee;display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Noto Sans",Arial,sans-serif;font-size:0.95rem;font-weight:600;text-align:center;padding:20px;';
+  overlay.textContent = '📄 PDF taiyar ho raha hai...';
+  document.body.appendChild(overlay);
+
+  const cleanup = () => {
+    if(wrapper.parentNode) document.body.removeChild(wrapper);
+    if(overlay.parentNode) document.body.removeChild(overlay);
+  };
 
   const opt = {
     margin: [12, 12, 14, 12],
     filename: title + '.pdf',
     image: { type: 'jpeg', quality: 0.95 },
-    html2canvas: { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff' },
+    html2canvas: { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff', windowWidth: exportWidth },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
     pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
   };
 
-  html2pdf().set(opt).from(wrapper).save().then(() => {
-    document.body.removeChild(wrapper);
+  // Wait for every cloned image (flattened canvases, ink overlay PNG,
+  // regular <img> notes content) to actually finish decoding before we
+  // snapshot — otherwise on slower devices html2canvas can race ahead
+  // and capture blank spots where those images hadn't painted yet.
+  const waitForImages = () => {
+    const imgs = Array.from(wrapper.querySelectorAll('img'));
+    return Promise.all(imgs.map((img) => {
+      if(img.complete && img.naturalWidth > 0) return Promise.resolve();
+      if(typeof img.decode === 'function') return img.decode().catch(() => {});
+      return new Promise((resolve) => {
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+      });
+    }));
+  };
+
+  // Give the browser one paint frame before capturing, so the freshly
+  // appended (and previously off-DOM) content is guaranteed to be painted.
+  const captureAndSave = () => new Promise((resolve) => {
+    requestAnimationFrame(() => { requestAnimationFrame(resolve); });
+  }).then(waitForImages).then(() => html2pdf().set(opt).from(wrapper).save());
+
+  captureAndSave().then(() => {
+    cleanup();
     showToast('✅ PDF download ho gaya!', 'success');
   }).catch((err) => {
-    if(wrapper.parentNode) document.body.removeChild(wrapper);
+    cleanup();
     console.error('PDF export error:', err);
     showToast('❌ PDF nahi ban paya, .txt download ho raha hai', 'error');
     downloadEditorContentAsTxt(title);
