@@ -9250,6 +9250,7 @@ function viewTopic(sid,secid,tid){
     { id:'raw',      cls:'cat-raw',      icon:'📄', name:'Raw Notes',   sub: `${(t.notes||[]).length} notes`, badge:(t.notes||[]).length||null },
     { id:'facts',    cls:'cat-facts',    icon:'📌', name:'Facts',       sub: `${(t.savedFacts||[]).length} saved`, badge:(t.savedFacts||[]).length||null },
     { id:'nodemap',  cls:'cat-master',   icon:'🗺️', name:'Node Maps',   sub: t.aiNodeMaps&&t.aiNodeMaps.length ? `${t.aiNodeMaps.length} maps saved` : 'AI se banao', badge: (t.aiNodeMaps&&t.aiNodeMaps.length)||null },
+    { id:'perfect',  cls:'cat-perfect',  icon:'🎯', name:'Exam Notes',  sub: t.perfectNotes ? '✅ Perfect notes ready' : 'Generate karo', badge: t.perfectNotes ? '✓' : null },
   ];
 
   const gridHtml = cats.map(c=>`
@@ -10091,7 +10092,8 @@ function tvShowSub(catId, sid, secid, tid){
           .replace(/%%HIGHLIGHT%%([\s\S]*?)%%ENDHIGHLIGHT%%/g,'<span class="user-highlight-text">$1 ⭐</span>')
           .replace(/\*\*(.*?)\*\*/g,'<span class="highlight-text">$1</span>');
       })(), date:'',  editFn:`openSpecialEditor('finalnotes',${sid},${secid},${tid})`,  extraBtns:`<button class="btn btn-xs btn-outline" onclick="openAiChat('finalnotes','${_e(t.name)}',${tid},${sid},${secid})">🤖</button><button class="btn btn-xs btn-outline" onclick="copyFinalNotesById(${tid},${sid},${secid})">📋</button>` },
-      master: { label:'⚡ Master Notes', text: t.masterNotes||'', date: t.masterNotesAt, editFn:`openSpecialEditor('masternotes',${sid},${secid},${tid})`, extraBtns:`<button class="btn btn-xs" style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;" onclick="openMasterNotesModal(${sid},${secid},${tid})">🔄</button><button class="btn btn-xs btn-outline" onclick="masterNotesCopy(${sid},${secid},${tid})">📋</button>` }
+      master: { label:'⚡ Master Notes', text: t.masterNotes||'', date: t.masterNotesAt, editFn:`openSpecialEditor('masternotes',${sid},${secid},${tid})`, extraBtns:`<button class="btn btn-xs" style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;" onclick="openMasterNotesModal(${sid},${secid},${tid})">🔄</button><button class="btn btn-xs btn-outline" onclick="masterNotesCopy(${sid},${secid},${tid})">📋</button>` },
+      perfect: { label:'🎯 Perfect Exam Notes', text: t.perfectNotes||'', date: t.perfectNotesAt, editFn:`openSpecialEditor('perfectnotes',${sid},${secid},${tid})`, extraBtns:`<button class="btn btn-xs" style="background:linear-gradient(135deg,#e65100,#bf360c);color:#fff;" onclick="closeModal('topicViewModal');setTimeout(()=>openPerfectNotesModal(${sid},${secid},${tid}),200)">🔄 Regenerate</button><button class="btn btn-xs btn-outline" onclick="copyPerfectNotes(${sid},${secid},${tid})">📋 Copy</button>` }
     };
     const info = typeMap[catId];
     subTitle.textContent = info.label;
@@ -10100,7 +10102,8 @@ function tvShowSub(catId, sid, secid, tid){
       const emptyMap = {
         smart:  `<button class="btn btn-xs btn-purple" onclick="genTopicSmartNotes(${t.id});closeModal('topicViewModal')">🤖 Smart Notes Banao</button>`,
         final:  `<div style="font-size:0.82rem;color:var(--text2);">Final Notes nahi bane hain.</div>`,
-        master: `<button class="btn btn-xs" style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;" onclick="openMasterNotesModal(${sid},${secid},${tid})">⚡ Master Notes Banao</button>`
+        master: `<button class="btn btn-xs" style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;" onclick="openMasterNotesModal(${sid},${secid},${tid})">⚡ Master Notes Banao</button>`,
+        perfect: `<button class="btn btn-xs" style="background:linear-gradient(135deg,#e65100,#bf360c);color:#fff;" onclick="closeModal('topicViewModal');setTimeout(()=>openPerfectNotesModal(${sid},${secid},${tid}),200)">🎯 Perfect Exam Notes Banao</button>`
       };
       subBody.innerHTML=`<div style="padding:20px;text-align:center;">${emptyMap[catId]||''}</div>`;
       return;
@@ -15081,6 +15084,14 @@ function _doSaveNoteData() {
     if(drawStrokes) t.masterNotesDrawStrokes = drawStrokes;
     if(qmapData)    t.masterNotesQmapData    = qmapData;
   }
+  else if(isSpecial === 'perfectnotes') {
+    t.perfectNotes = plainText;
+    t.perfectNotesAt = new Date().toLocaleDateString('hi-IN');
+    t.perfectNotesHTML = richHTML;
+    if(canvasObjs)  t.perfectNotesCanvasObjs = canvasObjs;
+    if(drawStrokes) t.perfectNotesDrawStrokes = drawStrokes;
+    if(qmapData)    t.perfectNotesQmapData    = qmapData;
+  }
   else if(isSpecial === 'factspage') {
     const fp = _fpState || {};
     if(fp.level === 'subject') {
@@ -17966,6 +17977,10 @@ function openSpecialEditor(type, sid, secid, tid) {
     text = t.masterNotes || '';
     title = '⚡ Master Notes';
     savedHTML = t.masterNotesHTML || null;
+  } else if(type === 'perfectnotes') {
+    text = t.perfectNotes || '';
+    title = '🎯 Perfect Exam Notes';
+    savedHTML = t.perfectNotesHTML || null;
   }
   _editorState.sid = sid;
   _editorState.secid = secid;
@@ -18016,6 +18031,10 @@ function openSpecialEditor(type, sid, secid, tid) {
       cvObjs=t.masterNotesCanvasObjs||null;
       drawStrokes=t.masterNotesDrawStrokes||null;
       qmapData=t.masterNotesQmapData||null;
+    } else if(type==='perfectnotes'){
+      cvObjs=t.perfectNotesCanvasObjs||null;
+      drawStrokes=t.perfectNotesDrawStrokes||null;
+      qmapData=t.perfectNotesQmapData||null;
     }
     _neRestoreCanvas(cvObjs);
     // Restore draw strokes
@@ -58256,7 +58275,727 @@ async function toggleUserBlock(uid, email, block){
 // ============================================================
 // END TEST SERIES FEATURE
 // ============================================================
+
+// ============================================================
+// PERFECT EXAM NOTES FEATURE — v1.0
+// Har topic ke liye 100% exam-ready comprehensive notes
+// ============================================================
+
+// ── CSS injection ──
+(function(){
+  var s = document.createElement('style');
+  s.textContent = `
+/* ── Perfect Notes category card ── */
+.tv-cat-card.cat-perfect {
+  background: linear-gradient(135deg,rgba(230,81,0,0.10),rgba(191,54,12,0.06));
+  border-color: rgba(230,81,0,0.30);
+}
+.tv-cat-card.cat-perfect .tv-cat-icon { color: #e65100; }
+.tv-cat-card.cat-perfect .tv-cat-name { color: #bf360c; font-weight:800; }
+body.night-mode .tv-cat-card.cat-perfect {
+  background: linear-gradient(135deg,rgba(230,81,0,0.14),rgba(191,54,12,0.08));
+  border-color: rgba(230,81,0,0.35);
+}
+
+/* ── Perfect Notes Modal Overlay ── */
+#perfectNotesOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0,0,0,0.55);
+  display: none;
+  align-items: stretch;
+  justify-content: stretch;
+  animation: _pfadeIn 0.22s ease;
+}
+#perfectNotesOverlay.show { display: flex; }
+@keyframes _pfadeIn { from{opacity:0} to{opacity:1} }
+
+#perfectNotesModal {
+  background: var(--surface);
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+#perfectNotesModal .pn-header {
+  background: linear-gradient(135deg,#e65100,#bf360c);
+  color: #fff;
+  padding: 14px 16px;
+  display: flex; align-items: center; gap: 10px;
+  flex-shrink: 0;
+}
+#perfectNotesModal .pn-header-title { font-size:1rem; font-weight:800; flex:1; }
+#perfectNotesModal .pn-close-btn {
+  background: rgba(255,255,255,0.2); border: none; border-radius:8px;
+  color:#fff; padding:6px 12px; cursor:pointer; font-size:0.82rem; font-weight:700;
+  font-family:inherit;
+}
+
+/* ── Body Scroll Area ── */
+#perfectNotesModal .pn-body {
+  flex: 1; overflow-y: auto; padding: 16px;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Step cards ── */
+.pn-step-card {
+  background: var(--surface2);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.pn-step-title {
+  font-size:0.88rem; font-weight:800; color:var(--accent);
+  margin-bottom: 6px; display:flex; align-items:center; gap:6px;
+}
+.pn-step-desc {
+  font-size:0.78rem; color:var(--text2); line-height:1.6;
+}
+
+/* ── Exam info form ── */
+.pn-form-row {
+  display: flex; flex-direction:column; gap:5px; margin-bottom:10px;
+}
+.pn-form-label {
+  font-size:0.76rem; font-weight:700; color:var(--text);
+}
+.pn-inp {
+  background:var(--surface); border:1.5px solid var(--border);
+  border-radius:9px; padding:8px 11px;
+  font-family:'Noto Sans Devanagari',sans-serif;
+  font-size:0.82rem; color:var(--text); outline:none; resize:none;
+  transition:border-color 0.15s;
+}
+.pn-inp:focus { border-color:var(--accent); }
+
+/* ── Progress section ── */
+#pnProgressSection { display:none; }
+.pn-progress-step {
+  display:flex; align-items:flex-start; gap:10px;
+  padding:8px 0; font-size:0.8rem; color:var(--text2);
+  border-bottom:1px solid var(--border);
+}
+.pn-progress-step:last-child { border-bottom:none; }
+.pn-progress-step.active { color:var(--accent); font-weight:700; }
+.pn-progress-step.done { color:var(--green); }
+.pn-progress-step.error { color:var(--red); }
+.pn-step-icon { font-size:1.1rem; flex-shrink:0; width:22px; text-align:center; }
+.pn-step-text { flex:1; line-height:1.5; }
+
+/* ── Result section ── */
+#pnResultSection { display:none; }
+.pn-result-box {
+  background:var(--surface2); border:1.5px solid var(--border);
+  border-radius:12px; padding:14px 16px;
+  font-size:0.83rem; line-height:1.9; color:var(--text);
+  white-space:pre-wrap; word-break:break-word;
+  max-height:60vh; overflow-y:auto;
+}
+/* Highlight important markers in result */
+.pn-result-box .pn-imp { background:#fff3cd; padding:1px 4px; border-radius:4px; font-weight:700; color:#e65100; }
+.pn-result-box .pn-pyq { background:rgba(21,101,192,0.10); padding:1px 4px; border-radius:4px; font-weight:700; color:#1565c0; border:1px solid rgba(21,101,192,0.25); }
+.pn-result-box .pn-head { font-size:0.95rem; font-weight:800; color:var(--accent); display:block; margin:10px 0 4px; }
+.pn-result-box .pn-hl { background:var(--user-highlight); padding:1px 4px; border-radius:4px; font-weight:700; color:var(--accent2); border:1px solid var(--user-highlight-border); }
+
+/* ── Bottom action bar ── */
+.pn-action-bar {
+  padding:12px 16px;
+  border-top:1.5px solid var(--border);
+  display:flex; gap:8px; flex-wrap:wrap;
+  flex-shrink:0; background:var(--surface);
+}
+.pn-btn-gen {
+  background:linear-gradient(135deg,#e65100,#bf360c);
+  color:#fff; border:none; border-radius:10px;
+  padding:10px 18px; font-family:'Noto Sans Devanagari',sans-serif;
+  font-size:0.85rem; font-weight:800; cursor:pointer;
+  flex:1; min-width:140px; transition:all 0.18s;
+}
+.pn-btn-gen:disabled { opacity:0.5; cursor:not-allowed; }
+.pn-btn-gen:not(:disabled):hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(230,81,0,0.3); }
+
+/* ── Source analysis chips ── */
+.pn-source-list { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+.pn-source-chip {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:20px; padding:2px 10px;
+  font-size:0.69rem; font-weight:700; color:var(--text2);
+  display:flex; align-items:center; gap:4px;
+}
+.pn-source-chip.active { border-color:var(--green); color:var(--green); background:rgba(46,125,50,0.06); }
+
+/* Night mode overrides */
+body.night-mode #perfectNotesModal .pn-result-box .pn-imp { background:rgba(255,243,205,0.12); color:#ffb74d; }
+body.night-mode #perfectNotesModal .pn-result-box .pn-pyq { background:rgba(21,101,192,0.18); color:#90caf9; }
+`;
+  document.head.appendChild(s);
+})();
+
+// ── State ──
+var _pnState = {
+  sid:null, secid:null, tid:null,
+  generating:false,
+  result:''
+};
+
+// ── Open Modal ──
+function openPerfectNotesModal(sid, secid, tid) {
+  if(!S.apiKey){showToast('Pehle Groq API Key daalo (Settings mein)!','error');return;}
+  var t = getTop(sid, secid, tid);
+  if(!t){showToast('Topic nahi mila!','error');return;}
+
+  _pnState.sid=sid; _pnState.secid=secid; _pnState.tid=tid;
+  _pnState.generating=false; _pnState.result='';
+
+  var overlay=document.getElementById('perfectNotesOverlay');
+  if(!overlay)return;
+
+  // Reset UI
+  document.getElementById('pnTopicName').textContent = t.name;
+  document.getElementById('pnProgressSection').style.display='none';
+  document.getElementById('pnResultSection').style.display='none';
+  document.getElementById('pnSetupSection').style.display='block';
+
+  // Fill exam info from active exam
+  var ae=S.exams&&S.exams.find(function(e){return e.id==S.activeExamId;});
+  document.getElementById('pnExamName').value = ae ? ae.name : '';
+  document.getElementById('pnSyllabus').value = ae ? (ae.syllabus||'') : '';
+  document.getElementById('pnPYQ').value = ae ? (ae.pyq||'') : '';
+
+  // Analyse available sources
+  _pnAnalyseSources(t);
+
+  var genBtn=document.getElementById('pnGenBtn');
+  if(genBtn){genBtn.disabled=false;genBtn.textContent='🎯 Perfect Notes Generate Karo';}
+
+  overlay.classList.add('show');
+  document.body.style.overflow='hidden';
+  history.pushState({type:'perfectNotes'},'');
+}
+
+function closePerfectNotesModal() {
+  var overlay=document.getElementById('perfectNotesOverlay');
+  if(overlay) overlay.classList.remove('show');
+  document.body.style.overflow='';
+  try{
+    if(history.state&&history.state.type==='perfectNotes') history.back();
+  }catch(_){}
+}
+
+// ── Analyse sources from library ──
+function _pnAnalyseSources(t) {
+  var chipList=document.getElementById('pnSourceChips');
+  if(!chipList)return;
+  var chips=[];
+
+  // Topic notes
+  var notesCnt=(t.notes||[]).length;
+  chips.push({icon:'📄',label:'Raw Notes ('+notesCnt+')',active:notesCnt>0});
+  chips.push({icon:'⭐',label:'Final Notes',active:!!t.finalNotes});
+  chips.push({icon:'🧠',label:'Smart Notes',active:!!t.smartNotesAI});
+  chips.push({icon:'⚡',label:'Master Notes',active:!!t.masterNotes});
+  var hlCnt=(t.highlights||[]).length;
+  chips.push({icon:'🌟',label:'Highlights ('+hlCnt+')',active:hlCnt>0});
+  var factCnt=(t.savedFacts||[]).length;
+  chips.push({icon:'📌',label:'Saved Facts ('+factCnt+')',active:factCnt>0});
+
+  // Cross-reference from other library topics
+  var relatedCount=0;
+  if(S.subjects){
+    S.subjects.forEach(function(subj){
+      subj.sections&&subj.sections.forEach(function(sec){
+        sec.topics&&sec.topics.forEach(function(ot){
+          if(ot.id===t.id)return;
+          var otherText=(ot.finalNotes||'')+(ot.smartNotesAI||'')+(ot.masterNotes||'');
+          // Check if topic name appears in other topics' notes
+          if(otherText&&t.name&&otherText.toLowerCase().indexOf(t.name.toLowerCase())!==-1){
+            relatedCount++;
+          }
+        });
+      });
+    });
+  }
+  chips.push({icon:'🔗',label:'Cross-references ('+relatedCount+')',active:relatedCount>0});
+  chips.push({icon:'🌐',label:'Wikipedia/Web',active:true});
+  chips.push({icon:'📚',label:'Standard Books (AI)',active:!!S.apiKey});
+
+  chipList.innerHTML = chips.map(function(c){
+    return '<span class="pn-source-chip'+(c.active?' active':'')+'">'+c.icon+' '+c.label+'</span>';
+  }).join('');
+}
+
+// ── Cross-library context extraction ──
+function _pnExtractCrossLibraryContext(t) {
+  var ctx='';
+  if(!S.subjects)return ctx;
+  var topicNameLower=t.name.toLowerCase();
+  S.subjects.forEach(function(subj){
+    subj.sections&&subj.sections.forEach(function(sec){
+      sec.topics&&sec.topics.forEach(function(ot){
+        if(ot.id===t.id)return;
+        var combined=(ot.finalNotes||'')+(ot.smartNotesAI||'')+(ot.masterNotes||'');
+        if(!combined)return;
+        // Find paragraphs/lines mentioning this topic
+        var lines=combined.split('\n');
+        var relevant=[];
+        lines.forEach(function(line){
+          if(line.toLowerCase().indexOf(topicNameLower)!==-1&&line.trim().length>30){
+            relevant.push(line.trim());
+          }
+        });
+        if(relevant.length>0){
+          ctx+='\n[From topic "'+ot.name+'" in '+subj.name+' > '+sec.name+']:\n';
+          ctx+=relevant.slice(0,6).join('\n')+'\n';
+        }
+      });
+    });
+  });
+  return ctx.substring(0,3000);
+}
+
+// ── Progress step update ──
+function _pnUpdateStep(idx, state, extra) {
+  var steps=document.querySelectorAll('#pnProgressSection .pn-progress-step');
+  if(steps[idx]){
+    steps[idx].className='pn-progress-step '+state;
+    var iconEl=steps[idx].querySelector('.pn-step-icon');
+    var icons={active:'⏳',done:'✅',error:'❌',pending:'○'};
+    if(iconEl)iconEl.textContent=icons[state]||'○';
+    if(extra){
+      var txtEl=steps[idx].querySelector('.pn-step-text');
+      if(txtEl){var orig=txtEl.getAttribute('data-orig')||txtEl.textContent;txtEl.setAttribute('data-orig',orig);txtEl.textContent=extra;}
+    }
+  }
+}
+
+// ── Format result for display ──
+function _pnFormatResult(text) {
+  if(!text)return'';
+  // Convert **bold** to highlighted spans
+  var html=text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\[IMPORTANT\](.*?)\[\/IMPORTANT\]/gs,'<span class="pn-imp">⭐ $1</span>')
+    .replace(/\[PYQ_IMPORTANT\](.*?)\[\/PYQ_IMPORTANT\]/gs,'<span class="pn-pyq">📝 PYQ: $1</span>')
+    .replace(/\[HIGHLIGHT\](.*?)\[\/HIGHLIGHT\]/gs,'<span class="pn-hl">$1</span>')
+    .replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')
+    .replace(/^#{1,3}\s+(.+)$/gm,'<span class="pn-head">$1</span>')
+    .replace(/\n/g,'<br>');
+  return html;
+}
+
+// ── Main generation function ──
+async function generatePerfectNotes() {
+  if(_pnState.generating){showToast('Abhi generation chal rahi hai...','error');return;}
+  if(!S.apiKey){showToast('API Key daalo!','error');return;}
+
+  var sid=_pnState.sid, secid=_pnState.secid, tid=_pnState.tid;
+  var t=getTop(sid,secid,tid);
+  if(!t){showToast('Topic nahi mila!','error');return;}
+
+  // Read user inputs
+  var examName=(document.getElementById('pnExamName').value||'').trim();
+  var syllabus=(document.getElementById('pnSyllabus').value||'').trim();
+  var pyq=(document.getElementById('pnPYQ').value||'').trim();
+
+  // Save exam info to active exam if changed
+  var ae=S.exams&&S.exams.find(function(e){return e.id==S.activeExamId;});
+  if(ae){
+    if(examName&&!ae.name)ae.name=examName;
+    if(syllabus&&!ae.syllabus)ae.syllabus=syllabus;
+    if(pyq&&!ae.pyq)ae.pyq=pyq;
+    save();
+  }
+
+  _pnState.generating=true;
+  var genBtn=document.getElementById('pnGenBtn');
+  if(genBtn){genBtn.disabled=true;genBtn.textContent='⏳ Generating...';}
+
+  // Reset all progress steps to pending state
+  document.querySelectorAll('#pnProgressSection .pn-progress-step').forEach(function(el){
+    el.className='pn-progress-step pending';
+    var icn=el.querySelector('.pn-step-icon');
+    if(icn)icn.textContent='○';
+    var txt=el.querySelector('.pn-step-text');
+    if(txt&&txt.getAttribute('data-orig'))txt.textContent=txt.getAttribute('data-orig');
+  });
+
+  // Hide setup, show progress
+  document.getElementById('pnSetupSection').style.display='none';
+  document.getElementById('pnProgressSection').style.display='block';
+  document.getElementById('pnResultSection').style.display='none';
+
+  var subj=getSubj(sid);
+  var sec=getSec(sid,secid);
+
+  var errors=[];
+
+  try {
+    // ── Step 1: Analyse topic content ──
+    _pnUpdateStep(0,'active','📄 Topic content analyse ho raha hai...');
+    await new Promise(function(r){setTimeout(r,200);}); // UI update
+    
+    var notesText='';
+    (t.notes||[]).forEach(function(n){
+      notesText+='### Note: '+n.name+'\n'+(n.content||'')+'\n\n';
+    });
+    var finalNotesText=(t.finalNotes||'').replace(/%%[^%]+%%/g,'').substring(0,2000);
+    var smartNotesText=(t.smartNotesAI||'').substring(0,1500);
+    var masterNotesText=(t.masterNotes||'').substring(0,1500);
+    var highlights=(t.highlights||[]).map(function(h){return h.text;}).join('\n');
+    var savedFacts=(t.savedFacts||[]).map(function(f){return f.text;}).join('\n');
+
+    if(!notesText.trim()&&!finalNotesText&&!smartNotesText&&!masterNotesText){
+      _pnUpdateStep(0,'error','❌ Topic mein koi notes nahi hain!');
+      throw new Error('Is topic mein koi notes nahi hain. Pehle notes add karo.');
+    }
+    _pnUpdateStep(0,'done');
+
+    // ── Step 2: Cross-library scan ──
+    _pnUpdateStep(1,'active','🔗 Poori library scan ho rahi hai...');
+    await new Promise(function(r){setTimeout(r,100);});
+    var crossCtx=_pnExtractCrossLibraryContext(t);
+    _pnUpdateStep(1,'done','✅ Cross-library: '+(crossCtx?'References mile':'Koi reference nahi'));
+
+    // ── Step 3: Web search ──
+    _pnUpdateStep(2,'active','🌐 Web se data fetch ho raha hai...');
+    var webData='';
+    try {
+      webData=await performWebSearch(
+        t.name+' '+(examName?examName+' exam ':'')+' important points previous year questions',
+        t.name
+      );
+      _pnUpdateStep(2,'done','✅ Web data mila: '+(webData.length>50?webData.substring(0,60)+'...':'Data nahi mila'));
+    } catch(we){
+      _pnUpdateStep(2,'error','⚠️ Web search fail — AI se generate karega');
+      errors.push('web_search');
+    }
+
+    // ── Step 4: AI generation ──
+    _pnUpdateStep(3,'active','🤖 AI comprehensive notes bana raha hai...');
+    await new Promise(function(r){setTimeout(r,100);});
+
+    // Collect all PYQ context
+    var allPyq='';
+    if(pyq)allPyq+='\nEXAM PYQ:\n'+pyq.substring(0,800);
+    (S.exams||[]).forEach(function(exam){
+      if(exam.selectedTopicIds&&exam.selectedTopicIds.includes(t.id)&&exam.pyq&&exam.pyq!==pyq){
+        allPyq+='\n['+exam.name+'] PYQ:\n'+exam.pyq.substring(0,500);
+      }
+    });
+
+    // Build the mega-prompt
+    var prompt='Tu ek EXPERT TEACHER aur EXAM ANALYST hai. Tera kaam hai: is topic ke baare mein PERFECT EXAM NOTES banana jo ek student ko 100% confident bana de.\n\n';
+    prompt+='TOPIC: '+t.name+'\n';
+    prompt+='SUBJECT: '+(subj?subj.name:'')+(sec?' > '+sec.name:'')+'\n';
+    if(examName)prompt+='EXAM: '+examName+'\n';
+    if(syllabus)prompt+='SYLLABUS: '+syllabus.substring(0,800)+'\n';
+    if(allPyq)prompt+='\nPREVIOUS YEAR QUESTIONS (PYQ):\n'+allPyq+'\n';
+
+    if(notesText.trim()){
+      prompt+='\n== STUDENT KE APNE NOTES ==\n'+notesText.substring(0,5000)+'\n';
+    }
+    if(finalNotesText){
+      prompt+='\n== FINAL NOTES (ALREADY GENERATED) ==\n'+finalNotesText+'\n';
+    }
+    if(smartNotesText){
+      prompt+='\n== SMART NOTES ==\n'+smartNotesText+'\n';
+    }
+    if(masterNotesText){
+      prompt+='\n== MASTER NOTES ==\n'+masterNotesText+'\n';
+    }
+    if(highlights){
+      prompt+='\n== STUDENT NE YEH POINTS HIGHLIGHT KIE HAIN (EXAM KE LIYE ZAROOR PADHO) ==\n'+highlights+'\n';
+    }
+    if(savedFacts){
+      prompt+='\n== STUDENT KE SAVED FACTS ==\n'+savedFacts+'\n';
+    }
+    if(crossCtx){
+      prompt+='\n== LIBRARY KE DUSRE TOPICS MEIN MENTIONED ==\n'+crossCtx+'\n';
+    }
+    if(webData&&webData.length>50){
+      prompt+='\n== WEB DATA (Wikipedia + DuckDuckGo) ==\n'+webData.substring(0,2500)+'\n';
+    }
+
+    prompt+=`
+== TASK ==
+Upar diye gaye SAARE sources ko deeply analyse karke, is topic ke liye PERFECT EXAM NOTES banao.
+
+== FORMAT (EXACTLY IS FORMAT MEIN DO) ==
+
+# [Topic Name] — Complete Exam Notes
+
+## 📌 Topic Parichay (Introduction)
+[2-3 lines mein topic kya hai, kyun important hai]
+
+## 🎯 Core Concepts & Definitions
+[Har important definition aur concept clearly — **bold** se mark karo]
+[Student ke highlights ko ** ** mein include karo]
+
+## 📊 Key Facts & Data Points
+[Dates, numbers, statistics, specific facts — bullet list mein]
+[Jo student ne highlight kia hai ya repeatedly mention hai, usse [HIGHLIGHT] tag mein do]
+
+## 🔗 Important Connections & Relations
+[Yeh topic kaise connect hai dusre topics se — brief]
+
+## ⭐ Most Important Points (Exam Ke Liye)
+[TOP 5-8 MOST IMPORTANT POINTS — ** se mark karo]
+[Jo PYQ mein aa chuke hain unhe [PYQ_IMPORTANT]...[/PYQ_IMPORTANT] mein do]
+[Jo bahut important hai usse [IMPORTANT]...[/IMPORTANT] mein do]
+
+## 📝 Previous Year Questions (PYQs)
+[PYQ data se ya AI se expected questions — numbered list]
+[Har question ke saath 1-line answer bhi do]
+
+## 📚 Standard Books/Teachers Ki Notes Se
+[Is topic ke baare mein standard books ya teachers commonly kya padate hain — common facts/points]
+
+## ⚡ Quick Revision Points (Last-Minute Read)
+[5-10 super-short bullet points — sirf key facts, definitions, numbers]
+
+## ❓ Possible Exam Questions (Expected)
+[5-7 questions jo is topic se puchhe ja sakte hain — types: MCQ, Short, Long]
+
+RULES:
+1. Hindi mein likho, lekin technical terms English mein reh sakte hain
+2. ** ** se important facts mark karo
+3. PYQ wale points [PYQ_IMPORTANT]...[/PYQ_IMPORTANT] mein do
+4. Student ke highlights ko zaroor include karo — [HIGHLIGHT]...[/HIGHLIGHT] mein
+5. Koi fact miss mat karo — 100% comprehensive notes banao
+6. ${examName?examName+' exam ke pattern ke hisaab se notes banao':'Competitive exam perspective se notes banao'}
+7. Seedha notes do — koi extra explanation nahi
+`;
+
+    var result=await callGroq(prompt, 7000);
+    t.perfectNotes=result;
+    t.perfectNotesAt=new Date().toLocaleDateString('hi-IN');
+    save();
+    _pnUpdateStep(3,'done');
+
+    // ── Step 5: Save & display ──
+    _pnUpdateStep(4,'active','💾 Notes save ho rahi hain...');
+    await new Promise(function(r){setTimeout(r,150);});
+    _pnUpdateStep(4,'done','✅ Topic se linked ho gayi!');
+
+    _pnState.result=result;
+    _pnState.generating=false;
+
+    // Show result
+    setTimeout(function(){
+      document.getElementById('pnProgressSection').style.display='none';
+      document.getElementById('pnResultSection').style.display='block';
+      document.getElementById('pnResultContent').innerHTML=_pnFormatResult(result);
+      if(genBtn){genBtn.disabled=false;genBtn.textContent='🔄 Regenerate';}
+    },400);
+
+    showToast('🎯 Perfect Exam Notes ready!','success');
+
+    // Refresh topicView if open
+    if(typeof renderFinalNotesCard==='function')renderFinalNotesCard();
+
+  } catch(err) {
+    _pnState.generating=false;
+    if(genBtn){genBtn.disabled=false;genBtn.textContent='🔄 Dobara Try Karo';}
+    showToast('❌ '+err.message,'error');
+    // Show error in progress
+    var activeSt=document.querySelector('#pnProgressSection .pn-progress-step.active');
+    if(activeSt){
+      activeSt.className='pn-progress-step error';
+      var icn=activeSt.querySelector('.pn-step-icon');
+      if(icn)icn.textContent='❌';
+    }
+    // Reset UI to setup view, hide progress/result
+    document.getElementById('pnProgressSection').style.display='none';
+    document.getElementById('pnResultSection').style.display='none';
+    document.getElementById('pnSetupSection').style.display='block';
+    // Reset progress step icons for next run
+    document.querySelectorAll('#pnProgressSection .pn-progress-step').forEach(function(el){
+      el.className='pn-progress-step pending';
+      var icn2=el.querySelector('.pn-step-icon');
+      if(icn2)icn2.textContent='○';
+      var txt=el.querySelector('.pn-step-text');
+      if(txt&&txt.getAttribute('data-orig'))txt.textContent=txt.getAttribute('data-orig');
+    });
+  }
+}
+
+// ── Copy perfect notes ──
+function copyPerfectNotes(sid, secid, tid) {
+  var t=getTop(sid,secid,tid);
+  if(!t||!t.perfectNotes){showToast('Perfect notes nahi hain!','error');return;}
+  navigator.clipboard.writeText(t.perfectNotes).then(function(){
+    showToast('Perfect Notes copy ho gayi! 📋','success');
+  }).catch(function(){
+    showToast('Copy nahi ho paya','error');
+  });
+}
+
+// ── Copy from current session result ──
+function copyPerfectNotesDirect() {
+  var text = _pnState.result;
+  if(!text){
+    var t=getTop(_pnState.sid,_pnState.secid,_pnState.tid);
+    text=t?t.perfectNotes:'';
+  }
+  if(!text){showToast('Notes nahi hain!','error');return;}
+  navigator.clipboard.writeText(text).then(function(){
+    showToast('Perfect Notes copy ho gayi! 📋','success');
+  }).catch(function(){showToast('Copy nahi ho paya','error');});
+}
+
+// ── Open in full-screen editor ──
+function openPerfectNotesInEditor() {
+  var sid=_pnState.sid, secid=_pnState.secid, tid=_pnState.tid;
+  closePerfectNotesModal();
+  setTimeout(function(){
+    openSpecialEditor('perfectnotes', sid, secid, tid);
+  }, 250);
+}
+
+// Handle back button for perfect notes modal
+window.addEventListener('popstate', function(e){
+  var ov=document.getElementById('perfectNotesOverlay');
+  if(ov&&ov.classList.contains('show')){
+    ov.classList.remove('show');
+    document.body.style.overflow='';
+  }
+});
+
+// ============================================================
+// END PERFECT EXAM NOTES FEATURE
+// ============================================================
 </script>
+<!-- ===== PERFECT EXAM NOTES MODAL ===== -->
+<div id="perfectNotesOverlay" onclick="if(event.target===this)closePerfectNotesModal()">
+  <div id="perfectNotesModal">
+
+    <!-- Header -->
+    <div class="pn-header">
+      <div>
+        <div class="pn-header-title">🎯 Perfect Exam Notes</div>
+        <div style="font-size:0.7rem;opacity:0.85;" id="pnTopicName">Topic</div>
+      </div>
+      <button class="pn-close-btn" onclick="closePerfectNotesModal()">✕ Band Karo</button>
+    </div>
+
+    <!-- Scrollable body -->
+    <div class="pn-body">
+
+      <!-- Setup Section -->
+      <div id="pnSetupSection">
+
+        <!-- What this does -->
+        <div class="pn-step-card" style="border-color:rgba(230,81,0,0.3);background:linear-gradient(135deg,rgba(230,81,0,0.07),rgba(191,54,12,0.04));">
+          <div class="pn-step-title" style="color:#e65100;">🎯 Yeh kya karta hai?</div>
+          <div class="pn-step-desc">
+            Aapke <b>topic ke saare notes</b>, <b>highlights</b>, <b>saved facts</b>, poori <b>library ke cross-references</b>, <b>Wikipedia/web data</b>, aur <b>previous year questions</b> ko ek saath analyse karke —
+            <b style="color:#e65100;">100% exam-ready perfect notes</b> banata hai jisme definitions, key facts, PYQ analysis, expected questions — sab kuch hoga.
+          </div>
+        </div>
+
+        <!-- Available sources -->
+        <div class="pn-step-card">
+          <div class="pn-step-title">📊 Available Sources</div>
+          <div id="pnSourceChips" class="pn-source-list"></div>
+        </div>
+
+        <!-- Exam info -->
+        <div class="pn-step-card">
+          <div class="pn-step-title">🎓 Exam Details (Optional but IMPORTANT)</div>
+          <div class="pn-step-desc" style="margin-bottom:10px;">
+            Agar aap konse exam ke liye pad rahe hain yeh batayenge, toh notes <b>usi exam ke pattern ke hisaab se</b> banenge — aur zyada targeted honge.
+          </div>
+
+          <div class="pn-form-row">
+            <label class="pn-form-label">📌 Exam ka naam (UPSC / SSC / NEET / State PCS / etc.)</label>
+            <input class="pn-inp" id="pnExamName" type="text" placeholder="Jaise: UPSC CSE, SSC CGL, NEET, RPSC RAS..." />
+          </div>
+
+          <div class="pn-form-row">
+            <label class="pn-form-label">📚 Syllabus (is topic se related jo syllabus mein hai)</label>
+            <textarea class="pn-inp" id="pnSyllabus" rows="3" placeholder="Jaise: Polity — Fundamental Rights, DPSP, Amendment Procedure..."></textarea>
+          </div>
+
+          <div class="pn-form-row">
+            <label class="pn-form-label">📝 Previous Year Questions (agar aapke paas hain)</label>
+            <textarea class="pn-inp" id="pnPYQ" rows="3" placeholder="Jaise: 2023 - Article 32 kya hai? 2022 - DPSP ka kya mahatva hai?..."></textarea>
+          </div>
+        </div>
+
+        <!-- Info card -->
+        <div class="pn-step-card" style="border-color:rgba(21,101,192,0.25);background:rgba(21,101,192,0.04);">
+          <div class="pn-step-title" style="color:#1565c0;">💡 Notes mein kya-kya hoga?</div>
+          <div class="pn-step-desc">
+            ✅ Topic Introduction &nbsp;·&nbsp; ✅ Core Concepts &amp; Definitions<br>
+            ✅ Key Facts &amp; Data Points &nbsp;·&nbsp; ✅ Important Connections<br>
+            ✅ Student Highlights Preserved &nbsp;·&nbsp; ✅ PYQ Analysis<br>
+            ✅ Standard Books/Teachers Notes &nbsp;·&nbsp; ✅ Quick Revision Points<br>
+            ✅ Expected Exam Questions
+          </div>
+        </div>
+
+      </div><!-- /pnSetupSection -->
+
+      <!-- Progress Section -->
+      <div id="pnProgressSection">
+        <div class="pn-step-card">
+          <div class="pn-step-title">⏳ Generation Progress</div>
+          <div class="pn-progress-step pending" data-step="0">
+            <span class="pn-step-icon">○</span>
+            <span class="pn-step-text" data-orig="📄 Topic content analyse karo (notes, highlights, facts)">📄 Topic content analyse karo (notes, highlights, facts)</span>
+          </div>
+          <div class="pn-progress-step pending" data-step="1">
+            <span class="pn-step-icon">○</span>
+            <span class="pn-step-text" data-orig="🔗 Poori library scan karo — cross-references dhundo">🔗 Poori library scan karo — cross-references dhundo</span>
+          </div>
+          <div class="pn-progress-step pending" data-step="2">
+            <span class="pn-step-icon">○</span>
+            <span class="pn-step-text" data-orig="🌐 Web se data fetch karo (Wikipedia, DuckDuckGo)">🌐 Web se data fetch karo (Wikipedia, DuckDuckGo)</span>
+          </div>
+          <div class="pn-progress-step pending" data-step="3">
+            <span class="pn-step-icon">○</span>
+            <span class="pn-step-text" data-orig="🤖 AI se comprehensive perfect notes generate karo">🤖 AI se comprehensive perfect notes generate karo</span>
+          </div>
+          <div class="pn-progress-step pending" data-step="4">
+            <span class="pn-step-icon">○</span>
+            <span class="pn-step-text" data-orig="💾 Notes save karo aur topic se link karo">💾 Notes save karo aur topic se link karo</span>
+          </div>
+        </div>
+        <div style="text-align:center;padding:10px;font-size:0.78rem;color:var(--text2);">
+          ⏳ Kripya wait karo — AI deeply analyse kar raha hai...
+        </div>
+      </div><!-- /pnProgressSection -->
+
+      <!-- Result Section -->
+      <div id="pnResultSection">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+          <div style="font-size:0.88rem;font-weight:800;color:var(--green);">✅ Perfect Exam Notes Ready!</div>
+          <div style="display:flex;gap:7px;">
+            <button class="btn btn-outline btn-sm" onclick="copyPerfectNotesDirect()">📋 Copy</button>
+            <button class="btn btn-purple btn-sm" onclick="openPerfectNotesInEditor()">✏️ Editor Mein Kholo</button>
+          </div>
+        </div>
+        <div class="pn-result-box" id="pnResultContent"></div>
+        <div style="margin-top:10px;padding:10px 12px;background:rgba(46,125,50,0.08);border:1px solid rgba(46,125,50,0.25);border-radius:10px;font-size:0.75rem;color:var(--green);">
+          💾 <b>Auto-saved!</b> Yeh notes aapke topic mein save ho gayi hain. Topic View → 🎯 Exam Notes se dobara dekh sakte hain.
+        </div>
+      </div><!-- /pnResultSection -->
+
+    </div><!-- /pn-body -->
+
+    <!-- Action bar -->
+    <div class="pn-action-bar">
+      <button class="btn btn-outline" onclick="closePerfectNotesModal()" style="flex:none;">✕ Band Karo</button>
+      <button class="pn-btn-gen" id="pnGenBtn" onclick="generatePerfectNotes()">🎯 Perfect Notes Generate Karo</button>
+    </div>
+
+  </div><!-- /perfectNotesModal -->
+</div><!-- /perfectNotesOverlay -->
+<!-- ===== END PERFECT EXAM NOTES MODAL ===== -->
+
 <!-- ===== END DEBUG CONSOLE ===== -->
 </body>
 </html>
