@@ -10113,7 +10113,7 @@ function tvShowSub(catId, sid, secid, tid){
           ${info.extraBtns}
           ${info.date?`<span style="font-size:0.6rem;color:var(--text2);margin-left:auto;">${info.date}</span>`:''}
         </div>
-        <div class="tv-content-body">${info.text}</div>
+        <div class="tv-content-body">${_pnFormatResult(info.text)}</div>
       </div>`;
   }
 }
@@ -58871,70 +58871,142 @@ function _pnParseCaptionXml(xml) {
   }
   return out.join(' ');
 }
+// Public Invidious instances — CORS-enabled, no proxy needed, works from any static host.
+// Each has Access-Control-Allow-Origin:* so browsers can call them directly.
+var _PN_INVIDIOUS=[
+  'https://inv.nadeko.net',
+  'https://invidious.privacyredirect.com',
+  'https://iv.datura.network',
+  'https://invidious.nerdvpn.de',
+  'https://yt.drgnz.club',
+  'https://invidious.reallyaweso.me'
+];
+
+// Parse SRT / WebVTT / srv3 captions into plain text
+function _pnParseSrtVtt(text){
+  // Strip WebVTT header
+  text=text.replace(/^WEBVTT[^\n]*\n/,'');
+  // Remove timestamps (00:00:00.000 --> ... or 0:00.000 --> ...)
+  text=text.replace(/[\d:]+\.?\d*\s*-->\s*[\d:]+\.?\d*[^\n]*/g,'');
+  // Remove SRT numeric index lines
+  text=text.replace(/^\d+\s*$/mg,'');
+  // Remove VTT cue settings
+  text=text.replace(/<\d+:\d+:\d+\.\d+>/g,'');
+  // Strip HTML tags (bold, italic cues etc)
+  text=text.replace(/<[^>]+>/g,' ');
+  // Decode entities
+  text=text.replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ');
+  // Collapse whitespace
+  var lines=text.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>1;});
+  // Deduplicate consecutive identical lines (VTT often repeats partial cues)
+  var dedup=[];
+  lines.forEach(function(l){if(!dedup.length||dedup[dedup.length-1]!==l)dedup.push(l);});
+  return dedup.join(' ');
+}
+
 async function _pnFetchYouTubeTranscript(url) {
   var vid=_pnParseYouTubeId(url);
   if(!vid)throw new Error('Invalid YouTube URL — video link check karo');
-  var watchUrl='https://www.youtube.com/watch?v='+vid+'&hl=en';
-  var html=null;
-  for(var i=0;i<_PN_PROXIES.length;i++){
-    try{
-      var proxied=_PN_PROXIES[i](watchUrl);
-      var r=await fetch(proxied,{signal:AbortSignal.timeout(20000)});
-      if(!r.ok)continue;
-      var t=await r.text();
-      if(t&&t.indexOf('captionTracks')!==-1){html=t;break;}
-      if(t&&t.length>2000&&!html)html=t;
-    }catch(e){}
-  }
-  if(!html)throw new Error('Video page load nahi ho payi — link check karo ya video private/unavailable hai');
 
-  var titleM=html.match(/"title":"((?:[^"\\]|\\.)*)"/);
-  var videoTitle=titleM?titleM[1].replace(/\\u0026/g,'&').replace(/\\"/g,'"'):('YouTube Video '+vid);
-
-  // Bracket-depth-aware extraction (more resilient to YouTube's JSON layout/escaping changes
-  // than a plain non-nested-bracket regex, since track objects can contain nested structures).
-  var marker='"captionTracks":';
-  var markerIdx=html.indexOf(marker);
-  if(markerIdx===-1)throw new Error('Is video mein captions/subtitles available nahi hain');
-  var arrStart=html.indexOf('[', markerIdx);
-  var tracksRaw=arrStart!==-1?_pnExtractBalancedJson(html, arrStart, '[', ']'):null;
-  if(!tracksRaw)throw new Error('Captions data parse nahi ho paya');
-  var tracksJson;
-  try{ tracksJson=JSON.parse(tracksRaw.replace(/\\u0026/g,'&')); }
-  catch(e){ throw new Error('Captions data parse nahi ho paya'); }
-  if(!tracksJson||!tracksJson.length)throw new Error('Is video mein captions available nahi hain');
-
-  function findLang(list,langs){
-    for(var li=0;li<langs.length;li++){
-      var f=list.find(function(tr){return(tr.languageCode||'').indexOf(langs[li])===0;});
-      if(f)return f;
+  // ── Strategy 1: local api-server (available when hosted on Replit) ────────
+  // Falls back silently if the endpoint returns a non-JSON/4xx response,
+  // so the same HTML file works identically on GitHub Pages or any static host.
+  try{
+    var apiResp=await fetch('/api/youtube-transcript?url='+encodeURIComponent(url),
+      {signal:AbortSignal.timeout(30000)});
+    if(apiResp.ok){
+      var apiData=await apiResp.json();
+      if(apiData&&apiData.transcript&&apiData.transcript.trim().length>40){
+        return{title:'YouTube Video '+vid,transcript:apiData.transcript,isAuto:apiData.lang==='auto'||!apiData.lang,lang:apiData.lang||''};
+      }
     }
-    return list[0];
-  }
-  var manual=tracksJson.filter(function(tr){return tr.kind!=='asr';});
-  var auto=tracksJson.filter(function(tr){return tr.kind==='asr';});
-  var track=(manual.length?findLang(manual,['hi','en']):null)||(auto.length?findLang(auto,['hi','en']):null);
-  if(!track)throw new Error('Koi usable caption track nahi mila');
+  }catch(e){ /* backend not available — continue to Invidious */ }
 
-  var capUrl=(track.baseUrl||'').replace(/\\u0026/g,'&');
-  if(!capUrl)throw new Error('Caption URL nahi mila');
-
-  var xml=null;
-  for(var j=0;j<_PN_PROXIES.length;j++){
+  // ── Strategy 2: Invidious public API (CORS-enabled, works on any host) ────
+  // Step 2a: get video metadata + caption track list from Invidious
+  var captionsList=null, invBase=null;
+  for(var i=0;i<_PN_INVIDIOUS.length;i++){
     try{
-      var proxiedCap=_PN_PROXIES[j](capUrl);
-      var rc=await fetch(proxiedCap,{signal:AbortSignal.timeout(15000)});
-      if(!rc.ok)continue;
-      var tc=await rc.text();
-      if(tc&&tc.length>30){xml=tc;break;}
+      var metaUrl=_PN_INVIDIOUS[i]+'/api/v1/videos/'+vid+'?fields=title,captions';
+      var mr=await fetch(metaUrl,{signal:AbortSignal.timeout(15000)});
+      if(!mr.ok)continue;
+      var md=await mr.json();
+      if(md&&md.captions&&md.captions.length>0){
+        captionsList=md.captions;
+        invBase=_PN_INVIDIOUS[i];
+        break;
+      }
     }catch(e){}
   }
-  if(!xml)throw new Error('Caption text download nahi ho paya');
 
-  var transcript=_pnParseCaptionXml(xml);
-  if(!transcript||transcript.trim().length<40)throw new Error('Transcript empty aaya — video mein sirf music/no speech ho sakta hai');
+  if(captionsList&&captionsList.length>0){
+    // Pick best caption: prefer Hindi manual > English manual > any manual > any auto
+    function _pickCap(list,lang){return list.find(function(c){return(c.languageCode||'').indexOf(lang)===0&&!(c.label||'').toLowerCase().includes('auto');});}
+    function _pickAuto(list,lang){return list.find(function(c){return(c.languageCode||'').indexOf(lang)===0;});}
+    var chosen=_pickCap(captionsList,'hi')||_pickCap(captionsList,'en')||captionsList.find(function(c){return!(c.label||'').toLowerCase().includes('auto');})||_pickAuto(captionsList,'hi')||_pickAuto(captionsList,'en')||captionsList[0];
 
-  return{title:videoTitle, transcript:transcript.substring(0,15000), isAuto:track.kind==='asr', lang:track.languageCode||''};
+    // Step 2b: download the actual caption file via the same Invidious instance
+    // Invidious /api/v1/captions/{id}?label=... returns VTT
+    for(var j=0;j<_PN_INVIDIOUS.length;j++){
+      var tryBase=j===0?invBase:_PN_INVIDIOUS[j];
+      try{
+        var capUrl=tryBase+'/api/v1/captions/'+vid+'?label='+encodeURIComponent(chosen.label||'');
+        var cr=await fetch(capUrl,{signal:AbortSignal.timeout(15000)});
+        if(!cr.ok)continue;
+        var capText=await cr.text();
+        if(!capText||capText.trim().length<30)continue;
+        var transcript=_pnParseSrtVtt(capText);
+        if(!transcript||transcript.trim().length<40)continue;
+        return{title:'YouTube Video '+vid,transcript:transcript.substring(0,30000),isAuto:(chosen.label||'').toLowerCase().includes('auto'),lang:chosen.languageCode||''};
+      }catch(e){}
+    }
+  }
+
+  // ── Strategy 3: CORS proxies → YouTube timedtext API (compact, ~10KB) ─────
+  // Much lighter than fetching the full watch page HTML (~1-2MB).
+  var listXml=null;
+  for(var k=0;k<_PN_PROXIES.length;k++){
+    try{
+      var listUrl=_PN_PROXIES[k]('https://video.google.com/timedtext?type=list&v='+vid);
+      var lr=await fetch(listUrl,{signal:AbortSignal.timeout(12000)});
+      if(!lr.ok)continue;
+      var lt=await lr.text();
+      if(lt&&lt.indexOf('<track')!==-1){listXml=lt;break;}
+    }catch(e){}
+  }
+  if(listXml){
+    var trackM=listXml.match(/<track[^>]+lang_code="([^"]*)"[^>]*(?:id="([^"]*)")?[^>]*(?:name="([^"]*)")?[^>]*>/g)||[];
+    // prefer Hindi track then any
+    var bestTrack=null;
+    trackM.forEach(function(t){
+      var lm=t.match(/lang_code="([^"]*)"/);
+      var lc=lm?lm[1]:'';
+      if(!bestTrack||(lc.indexOf('hi')===0&&!bestTrack._hi)||(lc.indexOf('en')===0&&!bestTrack._en)){
+        bestTrack={lang:lc,_hi:lc.indexOf('hi')===0,_en:lc.indexOf('en')===0};
+      }
+    });
+    if(!bestTrack&&trackM.length){bestTrack={lang:'en'};}
+    if(bestTrack){
+      var xmlResp=null;
+      for(var m2=0;m2<_PN_PROXIES.length;m2++){
+        try{
+          var txUrl=_PN_PROXIES[m2]('https://www.youtube.com/api/timedtext?v='+vid+'&lang='+bestTrack.lang+'&fmt=vtt');
+          var xr=await fetch(txUrl,{signal:AbortSignal.timeout(12000)});
+          if(!xr.ok)continue;
+          var xt=await xr.text();
+          if(xt&&xt.length>50){xmlResp=xt;break;}
+        }catch(e){}
+      }
+      if(xmlResp){
+        var t3=_pnParseSrtVtt(xmlResp);
+        if(t3&&t3.trim().length>40){
+          return{title:'YouTube Video '+vid,transcript:t3.substring(0,30000),isAuto:false,lang:bestTrack.lang};
+        }
+      }
+    }
+  }
+
+  throw new Error('Transcript nahi mila — video private/captions disabled ho sakta hai, ya kisi bhi method ne kaam nahi kiya');
 }
 
 // ── Wikipedia-based web search (CORS-safe, works in deployed app) ──
