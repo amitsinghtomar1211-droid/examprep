@@ -21,6 +21,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- html2pdf.js (jsPDF + html2canvas) for Notes Editor -> highlighted PDF export -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html-docx-js/dist/html-docx.js"></script>
 <!-- Tesseract.js for scanned PDF OCR -->
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <!-- Mammoth.js for Word (.docx) file reading -->
@@ -6837,6 +6838,17 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;box-shadow:0 2px 10px rgba(0,0,0,0.12);">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </button>
+
+      <!-- Download as Word (editable) -->
+      <button onclick="downloadEditorContentAsWord()" title="Word (Editable)"
+        style="width:36px;height:36px;border-radius:10px;border:1.5px solid var(--border);
+        background:rgba(255,255,255,0.88);cursor:pointer;display:flex;align-items:center;
+        justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;box-shadow:0 2px 10px rgba(0,0,0,0.12);">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+          <path d="M8 13l1.5 5 1.5-4 1.5 4L14 13"/>
         </svg>
       </button>
 
@@ -19304,6 +19316,49 @@ function downloadEditorContent() {
     showToast('❌ PDF nahi ban paya, .txt download ho raha hai', 'error');
     downloadEditorContentAsTxt(title);
   });
+}
+
+function downloadEditorContentAsWord() {
+  // Editable Word (.doc) download — same content/highlights/formatting as
+  // the PDF/Print (built from the same neBuildExportContent), but saved as
+  // a Word document so the user can freely resize/cut/add text after
+  // downloading, unlike a PDF which is fixed/print-ready by nature.
+  const title = document.getElementById('notesEditorTitle').textContent.replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g,'').trim() || 'notes';
+  const area = document.getElementById('noteEditableArea');
+
+  if(typeof htmlDocx === 'undefined' || !area) {
+    showToast('❌ Word download abhi available nahi hai, internet check karo', 'error');
+    return;
+  }
+
+  showToast('⬇️ Word file taiyar ho rahi hai...', 'success');
+
+  try {
+    // Word always gets the wide, reflowed body (same as neBuildExportContent's
+    // non-ink path) since a .doc is inherently editable/reflowable anyway —
+    // pixel-aligned ink overlay positioning is not meaningful in Word, so we
+    // skip the ink composite for this export and just keep the text/images.
+    const built = neBuildExportContent(area, document.getElementById('notesEditorTitle').textContent || 'Notes');
+    const bodyHTML = built.wrapper.innerHTML;
+
+    const fullHTML = `<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+    <head><meta charset="utf-8"><title>${title}</title></head>
+    <body style="font-family:'Noto Sans',Arial,sans-serif;">${bodyHTML}</body></html>`;
+
+    const converted = htmlDocx.asBlob(fullHTML);
+    const url = URL.createObjectURL(converted);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = title + '.doc';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast('✅ Word file download ho gayi! Ab isme text edit/resize/cut/add sab kar sakte ho.', 'success');
+  } catch(err) {
+    console.error('Word export error:', err);
+    showToast('❌ Word file nahi ban payi', 'error');
+  }
 }
 
 function downloadEditorContentAsTxt(titleArg) {
