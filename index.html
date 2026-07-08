@@ -58427,6 +58427,29 @@ body.night-mode .tv-cat-card.cat-perfect {
 }
 .pn-source-chip.active { border-color:var(--green); color:var(--green); background:rgba(46,125,50,0.06); }
 
+/* Drive links UI */
+.pn-drive-item {
+  background:rgba(0,0,0,0.03); border:1px solid rgba(0,0,0,0.1);
+  border-radius:10px; padding:9px 10px; margin-bottom:8px;
+}
+.pn-drive-url { font-size:0.77rem!important; margin-bottom:0!important; }
+.pn-drive-row { display:flex; gap:6px; margin-top:6px; align-items:center; }
+select.pn-inp { padding:5px 8px; cursor:pointer; }
+.pn-add-drive-btn {
+  width:100%; margin-top:6px; padding:8px 12px;
+  background:rgba(230,81,0,0.08); color:#e65100;
+  border:1.5px dashed #e65100; border-radius:10px;
+  font-size:0.8rem; font-weight:700; cursor:pointer;
+  transition:background 0.15s;
+}
+.pn-add-drive-btn:hover { background:rgba(230,81,0,0.18); }
+.pn-drive-remove { background:#c62828!important; color:#fff!important; border:none!important; padding:4px 8px!important; font-size:0.75rem!important; flex:none; }
+.pn-drive-status { font-size:0.7rem; margin-top:4px; padding:3px 8px; border-radius:20px; display:inline-block; }
+.pn-drive-status.ok { background:rgba(46,125,50,0.12); color:var(--green); }
+.pn-drive-status.err { background:rgba(198,40,40,0.1); color:#c62828; }
+body.night-mode .pn-drive-item { background:rgba(255,255,255,0.04); border-color:rgba(255,255,255,0.1); }
+body.night-mode .pn-add-drive-btn { background:rgba(230,81,0,0.12); }
+
 /* Night mode overrides */
 body.night-mode #perfectNotesModal .pn-result-box .pn-imp { background:rgba(255,243,205,0.12); color:#ffb74d; }
 body.night-mode #perfectNotesModal .pn-result-box .pn-pyq { background:rgba(21,101,192,0.18); color:#90caf9; }
@@ -58438,7 +58461,8 @@ body.night-mode #perfectNotesModal .pn-result-box .pn-pyq { background:rgba(21,1
 var _pnState = {
   sid:null, secid:null, tid:null,
   generating:false,
-  result:''
+  result:'',
+  driveLinks:[]   // [{url, label, content, status}]
 };
 
 // ── Open Modal ──
@@ -58449,6 +58473,7 @@ function openPerfectNotesModal(sid, secid, tid) {
 
   _pnState.sid=sid; _pnState.secid=secid; _pnState.tid=tid;
   _pnState.generating=false; _pnState.result='';
+  _pnState.driveLinks=[];
 
   var overlay=document.getElementById('perfectNotesOverlay');
   if(!overlay)return;
@@ -58464,6 +58489,9 @@ function openPerfectNotesModal(sid, secid, tid) {
   document.getElementById('pnExamName').value = ae ? ae.name : '';
   document.getElementById('pnSyllabus').value = ae ? (ae.syllabus||'') : '';
   document.getElementById('pnPYQ').value = ae ? (ae.pyq||'') : '';
+
+  // Render empty drive links section
+  _pnRenderDriveLinks();
 
   // Analyse available sources
   _pnAnalyseSources(t);
@@ -58571,6 +58599,162 @@ function _pnUpdateStep(idx, state, extra) {
   }
 }
 
+// ── Drive link management ──
+function _pnAddDriveLink() {
+  _pnState.driveLinks.push({url:'', label:'Book', content:'', status:''});
+  _pnRenderDriveLinks();
+}
+function _pnRemoveDriveLink(idx) {
+  _pnState.driveLinks.splice(idx, 1);
+  _pnRenderDriveLinks();
+}
+function _pnRenderDriveLinks() {
+  var c=document.getElementById('pnDriveLinks');
+  if(!c)return;
+  c.innerHTML='';
+  (_pnState.driveLinks||[]).forEach(function(lnk, idx) {
+    var d=document.createElement('div');
+    d.className='pn-drive-item';
+    var statusHtml=lnk.status?'<div class="pn-drive-status '+(lnk.content?'ok':'err')+'">'+lnk.status+'</div>':'';
+    d.innerHTML='<input class="pn-inp pn-drive-url" type="url" placeholder="Google Drive link paste karo (Share link)..." value="'+_pnEsc(lnk.url)+'" oninput="_pnState.driveLinks['+idx+'].url=this.value" />'
+      +'<div class="pn-drive-row">'
+      +'<select class="pn-inp" style="flex:1" onchange="_pnState.driveLinks['+idx+'].label=this.value">'
+      +'<option'+(lnk.label==='Book'?' selected':'')+'>Book</option>'
+      +'<option'+(lnk.label==='Notes'?' selected':'')+'>Notes</option>'
+      +'<option'+(lnk.label==='PDF'?' selected':'')+'>PDF</option>'
+      +'<option'+(lnk.label==='Question Bank'?' selected':'')+'>Question Bank</option>'
+      +'<option'+(lnk.label==='Handwritten Notes'?' selected':'')+'>Handwritten Notes</option>'
+      +'</select>'
+      +'<button class="btn btn-xs pn-drive-remove" onclick="_pnRemoveDriveLink('+idx+')">✕ Hata do</button>'
+      +'</div>'+statusHtml;
+    c.appendChild(d);
+  });
+}
+function _pnEsc(s){return (s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;');}
+
+// ── Parse Google Drive/Docs URL → text export URL ──
+function _pnParseDriveUrl(url) {
+  if(!url)return null;
+  url=url.trim();
+  // Google Docs
+  var docM=url.match(/docs\.google\.com\/document\/d\/([a-zA-Z0-9_-]+)/);
+  if(docM)return{type:'gdoc', exportUrl:'https://docs.google.com/document/d/'+docM[1]+'/export?format=txt'};
+  // Google Sheets
+  var shM=url.match(/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  if(shM)return{type:'gsheet', exportUrl:'https://docs.google.com/spreadsheets/d/'+shM[1]+'/export?format=csv'};
+  // Generic Drive file
+  var drM=url.match(/drive\.google\.com\/(?:file\/d\/|open\?id=)([a-zA-Z0-9_-]+)/);
+  if(drM)return{type:'file', exportUrl:'https://drive.google.com/uc?export=download&id='+drM[1]};
+  var idM=url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if(idM)return{type:'file', exportUrl:'https://drive.google.com/uc?export=download&id='+idM[1]};
+  return null;
+}
+
+// ── Fetch content from Drive URL via CORS proxies ──
+async function _pnFetchDriveContent(url) {
+  var parsed=_pnParseDriveUrl(url);
+  if(!parsed)throw new Error('Invalid Drive URL — share link paste karo');
+  var exportUrl=parsed.exportUrl;
+  var proxies=[
+    'https://api.allorigins.win/get?url='+encodeURIComponent(exportUrl),
+    'https://corsproxy.io/?'+encodeURIComponent(exportUrl)
+  ];
+  for(var pi=0;pi<proxies.length;pi++){
+    try{
+      var r=await fetch(proxies[pi],{signal:AbortSignal.timeout(18000)});
+      if(!r.ok)continue;
+      if(pi===0){
+        var data=await r.json();
+        var txt=data.contents||'';
+        // Filter out HTML if it got redirected to a login page
+        if(txt.indexOf('<html')!==-1&&txt.indexOf('signin')!==-1)continue;
+        if(txt.indexOf('<html')!==-1){
+          // Strip HTML tags to get text
+          txt=txt.replace(/<style[^>]*>[\s\S]*?<\/style>/gi,'')
+                 .replace(/<script[^>]*>[\s\S]*?<\/script>/gi,'')
+                 .replace(/<[^>]+>/g,' ').replace(/\s{3,}/g,'\n').trim();
+        }
+        if(txt&&txt.length>80)return txt.substring(0,10000);
+      } else {
+        var txt2=await r.text();
+        if(txt2.indexOf('<html')!==-1&&txt2.indexOf('signin')!==-1)continue;
+        if(txt2.indexOf('<html')!==-1){
+          txt2=txt2.replace(/<style[^>]*>[\s\S]*?<\/style>/gi,'')
+                   .replace(/<script[^>]*>[\s\S]*?<\/script>/gi,'')
+                   .replace(/<[^>]+>/g,' ').replace(/\s{3,}/g,'\n').trim();
+        }
+        if(txt2&&txt2.length>80)return txt2.substring(0,10000);
+      }
+    }catch(e){}
+  }
+  throw new Error('Drive content fetch nahi ho paya — file publicly shared hai? (Anyone with link)');
+}
+
+// ── Wikipedia-based web search (CORS-safe, works in deployed app) ──
+async function _pnFetchWebData(topicName, examName) {
+  var res='';
+  var cleanName=topicName.replace(/[^\w\s\u0900-\u097F]/g,'').trim();
+  var enc=encodeURIComponent(cleanName);
+
+  // 1. Wikipedia English - REST summary (CORS-safe)
+  try{
+    var r1=await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/'+enc,{signal:AbortSignal.timeout(8000)});
+    if(r1.ok){
+      var d1=await r1.json();
+      if(d1.extract&&d1.extract.length>100)res+='[Wikipedia EN - '+d1.title+']:\n'+d1.extract.substring(0,2500)+'\n\n';
+    }
+  }catch(e){}
+
+  // 2. Wikipedia English - Search API if direct lookup failed
+  if(!res){
+    try{
+      var r2=await fetch('https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch='+enc+'&format=json&origin=*&srlimit=3',{signal:AbortSignal.timeout(8000)});
+      if(r2.ok){
+        var d2=await r2.json();
+        var results=(d2.query&&d2.query.search)||[];
+        if(results.length>0){
+          var pt=encodeURIComponent(results[0].title);
+          var r3=await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/'+pt,{signal:AbortSignal.timeout(8000)});
+          if(r3.ok){
+            var d3=await r3.json();
+            if(d3.extract&&d3.extract.length>100)res+='[Wikipedia EN - '+d3.title+']:\n'+d3.extract.substring(0,2500)+'\n\n';
+          }
+        }
+      }
+    }catch(e){}
+  }
+
+  // 3. Wikipedia Hindi (CORS-safe)
+  try{
+    var rh=await fetch('https://hi.wikipedia.org/api/rest_v1/page/summary/'+encodeURIComponent(topicName.trim()),{signal:AbortSignal.timeout(7000)});
+    if(rh.ok){
+      var dh=await rh.json();
+      if(dh.extract&&dh.extract.length>100)res+='[Wikipedia Hindi - '+dh.title+']:\n'+dh.extract.substring(0,2000)+'\n\n';
+    }
+  }catch(e){}
+
+  // 4. Wikipedia Hindi fallback via Search API
+  if(res.indexOf('Wikipedia Hindi')===-1){
+    try{
+      var rhs=await fetch('https://hi.wikipedia.org/w/api.php?action=query&list=search&srsearch='+encodeURIComponent(topicName)+'&format=json&origin=*&srlimit=2',{signal:AbortSignal.timeout(7000)});
+      if(rhs.ok){
+        var dhs=await rhs.json();
+        var hres=(dhs.query&&dhs.query.search)||[];
+        if(hres.length>0){
+          var hpt=encodeURIComponent(hres[0].title);
+          var rhp=await fetch('https://hi.wikipedia.org/api/rest_v1/page/summary/'+hpt,{signal:AbortSignal.timeout(7000)});
+          if(rhp.ok){
+            var dhp=await rhp.json();
+            if(dhp.extract&&dhp.extract.length>100)res+='[Wikipedia Hindi - '+dhp.title+']:\n'+dhp.extract.substring(0,2000)+'\n\n';
+          }
+        }
+      }
+    }catch(e){}
+  }
+
+  return res.trim();
+}
+
 // ── Format result for display ──
 function _pnFormatResult(text) {
   if(!text)return'';
@@ -58586,6 +58770,17 @@ function _pnFormatResult(text) {
   return html;
 }
 
+// ── Progress reset helper ──
+function _pnResetSteps() {
+  document.querySelectorAll('#pnProgressSection .pn-progress-step').forEach(function(el){
+    el.className='pn-progress-step pending';
+    var icn=el.querySelector('.pn-step-icon');
+    if(icn)icn.textContent='○';
+    var txt=el.querySelector('.pn-step-text');
+    if(txt&&txt.getAttribute('data-orig'))txt.textContent=txt.getAttribute('data-orig');
+  });
+}
+
 // ── Main generation function ──
 async function generatePerfectNotes() {
   if(_pnState.generating){showToast('Abhi generation chal rahi hai...','error');return;}
@@ -58595,12 +58790,11 @@ async function generatePerfectNotes() {
   var t=getTop(sid,secid,tid);
   if(!t){showToast('Topic nahi mila!','error');return;}
 
-  // Read user inputs
   var examName=(document.getElementById('pnExamName').value||'').trim();
   var syllabus=(document.getElementById('pnSyllabus').value||'').trim();
   var pyq=(document.getElementById('pnPYQ').value||'').trim();
 
-  // Save exam info to active exam if changed
+  // Save exam info to active exam
   var ae=S.exams&&S.exams.find(function(e){return e.id==S.activeExamId;});
   if(ae){
     if(examName&&!ae.name)ae.name=examName;
@@ -58613,16 +58807,7 @@ async function generatePerfectNotes() {
   var genBtn=document.getElementById('pnGenBtn');
   if(genBtn){genBtn.disabled=true;genBtn.textContent='⏳ Generating...';}
 
-  // Reset all progress steps to pending state
-  document.querySelectorAll('#pnProgressSection .pn-progress-step').forEach(function(el){
-    el.className='pn-progress-step pending';
-    var icn=el.querySelector('.pn-step-icon');
-    if(icn)icn.textContent='○';
-    var txt=el.querySelector('.pn-step-text');
-    if(txt&&txt.getAttribute('data-orig'))txt.textContent=txt.getAttribute('data-orig');
-  });
-
-  // Hide setup, show progress
+  _pnResetSteps();
   document.getElementById('pnSetupSection').style.display='none';
   document.getElementById('pnProgressSection').style.display='block';
   document.getElementById('pnResultSection').style.display='none';
@@ -58630,160 +58815,231 @@ async function generatePerfectNotes() {
   var subj=getSubj(sid);
   var sec=getSec(sid,secid);
 
-  var errors=[];
+  // Step indices: 0=analyse, 1=cross-lib, 2=drive, 3=web, 4=AI, 5=save
 
   try {
-    // ── Step 1: Analyse topic content ──
+    // ── Step 0: Analyse topic content ──
     _pnUpdateStep(0,'active','📄 Topic content analyse ho raha hai...');
-    await new Promise(function(r){setTimeout(r,200);}); // UI update
-    
+    await new Promise(function(r){setTimeout(r,200);});
+
     var notesText='';
     (t.notes||[]).forEach(function(n){
       notesText+='### Note: '+n.name+'\n'+(n.content||'')+'\n\n';
     });
-    var finalNotesText=(t.finalNotes||'').replace(/%%[^%]+%%/g,'').substring(0,2000);
-    var smartNotesText=(t.smartNotesAI||'').substring(0,1500);
-    var masterNotesText=(t.masterNotes||'').substring(0,1500);
-    var highlights=(t.highlights||[]).map(function(h){return h.text;}).join('\n');
-    var savedFacts=(t.savedFacts||[]).map(function(f){return f.text;}).join('\n');
+    var finalNotesText=(t.finalNotes||'').replace(/%%[^%]+%%/g,'').substring(0,3000);
+    var smartNotesText=(t.smartNotesAI||'').substring(0,2000);
+    var masterNotesText=(t.masterNotes||'').substring(0,2000);
+    var highlights=(t.highlights||[]).map(function(h){return '• '+h.text;}).join('\n');
+    var savedFacts=(t.savedFacts||[]).map(function(f){return '• '+f.text;}).join('\n');
 
     if(!notesText.trim()&&!finalNotesText&&!smartNotesText&&!masterNotesText){
       _pnUpdateStep(0,'error','❌ Topic mein koi notes nahi hain!');
-      throw new Error('Is topic mein koi notes nahi hain. Pehle notes add karo.');
+      throw new Error('Is topic mein koi notes nahi hain. Pehle kuch notes add karo.');
     }
-    _pnUpdateStep(0,'done');
+    _pnUpdateStep(0,'done','✅ Sources mila: notes/'+(t.notes||[]).length+', highlights/'+(t.highlights||[]).length);
 
-    // ── Step 2: Cross-library scan ──
+    // ── Step 1: Cross-library scan ──
     _pnUpdateStep(1,'active','🔗 Poori library scan ho rahi hai...');
     await new Promise(function(r){setTimeout(r,100);});
     var crossCtx=_pnExtractCrossLibraryContext(t);
-    _pnUpdateStep(1,'done','✅ Cross-library: '+(crossCtx?'References mile':'Koi reference nahi'));
+    _pnUpdateStep(1,'done','✅ Cross-library: '+(crossCtx?'References mile':'Koi cross-reference nahi'));
 
-    // ── Step 3: Web search ──
-    _pnUpdateStep(2,'active','🌐 Web se data fetch ho raha hai...');
+    // ── Step 2: Drive documents ──
+    var driveContent='';
+    var driveLinks=(_pnState.driveLinks||[]).filter(function(l){return l.url&&l.url.trim();});
+    if(driveLinks.length>0){
+      _pnUpdateStep(2,'active','📁 Drive documents padhe ja rahe hain ('+driveLinks.length+' files)...');
+      await new Promise(function(r){setTimeout(r,100);});
+      var driveResults=[];
+      for(var di=0;di<driveLinks.length;di++){
+        var lnk=driveLinks[di];
+        try{
+          var dContent=await _pnFetchDriveContent(lnk.url);
+          lnk.content=dContent;
+          lnk.status='✅ Padh liya ('+Math.round(dContent.length/100)/10+'KB)';
+          driveResults.push('['+lnk.label+']\n'+dContent.substring(0,5000));
+          _pnUpdateStep(2,'active','📁 Document '+(di+1)+'/'+driveLinks.length+' padha...');
+        }catch(de){
+          lnk.content='';
+          lnk.status='❌ '+de.message;
+        }
+        _pnRenderDriveLinks();
+      }
+      driveContent=driveResults.join('\n\n---\n\n');
+      var fetched=driveResults.length;
+      if(fetched>0){
+        _pnUpdateStep(2,'done','✅ '+fetched+'/'+driveLinks.length+' Drive files padhi gayi');
+      } else {
+        _pnUpdateStep(2,'error','⚠️ Drive files nahi khuli — baaki sources se notes banenge');
+      }
+    } else {
+      _pnUpdateStep(2,'done','⏭️ Drive links nahi diye — skip');
+    }
+
+    // ── Step 3: Web search (Wikipedia — CORS-safe) ──
+    _pnUpdateStep(3,'active','🌐 Wikipedia se data fetch ho raha hai...');
     var webData='';
-    try {
-      webData=await performWebSearch(
-        t.name+' '+(examName?examName+' exam ':'')+' important points previous year questions',
-        t.name
-      );
-      _pnUpdateStep(2,'done','✅ Web data mila: '+(webData.length>50?webData.substring(0,60)+'...':'Data nahi mila'));
-    } catch(we){
-      _pnUpdateStep(2,'error','⚠️ Web search fail — AI se generate karega');
-      errors.push('web_search');
+    try{
+      webData=await _pnFetchWebData(t.name, examName);
+      _pnUpdateStep(3,'done', webData.length>100
+        ? '✅ Wikipedia data mila ('+Math.round(webData.length/100)/10+'KB)'
+        : '⚠️ Wikipedia data nahi mila — AI apni knowledge se banayega');
+    }catch(we){
+      _pnUpdateStep(3,'error','⚠️ Web fetch fail — AI knowledge se banayega');
     }
 
     // ── Step 4: AI generation ──
-    _pnUpdateStep(3,'active','🤖 AI comprehensive notes bana raha hai...');
+    _pnUpdateStep(4,'active','🤖 AI comprehensive notes bana raha hai...');
     await new Promise(function(r){setTimeout(r,100);});
 
-    // Collect all PYQ context
+    // Collect all PYQ
     var allPyq='';
-    if(pyq)allPyq+='\nEXAM PYQ:\n'+pyq.substring(0,800);
+    if(pyq)allPyq+='EXAM PYQ:\n'+pyq.substring(0,1000);
     (S.exams||[]).forEach(function(exam){
       if(exam.selectedTopicIds&&exam.selectedTopicIds.includes(t.id)&&exam.pyq&&exam.pyq!==pyq){
-        allPyq+='\n['+exam.name+'] PYQ:\n'+exam.pyq.substring(0,500);
+        allPyq+='\n['+exam.name+'] PYQ:\n'+exam.pyq.substring(0,600);
       }
     });
 
-    // Build the mega-prompt
-    var prompt='Tu ek EXPERT TEACHER aur EXAM ANALYST hai. Tera kaam hai: is topic ke baare mein PERFECT EXAM NOTES banana jo ek student ko 100% confident bana de.\n\n';
-    prompt+='TOPIC: '+t.name+'\n';
-    prompt+='SUBJECT: '+(subj?subj.name:'')+(sec?' > '+sec.name:'')+'\n';
-    if(examName)prompt+='EXAM: '+examName+'\n';
-    if(syllabus)prompt+='SYLLABUS: '+syllabus.substring(0,800)+'\n';
-    if(allPyq)prompt+='\nPREVIOUS YEAR QUESTIONS (PYQ):\n'+allPyq+'\n';
+    // ── Build the mega-prompt ──
+    var prompt = 'Tu ek SENIOR PROFESSOR aur TOP EXAM ANALYST hai jisne hazaron students ko '
+      +(examName||'competitive exams')+' crack karwaye hain.\n'
+      +'Tera MISSION: is topic ke liye ITNI COMPREHENSIVE NOTES banana ki student SIRF YEH PADH KE exam mein '
+      +'perfect score kar sake. Notes mein koi bhi important point miss nahi hona chahiye.\n\n'
+      +'TOPIC: '+t.name+'\n'
+      +'SUBJECT: '+(subj?subj.name:'')+(sec?' > '+sec.name:'')+'\n'
+      +'EXAM TARGET: '+(examName||'All Competitive Exams (UPSC, SSC, State PCS, NEET, JEE, etc.)')+'\n'
+      +(syllabus?'SYLLABUS COVERAGE: '+syllabus.substring(0,600)+'\n':'')
+      +(allPyq?'\n== PREVIOUS YEAR QUESTIONS ==\n'+allPyq+'\n':'');
 
-    if(notesText.trim()){
+    if(notesText.trim())
       prompt+='\n== STUDENT KE APNE NOTES ==\n'+notesText.substring(0,5000)+'\n';
-    }
-    if(finalNotesText){
-      prompt+='\n== FINAL NOTES (ALREADY GENERATED) ==\n'+finalNotesText+'\n';
-    }
-    if(smartNotesText){
+    if(finalNotesText)
+      prompt+='\n== FINAL NOTES ==\n'+finalNotesText+'\n';
+    if(smartNotesText)
       prompt+='\n== SMART NOTES ==\n'+smartNotesText+'\n';
-    }
-    if(masterNotesText){
+    if(masterNotesText)
       prompt+='\n== MASTER NOTES ==\n'+masterNotesText+'\n';
-    }
-    if(highlights){
-      prompt+='\n== STUDENT NE YEH POINTS HIGHLIGHT KIE HAIN (EXAM KE LIYE ZAROOR PADHO) ==\n'+highlights+'\n';
-    }
-    if(savedFacts){
-      prompt+='\n== STUDENT KE SAVED FACTS ==\n'+savedFacts+'\n';
-    }
-    if(crossCtx){
-      prompt+='\n== LIBRARY KE DUSRE TOPICS MEIN MENTIONED ==\n'+crossCtx+'\n';
-    }
-    if(webData&&webData.length>50){
-      prompt+='\n== WEB DATA (Wikipedia + DuckDuckGo) ==\n'+webData.substring(0,2500)+'\n';
-    }
+    if(highlights)
+      prompt+='\n== STUDENT NE YEH POINTS HIGHLIGHT KIE HAIN ==\n'+highlights+'\n';
+    if(savedFacts)
+      prompt+='\n== STUDENT KE SAVED IMPORTANT FACTS ==\n'+savedFacts+'\n';
+    if(crossCtx)
+      prompt+='\n== DUSRE TOPICS SE CROSS-REFERENCES ==\n'+crossCtx+'\n';
+    if(driveContent)
+      prompt+='\n== REFERENCE BOOKS / STUDY MATERIAL (DRIVE SE) ==\n'+driveContent.substring(0,8000)+'\n';
+    if(webData&&webData.length>100)
+      prompt+='\n== WIKIPEDIA / WEB DATA ==\n'+webData.substring(0,3000)+'\n';
 
     prompt+=`
-== TASK ==
-Upar diye gaye SAARE sources ko deeply analyse karke, is topic ke liye PERFECT EXAM NOTES banao.
 
-== FORMAT (EXACTLY IS FORMAT MEIN DO) ==
+== YAHI FORMAT FOLLOW KARO — HAR SECTION MEIN POORI DEPTH AUR DETAIL CHAHIYE ==
 
-# [Topic Name] — Complete Exam Notes
+# ${t.name} — Complete Master Notes
 
-## 📌 Topic Parichay (Introduction)
-[2-3 lines mein topic kya hai, kyun important hai]
+## 📌 1. Parichay (Introduction)
+- Topic kya hai? Iska broader context kya hai?
+- Exam mein kyun important hai? Kab/kahaan se aaya?
+- Iska parent concept/category kya hai?
+[Minimum 150 words — complete context dena hai, surface-level nahi]
 
-## 🎯 Core Concepts & Definitions
-[Har important definition aur concept clearly — **bold** se mark karo]
-[Student ke highlights ko ** ** mein include karo]
+## 🔑 2. Core Concepts & Definitions
+Har important concept ke liye yeh pattern follow karo:
 
-## 📊 Key Facts & Data Points
-[Dates, numbers, statistics, specific facts — bullet list mein]
-[Jo student ne highlight kia hai ya repeatedly mention hai, usse [HIGHLIGHT] tag mein do]
+### Concept: [Naam]
+**Paribhasha:** [clear definition]
+**Vistrit Vyakhya:** [2-3 lines mein samjhao — kaise kaam karta hai, kya hota hai]
+**Practical Example:** [real-world ya exam-relevant example]
+[HIGHLIGHT tag use karo agar student ne yeh highlight kia ho]
 
-## 🔗 Important Connections & Relations
-[Yeh topic kaise connect hai dusre topics se — brief]
+[SAARE important concepts aur definitions cover karo — ek bhi miss mat karo]
 
-## ⭐ Most Important Points (Exam Ke Liye)
-[TOP 5-8 MOST IMPORTANT POINTS — ** se mark karo]
-[Jo PYQ mein aa chuke hain unhe [PYQ_IMPORTANT]...[/PYQ_IMPORTANT] mein do]
-[Jo bahut important hai usse [IMPORTANT]...[/IMPORTANT] mein do]
+## 📊 3. Key Facts, Dates & Statistics
+[Sab important numbers, dates, names, statistics — bullet mein, bold mein]
+• **[Date/Year]** — [event/fact]
+• **[Number/Stat]** — [kya hai]
+[Jo student ne highlight kia → [HIGHLIGHT]...[/HIGHLIGHT] mein do]
 
-## 📝 Previous Year Questions (PYQs)
-[PYQ data se ya AI se expected questions — numbered list]
-[Har question ke saath 1-line answer bhi do]
+## ⚙️ 4. Working / Process / Mechanism
+[Topic kaise kaam karta hai — numbered steps mein]
+1. [Step 1]
+2. [Step 2]
+[Agar topic mein koi process/mechanism/cycle hai toh zaroor explain karo]
 
-## 📚 Standard Books/Teachers Ki Notes Se
-[Is topic ke baare mein standard books ya teachers commonly kya padate hain — common facts/points]
+## 🔗 5. Important Connections & Inter-linkages
+- Is topic ka [Connected Topic A] se sambandh: ...
+- [Connected Topic B] se sambandh: ...
+[Dusre subjects/topics se connections — cross-reference ke liye critical]
 
-## ⚡ Quick Revision Points (Last-Minute Read)
-[5-10 super-short bullet points — sirf key facts, definitions, numbers]
+## ⭐ 6. Exam-Critical Points — SABSE ZAROOR PADHO
+[IMPORTANT]Ye 10-12 points exam mein pakka aayenge — ek ek carefully yaad karo[/IMPORTANT]
 
-## ❓ Possible Exam Questions (Expected)
-[5-7 questions jo is topic se puchhe ja sakte hain — types: MCQ, Short, Long]
+1. **...** — [complete explanation, 1-2 lines]
+2. **...** — ...
+[Minimum 10 points, complete aur specific — vague nahi]
+[PYQ wale → [PYQ_IMPORTANT]...[/PYQ_IMPORTANT]]
 
-RULES:
-1. Hindi mein likho, lekin technical terms English mein reh sakte hain
-2. ** ** se important facts mark karo
-3. PYQ wale points [PYQ_IMPORTANT]...[/PYQ_IMPORTANT] mein do
-4. Student ke highlights ko zaroor include karo — [HIGHLIGHT]...[/HIGHLIGHT] mein
-5. Koi fact miss mat karo — 100% comprehensive notes banao
-6. ${examName?examName+' exam ke pattern ke hisaab se notes banao':'Competitive exam perspective se notes banao'}
-7. Seedha notes do — koi extra explanation nahi
+## 📝 7. Previous Year Questions (PYQ) Analysis
+[PYQ_IMPORTANT]Ye questions pehle aa chuke hain — inke answers perfect hone chahiye[/PYQ_IMPORTANT]
+[Agar PYQ data mila hai toh unhe use karo, warna is topic se possible important questions do]
+Q1. ... (Year: ...) → **Answer:** ...
+Q2. ...
+
+## 🧠 8. Conceptual Clarity — Common Confusions & Exceptions
+- **[Confusion/Myth]:** Log aksar yeh galat samajhte hain — **SAHI YEH HAI:** ...
+- **Important Exception:** ...
+- **Kya galti avoid karni hai:** ...
+[Jo students aksar confuse hote hain woh zaroor clear karo]
+
+## 📚 9. Standard Reference Insights
+- Standard books/renowned teachers is topic ko kaise padate hain
+- Is topic ka official/standard definition kya hai
+- Commonly tested perspective kya hai
+[Agar Drive se material mila hai toh uske key insights zaroor include karo]
+
+## ⚡ 10. Rapid Revision — Last Night Read
+[15-20 super-short one-liners — sirf key facts, perfect for last-minute revision]
+• ...
+• ...
+
+## ❓ 11. Expected Exam Questions — Practice Karo
+**MCQ Type (1 mark):**
+Q. ... → (A)... (B)... (C)... (D)...  ✓ **Answer: [X]** — [1-line reason]
+
+**Short Answer (2-3 marks):**
+Q. ... → Key points: [bullet mein]
+
+**Long/Descriptive (5+ marks):**
+Q. ... → Structure: [intro → main points → conclusion outline]
+
+---
+CRITICAL RULES:
+1. Hindi mein likho — technical/English terms English mein reh sakte hain
+2. HAR SECTION MEIN DEPTH CHAHIYE — minimum 1800 words total
+3. ** ** se important terms bold karo
+4. Student highlights → [HIGHLIGHT]...[/HIGHLIGHT]
+5. PYQ confirmed points → [PYQ_IMPORTANT]...[/PYQ_IMPORTANT]
+6. Critical points → [IMPORTANT]...[/IMPORTANT]
+7. ${examName?examName+' ke specific pattern aur syllabus ke hisaab se tailor karo':'Sab major exams ka perspective cover karo'}
+8. Diye gaye SAARE sources (notes, highlights, Drive material, Wikipedia) fully utilize karo
+9. Generic notes mat do — IS SPECIFIC TOPIC ke baare mein deep, accurate, exam-focused notes do
+10. Result seedha do — koi preamble ya "yeh notes hain" type intro mat do
 `;
 
-    var result=await callGroq(prompt, 7000);
+    var result=await callGroq(prompt, 8000);
     t.perfectNotes=result;
     t.perfectNotesAt=new Date().toLocaleDateString('hi-IN');
     save();
-    _pnUpdateStep(3,'done');
+    _pnUpdateStep(4,'done','✅ Notes generate ho gayi!');
 
     // ── Step 5: Save & display ──
-    _pnUpdateStep(4,'active','💾 Notes save ho rahi hain...');
+    _pnUpdateStep(5,'active','💾 Notes save ho rahi hain...');
     await new Promise(function(r){setTimeout(r,150);});
-    _pnUpdateStep(4,'done','✅ Topic se linked ho gayi!');
+    _pnUpdateStep(5,'done','✅ Topic se link ho gayi!');
 
     _pnState.result=result;
     _pnState.generating=false;
 
-    // Show result
     setTimeout(function(){
       document.getElementById('pnProgressSection').style.display='none';
       document.getElementById('pnResultSection').style.display='block';
@@ -58792,33 +59048,22 @@ RULES:
     },400);
 
     showToast('🎯 Perfect Exam Notes ready!','success');
-
-    // Refresh topicView if open
     if(typeof renderFinalNotesCard==='function')renderFinalNotesCard();
 
   } catch(err) {
     _pnState.generating=false;
     if(genBtn){genBtn.disabled=false;genBtn.textContent='🔄 Dobara Try Karo';}
     showToast('❌ '+err.message,'error');
-    // Show error in progress
     var activeSt=document.querySelector('#pnProgressSection .pn-progress-step.active');
     if(activeSt){
       activeSt.className='pn-progress-step error';
       var icn=activeSt.querySelector('.pn-step-icon');
       if(icn)icn.textContent='❌';
     }
-    // Reset UI to setup view, hide progress/result
     document.getElementById('pnProgressSection').style.display='none';
     document.getElementById('pnResultSection').style.display='none';
     document.getElementById('pnSetupSection').style.display='block';
-    // Reset progress step icons for next run
-    document.querySelectorAll('#pnProgressSection .pn-progress-step').forEach(function(el){
-      el.className='pn-progress-step pending';
-      var icn2=el.querySelector('.pn-step-icon');
-      if(icn2)icn2.textContent='○';
-      var txt=el.querySelector('.pn-step-text');
-      if(txt&&txt.getAttribute('data-orig'))txt.textContent=txt.getAttribute('data-orig');
-    });
+    _pnResetSteps();
   }
 }
 
@@ -58925,15 +59170,30 @@ window.addEventListener('popstate', function(e){
           </div>
         </div>
 
+        <!-- Drive Reference Materials -->
+        <div class="pn-step-card" style="border-color:rgba(25,118,210,0.3);background:linear-gradient(135deg,rgba(25,118,210,0.06),rgba(13,71,161,0.03));">
+          <div class="pn-step-title" style="color:#1565c0;">📁 Reference Books / Study Material (Google Drive)</div>
+          <div class="pn-step-desc" style="margin-bottom:10px;">
+            Google Drive ya Google Docs par upload kiye books, notes ya PDFs ka link paste karo —
+            <b style="color:#1565c0;">AI unhe bhi padh ke notes mein include karega</b>. Isse notes bahut zyada accurate aur complete bante hain.
+          </div>
+          <div id="pnDriveLinks"></div>
+          <button class="pn-add-drive-btn" onclick="_pnAddDriveLink()">+ Drive Link Add Karo</button>
+          <div style="margin-top:8px;font-size:0.71rem;color:var(--text2);line-height:1.5;">
+            💡 <b>Share kaise karein:</b> Google Drive → File select karein → Share → "Anyone with the link" → Copy Link paste karein yahaan<br>
+            ✅ Supported: Google Docs, Google Drive files, PDFs, Sheets
+          </div>
+        </div>
+
         <!-- Info card -->
         <div class="pn-step-card" style="border-color:rgba(21,101,192,0.25);background:rgba(21,101,192,0.04);">
           <div class="pn-step-title" style="color:#1565c0;">💡 Notes mein kya-kya hoga?</div>
           <div class="pn-step-desc">
-            ✅ Topic Introduction &nbsp;·&nbsp; ✅ Core Concepts &amp; Definitions<br>
-            ✅ Key Facts &amp; Data Points &nbsp;·&nbsp; ✅ Important Connections<br>
+            ✅ Topic Introduction &nbsp;·&nbsp; ✅ Core Concepts &amp; Definitions (depth mein)<br>
+            ✅ Key Facts &amp; Dates &nbsp;·&nbsp; ✅ Process/Mechanism<br>
             ✅ Student Highlights Preserved &nbsp;·&nbsp; ✅ PYQ Analysis<br>
-            ✅ Standard Books/Teachers Notes &nbsp;·&nbsp; ✅ Quick Revision Points<br>
-            ✅ Expected Exam Questions
+            ✅ Conceptual Clarity / Common Confusions &nbsp;·&nbsp; ✅ Drive Material Insights<br>
+            ✅ Rapid Revision Points &nbsp;·&nbsp; ✅ Expected Exam Questions (MCQ + Long)
           </div>
         </div>
 
@@ -58953,13 +59213,17 @@ window.addEventListener('popstate', function(e){
           </div>
           <div class="pn-progress-step pending" data-step="2">
             <span class="pn-step-icon">○</span>
-            <span class="pn-step-text" data-orig="🌐 Web se data fetch karo (Wikipedia, DuckDuckGo)">🌐 Web se data fetch karo (Wikipedia, DuckDuckGo)</span>
+            <span class="pn-step-text" data-orig="📁 Drive books/material padho (agar links diye hain)">📁 Drive books/material padho (agar links diye hain)</span>
           </div>
           <div class="pn-progress-step pending" data-step="3">
             <span class="pn-step-icon">○</span>
-            <span class="pn-step-text" data-orig="🤖 AI se comprehensive perfect notes generate karo">🤖 AI se comprehensive perfect notes generate karo</span>
+            <span class="pn-step-text" data-orig="🌐 Wikipedia se verified data fetch karo">🌐 Wikipedia se verified data fetch karo</span>
           </div>
           <div class="pn-progress-step pending" data-step="4">
+            <span class="pn-step-icon">○</span>
+            <span class="pn-step-text" data-orig="🤖 AI se comprehensive master notes generate karo">🤖 AI se comprehensive master notes generate karo</span>
+          </div>
+          <div class="pn-progress-step pending" data-step="5">
             <span class="pn-step-icon">○</span>
             <span class="pn-step-text" data-orig="💾 Notes save karo aur topic se link karo">💾 Notes save karo aur topic se link karo</span>
           </div>
