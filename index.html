@@ -19064,6 +19064,130 @@ function copyEditorContent() {
   navigator.clipboard.writeText(text).then(() => showToast('Copy ho gaya! 📋', 'success'));
 }
 
+// ══════════════════════════════════════════════════════════
+// SHARED EXPORT BUILDER — used by both PDF download and Print
+// so the two features always render the note IDENTICALLY and
+// IDENTICALLY to what's shown live in the notes editor:
+//   • text formatting (bold/italic/underline/lists/tables)
+//   • ALL highlight colors (yellow/pink/green/blue) with the
+//     exact same background shades used in the editor
+//   • images already embedded in the note
+//   • any inline canvas widgets (e.g. mind-maps) → flattened to PNG
+//   • hand-drawn ink (Draw / QuickMap overlay on top of the note
+//     text) → composited in at the exact same pixel position
+// ══════════════════════════════════════════════════════════
+function _neCollectInkOverlayDataURL() {
+  try {
+    const layers = [document.getElementById('neDrawCanvas'), document.getElementById('neQmCanvas')]
+      .filter(function(c) { return c && c.width > 0 && c.height > 0; });
+    if(!layers.length) return null;
+
+    const w = Math.max.apply(null, layers.map(function(c){ return c.width; }));
+    const h = Math.max.apply(null, layers.map(function(c){ return c.height; }));
+    const out = document.createElement('canvas');
+    out.width = w; out.height = h;
+    const ctx = out.getContext('2d');
+    layers.forEach(function(cv) {
+      try { ctx.drawImage(cv, 0, 0, w, h); } catch(e) {}
+    });
+
+    // Skip entirely-blank overlays (nothing drawn) so a plain text
+    // note never gets an unnecessary transparent image layer.
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const buf = new Uint32Array(data.buffer);
+    let hasInk = false;
+    for(let i = 0; i < buf.length; i++) { if(buf[i] !== 0) { hasInk = true; break; } }
+    if(!hasInk) return null;
+
+    return { dataUrl: out.toDataURL('image/png'), width: w, height: h };
+  } catch(e) {
+    console.warn('Ink overlay capture skipped:', e);
+    return null;
+  }
+}
+
+function neBuildExportContent(area, titleText) {
+  const container = document.createElement('div');
+  container.style.cssText = 'font-family:"Noto Sans",Arial,sans-serif;padding:6px;color:#111;line-height:1.85;font-size:15px;';
+
+  const heading = document.createElement('h1');
+  heading.textContent = titleText || 'Notes';
+  heading.style.cssText = 'font-size:1.35rem;border-bottom:2px solid #1565c0;padding-bottom:8px;margin:0 0 16px;color:#1565c0;';
+  container.appendChild(heading);
+
+  // Clone the live note — keep its inline styles (font-size etc. are
+  // set inline by the A-/A+ controls) so the exported look matches
+  // exactly what the editor is showing right now.
+  const body = area.cloneNode(true);
+  body.removeAttribute('contenteditable');
+  body.style.outline = 'none';
+
+  // Any canvas actually embedded INSIDE the note content (e.g. an
+  // inline mind-map/diagram widget) → flatten to a static image so
+  // it survives export instead of showing up blank.
+  const liveCanvases = area.querySelectorAll('canvas');
+  const clonedCanvases = body.querySelectorAll('canvas');
+  clonedCanvases.forEach(function(cloneCv, i) {
+    const liveCv = liveCanvases[i];
+    try {
+      const dataUrl = liveCv ? liveCv.toDataURL('image/png') : null;
+      if(dataUrl) {
+        const img = document.createElement('img');
+        img.src = dataUrl;
+        img.style.maxWidth = '100%';
+        cloneCv.replaceWith(img);
+      } else {
+        cloneCv.remove();
+      }
+    } catch(e) {
+      cloneCv.remove();
+    }
+  });
+
+  // Hand-drawn ink (pen/highlighter strokes drawn on top of the note
+  // via the Draw/QuickMap tools) lives on separate overlay canvases,
+  // not inside noteEditableArea. Composite it back in at the exact
+  // same pixel geometry so it lines up perfectly with the text below.
+  let contentHolder = body;
+  const ink = _neCollectInkOverlayDataURL();
+  if(ink) {
+    const stageWidth = area.offsetWidth || ink.width || 760;
+    const stageHeight = Math.max(area.scrollHeight || 0, ink.height || 0);
+    const stage = document.createElement('div');
+    stage.style.cssText = 'position:relative;width:' + stageWidth + 'px;';
+    body.style.width = stageWidth + 'px';
+    stage.appendChild(body);
+    const inkImg = document.createElement('img');
+    inkImg.src = ink.dataUrl;
+    inkImg.style.cssText = 'position:absolute;left:0;top:0;width:' + stageWidth + 'px;height:' + stageHeight + 'px;pointer-events:none;';
+    stage.appendChild(inkImg);
+    contentHolder = stage;
+  }
+  container.appendChild(contentHolder);
+
+  // Highlight colors below are the EXACT shades used live in the
+  // notes editor (.ne-editable mark.user-hl*) — kept in sync so the
+  // exported PDF/print looks identical to what the user highlighted.
+  const styleTag = document.createElement('style');
+  styleTag.textContent = `
+    mark.user-hl{background:#fff176;color:inherit;padding:0 2px;border-radius:3px;}
+    mark.user-hl-pink{background:#fce4ec;color:inherit;padding:0 2px;border-radius:3px;}
+    mark.user-hl-green{background:#e8f5e9;color:inherit;padding:0 2px;border-radius:3px;}
+    mark.user-hl-blue{background:#e3f2fd;color:inherit;padding:0 2px;border-radius:3px;}
+    b, strong { font-weight:800; color:#1565c0; }
+    i, em { font-style:italic; }
+    u { text-decoration:underline; }
+    ul, ol { padding-left:20px; margin:6px 0; }
+    li { margin-bottom:3px; }
+    table { border-collapse:collapse; width:100%; margin:10px 0; font-size:0.9rem; }
+    td, th { border:1.2px solid #999; padding:6px 8px; text-align:left; }
+    img { max-width:100%; border-radius:6px; }
+  `;
+  container.appendChild(styleTag);
+
+  return { wrapper: container };
+}
+
 function downloadEditorContent() {
   // Rich, highlight-preserving PDF download. Falls back to .txt if html2pdf
   // library didn't load (e.g. no internet) or something goes wrong.
@@ -19077,38 +19201,15 @@ function downloadEditorContent() {
 
   showToast('⬇️ PDF taiyar ho raha hai...', 'success');
 
-  // Build a clean, print-styled clone so the exported PDF looks exactly
-  // like the notes editor (highlights, bold/italic, tables, images, checklists).
-  const wrapper = document.createElement('div');
-  wrapper.style.cssText = 'font-family:"Noto Sans",Arial,sans-serif;padding:6px;max-width:760px;color:#111;line-height:1.85;font-size:15px;';
-
-  const heading = document.createElement('h1');
-  heading.textContent = document.getElementById('notesEditorTitle').textContent || 'Notes';
-  heading.style.cssText = 'font-size:1.35rem;border-bottom:2px solid #1565c0;padding-bottom:8px;margin:0 0 16px;color:#1565c0;';
-  wrapper.appendChild(heading);
-
-  const body = area.cloneNode(true);
-  body.removeAttribute('contenteditable');
-  body.style.cssText = 'outline:none;';
-  wrapper.appendChild(body);
-
-  const styleTag = document.createElement('style');
-  styleTag.textContent = `
-    mark.user-hl{background:#fff176 !important;color:inherit;padding:0 2px;border-radius:3px;}
-    mark.user-hl-pink{background:#f48fb1 !important;color:inherit;padding:0 2px;border-radius:3px;}
-    mark.user-hl-green{background:#a5d6a7 !important;color:inherit;padding:0 2px;border-radius:3px;}
-    mark.user-hl-blue{background:#90caf9 !important;color:inherit;padding:0 2px;border-radius:3px;}
-    b, strong { font-weight:800; color:#1565c0; }
-    i, em { font-style:italic; }
-    u { text-decoration:underline; }
-    ul, ol { padding-left:20px; margin:6px 0; }
-    li { margin-bottom:3px; }
-    table { border-collapse:collapse; width:100%; margin:10px 0; font-size:0.9rem; }
-    td, th { border:1.2px solid #999; padding:6px 8px; text-align:left; }
-    img { max-width:100%; border-radius:6px; }
-    canvas { display:none; }
-  `;
-  wrapper.appendChild(styleTag);
+  let wrapper;
+  try {
+    wrapper = neBuildExportContent(area, document.getElementById('notesEditorTitle').textContent || 'Notes').wrapper;
+  } catch(err) {
+    console.error('PDF build error:', err);
+    showToast('❌ PDF nahi ban paya, .txt download ho raha hai', 'error');
+    downloadEditorContentAsTxt(title);
+    return;
+  }
 
   // Off-screen render container (needs to be in DOM for html2canvas to measure it)
   wrapper.style.position = 'fixed';
@@ -19120,7 +19221,7 @@ function downloadEditorContent() {
     margin: [12, 12, 14, 12],
     filename: title + '.pdf',
     image: { type: 'jpeg', quality: 0.95 },
-    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+    html2canvas: { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff' },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
     pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
   };
@@ -19153,91 +19254,36 @@ function printEditorContent() {
   const text = neGetPlainText();
   const title = document.getElementById('notesEditorTitle').textContent || 'Notes';
   const area = document.getElementById('noteEditableArea');
-  const richHTML = area ? area.innerHTML : text.replace(/\n/g,'<br>');
 
   const printWin = window.open('', '_blank', 'width=800,height=600');
   if(!printWin) { showToast('Popup blocked! Browser settings mein allow karo.', 'error'); return; }
+
+  // Build the exact same export content as PDF download — same highlight
+  // colors, same flattened inline canvases, same composited ink overlay —
+  // so Print always matches what the notes editor (and the PDF) shows.
+  let bodyHTML;
+  if(area) {
+    try {
+      bodyHTML = neBuildExportContent(area, title).wrapper.outerHTML;
+    } catch(err) {
+      console.error('Print build error:', err);
+      bodyHTML = '<h1 style="font-size:1.3rem;border-bottom:2px solid #1565c0;padding-bottom:8px;color:#1565c0;">' + title + '</h1><div>' + text.replace(/\n/g,'<br>') + '</div>';
+    }
+  } else {
+    bodyHTML = '<h1 style="font-size:1.3rem;border-bottom:2px solid #1565c0;padding-bottom:8px;color:#1565c0;">' + title + '</h1><div>' + text.replace(/\n/g,'<br>') + '</div>';
+  }
 
   printWin.document.write(`<!DOCTYPE html><html><head>
     <meta charset="UTF-8">
     <title>${title}</title>
     <style>
       body { font-family: 'Noto Sans', Arial, sans-serif; padding: 30px; max-width: 800px; margin: auto; line-height: 1.7; color: #111; }
-      h1 { font-size: 1.3rem; border-bottom: 2px solid #1565c0; padding-bottom: 8px; color: #1565c0; }
-      mark.user-hl { background: #fff176; padding: 1px 2px; border-radius: 2px; }
-      mark.user-hl-pink { background: #f48fb1; padding: 1px 2px; border-radius: 2px; }
-      mark.user-hl-green { background: #a5d6a7; padding: 1px 2px; border-radius: 2px; }
-      mark.user-hl-blue { background: #90caf9; padding: 1px 2px; border-radius: 2px; }
       @media print { body { padding: 15px; } }
-    
-  /* ===== NOTES EDITOR TABLE FLOATING BAR ===== */
-  /* ── neTableBar: PERMANENTLY HIDDEN — Long press se full modal khulta hai ── */
-  #neTableBar { display: none !important; }
-  #neTableBar.netb-open { display: none !important; }
-  /* top info strip */
-  #neTableBar .netb-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 4px 10px 3px;
-    background: linear-gradient(90deg,rgba(21,101,192,0.1),rgba(21,101,192,0.03));
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-    min-height: 28px;
-  }
-  #neTableBar .netb-title {
-    font-size: 0.72rem; font-weight: 800; color: var(--accent);
-    display: flex; align-items: center; gap: 5px;
-  }
-  #neTableBar .netb-close {
-    width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--border);
-    background: var(--surface2); font-size: 0.8rem; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    color: var(--text2); -webkit-tap-highlight-color: transparent; flex-shrink: 0;
-  }
-  /* single horizontal scroll row — saare buttons ek line mein */
-  #neTableBar .netb-scroll-row {
-    display: flex; align-items: center; gap: 5px;
-    overflow-x: auto; overflow-y: hidden;
-    padding: 7px 10px; scrollbar-width: none;
-    flex-wrap: nowrap;
-  }
-  #neTableBar .netb-scroll-row::-webkit-scrollbar { display: none; }
-  #neTableBar .netb-sep {
-    width: 1.5px; height: 26px; background: var(--border); flex-shrink: 0; margin: 0 3px;
-  }
-  #neTableBar .nb {
-    min-width: 38px; height: 34px; border-radius: 8px;
-    border: 1.5px solid var(--border);
-    background: var(--surface2); font-size: 0.68rem; font-weight: 700;
-    color: var(--text); cursor: pointer; padding: 0 7px; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center; gap: 2px;
-    -webkit-tap-highlight-color: transparent; white-space: nowrap;
-    transition: background 0.1s, transform 0.08s;
-  }
-  #neTableBar .nb:active { transform: scale(0.92); }
-  #neTableBar .nb.red { color: var(--red); border-color: rgba(198,40,40,0.3); }
-  #neTableBar .nb.green { color: var(--green); border-color: rgba(46,125,50,0.3); }
-  #neTableBar .nb.blue { color: var(--accent); border-color: rgba(21,101,192,0.3); }
-  #neTableBar .nb.bold-btn { font-size: 0.95rem; font-weight: 900; }
-  #neTableBar .nb.active-fmt { background: var(--accent); color: #fff; border-color: var(--accent); }
-  /* color swatches inline */
-  .netb-swatch-inline {
-    width: 26px; height: 26px; border-radius: 6px; border: 2px solid transparent;
-    cursor: pointer; flex-shrink: 0; display: inline-block;
-    -webkit-tap-highlight-color: transparent;
-    transition: transform 0.1s;
-  }
-  .netb-swatch-inline:active { transform: scale(0.88); }
-  /* legacy swatch kept for backward compat */
-  .netb-swatch { width:26px;height:26px;border-radius:6px;border:2px solid transparent;cursor:pointer;flex-shrink:0;-webkit-tap-highlight-color:transparent;transition:transform 0.1s;display:inline-block; }
-  .netb-swatch:active { transform:scale(0.88); }
-  
-</style>
+    </style>
   </head><body>
-    <h1>${title}</h1>
-    <div>${richHTML}</div>
+    ${bodyHTML}
     <script>window.onload=()=>{window.print();window.close();}<\/script>
-  
-</body></html>`);
+  </body></html>`);
   printWin.document.close();
 }
 
