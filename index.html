@@ -19,6 +19,8 @@
 
 <!-- PDF.js for PDF text extraction -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- html2pdf.js (jsPDF + html2canvas) for Notes Editor -> highlighted PDF export -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <!-- Tesseract.js for scanned PDF OCR -->
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <!-- Mammoth.js for Word (.docx) file reading -->
@@ -19063,8 +19065,80 @@ function copyEditorContent() {
 }
 
 function downloadEditorContent() {
-  const text = neGetPlainText();
+  // Rich, highlight-preserving PDF download. Falls back to .txt if html2pdf
+  // library didn't load (e.g. no internet) or something goes wrong.
   const title = document.getElementById('notesEditorTitle').textContent.replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g,'').trim() || 'notes';
+  const area = document.getElementById('noteEditableArea');
+
+  if(typeof html2pdf === 'undefined' || !area) {
+    downloadEditorContentAsTxt(title);
+    return;
+  }
+
+  showToast('⬇️ PDF taiyar ho raha hai...', 'success');
+
+  // Build a clean, print-styled clone so the exported PDF looks exactly
+  // like the notes editor (highlights, bold/italic, tables, images, checklists).
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'font-family:"Noto Sans",Arial,sans-serif;padding:6px;max-width:760px;color:#111;line-height:1.85;font-size:15px;';
+
+  const heading = document.createElement('h1');
+  heading.textContent = document.getElementById('notesEditorTitle').textContent || 'Notes';
+  heading.style.cssText = 'font-size:1.35rem;border-bottom:2px solid #1565c0;padding-bottom:8px;margin:0 0 16px;color:#1565c0;';
+  wrapper.appendChild(heading);
+
+  const body = area.cloneNode(true);
+  body.removeAttribute('contenteditable');
+  body.style.cssText = 'outline:none;';
+  wrapper.appendChild(body);
+
+  const styleTag = document.createElement('style');
+  styleTag.textContent = `
+    mark.user-hl{background:#fff176 !important;color:inherit;padding:0 2px;border-radius:3px;}
+    mark.user-hl-pink{background:#f48fb1 !important;color:inherit;padding:0 2px;border-radius:3px;}
+    mark.user-hl-green{background:#a5d6a7 !important;color:inherit;padding:0 2px;border-radius:3px;}
+    mark.user-hl-blue{background:#90caf9 !important;color:inherit;padding:0 2px;border-radius:3px;}
+    b, strong { font-weight:800; color:#1565c0; }
+    i, em { font-style:italic; }
+    u { text-decoration:underline; }
+    ul, ol { padding-left:20px; margin:6px 0; }
+    li { margin-bottom:3px; }
+    table { border-collapse:collapse; width:100%; margin:10px 0; font-size:0.9rem; }
+    td, th { border:1.2px solid #999; padding:6px 8px; text-align:left; }
+    img { max-width:100%; border-radius:6px; }
+    canvas { display:none; }
+  `;
+  wrapper.appendChild(styleTag);
+
+  // Off-screen render container (needs to be in DOM for html2canvas to measure it)
+  wrapper.style.position = 'fixed';
+  wrapper.style.left = '-9999px';
+  wrapper.style.top = '0';
+  document.body.appendChild(wrapper);
+
+  const opt = {
+    margin: [12, 12, 14, 12],
+    filename: title + '.pdf',
+    image: { type: 'jpeg', quality: 0.95 },
+    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+  };
+
+  html2pdf().set(opt).from(wrapper).save().then(() => {
+    document.body.removeChild(wrapper);
+    showToast('✅ PDF download ho gaya!', 'success');
+  }).catch((err) => {
+    if(wrapper.parentNode) document.body.removeChild(wrapper);
+    console.error('PDF export error:', err);
+    showToast('❌ PDF nahi ban paya, .txt download ho raha hai', 'error');
+    downloadEditorContentAsTxt(title);
+  });
+}
+
+function downloadEditorContentAsTxt(titleArg) {
+  const text = neGetPlainText();
+  const title = titleArg || (document.getElementById('notesEditorTitle').textContent.replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g,'').trim() || 'notes');
   const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
