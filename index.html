@@ -21,7 +21,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- html2pdf.js (jsPDF + html2canvas) for Notes Editor -> highlighted PDF export -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/html-docx-js/dist/html-docx.js"></script>
 <!-- Tesseract.js for scanned PDF OCR -->
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <!-- Mammoth.js for Word (.docx) file reading -->
@@ -19129,7 +19128,11 @@ function _neCollectInkOverlayDataURL() {
 // text *inside* each one re-wraps.
 const NE_PRINT_WIDTH = 700;
 
-function neBuildExportContent(area, titleText) {
+function neBuildExportContent(area, titleText, opts) {
+  // opts.forceWideReflow: used by the Word export, which is inherently
+  // editable/reflowable and has no use for pixel-locked ink alignment —
+  // always use the wide print width and skip the ink overlay for it.
+  const forceWideReflow = !!(opts && opts.forceWideReflow);
   const container = document.createElement('div');
   container.style.cssText = 'font-family:"Noto Sans",Arial,sans-serif;padding:6px;color:#111;line-height:1.85;font-size:15px;';
 
@@ -19173,7 +19176,7 @@ function neBuildExportContent(area, titleText) {
   // same pixel geometry so it lines up perfectly with the text below.
   let contentHolder = body;
   let exportWidth = NE_PRINT_WIDTH;
-  const ink = _neCollectInkOverlayDataURL();
+  const ink = forceWideReflow ? null : _neCollectInkOverlayDataURL();
   if(ink) {
     // Hand-drawn strokes are pixel-mapped to the note's ORIGINAL on-screen
     // width — reflowing text wider here would shift every word out from
@@ -19323,30 +19326,51 @@ function downloadEditorContentAsWord() {
   // the PDF/Print (built from the same neBuildExportContent), but saved as
   // a Word document so the user can freely resize/cut/add text after
   // downloading, unlike a PDF which is fixed/print-ready by nature.
+  //
+  // NOTE: we deliberately do NOT use a third-party HTML→OOXML converter
+  // library (html-docx-js) here anymore — it silently produced a BLANK
+  // document on real, richly-formatted contenteditable notes (same
+  // symptom class as the earlier blank-PDF bug, but the converter fails
+  // silently with no error to catch). Instead we use the well-established
+  // "Word HTML" trick: wrap the exact same export HTML (same wrapper
+  // outerHTML used for PDF/Print, so it looks identical) in a minimal
+  // Word-namespaced HTML shell and save it with a `application/msword`
+  // MIME type. Word opens this by rendering the HTML/CSS natively and the
+  // user can then freely edit it — no external library, no conversion
+  // step that can fail, so it can't silently go blank.
   const title = document.getElementById('notesEditorTitle').textContent.replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g,'').trim() || 'notes';
   const area = document.getElementById('noteEditableArea');
 
-  if(typeof htmlDocx === 'undefined' || !area) {
-    showToast('❌ Word download abhi available nahi hai, internet check karo', 'error');
+  if(!area) {
+    showToast('❌ Word download abhi available nahi hai', 'error');
     return;
   }
 
   showToast('⬇️ Word file taiyar ho rahi hai...', 'success');
 
   try {
-    // Word always gets the wide, reflowed body (same as neBuildExportContent's
-    // non-ink path) since a .doc is inherently editable/reflowable anyway —
-    // pixel-aligned ink overlay positioning is not meaningful in Word, so we
-    // skip the ink composite for this export and just keep the text/images.
-    const built = neBuildExportContent(area, document.getElementById('notesEditorTitle').textContent || 'Notes');
-    const bodyHTML = built.wrapper.innerHTML;
+    // Word always gets the wide, reflowed body (forceWideReflow skips the
+    // ink overlay/width-lock path in neBuildExportContent) since a Word
+    // doc is inherently editable/reflowable anyway — pixel-aligned ink
+    // overlay positioning is not meaningful in Word, so we skip the ink
+    // composite for this export and just keep the text/images.
+    const built = neBuildExportContent(area, document.getElementById('notesEditorTitle').textContent || 'Notes', { forceWideReflow: true });
+    // outerHTML (not innerHTML) so the highlight/table/list CSS <style>
+    // tag that neBuildExportContent appends travels along with it — this
+    // is exactly what keeps PDF/Print/Word all looking identical.
+    const contentHTML = built.wrapper.outerHTML;
 
-    const fullHTML = `<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-    <head><meta charset="utf-8"><title>${title}</title></head>
-    <body style="font-family:'Noto Sans',Arial,sans-serif;">${bodyHTML}</body></html>`;
+    const fullHTML = '<html xmlns:o="urn:schemas-microsoft-com:office:office" '
+      + 'xmlns:w="urn:schemas-microsoft-com:office:word" '
+      + 'xmlns="http://www.w3.org/TR/REC-html40">'
+      + '<head><meta charset="utf-8"><title>' + title + '</title>'
+      + '<style>@page{size:8.5in 11in;margin:1in;} body{font-family:"Noto Sans",Arial,sans-serif;}</style>'
+      + '</head><body>' + contentHTML + '</body></html>';
 
-    const converted = htmlDocx.asBlob(fullHTML);
-    const url = URL.createObjectURL(converted);
+    // The UTF-8 BOM ("\ufeff") ensures Word correctly detects the encoding
+    // so Hindi/Devanagari text doesn't get mangled when opened.
+    const blob = new Blob(['\ufeff', fullHTML], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = title + '.doc';
