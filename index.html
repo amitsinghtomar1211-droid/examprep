@@ -22609,7 +22609,10 @@ function insertCodeBlock() {
 }
 // Naya link kisi bhi web page (ya app ke andar kisi bhi jagah) tak le jaane wala
 // clickable "button" ke roop mein insert karta hai. Click karte hi naye tab mein khulta hai.
+var _neLinkBtnLongPressed = false;
+var _neLinkBtnTouchTimer = null;
 function openNoteLinkBtn(el) {
+  if(_neLinkBtnLongPressed) { _neLinkBtnLongPressed = false; return; }
   try {
     var url = el && (el.getAttribute('data-url') || el.dataset.url);
     if(!url) return;
@@ -22621,15 +22624,32 @@ function openNoteLinkBtn(el) {
 function _neNormalizeUrl(u) {
   u = (u || '').trim();
   if(!u) return '';
-  if(/^([a-zA-Z][a-zA-Z0-9+.-]*:)/.test(u)) return u; // already has a scheme (http:, https:, mailto:, tel:...)
+  if(/^([a-zA-Z][a-zA-Z0-9+.-]*:)/.test(u)) {
+    // Only allow safe schemes — block javascript:/data:/vbscript: etc.
+    if(!/^(https?|mailto|tel):/i.test(u)) return '';
+    return u;
+  }
   return 'https://' + u;
 }
-function _neLinkButtonHTML(url, label) {
+function _neSafeColor(c) {
+  c = (c || '').trim();
+  return /^#[0-9a-fA-F]{3,8}$/.test(c) ? c : '#1565c0';
+}
+function _neEscHtml(s) {
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function _neLinkButtonHTML(url, label, color) {
   var safeUrl = url.replace(/"/g, '&quot;');
-  var safeLabel = (label || url).replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return '<button type="button" class="ne-link-btn" data-url="' + safeUrl + '" onclick="openNoteLinkBtn(this)" contenteditable="false" ' +
-    'style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:4px 4px 4px 0;background:var(--accent,#1565c0);color:#fff;border:none;border-radius:20px;font-size:0.78rem;font-weight:700;cursor:pointer;font-family:inherit;vertical-align:middle;">🔗 ' +
-    safeLabel + '</button>&nbsp;';
+  var c = color || '#1565c0';
+  var safeLabel = _neEscHtml(label || url);
+  return '<button type="button" class="ne-link-btn" data-url="' + safeUrl + '" data-color="' + c + '" ' +
+    'draggable="true" ' +
+    'onclick="openNoteLinkBtn(this)" oncontextmenu="neLinkBtnEdit(event,this);return false;" ' +
+    'ontouchstart="_neLinkBtnTouchStart(event,this)" ontouchend="_neLinkBtnTouchEnd(event)" ontouchmove="_neLinkBtnTouchEnd(event)" ' +
+    'contenteditable="false" ' +
+    'title="Click: link kholo  |  Right-click / thoda der dabaye rakho: naam, link, color badlo ya idhar-udhar move karo" ' +
+    'style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:4px 4px 4px 0;background:' + c + ';color:#fff;border:none;border-radius:20px;font-size:0.78rem;font-weight:700;cursor:grab;font-family:inherit;vertical-align:middle;">🔗 ' +
+    '<span class="ne-link-label">' + safeLabel + '</span></button>&nbsp;';
 }
 function insertLinkBlock() {
   var url = prompt('Web link daalo (jaise https://example.com ya app ke andar ka page):', 'https://');
@@ -22638,6 +22658,127 @@ function insertLinkBlock() {
   if(!url) return;
   var label = prompt('Button par kya likha ho?', 'Link Kholo');
   insertAtCursor(_neLinkButtonHTML(url, label || 'Link Kholo'));
+}
+
+// ---- Link button editing: rename, change URL, change color, reposition ----
+function _neLinkBtnTouchStart(ev, el) {
+  _neLinkBtnLongPressed = false;
+  if(_neLinkBtnTouchTimer) clearTimeout(_neLinkBtnTouchTimer);
+  _neLinkBtnTouchTimer = setTimeout(function() {
+    _neLinkBtnLongPressed = true;
+    _neLinkBtnTouchTimer = null;
+    try { if(navigator.vibrate) navigator.vibrate(30); } catch(e) {}
+    neLinkBtnEdit(ev, el);
+  }, 500);
+}
+function _neLinkBtnTouchEnd() {
+  if(_neLinkBtnTouchTimer) { clearTimeout(_neLinkBtnTouchTimer); _neLinkBtnTouchTimer = null; }
+}
+function _neMarkNoteUnsaved() {
+  try { if(typeof markModified === 'function') { markModified(); return; } } catch(e) {}
+  try { var ud = document.getElementById('unsavedDot'); if(ud) ud.style.display = ''; } catch(e) {}
+  try { var ud2 = document.getElementById('unsavedDot2'); if(ud2) ud2.style.display = ''; } catch(e) {}
+}
+function _neNextElSibling(node, dir) {
+  var n = node;
+  do { n = dir < 0 ? n.previousSibling : n.nextSibling; }
+  while(n && !(n.nodeType === 1));
+  return n || null;
+}
+var _neLinkBtnEditingEl = null;
+function neLinkBtnEdit(ev, el) {
+  try { if(ev && ev.preventDefault) ev.preventDefault(); if(ev && ev.stopPropagation) ev.stopPropagation(); } catch(e) {}
+  if(document.getElementById('neLinkEditOverlay')) return;
+  _neLinkBtnEditingEl = el;
+  var labelSpan = el.querySelector('.ne-link-label');
+  var curLabel = labelSpan ? labelSpan.textContent : el.textContent.replace('🔗', '').trim();
+  var curUrl = el.getAttribute('data-url') || '';
+  var curColor = _neSafeColor(el.getAttribute('data-color'));
+  var swatches = ['#1565c0','#2e7d32','#c62828','#6a1b9a','#e65100','#00695c','#37474f','#ad1457'];
+  var swatchHtml = swatches.map(function(c) {
+    return '<span onclick="document.getElementById(\'neLinkEditColor\').value=\'' + c + '\'" ' +
+      'style="width:22px;height:22px;border-radius:50%;background:' + c + ';cursor:pointer;display:inline-block;box-shadow:0 0 0 1px #ddd;"></span>';
+  }).join('');
+  var overlay = document.createElement('div');
+  overlay.id = 'neLinkEditOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;';
+  overlay.innerHTML =
+    '<div style="background:#fff;border-radius:14px;padding:18px;width:100%;max-width:340px;box-shadow:0 10px 40px rgba(0,0,0,0.3);font-family:inherit;max-height:90vh;overflow-y:auto;">' +
+      '<div style="font-weight:800;font-size:0.95rem;margin-bottom:12px;color:#1565c0;">🔗 Link Button Edit karo</div>' +
+      '<label style="font-size:0.75rem;font-weight:700;color:#555;display:block;margin-bottom:4px;">Button ka naam</label>' +
+      '<input type="text" id="neLinkEditLabel" value="' + _neEscHtml(curLabel) + '" style="width:100%;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:0.85rem;margin-bottom:10px;box-sizing:border-box;">' +
+      '<label style="font-size:0.75rem;font-weight:700;color:#555;display:block;margin-bottom:4px;">Link (URL)</label>' +
+      '<input type="text" id="neLinkEditUrl" value="' + _neEscHtml(curUrl) + '" style="width:100%;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:0.85rem;margin-bottom:10px;box-sizing:border-box;">' +
+      '<label style="font-size:0.75rem;font-weight:700;color:#555;display:block;margin-bottom:4px;">Button ka color</label>' +
+      '<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">' +
+        '<input type="color" id="neLinkEditColor" value="' + curColor + '" style="width:38px;height:32px;border:1.5px solid #ddd;border-radius:8px;padding:2px;cursor:pointer;">' +
+        swatchHtml +
+      '</div>' +
+      '<label style="font-size:0.75rem;font-weight:700;color:#555;display:block;margin-bottom:4px;">Position (idhar-udhar move karo)</label>' +
+      '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
+        '<button type="button" onclick="_neLinkBtnMove(-1)" style="flex:1;padding:8px;border:1.5px solid #ddd;border-radius:8px;background:#f5f5f5;cursor:pointer;font-weight:700;color:#333;">◀ Peeche</button>' +
+        '<button type="button" onclick="_neLinkBtnMove(1)" style="flex:1;padding:8px;border:1.5px solid #ddd;border-radius:8px;background:#f5f5f5;cursor:pointer;font-weight:700;color:#333;">Aage ▶</button>' +
+      '</div>' +
+      '<div style="font-size:0.68rem;color:#888;margin-bottom:14px;">💡 Tip: Button ko pakad kar (drag & drop) bhi note ke kisi bhi jagah move kar sakte ho.</div>' +
+      '<div style="display:flex;gap:8px;">' +
+        '<button type="button" onclick="_neLinkBtnDelete()" title="Delete" style="padding:9px 12px;border:1.5px solid #c62828;border-radius:8px;background:#fff;color:#c62828;font-weight:800;cursor:pointer;">🗑</button>' +
+        '<button type="button" onclick="_neLinkBtnEditClose()" style="flex:1;padding:9px 12px;border:1.5px solid #ddd;border-radius:8px;background:#fff;color:#555;font-weight:700;cursor:pointer;">Cancel</button>' +
+        '<button type="button" onclick="_neLinkBtnSave()" style="flex:1;padding:9px 12px;border:none;border-radius:8px;background:#1565c0;color:#fff;font-weight:800;cursor:pointer;">✔ Save</button>' +
+      '</div>' +
+    '</div>';
+  overlay.addEventListener('mousedown', function(e) { if(e.target === overlay) _neLinkBtnEditClose(); });
+  document.body.appendChild(overlay);
+}
+function _neLinkBtnEditClose() {
+  var o = document.getElementById('neLinkEditOverlay');
+  if(o) o.remove();
+  _neLinkBtnEditingEl = null;
+}
+function _neLinkBtnSave() {
+  var el = _neLinkBtnEditingEl;
+  if(!el) return _neLinkBtnEditClose();
+  var labelInput = document.getElementById('neLinkEditLabel');
+  var urlInput = document.getElementById('neLinkEditUrl');
+  var colorInput = document.getElementById('neLinkEditColor');
+  var label = ((labelInput && labelInput.value) || '').trim() || 'Link Kholo';
+  var url = _neNormalizeUrl((urlInput && urlInput.value) || '');
+  var color = _neSafeColor(colorInput && colorInput.value);
+  if(!url) { alert('Link (URL) sahi nahi hai! Sirf http(s)/mailto/tel allowed hai.'); return; }
+  el.setAttribute('data-url', url);
+  el.setAttribute('data-color', color);
+  el.style.background = color;
+  var labelSpan = el.querySelector('.ne-link-label');
+  if(!labelSpan) {
+    el.innerHTML = '🔗 <span class="ne-link-label"></span>';
+    labelSpan = el.querySelector('.ne-link-label');
+  }
+  labelSpan.textContent = label;
+  _neMarkNoteUnsaved();
+  _neLinkBtnEditClose();
+}
+function _neLinkBtnDelete() {
+  var el = _neLinkBtnEditingEl;
+  if(el && confirm('Ye link button delete karein?')) {
+  el.remove();
+    _neMarkNoteUnsaved();
+  }
+  _neLinkBtnEditClose();
+}
+function _neLinkBtnMove(dir) {
+  var el = _neLinkBtnEditingEl;
+  if(!el || !el.parentNode) return;
+  if(dir < 0) {
+    var prev = _neNextElSibling(el, -1);
+    if(prev) el.parentNode.insertBefore(el, prev);
+  } else {
+    var next = _neNextElSibling(el, 1);
+    if(next) {
+      var afterNext = _neNextElSibling(next, 1);
+      if(afterNext) el.parentNode.insertBefore(el, afterNext);
+      else el.parentNode.appendChild(el);
+    }
+  }
+  _neMarkNoteUnsaved();
 }
 function insertCommentBlock() {
   insertAtCursor('<div style="background:rgba(255,235,59,0.15);border:1.5px dashed #f9a825;border-radius:8px;padding:8px 12px;margin:6px 0;font-size:0.8rem;font-style:italic;color:#7b5800;">💭 Comment: Yahan apna note likhein...</div><br>');
