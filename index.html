@@ -19182,6 +19182,26 @@ function neBuildExportContent(area, titleText, opts) {
   body.removeAttribute('contenteditable');
   body.style.outline = 'none';
 
+  // Link buttons (🔗 inserted via insertLinkBlock) are real <button> tags
+  // on-screen — that's needed for reliable clicks inside contenteditable.
+  // But html2pdf's clickable-link feature (enableLinks) only scans real
+  // <a href> tags to place PDF link annotations. So for export we swap
+  // each button for a same-looking <a href="..."> — this makes the
+  // button show up AND stay clickable (redirects to the URL) in the
+  // downloaded PDF / printed page.
+  body.querySelectorAll('button.ne-link-btn[data-url]').forEach(function(btn) {
+    const a = document.createElement('a');
+    a.href = btn.getAttribute('data-url') || '#';
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener noreferrer');
+    a.innerHTML = btn.innerHTML;
+    const bg = btn.getAttribute('data-color') || btn.style.background || '#1565c0';
+    a.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:4px 4px 4px 0;' +
+      'background:' + bg + ';color:#fff;border:none;border-radius:20px;font-size:0.78rem;font-weight:700;' +
+      'font-family:inherit;vertical-align:middle;text-decoration:none;';
+    btn.replaceWith(a);
+  });
+
   // Any canvas actually embedded INSIDE the note content (e.g. an
   // inline mind-map/diagram widget) → flatten to a static image so
   // it survives export instead of showing up blank.
@@ -19319,7 +19339,8 @@ function downloadEditorContent() {
     image: { type: 'jpeg', quality: 0.95 },
     html2canvas: { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff', windowWidth: exportWidth },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
+    enableLinks: true // keeps 🔗 link-buttons clickable in the downloaded PDF
   };
 
   // Wait for every cloned image (flattened canvases, ink overlay PNG,
