@@ -4423,7 +4423,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         <button class="itb-btn" onclick="insertDivider()">━ Divider</button>
         <button class="itb-btn" onclick="insertBulletList()">📋 Bullets</button>
         <button class="itb-btn" onclick="insertNumberedList()">🔢 Numbered</button>
-        <button class="itb-btn" onclick="insertLinkBlock()">🔗 Link</button>
+        <button class="itb-btn" onclick="insertLinkBlock()">🔗 Link Button</button>
         <button class="itb-btn" onclick="insertCommentBlock()">💬 Comment</button>
         <button class="itb-btn" onclick="insertQuoteBlock()">❝ Quote</button>
         <button class="itb-btn" onclick="insertDateStamp()">📅 Date</button>
@@ -5016,6 +5016,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
                 <button type="button" onclick="clearNoteRichEditor()" title="Sab saaf karo" style="padding:3px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);cursor:pointer;font-size:0.78rem;color:var(--red);">🗑 Clear</button>
                 <button type="button" onclick="document.getElementById('noteAddImgInput').click()" title="📷 Image insert karo" style="padding:3px 8px;border:1px solid rgba(0,121,107,0.4);border-radius:5px;background:rgba(0,121,107,0.08);cursor:pointer;font-size:0.78rem;color:#00695c;">📷 Image</button>
                 <input type="file" id="noteAddImgInput" accept=".jpg,.jpeg,.png,.gif,.webp,.svg" multiple style="display:none;" onchange="noteAddImgInsert(this)">
+                <button type="button" onclick="insertNoteLinkButton()" title="🔗 Link ko button ke roop mein insert karo — click karte hi link khulega" style="padding:3px 8px;border:1px solid rgba(21,101,192,0.4);border-radius:5px;background:rgba(21,101,192,0.08);cursor:pointer;font-size:0.78rem;color:#1565c0;font-weight:700;">🔗 Link Button</button>
                 <button type="button" onclick="openAiTextEnhancer()" title="Plain text ko rich HTML mein convert karo — AI se!" style="padding:3px 8px;border:1.5px solid rgba(106,27,154,0.45);border-radius:5px;background:linear-gradient(135deg,rgba(106,27,154,0.12),rgba(21,101,192,0.10));cursor:pointer;font-size:0.78rem;color:#6a1b9a;font-weight:700;display:flex;align-items:center;gap:3px;">🪄 AI Enhance</button>
               </div>
               <div id="noteRichEditor" contenteditable="true"
@@ -8363,6 +8364,18 @@ function clearNoteRichEditor() {
     document.getElementById('noteRichEditor').innerHTML = '';
     document.getElementById('noteFileStatus').style.display = 'none';
   }
+}
+// Link ko ek clickable "button" ke roop mein "Add Note" editor mein insert karta hai.
+// Kisi bhi website ka link ho ya app ke andar kisi page/section ka — click karte hi naye tab mein khul jaata hai.
+function insertNoteLinkButton() {
+  var url = prompt('Link ka URL daalo (jaise https://example.com):', 'https://');
+  if(!url) return;
+  url = _neNormalizeUrl(url);
+  if(!url) return;
+  var label = prompt('Button par kya likha ho?', 'Link Kholo');
+  var editor = document.getElementById('noteRichEditor');
+  if(editor) editor.focus();
+  document.execCommand('insertHTML', false, _neLinkButtonHTML(url, label || 'Link Kholo'));
 }
 
 // ============================================================
@@ -22586,11 +22599,37 @@ function insertNumberedList() {
 function insertCodeBlock() {
   insertAtCursor('<pre style="background:#1a1a2e;color:#e6edf3;padding:12px;border-radius:8px;font-size:0.8rem;overflow-x:auto;margin:8px 0;"><code>// Code yahan likhein</code></pre><br>');
 }
+// Naya link kisi bhi web page (ya app ke andar kisi bhi jagah) tak le jaane wala
+// clickable "button" ke roop mein insert karta hai. Click karte hi naye tab mein khulta hai.
+function openNoteLinkBtn(el) {
+  try {
+    var url = el && (el.getAttribute('data-url') || el.dataset.url);
+    if(!url) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  } catch(e) {
+    try { location.href = el.getAttribute('data-url'); } catch(e2) {}
+  }
+}
+function _neNormalizeUrl(u) {
+  u = (u || '').trim();
+  if(!u) return '';
+  if(/^([a-zA-Z][a-zA-Z0-9+.-]*:)/.test(u)) return u; // already has a scheme (http:, https:, mailto:, tel:...)
+  return 'https://' + u;
+}
+function _neLinkButtonHTML(url, label) {
+  var safeUrl = url.replace(/"/g, '&quot;');
+  var safeLabel = (label || url).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return '<button type="button" class="ne-link-btn" data-url="' + safeUrl + '" onclick="openNoteLinkBtn(this)" contenteditable="false" ' +
+    'style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:4px 4px 4px 0;background:var(--accent,#1565c0);color:#fff;border:none;border-radius:20px;font-size:0.78rem;font-weight:700;cursor:pointer;font-family:inherit;vertical-align:middle;">🔗 ' +
+    safeLabel + '</button>&nbsp;';
+}
 function insertLinkBlock() {
-  var url = prompt('Web link daalo (https://...):', 'https://');
+  var url = prompt('Web link daalo (jaise https://example.com ya app ke andar ka page):', 'https://');
   if(!url) return;
-  var label = prompt('Link ka naam:', url);
-  insertAtCursor('<a href="' + url + '" target="_blank" style="color:var(--accent);text-decoration:underline;font-weight:600;">🔗 ' + (label||url) + '</a>');
+  url = _neNormalizeUrl(url);
+  if(!url) return;
+  var label = prompt('Button par kya likha ho?', 'Link Kholo');
+  insertAtCursor(_neLinkButtonHTML(url, label || 'Link Kholo'));
 }
 function insertCommentBlock() {
   insertAtCursor('<div style="background:rgba(255,235,59,0.15);border:1.5px dashed #f9a825;border-radius:8px;padding:8px 12px;margin:6px 0;font-size:0.8rem;font-style:italic;color:#7b5800;">💭 Comment: Yahan apna note likhein...</div><br>');
