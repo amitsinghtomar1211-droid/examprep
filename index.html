@@ -55,6 +55,14 @@
   --transition:0.2s ease;
 }
 
+
+/* ===== ORGANIZE MODAL (Move/Duplicate/Merge/Split) ===== */
+.org-tab{padding:7px 12px;border:1.5px solid var(--border);border-radius:20px;background:var(--surface2);cursor:pointer;font-size:0.76rem;font-weight:700;color:var(--text2);white-space:nowrap;transition:all 0.15s;font-family:inherit;}
+.org-tab.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+.org-tab:hover:not(.active){background:var(--bg2);color:var(--text);}
+.org-tab-bar{display:flex;gap:5px;overflow-x:auto;margin-bottom:12px;padding-bottom:2px;scrollbar-width:none;}
+.org-tab-bar::-webkit-scrollbar{display:none;}
+
 /* ===== Image wrap stable positioning ===== */
 .ne-img-wrap {
   display: block;
@@ -9181,6 +9189,7 @@ function renderLibraryTree(){
           <div class="subj-meta">${subj.sections.length} sections · ${tc} topics</div>
         </div>
         <div style="display:flex;gap:5px;align-items:center;">
+          <button class="btn btn-outline btn-xs" onclick="event.stopPropagation();openOrgModal('subject',${subj.id},null,null)" title="Organize">📦</button>
           <button class="btn btn-danger btn-xs" onclick="delSubj(${subj.id},event)">🗑️</button>
           <span id="sb-${subj.id}-arr" style="font-size:0.75rem;color:var(--text2);">▼</span>
         </div>
@@ -9194,7 +9203,8 @@ function renderLibraryTree(){
                 <div style="font-size:0.68rem;color:var(--text2);">${sec.topics.length} topics</div>
               </div>
               <div style="display:flex;gap:5px;align-items:center;">
-                <button class="btn btn-danger btn-xs" onclick="delSec(${subj.id},${sec.id},event)">🗑️</button>
+                <button class="btn btn-outline btn-xs" onclick="event.stopPropagation();openOrgModal('section',${subj.id},${sec.id},null)" title="Organize">📦</button>
+                 <button class="btn btn-danger btn-xs" onclick="delSec(${subj.id},${sec.id},event)">🗑️</button>
                 <span id="sc-${sec.id}-arr" style="font-size:0.72rem;color:var(--text2);">▼</span>
               </div>
             </div>
@@ -9219,6 +9229,7 @@ function renderLibraryTree(){
                   <div style="display:flex;gap:4px;">
                     <button class="btn btn-outline btn-xs" onclick="viewTopic(${subj.id},${sec.id},${t.id})">���️</button>
                     <button class="btn btn-outline btn-xs" onclick="openSaveFactModal(${t.id}, '')" title="Save fact">📌</button>
+                    <button class="btn btn-outline btn-xs" onclick="event.stopPropagation();openOrgModal('topic',${subj.id},${sec.id},${t.id})" title="Organize">📦</button>
                     <button class="btn btn-danger btn-xs" onclick="delTop(${subj.id},${sec.id},${t.id},event)">🗑️</button>
                   </div>
                 </div>`;
@@ -30322,6 +30333,26 @@ window.addEventListener('load', function(){ initFirebase(); });
 
 
 <!-- RENAME MODAL -->
+
+<!-- ===== ORGANIZE MODAL ===== -->
+<div class="modal-overlay" id="orgModal">
+  <div class="modal" style="max-width:430px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-title" id="orgModalTitle" style="margin-bottom:10px;">📦 Organize</div>
+    <div class="org-tab-bar">
+      <button class="org-tab active" id="orgTab-move"      onclick="orgSwitchTab('move')">🔀 Move</button>
+      <button class="org-tab"        id="orgTab-duplicate" onclick="orgSwitchTab('duplicate')">📋 Duplicate</button>
+      <button class="org-tab"        id="orgTab-merge"     onclick="orgSwitchTab('merge')">🔗 Merge</button>
+      <button class="org-tab"        id="orgTab-split"     onclick="orgSwitchTab('split')">✂️ Split</button>
+    </div>
+    <div id="orgContent" style="min-height:80px;"></div>
+    <div class="modal-actions" style="margin-top:14px;">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('orgModal')">✕ Band Karo</button>
+      <button class="btn btn-primary btn-sm" onclick="orgConfirm()">✅ Karo</button>
+    </div>
+  </div>
+</div>
+<!-- ===== END ORGANIZE MODAL ===== -->
+
 <div class="modal-overlay" id="renameModal">
   <div class="modal" style="max-width:380px;">
     <div class="modal-title" id="renameModalTitle">✏️ Rename Karo</div>
@@ -59899,5 +59930,293 @@ window.addEventListener('popstate', function(e){
 <!-- ===== END PERFECT EXAM NOTES MODAL ===== -->
 
 <!-- ===== END DEBUG CONSOLE ===== -->
+
+<!-- ===== ORGANIZE FUNCTIONS ===== -->
+<script>
+(function(){
+'use strict';
+var _orgCtx={};
+
+window.openOrgModal=function(type,sid,secid,tid){
+  if(typeof _checkWriteAccess==='function'&&!_checkWriteAccess())return;
+  _orgCtx={type:type,sid:sid,secid:secid,tid:tid,tab:'move'};
+  var names={
+    topic:((typeof getTop==='function'&&getTop(sid,secid,tid))||{}).name||'',
+    section:((typeof getSec==='function'&&getSec(sid,secid))||{}).name||'',
+    subject:((typeof getSubj==='function'&&getSubj(sid))||{}).name||''
+  };
+  var icons={topic:'📙',section:'📘',subject:'📗'};
+  document.getElementById('orgModalTitle').textContent=(icons[type]||'')+'  "'+names[type]+'"  — Organize';
+  document.getElementById('orgTab-merge').style.display=(type==='subject')?'none':'';
+  document.getElementById('orgTab-split').style.display=(type==='subject')?'none':'';
+  orgSwitchTab('move');
+  document.getElementById('orgModal').classList.add('show');
+};
+
+window.orgSwitchTab=function(tab){
+  _orgCtx.tab=tab;
+  ['move','duplicate','merge','split'].forEach(function(t){
+    var b=document.getElementById('orgTab-'+t);
+    if(b)b.classList.toggle('active',t===tab);
+  });
+  orgRenderContent();
+};
+
+function orgRenderContent(){
+  var t=_orgCtx.type,sid=_orgCtx.sid,secid=_orgCtx.secid,tid=_orgCtx.tid,tab=_orgCtx.tab;
+  var el=document.getElementById('orgContent');if(!el)return;
+  if(tab==='move')          el.innerHTML=orgMoveHTML(t,sid,secid,tid);
+  else if(tab==='duplicate')el.innerHTML=orgDupHTML(t,sid,secid,tid);
+  else if(tab==='merge')    el.innerHTML=orgMergeHTML(t,sid,secid,tid);
+  else if(tab==='split')    el.innerHTML=orgSplitHTML(t,sid,secid,tid);
+}
+
+function _sOpts(selSid){return(S.subjects||[]).map(function(s){return'<option value="'+s.id+'"'+(s.id==selSid?' selected':'')+'>'+_eh(s.name)+'</option>';}).join('');}
+function _secOpts(subjId,selSecId){var s=getSubj(subjId);if(!s)return'';return(s.sections||[]).map(function(x){return'<option value="'+x.id+'"'+(x.id==selSecId?' selected':'')+'>'+_eh(x.name)+'</option>';}).join('');}
+window.orgUpdateSections=function(a,b){var sel=document.getElementById(a),out=document.getElementById(b);if(!sel||!out)return;out.innerHTML='<option value="">-- Select karo --</option>'+_secOpts(parseInt(sel.value||0),null);};
+function _eh(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function _ea(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;');}
+function _gv(id){var e=document.getElementById(id);return e?e.value:'';}
+function _gi(id){return parseInt(_gv(id)||0)||0;}
+
+function orgMoveHTML(type,sid,secid,tid){
+  if(type==='topic'){
+    return'<div style="font-size:0.8rem;color:var(--text2);margin-bottom:10px;">📙 Topic ko dusre Subject/Section mein move karo (original wahan se hat jaega)</div>'+
+      '<div class="field-group"><label class="field-label">📗 Destination Subject:</label>'+
+      '<select class="inp" id="orgDestSubj" onchange="orgUpdateSections('orgDestSubj','orgDestSec')"><option value="">-- Select karo --</option>'+_sOpts(sid)+'</select></div>'+
+      '<div class="field-group"><label class="field-label">📘 Destination Section:</label>'+
+      '<select class="inp" id="orgDestSec"><option value="">-- Select karo --</option>'+_secOpts(sid,secid)+'</select></div>';
+  }else if(type==='section'){
+    return'<div style="font-size:0.8rem;color:var(--text2);margin-bottom:10px;">📘 Section ko dusre Subject mein move karo (original wahan se hat jaega)</div>'+
+      '<div class="field-group"><label class="field-label">📗 Destination Subject (current ke alawa):</label>'+
+      '<select class="inp" id="orgDestSubj"><option value="">-- Select karo --</option>'+
+      (S.subjects||[]).filter(function(s){return s.id!=sid;}).map(function(s){return'<option value="'+s.id+'">'+_eh(s.name)+'</option>';}).join('')+
+      '</select></div>';
+  }else{
+    return'<div style="font-size:0.8rem;color:var(--text2);margin-bottom:10px;">📗 Library mein Subject ka position change karo</div>'+
+      '<div class="field-group"><label class="field-label">Position select karo:</label>'+
+      '<select class="inp" id="orgDestPos">'+
+      (S.subjects||[]).map(function(s,i){return'<option value="'+i+'"'+(s.id==sid?' selected':'')+'>'+(i+1)+'. '+_eh(s.name)+(s.id==sid?' ◀ current':'')+'</option>';}).join('')+
+      '</select></div>';
+  }
+}
+
+function orgDupHTML(type,sid,secid,tid){
+  if(type==='topic'){
+    var t=getTop(sid,secid,tid)||{};
+    return'<div style="font-size:0.8rem;color:var(--text2);margin-bottom:10px;">📙 Topic ki exact copy banao — original safe rahega</div>'+
+      '<div class="field-group"><label class="field-label">Copy ka Naam:</label><input type="text" class="inp" id="orgDupName" value="'+_ea((t.name||'')+' (Copy)')+'" /></div>'+
+      '<div class="field-group"><label class="field-label">📗 Destination Subject:</label>'+
+      '<select class="inp" id="orgDestSubj" onchange="orgUpdateSections('orgDestSubj','orgDestSec')"><option value="">-- Select karo --</option>'+_sOpts(sid)+'</select></div>'+
+      '<div class="field-group"><label class="field-label">📘 Destination Section:</label>'+
+      '<select class="inp" id="orgDestSec"><option value="">-- Select karo --</option>'+_secOpts(sid,secid)+'</select></div>';
+  }else if(type==='section'){
+    var sec=getSec(sid,secid)||{};
+    return'<div style="font-size:0.8rem;color:var(--text2);margin-bottom:10px;">📘 Section ki copy banao — saare topics duplicate honge</div>'+
+      '<div class="field-group"><label class="field-label">Copy ka Naam:</label><input type="text" class="inp" id="orgDupName" value="'+_ea((sec.name||'')+' (Copy)')+'" /></div>'+
+      '<div class="field-group"><label class="field-label">📗 Destination Subject:</label>'+
+      '<select class="inp" id="orgDestSubj"><option value="">-- Select karo --</option>'+_sOpts(sid)+'</select></div>';
+  }else{
+    var subj=getSubj(sid)||{};
+    return'<div style="font-size:0.8rem;color:var(--text2);margin-bottom:10px;">📗 Subject ki poori copy banao — saare sections + topics duplicate honge</div>'+
+      '<div class="field-group"><label class="field-label">Copy ka Naam:</label><input type="text" class="inp" id="orgDupName" value="'+_ea((subj.name||'')+' (Copy)')+'" /></div>';
+  }
+}
+
+function orgMergeHTML(type,sid,secid,tid){
+  function _row(chkExtra,nameHtml,metaHtml){
+    return'<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;cursor:pointer;border:1px solid var(--border);margin-bottom:5px;background:var(--surface2);">'+
+      '<input type="checkbox" class="org-merge-cb" '+chkExtra+' style="width:15px;height:15px;accent-color:var(--accent);">'+
+      '<span style="font-size:0.79rem;font-weight:600;">'+nameHtml+'</span>'+
+      '<span style="font-size:0.65rem;color:var(--text2);margin-left:auto;">'+metaHtml+'</span></label>';
+  }
+  if(type==='topic'){
+    var curT=getTop(sid,secid,tid)||{};
+    var rows='';
+    (S.subjects||[]).forEach(function(subj){(subj.sections||[]).forEach(function(sec){(sec.topics||[]).forEach(function(t){
+      if(t.id==tid)return;
+      rows+=_row('data-sid="'+subj.id+'" data-secid="'+sec.id+'" data-tid="'+t.id+'"',_eh(t.name),_eh(subj.name)+' → '+_eh(sec.name)+' · '+(t.notes||[]).length+' notes');
+    });});});
+    if(!rows)rows='<div style="font-size:0.8rem;color:var(--text2);padding:8px 0;">Koi aur topic nahi hai.</div>';
+    return'<div style="font-size:0.8rem;color:var(--text2);margin-bottom:6px;">Alag topics ke notes current topic mein merge karo</div>'+
+      '<div style="font-size:0.77rem;font-weight:700;margin-bottom:6px;color:var(--accent);">📙 Main: "'+_eh(curT.name||'')+'"</div>'+
+      '<div style="max-height:200px;overflow-y:auto;margin-bottom:8px;">'+rows+'</div>'+
+      '<div style="font-size:0.71rem;color:var(--red);font-weight:600;padding:8px;background:rgba(198,40,40,0.06);border-radius:8px;">⚠️ Selected topics delete ho jaenge — unke notes current topic mein add honge</div>';
+  }else if(type==='section'){
+    var curSec=getSec(sid,secid)||{};
+    var rows='';
+    (S.subjects||[]).forEach(function(subj){(subj.sections||[]).forEach(function(sec){
+      if(sec.id==secid)return;
+      rows+=_row('data-sid="'+subj.id+'" data-secid="'+sec.id+'"',_eh(sec.name),_eh(subj.name)+' · '+(sec.topics||[]).length+' topics');
+    });});
+    if(!rows)rows='<div style="font-size:0.8rem;color:var(--text2);padding:8px 0;">Koi aur section nahi hai.</div>';
+    return'<div style="font-size:0.8rem;color:var(--text2);margin-bottom:6px;">Alag sections ke topics current section mein merge karo</div>'+
+      '<div style="font-size:0.77rem;font-weight:700;margin-bottom:6px;color:var(--accent);">📘 Main: "'+_eh(curSec.name||'')+'"</div>'+
+      '<div style="max-height:200px;overflow-y:auto;margin-bottom:8px;">'+rows+'</div>'+
+      '<div style="font-size:0.71rem;color:var(--red);font-weight:600;padding:8px;background:rgba(198,40,40,0.06);border-radius:8px;">⚠️ Selected sections delete ho jaenge — unke topics current section mein aa jaenge</div>';
+  }
+  return'';
+}
+
+function orgSplitHTML(type,sid,secid,tid){
+  function _row2(chkExtra,nameHtml,metaHtml){
+    return'<label style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:8px;cursor:pointer;border:1px solid var(--border);margin-bottom:4px;background:var(--surface2);">'+
+      '<input type="checkbox" class="org-split-cb" '+chkExtra+' style="width:15px;height:15px;accent-color:var(--accent);">'+
+      '<span style="font-size:0.78rem;font-weight:600;">'+nameHtml+'</span>'+
+      '<span style="font-size:0.65rem;color:var(--text2);margin-left:auto;">'+metaHtml+'</span></label>';
+  }
+  if(type==='topic'){
+    var t=getTop(sid,secid,tid)||{};
+    var rows=(t.notes||[]).map(function(n,ni){return _row2('data-ni="'+ni+'"','📄 '+_eh(n.name||'Note '+(ni+1)),(n.wordCount||0)+' words');}).join('');
+    if(!rows)rows='<div style="font-size:0.8rem;color:var(--text2);padding:8px 0;">Is topic mein koi notes nahi hain.</div>';
+    return'<div style="font-size:0.8rem;color:var(--text2);margin-bottom:6px;">Topic ke selected notes alag topic mein move karo</div>'+
+      '<div style="font-size:0.77rem;font-weight:700;margin-bottom:5px;">Konse notes alag karne hain?</div>'+
+      '<div style="max-height:140px;overflow-y:auto;margin-bottom:10px;">'+rows+'</div>'+
+      '<div class="field-group"><label class="field-label">📙 Naye Topic ka Naam:</label><input type="text" class="inp" id="orgSplitName" placeholder="Naya topic naam..." /></div>'+
+      '<div class="field-group"><label class="field-label">📗 Destination Subject:</label>'+
+      '<select class="inp" id="orgDestSubj" onchange="orgUpdateSections('orgDestSubj','orgDestSec')"><option value="">-- Select karo --</option>'+_sOpts(sid)+'</select></div>'+
+      '<div class="field-group"><label class="field-label">📘 Destination Section:</label>'+
+      '<select class="inp" id="orgDestSec"><option value="">-- Select karo --</option>'+_secOpts(sid,secid)+'</select></div>';
+  }else if(type==='section'){
+    var sec=getSec(sid,secid)||{};
+    var rows=(sec.topics||[]).map(function(t){return _row2('data-tid="'+t.id+'"','📙 '+_eh(t.name),(t.notes||[]).length+' notes');}).join('');
+    if(!rows)rows='<div style="font-size:0.8rem;color:var(--text2);padding:8px 0;">Is section mein koi topics nahi hain.</div>';
+    return'<div style="font-size:0.8rem;color:var(--text2);margin-bottom:6px;">Section ke selected topics alag section mein move karo</div>'+
+      '<div style="font-size:0.77rem;font-weight:700;margin-bottom:5px;">Konse topics alag karne hain?</div>'+
+      '<div style="max-height:140px;overflow-y:auto;margin-bottom:10px;">'+rows+'</div>'+
+      '<div class="field-group"><label class="field-label">📘 Naye Section ka Naam:</label><input type="text" class="inp" id="orgSplitName" placeholder="Naya section naam..." /></div>'+
+      '<div class="field-group"><label class="field-label">📗 Destination Subject:</label>'+
+      '<select class="inp" id="orgDestSubj"><option value="">-- Select karo --</option>'+_sOpts(sid)+'</select></div>';
+  }
+  return'';
+}
+
+window.orgConfirm=function(){
+  var t=_orgCtx.type,sid=_orgCtx.sid,secid=_orgCtx.secid,tid=_orgCtx.tid,tab=_orgCtx.tab;
+  if(tab==='move')          orgDoMove(t,sid,secid,tid);
+  else if(tab==='duplicate')orgDoDuplicate(t,sid,secid,tid);
+  else if(tab==='merge')    orgDoMerge(t,sid,secid,tid);
+  else if(tab==='split')    orgDoSplit(t,sid,secid,tid);
+};
+
+function _nid(){return Date.now()+Math.floor(Math.random()*99999);}
+function _clone(o){return JSON.parse(JSON.stringify(o));}
+
+function orgDoMove(type,sid,secid,tid){
+  if(type==='topic'){
+    var ds=_gi('orgDestSubj'),dsc=_gi('orgDestSec');
+    if(!ds||!dsc){showToast('Subject aur Section dono select karo!','error');return;}
+    var srcSec=getSec(sid,secid),destSec=getSec(ds,dsc);
+    if(!srcSec||!destSec)return;
+    var tp=srcSec.topics.find(function(x){return x.id==tid;});if(!tp)return;
+    srcSec.topics=srcSec.topics.filter(function(x){return x.id!=tid;});
+    destSec.topics.push(tp);
+    _done('"'+tp.name+'" move ho gaya! ✅');
+  }else if(type==='section'){
+    var ds=_gi('orgDestSubj');
+    if(!ds){showToast('Destination Subject select karo!','error');return;}
+    var sSubj=getSubj(sid),dSubj=getSubj(ds);if(!sSubj||!dSubj)return;
+    var sc=sSubj.sections.find(function(x){return x.id==secid;});if(!sc)return;
+    sSubj.sections=sSubj.sections.filter(function(x){return x.id!=secid;});
+    dSubj.sections.push(sc);
+    _done('"'+sc.name+'" section move ho gaya! ✅');
+  }else{
+    var pos=_gi('orgDestPos');
+    var idx=S.subjects.findIndex(function(x){return x.id==sid;});if(idx<0)return;
+    var rem=S.subjects.splice(idx,1)[0];S.subjects.splice(pos,0,rem);
+    _done('"'+rem.name+'" position change ho gaya! ✅');
+  }
+}
+
+function orgDoDuplicate(type,sid,secid,tid){
+  var nm=(_gv('orgDupName')||'').trim();if(!nm){showToast('Naam daalo!','error');return;}
+  if(type==='topic'){
+    var ds=_gi('orgDestSubj'),dsc=_gi('orgDestSec');
+    if(!ds||!dsc){showToast('Subject aur Section dono select karo!','error');return;}
+    var tp=getTop(sid,secid,tid),dSec=getSec(ds,dsc);if(!tp||!dSec)return;
+    var cl=_clone(tp);cl.id=_nid();cl.name=nm;cl.createdAt=new Date().toLocaleDateString('hi-IN');
+    dSec.topics.push(cl);_done('"'+nm+'" copy ban gayi! ✅');
+  }else if(type==='section'){
+    var ds=_gi('orgDestSubj');if(!ds){showToast('Destination Subject select karo!','error');return;}
+    var sc=getSec(sid,secid),dSubj=getSubj(ds);if(!sc||!dSubj)return;
+    var cl=_clone(sc);cl.id=_nid();cl.name=nm;cl.createdAt=new Date().toLocaleDateString('hi-IN');
+    cl.topics=cl.topics.map(function(t){return Object.assign({},t,{id:_nid()});});
+    dSubj.sections.push(cl);_done('"'+nm+'" section copy ban gaya! ✅');
+  }else{
+    var subj=getSubj(sid);if(!subj)return;
+    var cl=_clone(subj);cl.id=_nid();cl.name=nm;cl.createdAt=new Date().toLocaleDateString('hi-IN');
+    cl.sections=cl.sections.map(function(sec){return Object.assign({},sec,{id:_nid(),topics:sec.topics.map(function(t){return Object.assign({},t,{id:_nid()});})});});
+    S.subjects.push(cl);_done('"'+nm+'" subject copy ban gaya! ✅');
+  }
+}
+
+function orgDoMerge(type,sid,secid,tid){
+  var chk=Array.from(document.querySelectorAll('.org-merge-cb:checked'));
+  if(!chk.length){showToast('Merge karne ke liye items select karo!','error');return;}
+  if(!confirm('Pakka merge karna hai? Selected items delete ho jaenge!'))return;
+  if(type==='topic'){
+    var mt=getTop(sid,secid,tid);if(!mt)return;
+    var cnt=0;
+    chk.forEach(function(cb){
+      var ss=parseInt(cb.dataset.sid),sc=parseInt(cb.dataset.secid),tt=parseInt(cb.dataset.tid);
+      var srcSec=getSec(ss,sc);if(!srcSec)return;
+      var st=srcSec.topics.find(function(x){return x.id==tt;});if(!st)return;
+      mt.notes=(mt.notes||[]).concat(st.notes||[]);
+      mt.savedFacts=(mt.savedFacts||[]).concat(st.savedFacts||[]);
+      mt.highlights=(mt.highlights||[]).concat(st.highlights||[]);
+      srcSec.topics=srcSec.topics.filter(function(x){return x.id!=tt;});cnt++;
+    });
+    _done(cnt+' topic(s) merge ho gaye! ✅');
+  }else if(type==='section'){
+    var ms=getSec(sid,secid);if(!ms)return;
+    var cnt=0;
+    chk.forEach(function(cb){
+      var ss=parseInt(cb.dataset.sid),sc=parseInt(cb.dataset.secid);
+      var sSubj=getSubj(ss);if(!sSubj)return;
+      var srcSec=sSubj.sections.find(function(x){return x.id==sc;});if(!srcSec)return;
+      ms.topics=(ms.topics||[]).concat(srcSec.topics||[]);
+      sSubj.sections=sSubj.sections.filter(function(x){return x.id!=sc;});cnt++;
+    });
+    _done(cnt+' section(s) merge ho gaye! ✅');
+  }
+}
+
+function orgDoSplit(type,sid,secid,tid){
+  var chk=Array.from(document.querySelectorAll('.org-split-cb:checked'));
+  if(!chk.length){showToast('Split karne ke liye items select karo!','error');return;}
+  var nm=(_gv('orgSplitName')||'').trim();if(!nm){showToast('Naya naam daalo!','error');return;}
+  if(type==='topic'){
+    var ds=_gi('orgDestSubj'),dsc=_gi('orgDestSec');
+    if(!ds||!dsc){showToast('Destination Subject aur Section select karo!','error');return;}
+    var st=getTop(sid,secid,tid),dSec=getSec(ds,dsc);if(!st||!dSec)return;
+    var idxs=new Set(chk.map(function(cb){return parseInt(cb.dataset.ni);}));
+    var mv=st.notes.filter(function(_,i){return idxs.has(i);});
+    st.notes=st.notes.filter(function(_,i){return !idxs.has(i);});
+    dSec.topics.push({id:_nid(),name:nm,notes:mv,finalNotes:'',finalNotesRaw:[],newPoints:[],highlights:[],savedFacts:[],finalNotesAt:null,createdAt:new Date().toLocaleDateString('hi-IN')});
+    _done('"'+nm+'" topic split ho gaya! ✅');
+  }else if(type==='section'){
+    var ds=_gi('orgDestSubj');if(!ds){showToast('Destination Subject select karo!','error');return;}
+    var ss=getSec(sid,secid),dSubj=getSubj(ds);if(!ss||!dSubj)return;
+    var tids=new Set(chk.map(function(cb){return parseInt(cb.dataset.tid);}));
+    var mv=ss.topics.filter(function(t){return tids.has(t.id);});
+    ss.topics=ss.topics.filter(function(t){return !tids.has(t.id);});
+    dSubj.sections.push({id:_nid(),name:nm,topics:mv,facts:[],createdAt:new Date().toLocaleDateString('hi-IN')});
+    _done('"'+nm+'" section split ho gaya! ✅');
+  }
+}
+
+function _done(msg){
+  save();
+  if(typeof renderLibraryTree==='function')renderLibraryTree();
+  if(typeof renderLibrarySelects==='function')renderLibrarySelects();
+  if(typeof updateQuizSelects==='function')updateQuizSelects();
+  closeModal('orgModal');
+  showToast('📦 '+msg,'success');
+}
+
+})();
+</script>
+<!-- ===== END ORGANIZE FUNCTIONS ===== -->
+
 </body>
 </html>
