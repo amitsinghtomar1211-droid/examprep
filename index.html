@@ -2730,6 +2730,37 @@ body.read-only-mode #scHlEraserBtn,
 body.read-only-mode #scHlClearBtn,
 body.read-only-mode #neHlCanvasBtn { display:none !important; }
 
+/* ════ READ-ONLY: Floating FAB buttons hide ════ */
+body.read-only-mode #qmapFab,
+body.read-only-mode #creatorFabNewBtn,
+body.read-only-mode #neDrawToggleBtn,
+body.read-only-mode #creatorFab,
+body.read-only-mode #_fabDockBar { display:none !important; }
+
+/* ════ READ-ONLY: Editor toolbar buttons ════ */
+body.read-only-mode [onclick*="insertLinkBlock"],
+body.read-only-mode [onclick*="neInsertTable"],
+body.read-only-mode [onclick*="neOpenJsonTableImport"],
+body.read-only-mode [onclick*="neOpenImageInsert"],
+body.read-only-mode [onclick*="neOpenUrlImageInsert"],
+body.read-only-mode [onclick*="openAiEnhancePanel"],
+body.read-only-mode [onclick*="printEditorContent"],
+body.read-only-mode [onclick*="openCreatorPanel"],
+body.read-only-mode [onclick*="neDrawToggle"],
+body.read-only-mode [onclick*="neSendAllHighlights"],
+body.read-only-mode [onclick*="mmOpenPanel"],
+body.read-only-mode [id="scMindMapBtn"],
+body.read-only-mode [onclick*="openTopicGameMode"],
+body.read-only-mode [onclick*="startQuizForTopic"],
+body.read-only-mode [onclick*="openFactsPage"],
+body.read-only-mode [onclick*="openPdfModal"],
+body.read-only-mode [onclick*="openYtModal"],
+body.read-only-mode [onclick*="tvAddRawNote"] { display:none !important; }
+
+/* ════ Topic view: locked feature card style ════ */
+.tv-cat-card.tv-locked { position:relative !important; opacity:0.62 !important; cursor:default !important; }
+.tv-cat-card.tv-locked::after { content:'🔒';position:absolute;top:5px;right:7px;font-size:0.85rem;line-height:1; }
+
 /* Feature lock icons on nav items */
 .nav-item.feature-locked { opacity:0.65; }
 .nav-lock-icon { font-size:0.7rem; margin-left:auto; pointer-events:none; }
@@ -9514,13 +9545,19 @@ function viewTopic(sid,secid,tid){
     { id:'perfect',  cls:'cat-perfect',  icon:'🎯', name:'Exam Notes',  sub: t.perfectNotes ? '✅ Perfect notes ready' : 'Generate karo', badge: t.perfectNotes ? '✓' : null },
   ];
 
-  const gridHtml = cats.map(c=>`
-    <div class="tv-cat-card ${c.cls}" onclick="tvShowSub('${c.id}',${sid},${secid},${tid})">
+  // Permission map for category cards
+  const _tvCatPermMap = {smart:'smartnotes',final:'notesEdit',master:'masterNotes',facts:'savedFacts',nodemap:'aiDraw',perfect:'smartnotes'};
+  const gridHtml = cats.map(c=>{
+    const _pk = _tvCatPermMap[c.id];
+    const _locked = !_isAdmin && _pk && !_userPerms[_pk];
+    const _oc = _locked ? '_showLockedToast()' : ("tvShowSub('"+c.id+"',"+sid+","+secid+","+tid+")");
+    return `<div class="tv-cat-card ${c.cls}${_locked?' tv-locked':''}" onclick="${_oc}">
       ${c.badge?`<div class="tv-cat-badge">${c.badge}</div>`:''}
       <div class="tv-cat-icon">${c.icon}</div>
       <div class="tv-cat-name">${c.name}</div>
-      <div class="tv-cat-sub">${c.sub}</div>
-    </div>`).join('');
+      <div class="tv-cat-sub">${_locked?'🔒 Locked':c.sub}</div>
+    </div>`;
+  }).join('');
 
   con.innerHTML = `
     <!-- Screen A: Category grid -->
@@ -9565,18 +9602,18 @@ function tvShowSub(catId, sid, secid, tid){
       : null;
     const wb = t.wrongBank||[];
 
-    // Feature cards data
+    // Feature cards data — perm field added for lock check
     const feats = [
-      { icon:'📄', name:'Raw Notes',    sub:'Text notes add karo',       cls:'cat-raw',    action:`closeModal('topicViewModal');setTimeout(()=>{openNotesEditor&&addNote?addNote():null;},200)`, onclick:`tvAddRawNote(${sid},${secid},${tid})` },
-      { icon:'📑', name:'PDF → Notes',  sub:'PDF se notes banao',         cls:'cat-final',  onclick:`closeModal('topicViewModal');setTimeout(()=>openPdfModal(${sid},${secid},${tid}),200)` },
-      { icon:'🎬', name:'YouTube/Audio',sub:'Video ya audio se notes',    cls:'cat-smart',  onclick:`closeModal('topicViewModal');setTimeout(()=>openYtModal(${sid},${secid},${tid}),200)` },
-      { icon:'🌐', name:'Web Link',     sub:'Webpage se notes extract',   cls:'cat-overview',onclick:`closeModal('topicViewModal');setTimeout(()=>openMasterNotesModal(${sid},${secid},${tid}),200)` },
-      { icon:'🎯', name:'Quiz',         sub:'Practice karo',              cls:'cat-facts',  onclick:`closeModal('topicViewModal');setTimeout(()=>startQuizForTopic(${sid},${secid},${tid}),200)` },
-      { icon:'🤖', name:'AI Chat',      sub:'Topic ke baare mein poochho',cls:'cat-master', onclick:`closeModal('topicViewModal');setTimeout(()=>openAiChat('general','${_e(t.name)}',${tid},${sid},${secid}),200)` },
-      { icon:'📌', name:'Facts',        sub:`${(t.savedFacts||[]).length} saved facts`,cls:'cat-facts', onclick:`closeModal('topicViewModal');setTimeout(()=>openFactsPage('topic',${sid},${secid},${tid},'${_e(t.name)}'),200)` },
-      { icon:'⚡', name:'Master Notes', sub:'Sab sources se banao',       cls:'cat-master', onclick:`closeModal('topicViewModal');setTimeout(()=>openMasterNotesModal(${sid},${secid},${tid}),200)` },
-      { icon:'🃏', name:'Flashcards',   sub:tvGetFCBadge(tid),            cls:'cat-fc',     onclick:`tvShowSub('flashcards',${sid},${secid},${tid})` },
-      { icon:'🎮', name:'Game Mode',    sub:'Khelke yaad karo!',           cls:'cat-master', onclick:`closeModal('topicViewModal');setTimeout(()=>openTopicGameMode(${sid},${secid},${tid},'${_e(t.name)}'),200)` },
+      { icon:'📄', name:'Raw Notes',    sub:'Text notes add karo',       cls:'cat-raw',    perm:'notesEdit',  onclick:`tvAddRawNote(${sid},${secid},${tid})` },
+      { icon:'📑', name:'PDF → Notes',  sub:'PDF se notes banao',         cls:'cat-final',  perm:'pdfNotes',   onclick:`closeModal('topicViewModal');setTimeout(()=>openPdfModal(${sid},${secid},${tid}),200)` },
+      { icon:'🎬', name:'YouTube/Audio',sub:'Video ya audio se notes',    cls:'cat-smart',  perm:'ytNotes',    onclick:`closeModal('topicViewModal');setTimeout(()=>openYtModal(${sid},${secid},${tid}),200)` },
+      { icon:'🌐', name:'Web Link',     sub:'Webpage se notes extract',   cls:'cat-overview',perm:'masterNotes',onclick:`closeModal('topicViewModal');setTimeout(()=>openMasterNotesModal(${sid},${secid},${tid}),200)` },
+      { icon:'🎯', name:'Quiz',         sub:'Practice karo',              cls:'cat-facts',  perm:'quiz',       onclick:`closeModal('topicViewModal');setTimeout(()=>startQuizForTopic(${sid},${secid},${tid}),200)` },
+      { icon:'🤖', name:'AI Chat',      sub:'Topic ke baare mein poochho',cls:'cat-master', perm:'aichat',     onclick:`closeModal('topicViewModal');setTimeout(()=>openAiChat('general','${_e(t.name)}',${tid},${sid},${secid}),200)` },
+      { icon:'📌', name:'Facts',        sub:`${(t.savedFacts||[]).length} saved facts`,cls:'cat-facts', perm:'savedFacts', onclick:`closeModal('topicViewModal');setTimeout(()=>openFactsPage('topic',${sid},${secid},${tid},'${_e(t.name)}'),200)` },
+      { icon:'⚡', name:'Master Notes', sub:'Sab sources se banao',       cls:'cat-master', perm:'masterNotes', onclick:`closeModal('topicViewModal');setTimeout(()=>openMasterNotesModal(${sid},${secid},${tid}),200)` },
+      { icon:'🃏', name:'Flashcards',   sub:tvGetFCBadge(tid),            cls:'cat-fc',     perm:'flashcards',  onclick:`tvShowSub('flashcards',${sid},${secid},${tid})` },
+      { icon:'🎮', name:'Game Mode',    sub:'Khelke yaad karo!',           cls:'cat-master', perm:'gamevault',   onclick:`closeModal('topicViewModal');setTimeout(()=>openTopicGameMode(${sid},${secid},${tid},'${_e(t.name)}'),200)` },
     ];
 
     subBody.innerHTML = `
@@ -9586,12 +9623,12 @@ function tvShowSub(catId, sid, secid, tid){
         ${(t.savedFacts||[]).length?`<span class="badge badge-blue">📌 ${t.savedFacts.length} facts</span>`:''}
       </div>
       <div class="tv-cat-grid" style="padding-top:8px;">
-        ${feats.map(f=>`
-          <div class="tv-cat-card ${f.cls}" onclick="${f.onclick}">
+        ${feats.map(f=>{const _lk=!_isAdmin&&f.perm&&!_userPerms[f.perm];const _oc=_lk?'_showLockedToast()':f.onclick;return `
+          <div class="tv-cat-card ${f.cls}${_lk?' tv-locked':''}" onclick="${_oc}">
             <div class="tv-cat-icon">${f.icon}</div>
             <div class="tv-cat-name">${f.name}</div>
-            <div class="tv-cat-sub">${f.sub}</div>
-          </div>`).join('')}
+            <div class="tv-cat-sub">${_lk?'🔒 Locked':f.sub}</div>
+          </div>`;}).join('')}
       </div>`;
 
   } else if(catId === 'raw'){
@@ -11514,6 +11551,7 @@ function qfResetProgress(key, label) {
 
 // Topic View modal se direct quiz start karne ke liye
 function startQuizForTopic(sid, secid, tid) {
+  if(!hasPermission('quiz')){ _showLockedToast(); return; }
   showPage('quiz', document.querySelector('[data-page=quiz]'));
   setTimeout(function() {
     var ss = document.getElementById('quizSubject');
@@ -20984,7 +21022,7 @@ var ADMIN_AUTO_EMAIL = 'amitsinghtomar1211@gmail.com'; // admin ka registered em
 var ADMIN_AUTO_PASS  = '12345678';  // ← Yahan apna Firebase password daalo (sirf email/password auth ke liye)
 var _isAdmin = false;
 // Per-user feature permissions loaded from Firebase
-var _userPerms = {quiz:false,quizvault:false,history:false,gamevault:false,stats:false,exams:false,testseries:false,aichat:false,smartnotes:false,savedFacts:false,studycoach:false,highlight:false,notesEdit:false,masterNotes:false};
+var _userPerms = {quiz:false,quizvault:false,history:false,gamevault:false,stats:false,exams:false,testseries:false,aichat:false,smartnotes:false,savedFacts:false,studycoach:false,highlight:false,notesEdit:false,masterNotes:false,aiDraw:false,flashcards:false,pdfNotes:false,ytNotes:false};
 var _ALL_FEATURES = [
   {key:'quiz',       label:'❓ Quiz',              desc:'Quiz attempt karna'},
   {key:'quizvault',  label:'🗄️ Quiz Vault',        desc:'Saved quizzes dekhna/use karna'},
@@ -20999,7 +21037,11 @@ var _ALL_FEATURES = [
   {key:'studycoach', label:'🎓 Study Coach',          desc:'Personal AI Study Coach'},
   {key:'highlight',  label:'🖍️ Highlight Tools',     desc:'Notes highlight aur erase karna'},
   {key:'notesEdit',  label:'✏️ Notes Editing',        desc:'Notes add/edit karna'},
-  {key:'masterNotes',label:'⚡ Master Notes',         desc:'Master Notes banana / dekhna'}
+  {key:'masterNotes',label:'⚡ Master Notes',         desc:'Master Notes banana / dekhna'},
+  {key:'aiDraw',     label:'🎨 AI Draw & Mind Map',    desc:'Creator Studio, QuickMap, Mind Map, Node Maps'},
+  {key:'flashcards', label:'🃏 Flashcards',             desc:'Topic flashcards banana aur khelna'},
+  {key:'pdfNotes',   label:'📑 PDF → Notes',            desc:'PDF se notes extract karna'},
+  {key:'ytNotes',    label:'🎬 YouTube/Audio Notes',    desc:'Video/Audio se notes banana'}
 ];
 function hasPermission(f){ return _isAdmin || !!_userPerms[f]; }
 function _showLockedToast(){ showToast('🔒 Yeh feature locked hai. Admin se access maango.','error'); }
@@ -21154,7 +21196,7 @@ function initFirebase(){
         applyAccessMode(); hideLoginScreen(); updateUserUI(user);
         loadFromFirebase().then(function(){ _attachRealtimeListener(); _initUpdatesListener(); if(_isAdmin) setTimeout(_adminLoadRecentUpdates, 1500); if(!_isAdmin && _currentUser) loadUserPermissions(_currentUser.uid); });
       } else {
-        _currentUser = null; _isAdmin = false; _effectiveUID = null; _userPerms = {quiz:false,quizvault:false,history:false,gamevault:false,stats:false,exams:false,testseries:false,aichat:false,smartnotes:false,savedFacts:false,studycoach:false,highlight:false,notesEdit:false,masterNotes:false};
+        _currentUser = null; _isAdmin = false; _effectiveUID = null; _userPerms = {quiz:false,quizvault:false,history:false,gamevault:false,stats:false,exams:false,testseries:false,aichat:false,smartnotes:false,savedFacts:false,studycoach:false,highlight:false,notesEdit:false,masterNotes:false,aiDraw:false,flashcards:false,pdfNotes:false,ytNotes:false};
         _eppKeyPassed = false; _eppKeyIsAdmin = false;
         if(_realtimeListener){ _realtimeListener(); _realtimeListener = null; }
         if(window._tsQuizListener){ try{ window._tsQuizListener(); }catch(e){} window._tsQuizListener = null; }
@@ -22178,6 +22220,7 @@ function showTapRipple(x, y) {
 var _creatorActiveTab = 'draw';
 
 function openCreatorPanel() {
+  if(!hasPermission('aiDraw')){ _showLockedToast(); return; }
   var ov = document.getElementById('creatorOverlay');
   if(ov) ov.classList.add('show');
   document.body.style.overflow = 'hidden';
@@ -22966,6 +23009,7 @@ function _neLinkButtonHTML(url, label, color) {
     '<span class="ne-link-label">' + safeLabel + '</span></button>&nbsp;';
 }
 function insertLinkBlock() {
+  if(!hasPermission('notesEdit')){ _showLockedToast(); return; }
   var url = prompt('Web link daalo (jaise https://example.com ya app ke andar ka page):', 'https://');
   if(!url) return;
   url = _neNormalizeUrl(url);
@@ -25756,6 +25800,7 @@ function initQmapFab() {
   fab._qmInited = true;
   fab.addEventListener('click', function(e) {
     e.preventDefault(); e.stopPropagation();
+    if(!hasPermission('aiDraw')){ _showLockedToast(); return; }
     var now = Date.now();
     if(now - _fabTap.last < 400) {
       // Double-tap → seedha Canvas/QuickMap Studio khulo �� kahi bhi ho user
@@ -25911,6 +25956,7 @@ document.addEventListener('DOMContentLoaded', function() {
   var btn = document.getElementById('creatorFabNewBtn');
   if(btn) btn.addEventListener('click', function(e) {
     if(btn._suppressClick) return;
+    if(!hasPermission('aiDraw')){ _showLockedToast(); return; }
     openCreatorPanel();
   });
 });
@@ -26007,6 +26053,7 @@ function neDrawResize() {
 
 // ── Toggle draw mode ON/OFF ──
 function neDrawToggle() {
+  if(!hasPermission('aiDraw')){ _showLockedToast(); return; }
   _ned.active = !_ned.active;
   var canvas  = document.getElementById('neDrawCanvas');
   var body    = document.getElementById('neBody');
@@ -31009,6 +31056,7 @@ let _pdfState = {
 
 // Topic ke saath PDF button click
 function openPdfModal(sid, secid, tid) {
+  if(!hasPermission('pdfNotes')){ _showLockedToast(); return; }
   const t = getTop(sid, secid, tid);
   if(!t) return;
   _pdfState = { topicId: t.id, sid, secid, tid, extractedText: '', generatedNotes: '' };
@@ -31342,6 +31390,7 @@ let _ytState = {
 };
 
 function openYtModal(sid, secid, tid) {
+  if(!hasPermission('ytNotes')){ _showLockedToast(); return; }
   const t = getTop(sid, secid, tid);
   if(!t) return;
   _ytState = { sid, secid, tid, extractedText: '', generatedNotes: '', activeTab: 'yt', audioFile: null };
@@ -33088,6 +33137,7 @@ function viewSectionFacts(sid, secid) {
 let _fpState = { level: null, sid: null, secid: null, tid: null, title: '' };
 
 function openFactsPage(level, sid, secid, tid, title) {
+  if(!hasPermission('savedFacts')){ _showLockedToast(); return; }
   _fpState = { level, sid, secid, tid, title };
 
   // Facts ko ek text mein combine karo editor ke liye
@@ -46865,6 +46915,7 @@ var _mm = { tid:null,sid:null,secid:null,topicName:'',slides:[],curSlide:0,editT
 
 // ── Open ──
 window.mmOpenPanel = async function(){
+  if(!hasPermission('aiDraw')){ _showLockedToast(); return; }
   var tid=null,sid=null,secid=null,topicName='';
   try{ if(typeof _sc!=='undefined'&&_sc.tid!=null){ tid=_sc.tid;sid=_sc.sid;secid=_sc.secid; var t=(typeof getTop==='function')?getTop(sid,secid,tid):null; topicName=t?t.name:('Topic '+tid); } }catch(e){}
   _mm.tid=tid;_mm.sid=sid;_mm.secid=secid;_mm.topicName=topicName||'Mind Map';_mm.curSlide=0;_mm.zoom=1;_mm.panX=0;_mm.panY=0;_mm.fitOnLoad=true;
@@ -53132,6 +53183,7 @@ function aeExamChanged() {
 }
 
 function openAiEnhancePanel() {
+  if(!hasPermission('aichat')){ _showLockedToast(); return; }
   if(!S.apiKey){showToast('Pehle Settings mein Groq API Key daalo!','error');return;}
   var overlay = document.getElementById('aiEnhanceOverlay');
   overlay.classList.add('show');
@@ -55002,6 +55054,7 @@ function _tgpLoadFactsFromCurrentTopic(showLobbyAfter){
 
 // ── Open — INSTANT load via line-split (Quiz jaisa, no Groq call) ──
 window.openTopicGameMode = async function(sid,secid,tid,topicName){
+  if(!hasPermission('gamevault')){ _showLockedToast(); return; }
   _tgp.sid=String(sid);_tgp.secid=String(secid);_tgp.tid=String(tid);
   _tgp.topicName=topicName||'Topic';
   _tgp.score=0;_tgp.facts=[];
