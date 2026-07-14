@@ -2730,6 +2730,34 @@ body.read-only-mode #scHlEraserBtn,
 body.read-only-mode #scHlClearBtn,
 body.read-only-mode #neHlCanvasBtn { display:none !important; }
 
+/* Feature lock icons on nav items */
+.nav-item.feature-locked { opacity:0.65; }
+.nav-lock-icon { font-size:0.7rem; margin-left:auto; pointer-events:none; }
+
+/* When admin grants highlight permission to a user */
+body.perm-highlight.read-only-mode #hlHeaderBtn,
+body.perm-highlight.read-only-mode #hlEraserHeaderBtn,
+body.perm-highlight.read-only-mode #neRmHlBtn,
+body.perm-highlight.read-only-mode #neRmEsBtn,
+body.perm-highlight.read-only-mode #scHlBtn,
+body.perm-highlight.read-only-mode #scHlEraserBtn,
+body.perm-highlight.read-only-mode #scHlClearBtn,
+body.perm-highlight.read-only-mode #neHlCanvasBtn { display:inline-flex !important; }
+
+/* User Permissions Modal */
+#userPermsModal { position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:16px; }
+#userPermsModal .upm-box { background:var(--surface);border-radius:18px;padding:22px;max-width:440px;width:100%;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.4); }
+.upm-feature-row { display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border); }
+.upm-feature-row:last-child { border-bottom:none; }
+.upm-feature-label { font-size:0.85rem;font-weight:600;color:var(--text); }
+.upm-feature-desc { font-size:0.7rem;color:var(--text2);margin-top:2px; }
+.upm-toggle { position:relative;width:44px;height:24px;flex-shrink:0;cursor:pointer; }
+.upm-toggle input { opacity:0;width:0;height:0;position:absolute; }
+.upm-toggle-slider { position:absolute;inset:0;border-radius:24px;background:#bbb;transition:0.3s;cursor:pointer; }
+.upm-toggle-slider:before { content:'';position:absolute;width:18px;height:18px;left:3px;top:3px;border-radius:50%;background:#fff;transition:0.3s; }
+.upm-toggle input:checked + .upm-toggle-slider { background:var(--accent); }
+.upm-toggle input:checked + .upm-toggle-slider:before { transform:translateX(20px); }
+
 /* Read-only banner at top of sidebar */
 #readOnlyBanner {
   display:none;
@@ -8381,6 +8409,12 @@ function showApiStatus(m,t){document.getElementById('apiStatus').innerHTML=`<spa
 // ==================== TABS ====================
 const PAGE_TITLES={'library':'📚 Library','savedFacts':'📌 Saved Facts','exams':'🎯 Exam Profiles','quiz':'❓ Quiz','quizvault':'🗄️ Quiz Vault','gamevault':'🎮 Game Vault','history':'📜 History','smartnotes':'🧠 Smart Notes','stats':'📊 Stats','settings':'⚙️ Settings','aichathistory':'💬 AI Chat History','testseries':'📝 Test Series','admin':'👑 Admin Panel'};
 function showPage(p,el,_skipHistory){
+  // Feature lock check for non-admin users
+  if(!_isAdmin && p!=='library' && p!=='settings' && p!=='admin'){
+    var _ppm={savedFacts:'savedFacts',smartnotes:'smartnotes',aichathistory:'aichat',quiz:'quiz',quizvault:'quizvault',history:'history',gamevault:'gamevault',stats:'stats',exams:'exams',testseries:'testseries'};
+    var _pk=_ppm[p];
+    if(_pk && !_userPerms[_pk]){ _showLockedToast(); return; }
+  }
   document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
   document.getElementById('page-'+p).classList.add('active');
@@ -11751,6 +11785,7 @@ async function startQuiz(){
 }
 
 async function startQuizActual(){
+  if(!hasPermission('quiz')){ _showLockedToast(); return; }
   if(!S.apiKey){showToast('Pehle API Key daalo!','error');return;}
   const _ctx=window._qfContext||{};
   const sid   =_ctx.sid   ||document.getElementById('quizSubject').value;
@@ -14197,6 +14232,7 @@ function updateSmartBadge(count){
 }
 
 async function genTopicSmartNotes(tid){
+  if(!hasPermission('smartnotes')){ _showLockedToast(); return; }
   if(!S.apiKey){showToast('Pehle API Key daalo!','error');return;}
   const t=findTopicById(tid);if(!t)return;
   const wb=t.wrongBank||[];
@@ -14369,6 +14405,7 @@ let _aiChatContext = null;
 let _aiChatHistory = [];
 
 function openAiChat(contextType, contextName, tid, sid, secid){
+  if(!hasPermission('aichat')){ _showLockedToast(); return; }
   if(!S.apiKey){showToast('Pehle API Key daalo!','error');return;}
   _aiChatHistory=[];
   _aiChatSessionId = null; // New session ke liye new ID generate hoga
@@ -18191,6 +18228,10 @@ function _neAdvImgEditorBuild(imgEl, srcImg) {
 // Undo
 // Open editor for Final Notes or Smart Notes
 function openSpecialEditor(type, sid, secid, tid) {
+  if(!_isAdmin){
+    if((type==='smartnotes'||type==='masternotes') && !hasPermission('smartnotes')){ _showLockedToast(); return; }
+    if(type==='finalnotes' && !hasPermission('notesEdit')){ _showLockedToast(); return; }
+  }
   const t = getTop(sid, secid, tid);
   if(!t) return;
   let text = '';
@@ -18401,7 +18442,7 @@ let _italicColor = '#000000'; // Default: black
 function setHlMode(mode) {
   // mode: 'highlight' | 'eraser' | 'off'
   // 🔒 Non-admin users: highlight mode disable hai
-  if(typeof _isAdmin !== 'undefined' && !_isAdmin && mode !== 'off') { return; }
+  if(typeof _isAdmin !== 'undefined' && !hasPermission('highlight') && mode !== 'off') { return; }
   _hlCurrentMode = mode;
 
   // Both hidden refs (kept for JS compat)
@@ -20942,6 +20983,26 @@ var USER_ACCESS_KEY  = 'FRIEND-EPP-2025';  // 🔑 Dosto ke liye shared key — 
 var ADMIN_AUTO_EMAIL = 'amitsinghtomar1211@gmail.com'; // admin ka registered email
 var ADMIN_AUTO_PASS  = '12345678';  // ← Yahan apna Firebase password daalo (sirf email/password auth ke liye)
 var _isAdmin = false;
+// Per-user feature permissions loaded from Firebase
+var _userPerms = {quiz:false,quizvault:false,history:false,gamevault:false,stats:false,exams:false,testseries:false,aichat:false,smartnotes:false,savedFacts:false,studycoach:false,highlight:false,notesEdit:false,masterNotes:false};
+var _ALL_FEATURES = [
+  {key:'quiz',       label:'❓ Quiz',              desc:'Quiz attempt karna'},
+  {key:'quizvault',  label:'🗄️ Quiz Vault',        desc:'Saved quizzes dekhna/use karna'},
+  {key:'history',    label:'📜 History',            desc:'Quiz history dekhna'},
+  {key:'gamevault',  label:'🎮 Games & Flashcards', desc:'Game Vault aur Flashcards'},
+  {key:'stats',      label:'📊 Stats',              desc:'Progress stats dekhna'},
+  {key:'exams',      label:'🎯 Exam Profiles',       desc:'Exam profiles dekhna'},
+  {key:'testseries', label:'📝 Test Series',         desc:'Test series attempt karna'},
+  {key:'aichat',     label:'💬 AI Chat',            desc:'AI se baatcheet karna (topic + coach)'},
+  {key:'smartnotes', label:'🧠 Smart Notes',         desc:'Smart Notes page aur generation'},
+  {key:'savedFacts', label:'📌 Saved Facts',         desc:'Saved facts dekhna'},
+  {key:'studycoach', label:'🎓 Study Coach',          desc:'Personal AI Study Coach'},
+  {key:'highlight',  label:'🖍️ Highlight Tools',     desc:'Notes highlight aur erase karna'},
+  {key:'notesEdit',  label:'✏️ Notes Editing',        desc:'Notes add/edit karna'},
+  {key:'masterNotes',label:'⚡ Master Notes',         desc:'Master Notes banana / dekhna'}
+];
+function hasPermission(f){ return _isAdmin || !!_userPerms[f]; }
+function _showLockedToast(){ showToast('🔒 Yeh feature locked hai. Admin se access maango.','error'); }
 var _effectiveUID = null;   // Admin ke liye: khud ka UID; Friend ke liye: admin ka UID
 var ADMIN_UID_STORED = '';  // Firestore se fetch hoga
 // =========================================================================
@@ -21091,9 +21152,9 @@ function initFirebase(){
           } catch(e){ console.error('[Auth] User check failed:', e.code, e.message); showToast('⚠️ Account check failed. Dobara try karo.','error'); setTimeout(()=>_auth.signOut(),2000); return; }
         }
         applyAccessMode(); hideLoginScreen(); updateUserUI(user);
-        loadFromFirebase().then(function(){ _attachRealtimeListener(); _initUpdatesListener(); if(_isAdmin) setTimeout(_adminLoadRecentUpdates, 1500); });
+        loadFromFirebase().then(function(){ _attachRealtimeListener(); _initUpdatesListener(); if(_isAdmin) setTimeout(_adminLoadRecentUpdates, 1500); if(!_isAdmin && _currentUser) loadUserPermissions(_currentUser.uid); });
       } else {
-        _currentUser = null; _isAdmin = false; _effectiveUID = null;
+        _currentUser = null; _isAdmin = false; _effectiveUID = null; _userPerms = {quiz:false,quizvault:false,history:false,gamevault:false,stats:false,exams:false,testseries:false,aichat:false,smartnotes:false,savedFacts:false,studycoach:false,highlight:false,notesEdit:false,masterNotes:false};
         _eppKeyPassed = false; _eppKeyIsAdmin = false;
         if(_realtimeListener){ _realtimeListener(); _realtimeListener = null; }
         if(window._tsQuizListener){ try{ window._tsQuizListener(); }catch(e){} window._tsQuizListener = null; }
@@ -22030,6 +22091,7 @@ function buildCoachPrompt() {
 
 // Open Personal AI Coach chat
 function openStudyCoach() {
+  if(!hasPermission('studycoach')){ _showLockedToast(); return; }
   if(!S.apiKey) { showToast('Pehle API Key daalo!', 'error'); return; }
   _aiChatHistory = [];
   _aiChatSessionId = null;
@@ -31889,6 +31951,7 @@ async function fetchYtTranscript(url) {
 }
 
 function openMasterNotesModal(sid, secid, tid) {
+  if(!hasPermission('masterNotes')){ _showLockedToast(); return; }
   if(!S.apiKey) { showToast('Pehle API Key daalo Settings mein!', 'error'); return; }
   var t = getTop(sid, secid, tid);
   if(!t) return;
@@ -36403,8 +36466,8 @@ function _scRenderHlStrokes() {
 
 // Toggle highlight / hlEraser mode
 function scToggleHlMode(tool) {
-  // 🔒 Non-admin users: canvas highlight disable hai
-  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return; }
+  // 🔒 Users without highlight permission: canvas highlight disable hai
+  if(typeof hasPermission !== 'undefined' && !hasPermission('highlight')) { return; }
   if(_sc.hlActive && _sc.hlTool === tool) {
     // Already active same tool → deactivate
     _sc.hlActive = false;
@@ -58507,6 +58570,45 @@ function _checkWriteAccess(){
   return true;
 }
 
+async function loadUserPermissions(uid){
+  if(_isAdmin) return;
+  try {
+    var d = await _db.collection('appUsers').doc(uid).get();
+    if(d.exists && d.data().permissions){ Object.assign(_userPerms, d.data().permissions); }
+  } catch(e){ console.warn('[Perms] load failed:',e); }
+  applyFeatureLocks();
+}
+
+function applyFeatureLocks(){
+  if(_isAdmin) return;
+  var ppm = {savedFacts:'savedFacts',smartnotes:'smartnotes',aichathistory:'aichat',quiz:'quiz',quizvault:'quizvault',history:'history',gamevault:'gamevault',stats:'stats',exams:'exams',testseries:'testseries'};
+  document.querySelectorAll('.nav-item[data-page]').forEach(function(el){
+    var pg = el.getAttribute('data-page');
+    var pk = ppm[pg];
+    if(!pk) return;
+    el.querySelectorAll('.nav-lock-icon').forEach(function(x){ x.remove(); });
+    if(!_userPerms[pk]){
+      var lk = document.createElement('span');
+      lk.className = 'nav-lock-icon'; lk.textContent = '🔒'; lk.title = 'Locked — Admin se access maango';
+      el.appendChild(lk); el.classList.add('feature-locked');
+    } else {
+      el.classList.remove('feature-locked');
+    }
+  });
+  // Study Coach
+  var coach = document.querySelector('.sb-coach-item');
+  if(coach){
+    coach.querySelectorAll('.nav-lock-icon').forEach(function(x){ x.remove(); });
+    if(!_userPerms['studycoach']){
+      var lk2 = document.createElement('span');
+      lk2.className = 'nav-lock-icon'; lk2.textContent = '🔒'; lk2.title = 'Locked';
+      coach.appendChild(lk2); coach.classList.add('feature-locked');
+    } else { coach.classList.remove('feature-locked'); }
+  }
+  // CSS body classes for permission-based overrides
+  document.body.classList.toggle('perm-highlight', !!_userPerms['highlight']);
+}
+
 function applyAccessMode(){
   if(_isAdmin){
     document.body.classList.remove('read-only-mode');
@@ -58737,6 +58839,81 @@ async function logoutFromKeyGate(){
   _showKeyGateFull();
 }
 
+function openUserPermsModal(idx){
+  var u = _adminUsersCache[idx];
+  if(!u){ showToast('User data nahi mila!','error'); return; }
+  var perms = u.permissions || {};
+  var featRows = _ALL_FEATURES.map(function(f){
+    var chk = perms[f.key] ? 'checked' : '';
+    return '<div class="upm-feature-row">' +
+      '<div><div class="upm-feature-label">' + f.label + '</div>' +
+      '<div class="upm-feature-desc">' + f.desc + '</div></div>' +
+      '<label class="upm-toggle">' +
+      '<input type="checkbox" id="upm_' + f.key + '" ' + chk + '>' +
+      '<span class="upm-toggle-slider"></span></label></div>';
+  }).join('');
+
+  // Remove any existing modal
+  var existing = document.getElementById('userPermsModal');
+  if(existing) existing.remove();
+
+  var modal = document.createElement('div');
+  modal.id = 'userPermsModal';
+  modal.innerHTML =
+    '<div class="upm-box">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">' +
+        '<div>' +
+          '<div style="font-size:1rem;font-weight:800;color:var(--text);">🔑 Feature Permissions</div>' +
+          '<div style="font-size:0.75rem;color:var(--accent);margin-top:2px;font-weight:600;">👤 ' + (u.name||u.email) + '</div>' +
+        '</div>' +
+        '<button onclick="document.getElementById(\'userPermsModal\').remove()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text2);line-height:1;">✕</button>' +
+      '</div>' +
+      '<div style="margin-bottom:12px;padding:8px 12px;background:rgba(21,101,192,0.08);border-radius:8px;font-size:0.72rem;color:var(--text2);line-height:1.6;">' +
+        '🔒 <strong>OFF</strong> = feature locked &nbsp;|&nbsp; ✅ <strong>ON</strong> = user is allowed<br>' +
+        'Library view (read-only) always free — baaki sab toggle karo.' +
+      '</div>' +
+      '<div style="margin-bottom:4px;font-size:0.72rem;font-weight:700;color:var(--text2);">Quick actions: ' +
+        '<span style="cursor:pointer;color:var(--accent);text-decoration:underline;" onclick="_upmToggleAll(true)">Enable All</span> | ' +
+        '<span style="cursor:pointer;color:var(--red);text-decoration:underline;" onclick="_upmToggleAll(false)">Disable All</span>' +
+      '</div>' +
+      featRows +
+      '<div style="display:flex;gap:8px;margin-top:16px;">' +
+        '<button class="btn btn-primary btn-sm" id="upmSaveBtn" style="flex:1;" onclick="saveUserPerms(\'' + u.id + '\',' + idx + ')">💾 Save Permissions</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="document.getElementById(\'userPermsModal\').remove()">Cancel</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(modal);
+  // Close on backdrop click
+  modal.addEventListener('click', function(e){ if(e.target===modal) modal.remove(); });
+}
+
+function _upmToggleAll(val){
+  _ALL_FEATURES.forEach(function(f){
+    var el = document.getElementById('upm_' + f.key);
+    if(el) el.checked = val;
+  });
+}
+
+async function saveUserPerms(uid, idx){
+  if(!_isAdmin || !_db) return;
+  var perms = {};
+  _ALL_FEATURES.forEach(function(f){
+    var el = document.getElementById('upm_' + f.key);
+    if(el) perms[f.key] = !!el.checked;
+  });
+  var btn = document.getElementById('upmSaveBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Saving...'; }
+  try {
+    await _db.collection('appUsers').doc(uid).update({ permissions: perms });
+    if(_adminUsersCache[idx]) _adminUsersCache[idx].permissions = perms;
+    showToast('✅ Permissions save ho gayi! User ko next login par milenge.','success');
+    var m = document.getElementById('userPermsModal'); if(m) m.remove();
+  } catch(e){
+    showToast('Error: ' + e.message, 'error');
+    if(btn){ btn.disabled = false; btn.textContent = '💾 Save Permissions'; }
+  }
+}
+
 async function loadAdminUsers(){
   if(!_isAdmin || !_db) return;
   const el = document.getElementById('adminUserList');
@@ -58802,6 +58979,7 @@ function renderAdminUserList(users){
         h += '<button class="btn btn-green btn-xs" data-uidx="' + idx + '" onclick="adminToggleBlock(this,false)">✅ Unblock</button>';
       } else {
         h += '<button class="btn btn-danger btn-xs" data-uidx="' + idx + '" onclick="adminToggleBlock(this,true)">🚫 Block</button>';
+        h += '<button class="btn btn-xs" style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;font-size:0.65rem;padding:3px 8px;border-radius:6px;border:none;cursor:pointer;margin-top:2px;" onclick="openUserPermsModal(' + idx + ')">🔑 Features</button>';
       }
       h += '</div>';
     }
