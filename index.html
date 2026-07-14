@@ -2675,6 +2675,41 @@ body.read-only-mode [onclick*="saveSerperKey"],
 body.read-only-mode [onclick*="deleteGameVault"],
 body.read-only-mode [onclick*="deleteFromWrong"] { display:none !important; }
 
+/* Block all contenteditable in read-only mode */
+body.read-only-mode [contenteditable="true"] {
+  pointer-events: none !important;
+  user-select: text !important;
+  cursor: default !important;
+  outline: none !important;
+  -webkit-user-modify: read-only !important;
+}
+/* Hide save note button */
+body.read-only-mode #saveNoteBtn { display:none !important; }
+/* Hide more edit-related buttons not covered above */
+body.read-only-mode [onclick*="saveEditedNote"],
+body.read-only-mode [onclick*="deleteNote"],
+body.read-only-mode [onclick*="editNote"],
+body.read-only-mode [onclick*="deleteSubject"],
+body.read-only-mode [onclick*="deleteSection"],
+body.read-only-mode [onclick*="deleteTopic"],
+body.read-only-mode [onclick*="addNote"],
+body.read-only-mode [onclick*="openSc"],
+body.read-only-mode [onclick*="scNew"],
+body.read-only-mode [onclick*="scDelete"],
+body.read-only-mode [onclick*="aiAssist"],
+body.read-only-mode [onclick*="autoFormat"],
+body.read-only-mode [onclick*="generateFacts"],
+body.read-only-mode [onclick*="tvAddRaw"],
+body.read-only-mode [onclick*="tvAdd"],
+body.read-only-mode [onclick*="generatePerfect"],
+body.read-only-mode [onclick*="regeneratePerfect"],
+body.read-only-mode [onclick*="saveToFirebase"],
+body.read-only-mode [onclick*="save()"],
+body.read-only-mode [onclick*="saveApiKey"],
+body.read-only-mode [onclick*="saveModel"],
+body.read-only-mode [onclick*="clearData"],
+body.read-only-mode [onclick*="restoreFromBackup"] { display:none !important; }
+
 /* Read-only banner at top of sidebar */
 #readOnlyBanner {
   display:none;
@@ -2685,8 +2720,12 @@ body.read-only-mode [onclick*="deleteFromWrong"] { display:none !important; }
   color:#e65100;
   font-weight:700;
   text-align:center;
+  letter-spacing:0.02em;
 }
 body.read-only-mode #readOnlyBanner { display:block; }
+/* Extra safety: no text input in read-only mode */
+body.read-only-mode input:not([type="search"]):not([type="text"]):not(#searchInput):not(#topicSearchInput),
+body.read-only-mode textarea { pointer-events:none !important; }
 body.admin-mode #adminBadge { display:inline-flex !important; }
 
 /* Admin nav item — only visible to admin */
@@ -4865,7 +4904,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 <aside class="sidebar" id="sidebar">
 
   <!-- READ-ONLY BANNER (visible only in read-only-mode) -->
-  <div id="readOnlyBanner">👁️ Read-Only Access — Sirf Dekhna Allowed</div>
+  <div id="readOnlyBanner">👁️ Read-Only Mode — Sirf Padhna Allowed. Admin updates live milenge.</div>
 
   <!-- HEADER: Logo + Close -->
   <div class="sb-header">
@@ -8419,6 +8458,7 @@ function getTop(sid,secid,tid){const s=getSec(sid,secid);return s?s.topics.find(
 
 // ==================== ADD SUBJECT/SECTION/TOPIC ====================
 function addSubject(){
+  if(!_isAdmin){ showToast('❌ Sirf admin subjects add kar sakta hai.','error'); return; }
   if(!_checkWriteAccess()) return;
   const name=document.getElementById('newSubject').value.trim();
   if(!name){showToast('Naam daalo!','error');return;}
@@ -8431,6 +8471,7 @@ function addSubject(){
   showToast(`"${name}" subject add ho gaya! 📗`,'success');
 }
 function addSection(){
+  if(!_isAdmin){ showToast('❌ Sirf admin sections add kar sakta hai.','error'); return; }
   if(!_checkWriteAccess()) return;
   if(!S.ui.sid){showToast('Subject select karo!','error');return;}
   const name=document.getElementById('newSection').value.trim();
@@ -8446,6 +8487,7 @@ function addSection(){
   showToast(`"${name}" section add! 📘`,'success');
 }
 function addTopic(){
+  if(!_isAdmin){ showToast('❌ Sirf admin topics add kar sakta hai.','error'); return; }
   if(!_checkWriteAccess()) return;
   if(!S.ui.sid||!S.ui.secid){showToast('Subject + Section select karo!','error');return;}
   const name=document.getElementById('newTopic').value.trim();
@@ -8879,6 +8921,7 @@ function noteAddImgInsert(input) {
 }
 
 async function addNote(){
+  if(!_isAdmin){ showToast('❌ Sirf admin notes add kar sakta hai.','error'); return; }
   if(!_checkWriteAccess()) return;
   if(!S.ui.tid){showToast('Topic select karo!','error');return;}
   const name=document.getElementById('noteName').value.trim();
@@ -19780,6 +19823,8 @@ User notes padh raha/rahi hai aur tujhse poochh raha/rahi hai.
 }
 
 async function saveEditedNote() {
+  // 🔒 READ-ONLY guard
+  if(!_isAdmin){ showToast('❌ Sirf admin notes edit kar sakta hai. Aap read-only mode mein hain.','error'); return; }
   // Save button dabaya - save karo aur editor KHULA RAHE (save ke baad bhi editing continue)
   // Process external images in editor before saving
   var area = document.getElementById('noteEditableArea');
@@ -20962,13 +21007,10 @@ function initFirebase(){
     _auth = firebase.auth();
     _db = firebase.firestore();
     // Offline persistence enable karo - network nahi ho tab bhi kaam kare
-    _db.enablePersistence({synchronizeTabs:true}).catch(err=>{
-      if(err.code === 'failed-precondition') {
-        // Multiple tabs open - ignore
-      } else if(err.code === 'unimplemented') {
-        // Browser support nahi - ignore
-      }
-    });
+    // Persistence DISABLED — mobile localStorage fills up (QuotaExceededError)
+    // and corrupts Firestore state machine → listeners die → no live updates.
+    // Online-only mode is more reliable for mobile PWAs.
+    // (Data is always fetched fresh from Firestore on load.)
     _fbReady = true;
 
     // Handle Google redirect result (mobile login)
@@ -29250,6 +29292,8 @@ async function saveMetaToFirebase(){
 // ══���═══════════════════════════════════════
 async function saveToFirebase(){
   if(!_db || !_currentUser) return;
+  // 🔒 READ-ONLY: Sirf admin data save kar sakta hai
+  if(!_isAdmin){ console.log('[saveToFirebase] User is read-only — save blocked.'); return; }
   setSyncStatus('syncing');
   try{
     var uid = _effectiveUID;
@@ -29603,8 +29647,8 @@ function _attachRealtimeListener(){
       console.log('Meta listener dropped, reconnecting in 3s:', err.code || err.message);
       _realtimeListener = null;
       _listenerRetryTimer = setTimeout(function(){
-        if(_currentUser) _attachRealtimeListener();
-      }, 3000);
+        if(_currentUser && _eppKeyPassed) _attachRealtimeListener();
+      }, 5000); // 5s retry — give Firestore time to recover
     }
   );
 }
@@ -29946,6 +29990,7 @@ function _applyMetaUpdate(meta){
 // ── Full silent reload — jab structure change ho (new subject/section/topic) ──
 async function _silentReloadFromFirebase(){
   if(!_db || !_currentUser || _syncInProgress) return;
+  // For non-admin users: _effectiveUID = admin's UID, so we read admin's data — correct.
   _syncInProgress = true;
 
   try{
