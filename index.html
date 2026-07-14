@@ -4737,7 +4737,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
   <div class="login-box" id="loginBox">
 
     <!-- App branding -->
-    <div class="login-logo">📚</div>
+    <div class="login-logo" onclick="_devConsoleTap()" title="10x tap = debug console" style="cursor:pointer;">📚</div>
     <div class="login-title">Exam Prep Pro</div>
     <div class="login-sub" id="loginSubText">Apne notes padho — kisi bhi device pe</div>
 
@@ -4782,7 +4782,7 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 <!-- ===== KEY GATE SCREEN ===== -->
 <div id="keyGateScreen" class="show">
   <div class="key-gate-box">
-    <div class="key-gate-icon">🔐</div>
+    <div class="key-gate-icon" onclick="_devConsoleTap()" title="10x tap = debug console" style="cursor:pointer;">🔐</div>
     <div class="key-gate-title">Exam Prep Pro</div>
     <div class="key-gate-sub">Access Key daalo jo admin ne diya hai</div>
     <div class="key-gate-error" id="keyGateError"></div>
@@ -20989,13 +20989,25 @@ function initFirebase(){
                   // Key directly HTML variable se compare karo (Firestore setup ki zaroorat nahi)
                   const keyOk = (_pendingUserKey === USER_ACCESS_KEY.toUpperCase());
                   if(keyOk){
+                    // ✅ FIX: write error ko ab silently ignore nahi karte — agar Firestore
+                    // security rules 'appUsers' collection pe write block kar rahi hain, to
+                    // "approved" field kabhi save nahi hoga aur refresh par phir se key
+                    // gate khul jaayega (loop). Ab error debug console + toast mein dikhega.
+                    let _writeOk = true;
                     try {
                       await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-                    } catch(we){ /* ignore write error */ }
+                    } catch(we){
+                      _writeOk = false;
+                      console.error('[KeyGate] approved write FAILED (uid='+user.uid+'):', we.code, we.message, '— Firestore Security Rules "appUsers" collection pe write allow nahi kar rahi lagti hai. Yehi refresh-loop ki wajah ho sakti hai.');
+                    }
                     _eppKeyPassed = true;
                     _hideKeyGateFull();
                     localStorage.setItem('epp_session', JSON.stringify({ role: 'user', email: user.email }));
-                    showToast('✅ Key sahi hai! Welcome — notes padho.','success');
+                    if(_writeOk){
+                      showToast('✅ Key sahi hai! Welcome — notes padho.','success');
+                    } else {
+                      showToast('⚠️ Key sahi hai lekin approval Firestore mein save NAHI hui (permission error). Refresh karne par phir se key maang sakta hai — Firestore Security Rules check karo (debug console kholo: logo 10x tap).','error');
+                    }
                     _pendingUserKey = '';
                     localStorage.removeItem('epp_pending_key');
                   } else {
@@ -21022,13 +21034,22 @@ function initFirebase(){
                 // Key directly HTML variable se compare karo (Firestore setup ki zaroorat nahi)
                 const keyOk2 = (_pendingUserKey === USER_ACCESS_KEY.toUpperCase());
                 if(keyOk2){
+                  // ✅ FIX: same as above — write error ab silently ignore nahi hota
+                  let _writeOk2 = true;
                   try {
                     await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-                  } catch(we){ /* ignore write error */ }
+                  } catch(we){
+                    _writeOk2 = false;
+                    console.error('[KeyGate] approved write FAILED (first-time user, uid='+user.uid+'):', we.code, we.message, '— Firestore Security Rules "appUsers" collection pe write allow nahi kar rahi lagti hai. Yehi refresh-loop ki wajah ho sakti hai.');
+                  }
                   _eppKeyPassed = true;
                   _hideKeyGateFull();
                   localStorage.setItem('epp_session', JSON.stringify({ role: 'user', email: user.email }));
-                  showToast('✅ Key sahi hai! Welcome — notes padho.','success');
+                  if(_writeOk2){
+                    showToast('✅ Key sahi hai! Welcome — notes padho.','success');
+                  } else {
+                    showToast('⚠️ Key sahi hai lekin approval Firestore mein save NAHI hui (permission error). Refresh karne par phir se key maang sakta hai — Firestore Security Rules check karo (debug console kholo: logo 10x tap).','error');
+                  }
                   _pendingUserKey = '';
                   localStorage.removeItem('epp_pending_key');
                 } else {
@@ -21164,6 +21185,9 @@ async function preLoginVerifyKey(){
     _eppKeyPassed   = true;
     _eppKeyIsAdmin  = true;
     _pendingUserKey = '';
+    // Turant localStorage mein persist karo — reload/race condition se bachne ke liye
+    localStorage.setItem('epp_key_passed', 'admin');
+    localStorage.removeItem('epp_pending_key');
     _hideKeyGateFull();
     // Auto-login agar ADMIN_AUTO_PASS set hai
     if(ADMIN_AUTO_PASS && ADMIN_AUTO_PASS.length >= 6 && _fbReady){
@@ -21207,6 +21231,10 @@ async function preLoginVerifyKey(){
   _pendingUserKey = entered;
   _eppKeyPassed   = true;
   _eppKeyIsAdmin  = false;
+  // ✅ FIX: turant localStorage mein bhi persist karo (sirf memory variable kaafi nahi hai —
+  // popup login ke beech reload/race condition mein ye variable khaali ho sakta tha)
+  localStorage.setItem('epp_key_passed', 'user');
+  localStorage.setItem('epp_pending_key', _pendingUserKey);
   _hideKeyGateFull();
   showLoginScreen();
   showToast('🔑 Key noted! Ab apni Gmail/Email se login karo — key verify hogi.','info');
@@ -21220,13 +21248,17 @@ async function loginWithGoogle(){
     const provider = new firebase.auth.GoogleAuthProvider();
     provider.addScope('email');
     provider.addScope('profile');
+    // ✅ FIX: key state ko localStorage mein persist karo Firebase call se PEHLE —
+    // pehle ye sirf redirect(mobile) flow mein hota tha, popup(desktop) flow mein
+    // kabhi save nahi hota tha. Isse popup ke baad reload/race condition mein
+    // "_pendingUserKey" khaali dikhta tha aur baar baar key gate khul jaata tha (loop).
+    localStorage.setItem('epp_key_passed', _eppKeyIsAdmin ? 'admin' : 'user');
+    localStorage.setItem('epp_pending_key', _pendingUserKey || '');
     // Mobile/PWA mein popup kaam nahi karta — redirect use karo
     const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
     if(isMobile){
       // Redirect result pehle check karo
       showToast('🔄 Google login ke liye redirect ho raha hai...','info');
-      localStorage.setItem('epp_key_passed', _eppKeyIsAdmin ? 'admin' : 'user');
-      localStorage.setItem('epp_pending_key', _pendingUserKey || '');
       await _auth.signInWithRedirect(provider);
     } else {
       await _auth.signInWithPopup(provider);
