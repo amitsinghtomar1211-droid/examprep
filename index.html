@@ -20998,50 +20998,24 @@ function initFirebase(){
               } else {
                 // Not approved — _pendingUserKey se verify karo (ab login ho chuka hai)
                 if(_pendingUserKey){
-                  // Key directly HTML variable se compare karo (Firestore setup ki zaroorat nahi)
-                  const keyOk = (_pendingUserKey === USER_ACCESS_KEY.toUpperCase());
-                  if(keyOk){
-                    // ✅ FIX: write error ko ab silently ignore nahi karte — agar Firestore
-                    // security rules 'appUsers' collection pe write block kar rahi hain, to
-                    // "approved" field kabhi save nahi hoga aur refresh par phir se key
-                    // gate khul jaayega (loop). Ab error debug console + toast mein dikhega.
-                    let _writeOk = true;
-                    try {
-                      await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-                    } catch(we){
-                      _writeOk = false;
-                      console.error('[KeyGate] approved write FAILED (uid='+user.uid+'):', we.code, we.message, '— Firestore Security Rules "appUsers" collection pe write allow nahi kar rahi lagti hai. Yehi refresh-loop ki wajah ho sakti hai.');
-                    }
-                    _eppKeyPassed = true;
-                    _hideKeyGateFull();
-                    localStorage.setItem('epp_session', JSON.stringify({ role: 'user', email: user.email }));
-                    if(_writeOk){
-                      showToast('✅ Key sahi hai! Welcome — notes padho.','success');
-                    } else {
-                      showToast('⚠️ Key sahi hai lekin approval Firestore mein save NAHI hui (permission error). Refresh karne par phir se key maang sakta hai — Firestore Security Rules check karo (debug console kholo: logo 10x tap).','error');
-                    }
-                    _pendingUserKey = '';
-                    localStorage.removeItem('epp_pending_key');
+                  const _kr = await _verifyPendingKeyAgainstFirestore(user);
+                  if(_kr === 'ok'){
+                    // handled inside helper (approved + toast + cleanup)
+                  } else if(_kr === 'no_key_configured'){
+                    return;
+                  } else if(_kr === 'locked_other_email'){
+                    return;
                   } else {
-                    showToast('❌ Galat key! Admin se sahi key maango aur dobara try karo.','error');
-                    _eppKeyPassed = false; _pendingUserKey = '';
-                    localStorage.removeItem('epp_pending_key');
-                    await _auth.signOut();
-                    _showKeyGateFull();
-                    const ki = document.getElementById('keyGateInput');
-                    if(ki){ ki.value = ''; ki.focus(); }
-                    _showKeyGateErr('❌ Galat key! Admin se sahi key maango.');
+                    // 'wrong'
                     return;
                   }
                 } else {
                   // ✅ FIX: pehle yahan "showKeyGate(user)" call hota tha — jo ek ALAG,
                   // Firestore "appConfig/accessKey" document based key-system hai (System B)
-                  // jo is app mein kabhi setup hi nahi kiya gaya (admin ADMIN_MASTER_KEY/
-                  // USER_ACCESS_KEY wala local system use karta hai — System A). Isliye
-                  // jab bhi _pendingUserKey khaali milta tha (jaise redirect race ya
-                  // Firestore write fail hone ke baad), user is galat/unconfigured System B
-                  // gate mein phas jaata tha jahan se kabhi login ho hi nahi sakta tha.
-                  // Ab seedha original Access Key gate (System A) dobara dikhao — sahi system.
+                  // jo is app mein kabhi setup hi nahi kiya gaya. Ab System B ko hi asli
+                  // check ke liye use kar rahe hain (upar helper mein), lekin agar
+                  // _pendingUserKey khaali mile (redirect race / refresh) to seedha
+                  // Access Key gate dobara dikhao — user se key firse maango.
                   console.error('[KeyGate] _pendingUserKey khaali mila (uid='+user.uid+') — user ko wapas Access Key gate par bheja ja raha hai. Agar ye baar baar ho raha hai, Firestore Security Rules ya redirect flow check karo.');
                   await _auth.signOut();
                   hideLoginScreen();
@@ -21055,42 +21029,19 @@ function initFirebase(){
             } else {
               // First time user — _pendingUserKey se verify karo
               if(_pendingUserKey){
-                // Key directly HTML variable se compare karo (Firestore setup ki zaroorat nahi)
-                const keyOk2 = (_pendingUserKey === USER_ACCESS_KEY.toUpperCase());
-                if(keyOk2){
-                  // ✅ FIX: same as above — write error ab silently ignore nahi hota
-                  let _writeOk2 = true;
-                  try {
-                    await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-                  } catch(we){
-                    _writeOk2 = false;
-                    console.error('[KeyGate] approved write FAILED (first-time user, uid='+user.uid+'):', we.code, we.message, '— Firestore Security Rules "appUsers" collection pe write allow nahi kar rahi lagti hai. Yehi refresh-loop ki wajah ho sakti hai.');
-                  }
-                  _eppKeyPassed = true;
-                  _hideKeyGateFull();
-                  localStorage.setItem('epp_session', JSON.stringify({ role: 'user', email: user.email }));
-                  if(_writeOk2){
-                    showToast('✅ Key sahi hai! Welcome — notes padho.','success');
-                  } else {
-                    showToast('⚠️ Key sahi hai lekin approval Firestore mein save NAHI hui (permission error). Refresh karne par phir se key maang sakta hai — Firestore Security Rules check karo (debug console kholo: logo 10x tap).','error');
-                  }
-                  _pendingUserKey = '';
-                  localStorage.removeItem('epp_pending_key');
-                } else {
-                  showToast('❌ Galat key! Admin se sahi key maango aur dobara try karo.','error');
-                  _eppKeyPassed = false; _pendingUserKey = '';
-                  localStorage.removeItem('epp_pending_key');
-                  await _auth.signOut();
-                  _showKeyGateFull();
-                  const ki = document.getElementById('keyGateInput');
-                  if(ki){ ki.value = ''; ki.focus(); }
-                  _showKeyGateErr('❌ Galat key! Admin se sahi key maango.');
-                  return;
-                }
+                const _kr2 = await _verifyPendingKeyAgainstFirestore(user);
+                if(_kr2 !== 'ok') return;
               } else {
-                // First time, no pending key — post-login key gate
+                // First time, no pending key — asli Access Key gate dobara dikhao
+                // (System B ka "showKeyGate" yahan use nahi karte — us system mein
+                // Gmail-binding first-time flow theek se kaam nahi karta.)
+                console.error('[KeyGate] First-time user, _pendingUserKey khaali (uid='+user.uid+') — Access Key gate dobara dikha rahe hain.');
+                await _auth.signOut();
                 hideLoginScreen();
-                showKeyGate(user);
+                _eppKeyPassed = false;
+                _eppKeyIsAdmin = false;
+                _showKeyGateFull();
+                _showKeyGateErr('⚠️ Session expire ho gaya. Access Key dobara daalo.');
                 return;
               }
             }
@@ -21198,6 +21149,83 @@ function _showKeyGateErr(msg){
   if(el){ el.textContent = msg; el.classList.add('show'); }
 }
 
+// ✅ Asli key-verification helper — Google login ke BAAD chalta hai (jab user
+// authenticated ho chuka hai, isliye Firestore rules "request.auth != null" wali
+// read allow kar deti hain). Yeh Firestore "appConfig/accessKey" document ko hi
+// source-of-truth maanta hai — wahi document jo admin panel ka "Naya Key Generate
+// Karo" button banata hai (generateNewKey()). Purana code hardcoded USER_ACCESS_KEY
+// se compare karta tha jo admin dwara generate ki gayi key se KABHI match hi nahi
+// karta tha — isliye har naya key "galat" bataata tha.
+async function _verifyPendingKeyAgainstFirestore(user){
+  try {
+    const keyDoc = await _db.collection('appConfig').doc('accessKey').get();
+    if(!keyDoc.exists || !keyDoc.data().key){
+      showToast('⚠️ Admin ne abhi tak koi Access Key generate nahi ki hai. Admin se poochho.','error');
+      _eppKeyPassed = false; _pendingUserKey = '';
+      localStorage.removeItem('epp_pending_key');
+      await _auth.signOut();
+      _showKeyGateFull();
+      _showKeyGateErr('⚠️ Admin ne abhi Access Key generate nahi ki. Thodi der baad try karo.');
+      return 'no_key_configured';
+    }
+    const correctKey = String(keyDoc.data().key).toUpperCase();
+    if(_pendingUserKey !== correctKey){
+      showToast('❌ Galat key! Admin se sahi key maango aur dobara try karo.','error');
+      _eppKeyPassed = false; _pendingUserKey = '';
+      localStorage.removeItem('epp_pending_key');
+      await _auth.signOut();
+      _showKeyGateFull();
+      const ki = document.getElementById('keyGateInput');
+      if(ki){ ki.value = ''; ki.focus(); }
+      _showKeyGateErr('❌ Galat key! Admin se sahi key maango.');
+      return 'wrong';
+    }
+    // Key sahi hai — Gmail-lock check (ek key sirf ek gmail ke liye kaam kare)
+    const thisEmail = (user.email || '').toLowerCase();
+    const boundEmail = (keyDoc.data().boundEmail || '').toLowerCase();
+    if(boundEmail && boundEmail !== thisEmail){
+      showToast('❌ Yeh key ' + boundEmail + ' ke liye lock hai. Admin se naya key maango.','error');
+      _eppKeyPassed = false; _pendingUserKey = '';
+      localStorage.removeItem('epp_pending_key');
+      await _auth.signOut();
+      _showKeyGateFull();
+      _showKeyGateErr('❌ Yeh key kisi aur ki Gmail ke liye lock hai. Admin se naya key maango.');
+      return 'locked_other_email';
+    }
+    // approved likho + (agar pehli baar use ho rahi hai) key ko is email se lock karo
+    let _writeOk = true;
+    try {
+      await _db.collection('appUsers').doc(user.uid).set({ approved: true, approvedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      if(!boundEmail){
+        await _db.collection('appConfig').doc('accessKey').update({ boundEmail: thisEmail, boundAt: firebase.firestore.FieldValue.serverTimestamp() });
+      }
+    } catch(we){
+      _writeOk = false;
+      console.error('[KeyGate] approved/lock write FAILED (uid='+user.uid+'):', we.code, we.message, '— Firestore Security Rules pe write allow nahi kar rahi lagti hai. Yehi refresh-loop ki wajah ho sakti hai.');
+    }
+    _eppKeyPassed = true;
+    _hideKeyGateFull();
+    localStorage.setItem('epp_session', JSON.stringify({ role: 'user', email: user.email }));
+    if(_writeOk){
+      showToast('✅ Key sahi hai! Welcome — notes padho.','success');
+    } else {
+      showToast('⚠️ Key sahi hai lekin Firestore mein save NAHI hui (permission error). Firestore Security Rules check karo (🐛 debug console).','error');
+    }
+    _pendingUserKey = '';
+    localStorage.removeItem('epp_pending_key');
+    return 'ok';
+  } catch(e){
+    console.error('[KeyGate] Firestore key-verify read FAILED:', e.code, e.message);
+    showToast('⚠️ Key verify karne mein error aayi (Firestore permission). 🐛 debug console check karo.','error');
+    _eppKeyPassed = false; _pendingUserKey = '';
+    localStorage.removeItem('epp_pending_key');
+    await _auth.signOut();
+    _showKeyGateFull();
+    _showKeyGateErr('⚠️ Key verify nahi ho payi (error). Dobara try karo.');
+    return 'error';
+  }
+}
+
 async function preLoginVerifyKey(){
   var inp = document.getElementById('keyGateInput');
   var btn = document.getElementById('keyGateBtn');
@@ -21249,17 +21277,31 @@ async function preLoginVerifyKey(){
     _showKeyGateErr('Key bahut choti hai! Sahi key daalo.');
     return;
   }
-  // ✅ FIX: USER_ACCESS_KEY ek local JS constant hai (Firestore se aata hi nahi),
-  // isliye ye check LOGIN SE PEHLE hi ho sakta hai — ab galat key yahin turant
-  // reject ho jaayegi, user ko Google login screen tak jaane hi nahi diya jaayega.
-  // (Pehle koi bhi 4+ character wali key "pass" ho jaati thi aur seedha Google
-  // login khul jaata tha — jisse lagta tha ki galat key bhi "verify" ho rahi hai.)
-  if(entered !== USER_ACCESS_KEY.toUpperCase()){
-    _showKeyGateErr('❌ Galat key! Admin se sahi key maango.');
-    if(inp){ inp.value = ''; inp.focus(); }
-    return;
+  // ✅ FIX: Admin panel se "Naya Key Generate Karo" dabane par jo key banti hai,
+  // wo HARDCODED USER_ACCESS_KEY nahi hoti — wo Firestore ke "appConfig/accessKey"
+  // document mein save hoti hai (dekh generateNewKey() function). Asli key
+  // Firestore se hi check honi chahiye, hardcoded constant se nahi.
+  // Pehle try karte hain Firestore se seedha check karna (agar rules unauthenticated
+  // read allow karti hain to turant galat key yahin reject ho jaayegi). Agar
+  // permission-denied aaye (normal — abhi login nahi hua), silently aage badhte
+  // hain — asli verification Google login ke BAAD hogi (_verifyPendingKeyAgainstFirestore).
+  if(_db){
+    try {
+      const _preDoc = await _db.collection('appConfig').doc('accessKey').get();
+      if(_preDoc.exists && _preDoc.data().key){
+        const _preCorrect = String(_preDoc.data().key).toUpperCase();
+        if(entered !== _preCorrect){
+          _showKeyGateErr('❌ Galat key! Admin se sahi key maango.');
+          if(inp){ inp.value = ''; inp.focus(); }
+          return;
+        }
+      }
+    } catch(_preErr){
+      console.warn('[KeyGate] Pre-login Firestore key check nahi ho paya (normal hai agar login nahi hua):', _preErr && _preErr.code);
+    }
   }
-  // Key sahi hai — memory + localStorage mein store karo, Firestore "approved" write login ke baad hogi
+  // Key memory mein store karo — asli match Google login ke BAAD Firestore
+  // appConfig/accessKey document se hoga (_verifyPendingKeyAgainstFirestore)
   _pendingUserKey = entered;
   _eppKeyPassed   = true;
   _eppKeyIsAdmin  = false;
