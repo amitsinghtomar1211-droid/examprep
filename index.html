@@ -4734,7 +4734,8 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 
 <!-- LOGIN SCREEN -->
 <div class="login-screen" id="loginScreen">
-  <div class="login-box" id="loginBox">
+  <div class="login-box" id="loginBox" style="position:relative;">
+    <button onclick="_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();" title="Debug Console (error dekhne ke liye)" style="position:absolute;top:8px;right:8px;background:transparent;border:none;font-size:0.85rem;cursor:pointer;color:rgba(128,128,128,0.55);padding:4px;">🐛</button>
 
     <!-- App branding -->
     <div class="login-logo" onclick="_devConsoleTap()" title="10x tap = debug console" style="cursor:pointer;">📚</div>
@@ -4781,7 +4782,11 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
 
 <!-- ===== KEY GATE SCREEN ===== -->
 <div id="keyGateScreen" class="show">
-  <div class="key-gate-box">
+  <div class="key-gate-box" style="position:relative;">
+    <!-- ✅ FIX: pehle sirf "10x tap" se debug console khulta tha — touchscreen par
+         itni jaldi 10 baar sahi jagah tap karna mushkil hai, isliye ek clear, single-click
+         wala 🐛 button bhi add kar diya, taaki error hamesha dekha ja sake. -->
+    <button onclick="_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();" title="Debug Console (error dekhne ke liye)" style="position:absolute;top:8px;right:8px;background:transparent;border:none;font-size:0.85rem;cursor:pointer;color:rgba(128,128,128,0.55);padding:4px;">🐛</button>
     <div class="key-gate-icon" onclick="_devConsoleTap()" title="10x tap = debug console" style="cursor:pointer;">🔐</div>
     <div class="key-gate-title">Exam Prep Pro</div>
     <div class="key-gate-sub">Access Key daalo jo admin ne diya hai</div>
@@ -20920,9 +20925,16 @@ function initFirebase(){
       if(result && result.user){
         // Restore key state from localStorage (set before redirect)
         // Variables already restored at startup (race-condition fix)
-        // Cleanup localStorage redirect keys
-        localStorage.removeItem('epp_key_passed');
-        localStorage.removeItem('epp_pending_key');
+        // ✅ FIX: pehle yahan turant localStorage se 'epp_pending_key'/'epp_key_passed'
+        // clear kar diya jaata tha — chahe onAuthStateChanged ne key verify/approve
+        // kiya ho ya nahi. Isse agar Firestore "approved" write fail ho jaaye
+        // (permission-denied), to key state already localStorage se gayab ho chuki
+        // hoti thi — refresh/retry par app ko "_pendingUserKey" khaali milta tha aur
+        // wo galat "post-login key gate" (Firestore accessKey-based, jo is app mein
+        // set hi nahi hai) mein bhej deta tha — jahan se login kabhi nahi ho pata
+        // (mobile/tablet redirect flow mein ye sabse zyada hota tha).
+        // Ab cleanup sirf onAuthStateChanged ke andar hi hota hai — jab key
+        // verify+approve dono successfully ho chuke hon. Yahan sirf toast dikhao.
         showToast('✅ Google login successful!','success');
       }
     }).catch(function(e){
@@ -21022,9 +21034,21 @@ function initFirebase(){
                     return;
                   }
                 } else {
-                  // Koi pending key nahi — post-login key gate dikhao
+                  // ✅ FIX: pehle yahan "showKeyGate(user)" call hota tha — jo ek ALAG,
+                  // Firestore "appConfig/accessKey" document based key-system hai (System B)
+                  // jo is app mein kabhi setup hi nahi kiya gaya (admin ADMIN_MASTER_KEY/
+                  // USER_ACCESS_KEY wala local system use karta hai — System A). Isliye
+                  // jab bhi _pendingUserKey khaali milta tha (jaise redirect race ya
+                  // Firestore write fail hone ke baad), user is galat/unconfigured System B
+                  // gate mein phas jaata tha jahan se kabhi login ho hi nahi sakta tha.
+                  // Ab seedha original Access Key gate (System A) dobara dikhao — sahi system.
+                  console.error('[KeyGate] _pendingUserKey khaali mila (uid='+user.uid+') — user ko wapas Access Key gate par bheja ja raha hai. Agar ye baar baar ho raha hai, Firestore Security Rules ya redirect flow check karo.');
+                  await _auth.signOut();
                   hideLoginScreen();
-                  showKeyGate(user);
+                  _eppKeyPassed = false;
+                  _eppKeyIsAdmin = false;
+                  _showKeyGateFull();
+                  _showKeyGateErr('⚠️ Session expire ho gaya. Access Key dobara daalo.');
                   return;
                 }
               }
