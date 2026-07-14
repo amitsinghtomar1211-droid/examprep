@@ -2710,6 +2710,23 @@ body.read-only-mode [onclick*="saveModel"],
 body.read-only-mode [onclick*="clearData"],
 body.read-only-mode [onclick*="restoreFromBackup"] { display:none !important; }
 
+/* Read-only: delete buttons — users files/notes delete nahi kar sakte */
+body.read-only-mode [onclick*="deleteRawNote"],
+body.read-only-mode [onclick*="deleteAiChatSession"],
+body.read-only-mode [onclick*="deleteQmById"],
+body.read-only-mode [onclick*="rvDeleteBox"],
+body.read-only-mode [onclick*="deleteRaw"] { display:none !important; }
+
+/* Read-only: highlight/eraser tools — users sirf read kar sakte hain */
+body.read-only-mode #hlHeaderBtn,
+body.read-only-mode #hlEraserHeaderBtn,
+body.read-only-mode #neRmHlBtn,
+body.read-only-mode #neRmEsBtn,
+body.read-only-mode #scHlBtn,
+body.read-only-mode #scHlEraserBtn,
+body.read-only-mode #scHlClearBtn,
+body.read-only-mode #neHlCanvasBtn { display:none !important; }
+
 /* Read-only banner at top of sidebar */
 #readOnlyBanner {
   display:none;
@@ -15105,6 +15122,8 @@ function closeNotesEditor() {
   // Hide floating back button
   var _nb = document.getElementById('neBackFloatBtn');
   if(_nb) _nb.style.display = 'none';
+  // 🔒 Non-admin users: directly close karo, koi popup nahi
+  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { _forceCloseEditor(); return; }
   // Agar modified hai to popup dikhao, nahi to seedha band
   if(_editorState.modified) {
     // Changes hain -- popup dikhao
@@ -15896,6 +15915,8 @@ function neGetHTML() {
 
 // onInput for editable area
 function onNEInput() {
+  // 🔒 Non-admin users: input ignore karo (read-only mode)
+  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return; }
   neSaveSnapshot(); // Save for undo before each input
   markModified();
   updateNEWordCount();
@@ -18376,6 +18397,8 @@ let _italicColor = '#000000'; // Default: black
 
 function setHlMode(mode) {
   // mode: 'highlight' | 'eraser' | 'off'
+  // 🔒 Non-admin users: highlight mode disable hai
+  if(typeof _isAdmin !== 'undefined' && !_isAdmin && mode !== 'off') { return; }
   _hlCurrentMode = mode;
 
   // Both hidden refs (kept for JS compat)
@@ -19277,6 +19300,8 @@ function selectHlColor(color) {
 }
 
 function markModified() {
+  // 🔒 Non-admin users: modified flag mat set karo
+  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return; }
   _editorState.modified = true;
   var dot = document.getElementById('unsavedDot');
   var dot2 = document.getElementById('unsavedDot2');
@@ -29940,6 +29965,17 @@ function _applyTopicUpdate(tid, newTopicData){
   updateHistBadge && updateHistBadge();
   updateSavedBadge && updateSavedBadge();
 
+  // Also refresh topic view modal if it is open for the updated topic
+  try{
+    var _tvModal = document.getElementById('topicViewModal');
+    if(_tvModal && _tvModal.classList.contains('show') && !isActiveEdit){
+      var _nes = (typeof _editorState !== 'undefined') ? _editorState : null;
+      if(_nes && String(_nes.tid) === String(tid) && typeof viewTopic === 'function'){
+        viewTopic(_nes.sid, _nes.secid, _nes.tid);
+      }
+    }
+  }catch(e2){}
+
   setSyncStatus('synced');
   if(isActiveEdit){
     // Receiving changes FROM another device while we are also editing — silent
@@ -30142,6 +30178,9 @@ var _metaSyncTimer = null;
 function save(){
   // Step 1: Instant local save
   try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
+
+  // 🔒 Non-admin users: sirf local save, Firestore sync nahi
+  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return; }
 
   if(!_currentUser || !_db) return;
   setSyncStatus('syncing');
@@ -36361,6 +36400,8 @@ function _scRenderHlStrokes() {
 
 // Toggle highlight / hlEraser mode
 function scToggleHlMode(tool) {
+  // 🔒 Non-admin users: canvas highlight disable hai
+  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return; }
   if(_sc.hlActive && _sc.hlTool === tool) {
     // Already active same tool → deactivate
     _sc.hlActive = false;
@@ -53835,11 +53876,13 @@ async function aeApplyMerge() {
       area.innerHTML = enhanced + imagesHTML;
     }
 
-    // Mark as modified
-    _editorState.modified = true;
-    var ud = document.getElementById('unsavedDot'); if(ud) ud.style.display = '';
-    var ud2 = document.getElementById('unsavedDot2'); if(ud2) ud2.style.display = '';
-    var snb = document.getElementById('saveNoteBtn'); if(snb) snb.style.display = '';
+    // Mark as modified (sirf admin ke liye)
+    if(typeof _isAdmin === 'undefined' || _isAdmin) {
+      _editorState.modified = true;
+      var ud = document.getElementById('unsavedDot'); if(ud) ud.style.display = '';
+      var ud2 = document.getElementById('unsavedDot2'); if(ud2) ud2.style.display = '';
+      var snb = document.getElementById('saveNoteBtn'); if(snb) snb.style.display = '';
+    }
 
     closeAiEnhancePanel();
     showToast('🎓 World-Class Notes taiyaar! Ye notes Delhi-Mumbai ke best teachers bhi nahi de sakte! 💾 Save karo!', 'success');
