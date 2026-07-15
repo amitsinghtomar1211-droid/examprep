@@ -8620,6 +8620,48 @@ function getSubj(sid){return S.subjects.find(x=>x.id==sid);}
 function getSec(sid,secid){const s=getSubj(sid);return s?s.sections.find(x=>x.id==secid):null;}
 function getTop(sid,secid,tid){const s=getSec(sid,secid);return s?s.topics.find(x=>x.id==tid):null;}
 
+// ==================== CONTENT VISIBILITY (ADMIN CONTROL) ====================
+// Admin can hide/show any subject/section/topic from normal users.
+// Hidden items stay fully visible & editable to admin, but are removed
+// everywhere a normal user browses/picks content (library, quiz, exams, search).
+function _visSubj(s){ return _isAdmin || !s.hidden; }
+function _visSec(sec){ return _isAdmin || !sec.hidden; }
+function _visTop(t){ return _isAdmin || !t.hidden; }
+// Returns the subjects tree, deep-filtered for the current viewer.
+// Admin sees everything; normal users never see hidden subjects/sections/topics
+// (a hidden subject/section also hides everything nested inside it).
+function visibleSubjectsTree(){
+  if(_isAdmin) return S.subjects;
+  return S.subjects.filter(s=>!s.hidden).map(s=>({
+    ...s,
+    sections:(s.sections||[]).filter(sec=>!sec.hidden).map(sec=>({
+      ...sec,
+      topics:(sec.topics||[]).filter(t=>!t.hidden)
+    }))
+  }));
+}
+function toggleSubjectVisibility(sid,e){
+  if(e) e.stopPropagation();
+  if(!_isAdmin){ showToast('❌ Sirf admin visibility control kar sakta hai.','error'); return; }
+  const s=getSubj(sid); if(!s) return;
+  s.hidden=!s.hidden; save(); renderLibraryTree(); updateQuizSelects();
+  showToast(s.hidden?`🚫 "${s.name}" users se hide kar diya`:`✅ "${s.name}" users ko dikhega`,'success');
+}
+function toggleSectionVisibility(sid,secid,e){
+  if(e) e.stopPropagation();
+  if(!_isAdmin){ showToast('❌ Sirf admin visibility control kar sakta hai.','error'); return; }
+  const sec=getSec(sid,secid); if(!sec) return;
+  sec.hidden=!sec.hidden; save(); renderLibraryTree(); updateQuizSelects();
+  showToast(sec.hidden?`🚫 "${sec.name}" users se hide kar diya`:`✅ "${sec.name}" users ko dikhega`,'success');
+}
+function toggleTopicVisibility(sid,secid,tid,e){
+  if(e) e.stopPropagation();
+  if(!_isAdmin){ showToast('❌ Sirf admin visibility control kar sakta hai.','error'); return; }
+  const t=getTop(sid,secid,tid); if(!t) return;
+  t.hidden=!t.hidden; save(); renderLibraryTree(); updateQuizSelects();
+  showToast(t.hidden?`🚫 "${t.name}" users se hide kar diya`:`✅ "${t.name}" users ko dikhega`,'success');
+}
+
 // ==================== ADD SUBJECT/SECTION/TOPIC ====================
 function addSubject(){
   if(!_isAdmin){ showToast('❌ Sirf admin subjects add kar sakta hai.','error'); return; }
@@ -8627,7 +8669,7 @@ function addSubject(){
   const name=document.getElementById('newSubject').value.trim();
   if(!name){showToast('Naam daalo!','error');return;}
   if(S.subjects.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Pehle se hai!','error');return;}
-  S.subjects.push({id:Date.now(),name,sections:[],facts:[],createdAt:new Date().toLocaleDateString('hi-IN')});
+  S.subjects.push({id:Date.now(),name,sections:[],facts:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')});
   save(); document.getElementById('newSubject').value='';
   renderLibrarySelects(); renderLibraryTree(); updateQuizSelects();
   document.getElementById('selSubject').value=S.subjects[S.subjects.length-1].id;
@@ -8642,7 +8684,7 @@ function addSection(){
   if(!name){showToast('Naam daalo!','error');return;}
   const subj=getSubj(S.ui.sid);
   if(subj.sections.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Pehle se hai!','error');return;}
-  const ns={id:Date.now(),name,topics:[],facts:[],createdAt:new Date().toLocaleDateString('hi-IN')};
+  const ns={id:Date.now(),name,topics:[],facts:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
   subj.sections.push(ns);save();
   document.getElementById('newSection').value='';
   onSubjectChange();
@@ -8658,7 +8700,7 @@ function addTopic(){
   if(!name){showToast('Naam daalo!','error');return;}
   const sec=getSec(S.ui.sid,S.ui.secid);
   if(sec.topics.find(t=>t.name.toLowerCase()===name.toLowerCase())){showToast('Pehle se hai!','error');return;}
-  const nt={id:Date.now(),name,notes:[],finalNotes:'',finalNotesRaw:[],newPoints:[],highlights:[],savedFacts:[],finalNotesAt:null,createdAt:new Date().toLocaleDateString('hi-IN')};
+  const nt={id:Date.now(),name,notes:[],finalNotes:'',finalNotesRaw:[],newPoints:[],highlights:[],savedFacts:[],finalNotesAt:null,hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
   sec.topics.push(nt);save();
   // ⚡ Attach listener for new topic immediately
   if(typeof _attachSingleTopicListener === 'function') _attachSingleTopicListener(nt.id);
@@ -9485,9 +9527,12 @@ function updateSavedBadge() {
 function renderLibraryTree(){
   const el=document.getElementById('libraryTree');
   const ae=S.exams.find(e=>e.id==S.activeExamId);
-  const ts=S.subjects.reduce((a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0),0);
-  document.getElementById('libStats').textContent=`— ${S.subjects.length} subjects, ${ts} topics`;
-  if(!S.subjects.length){el.innerHTML='<div class="empty"><div class="empty-icon">📚</div><p>Library empty hai.<br>Upar \"Add Content\" se shuru karo!</p></div>';return;}
+  // Admin sees everything (with hide/show controls); normal users only see
+  // subjects/sections/topics the admin has NOT hidden.
+  const subjList=visibleSubjectsTree();
+  const ts=subjList.reduce((a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0),0);
+  document.getElementById('libStats').textContent=`— ${subjList.length} subjects, ${ts} topics${_isAdmin?'':''}`;
+  if(!subjList.length){el.innerHTML=`<div class="empty"><div class="empty-icon">📚</div><p>${S.subjects.length?'Sab content abhi hide hai.':'Library empty hai.<br>Upar \"Add Content\" se shuru karo!'}</p></div>`;return;}
   const _CLRS=[
     {bar:'linear-gradient(160deg,#1565c0,#1976d2)',icon:'linear-gradient(135deg,#e3f2fd,#bbdefb)',nm:'#1565c0'},
     {bar:'linear-gradient(160deg,#6a1b9a,#8e24aa)',icon:'linear-gradient(135deg,#f3e5f5,#e1bee7)',nm:'#6a1b9a'},
@@ -9496,10 +9541,11 @@ function renderLibraryTree(){
     {bar:'linear-gradient(160deg,#283593,#3949ab)',icon:'linear-gradient(135deg,#e8eaf6,#c5cae9)',nm:'#283593'},
     {bar:'linear-gradient(160deg,#1b5e20,#2e7d32)',icon:'linear-gradient(135deg,#e8f5e9,#c8e6c9)',nm:'#1b5e20'},
   ];
-  el.innerHTML=S.subjects.map((subj,si)=>{
+  el.innerHTML=subjList.map((subj,si)=>{
     const tc=subj.sections.reduce((a,s)=>a+s.topics.length,0);
     const clr=_CLRS[si%_CLRS.length];
-    return `<div class="subject-block">
+    const subjHidden=!!subj.hidden;
+    return `<div class="subject-block" style="${subjHidden?'opacity:0.55;':''}">
       <div class="subject-header" onclick="toggleBlock('sb-${subj.id}')">
         <div class="subj-accent-bar" style="background:${clr.bar};"></div>
         <div class="subj-header-content">
@@ -9508,7 +9554,7 @@ function renderLibraryTree(){
               <span style="font-size:1.2rem;">📗</span>
             </div>
             <div>
-              <div class="subj-name" style="color:${clr.nm};">${subj.name}&nbsp;<button onclick="event.stopPropagation();doRename('subject',${subj.id},null,null,null)" title="Rename" style="background:none;border:none;cursor:pointer;font-size:0.65rem;opacity:0.4;padding:0 1px;vertical-align:middle;">✏️</button></div>
+              <div class="subj-name" style="color:${clr.nm};">${subj.name}&nbsp;<button onclick="event.stopPropagation();doRename('subject',${subj.id},null,null,null)" title="Rename" style="background:none;border:none;cursor:pointer;font-size:0.65rem;opacity:0.4;padding:0 1px;vertical-align:middle;">✏️</button>${subjHidden?'<span class="lib-chip" style="background:rgba(198,40,40,0.1);color:#c62828;margin-left:4px;">🚫 Hidden</span>':''}</div>
               <div class="subj-meta">
                 <span class="subj-pill">📂 ${subj.sections.length} sections</span>
                 <span class="subj-pill">📙 ${tc} topics</span>
@@ -9516,6 +9562,7 @@ function renderLibraryTree(){
             </div>
           </div>
           <div style="display:flex;gap:5px;align-items:center;flex-shrink:0;">
+            ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="toggleSubjectVisibility(${subj.id},event)" title="${subjHidden?'Users ko dikhao':'Users se hide karo'}" style="${subjHidden?'color:#c62828;':'color:#2e7d32;'}">${subjHidden?'🚫':'👁️'}</button>`:''}
             <button class="lib-action-btn" onclick="event.stopPropagation();openOrgModal('subject',${subj.id},null,null)" title="Organize">📦</button>
             <button class="lib-action-btn danger" onclick="delSubj(${subj.id},event)" title="Delete">🗑️</button>
             <span id="sb-${subj.id}-arr" style="font-size:0.72rem;color:var(--text2);margin-left:2px;">▼</span>
@@ -9526,16 +9573,18 @@ function renderLibraryTree(){
         ${!subj.sections.length
           ?`<div style="text-align:center;padding:20px 10px;color:var(--text2);font-size:0.76rem;font-style:italic;">📂 Koi section nahi — upar se add karo</div>`
           :subj.sections.map(sec=>{
-          return `<div class="section-block">
+          const secHidden=!!sec.hidden;
+          return `<div class="section-block" style="${secHidden?'opacity:0.55;':''}">
             <div class="section-header" onclick="toggleBlock('sc-${sec.id}')">
               <div class="sec-header-left">
                 <div class="sec-icon">📑</div>
                 <div>
-                  <div class="sec-name">${sec.name}&nbsp;<button onclick="event.stopPropagation();doRename('section',${subj.id},${sec.id},null,null)" title="Rename" style="background:none;border:none;cursor:pointer;font-size:0.65rem;opacity:0.4;padding:0 1px;vertical-align:middle;">✏️</button></div>
+                  <div class="sec-name">${sec.name}&nbsp;<button onclick="event.stopPropagation();doRename('section',${subj.id},${sec.id},null,null)" title="Rename" style="background:none;border:none;cursor:pointer;font-size:0.65rem;opacity:0.4;padding:0 1px;vertical-align:middle;">✏️</button>${secHidden?'<span class="lib-chip" style="background:rgba(198,40,40,0.1);color:#c62828;margin-left:4px;">🚫 Hidden</span>':''}</div>
                   <div class="sec-meta">📙 ${sec.topics.length} topics</div>
                 </div>
               </div>
               <div style="display:flex;gap:5px;align-items:center;">
+                ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="toggleSectionVisibility(${subj.id},${sec.id},event)" title="${secHidden?'Users ko dikhao':'Users se hide karo'}" style="${secHidden?'color:#c62828;':'color:#2e7d32;'}">${secHidden?'🚫':'👁️'}</button>`:''}
                 <button class="lib-action-btn" onclick="event.stopPropagation();openOrgModal('section',${subj.id},${sec.id},null)" title="Organize">📦</button>
                 <button class="lib-action-btn danger" onclick="delSec(${subj.id},${sec.id},event)" title="Delete">🗑️</button>
                 <span id="sc-${sec.id}-arr" style="font-size:0.72rem;color:var(--text2);margin-left:2px;">▼</span>
@@ -9558,9 +9607,10 @@ function renderLibraryTree(){
                   const accBg=pct===null?'transparent':pct>=70?'rgba(46,125,50,0.1)':pct>=40?'rgba(230,81,0,0.1)':'rgba(198,40,40,0.1)';
                   const tClrs=['#1565c0','#6a1b9a','#00695c','#c62828','#283593','#1b5e20'];
                   const tClr=tClrs[ti%tClrs.length];
-                  return `<div class="topic-item" style="--tc:${tClr};">
+                  const topHidden=!!t.hidden;
+                  return `<div class="topic-item" style="--tc:${tClr};${topHidden?'opacity:0.55;':''}">
                     <div class="topic-item-left">
-                      <div class="topic-name-el">${t.name}</div>
+                      <div class="topic-name-el">${t.name}${topHidden?' <span class="lib-chip" style="background:rgba(198,40,40,0.1);color:#c62828;">🚫 Hidden</span>':''}</div>
                       <div class="topic-meta-el">
                         <span>📝 ${t.notes.length} notes</span>
                         ${pct!==null?`<span class="lib-chip" style="background:${accBg};color:${accClr};">✓ ${pct}%</span>`:''}
@@ -9572,7 +9622,8 @@ function renderLibraryTree(){
                       </div>
                     </div>
                     <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
-                      <button class="lib-action-btn" onclick="viewTopic(${subj.id},${sec.id},${t.id})" title="View">👁️</button>
+                      ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="toggleTopicVisibility(${subj.id},${sec.id},${t.id},event)" title="${topHidden?'Users ko dikhao':'Users se hide karo'}" style="${topHidden?'color:#c62828;':'color:#2e7d32;'}">${topHidden?'🚫':'👁️'}</button>`:''}
+                      <button class="lib-action-btn" onclick="viewTopic(${subj.id},${sec.id},${t.id})" title="View">👀</button>
                       <button class="lib-action-btn" onclick="event.stopPropagation();openOrgModal('topic',${subj.id},${sec.id},${t.id})" title="Organize/Rename">📦</button>
                       <button class="lib-action-btn danger" onclick="delTop(${subj.id},${sec.id},${t.id},event)" title="Delete">🗑️</button>
                     </div>
@@ -10837,9 +10888,10 @@ function openTopicModal(eid){
   S._editExamId=eid;const exam=S.exams.find(e=>e.id==eid);
   document.getElementById('examTopicModalTitle').textContent=`${exam.name} -- Topics Select Karo`;
   let html='';
-  if(!S.subjects.length){html='<div class="empty"><p>Library mein topics nahi hain. Pehle Library mein add karo!</p></div>';}
+  const _visSubjs=visibleSubjectsTree();
+  if(!_visSubjs.length){html='<div class="empty"><p>Library mein topics nahi hain. Pehle Library mein add karo!</p></div>';}
   else{
-    S.subjects.forEach(subj=>{
+    _visSubjs.forEach(subj=>{
       html+=`<div style="margin-bottom:11px;"><div style="font-weight:800;font-size:0.86rem;color:var(--accent);margin-bottom:5px;">📗 ${subj.name}</div>`;
       subj.sections.forEach(sec=>{
         html+=`<div style="margin-left:10px;margin-bottom:5px;"><div style="font-weight:700;font-size:0.8rem;color:var(--accent2);margin-bottom:3px;">📘 ${sec.name}</div>`;
@@ -10868,21 +10920,21 @@ function saveExamTopics(){
 function updateQuizSelects(){
   const ss=document.getElementById('quizSubject');
   ss.innerHTML='<option value="all">Saare Subjects</option>';
-  S.subjects.forEach(s=>{ss.innerHTML+=`<option value="${s.id}">${s.name}</option>`;});
+  visibleSubjectsTree().forEach(s=>{ss.innerHTML+=`<option value="${s.id}">${s.name}</option>`;});
   updateQuizSections();
 }
 function updateQuizSections(){
   const sid=document.getElementById('quizSubject').value;
   const sel=document.getElementById('quizSection');
   sel.innerHTML='<option value="all">Saare Sections</option>';
-  if(sid!=='all'){const s=getSubj(parseInt(sid));if(s)s.sections.forEach(sec=>{sel.innerHTML+=`<option value="${sec.id}">${sec.name}</option>`;});}
+  if(sid!=='all'){const s=visibleSubjectsTree().find(x=>x.id==parseInt(sid));if(s)s.sections.forEach(sec=>{sel.innerHTML+=`<option value="${sec.id}">${sec.name}</option>`;});}
   updateQuizTopics();
 }
 function updateQuizTopics(){
   const sid=document.getElementById('quizSubject').value;const secid=document.getElementById('quizSection').value;
   const sel=document.getElementById('quizTopic');
   sel.innerHTML='<option value="all">Saare Topics</option>';
-  if(sid!=='all'&&secid!=='all'){const sec=getSec(parseInt(sid),parseInt(secid));if(sec)sec.topics.forEach(t=>{sel.innerHTML+=`<option value="${t.id}">${t.name}</option>`;});}
+  if(sid!=='all'&&secid!=='all'){const s=visibleSubjectsTree().find(x=>x.id==parseInt(sid));const sec=s?s.sections.find(x=>x.id==parseInt(secid)):null;if(sec)sec.topics.forEach(t=>{sel.innerHTML+=`<option value="${t.id}">${t.name}</option>`;});}
 }
 function updateQuizSourceVisibility(){
   var tid = document.getElementById('quizTopic').value;
