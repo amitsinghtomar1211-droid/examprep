@@ -4944,10 +4944,10 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
           <!-- Step 1 — Email verification -->
           <div id="fpwStep1">
             <div style="font-size:0.8rem;font-weight:700;color:#1565c0;margin-bottom:4px;">Reset Password</div>
-            <div style="font-size:0.72rem;color:#90a4ae;margin-bottom:11px;line-height:1.5;">Enter your registered email address to begin the verification process.</div>
+            <div style="font-size:0.72rem;color:#90a4ae;margin-bottom:11px;line-height:1.5;">Enter your registered email address and we'll send you a password reset link.</div>
             <div id="fpwMsg1" style="display:none;font-size:0.72rem;margin-bottom:9px;padding:7px 10px;border-radius:8px;line-height:1.45;"></div>
             <input type="email" class="login-inp" id="fpwEmail" placeholder="Email address" autocomplete="email" style="margin-bottom:8px;"/>
-            <button class="login-btn-primary" id="fpwBtn1" onclick="fpwCheckEmail()" style="margin-bottom:0;padding:11px;">Continue &rarr;</button>
+            <button class="login-btn-primary" id="fpwBtn1" onclick="fpwCheckEmail()" style="margin-bottom:0;padding:11px;">Send Reset Link</button>
           </div>
 
           <!-- Step 2 — Phone identity verification -->
@@ -21582,83 +21582,54 @@ function toggleForgotPw(){
   }
 }
 
-// Legacy stub — new flow uses fpwCheckEmail / fpwVerifyPhone
+// Legacy stub — new flow uses fpwCheckEmail
 async function sendForgotPwEmail(){ fpwCheckEmail(); }
 
-// ─── Forgot Password: Step 1 — verify email exists ───────────
+// ─── Forgot Password — single step: email → Firebase reset link ───
+// NOTE: Phone/OTP identity verification was removed. It required reading the
+// `appUsers` collection with an unauthenticated request (user isn't logged in
+// yet during password reset), which Firestore rules reject with
+// "Missing or insufficient permissions". Firebase's own reset-email flow
+// already verifies the email belongs to a real account, so no Firestore
+// lookup is needed here.
 var _fpwFoundUid = null;
 var _fpwFoundEmail = '';
 async function fpwCheckEmail(){
-  if(!_fbReady||!_db){ showLoginError('Service not ready. Please try again.'); return; }
+  if(!_fbReady||!_auth){ showLoginError('Service not ready. Please try again.'); return; }
   var emailEl=document.getElementById('fpwEmail');
   var email=(emailEl&&emailEl.value||'').trim();
   if(!email){ _fpwShowMsg(1,'Please enter your email address.','error'); return; }
   var btn=document.getElementById('fpwBtn1');
   var msg1=document.getElementById('fpwMsg1');
-  if(btn){btn.disabled=true;btn.textContent='Checking…';}
+  if(btn){btn.disabled=true;btn.textContent='Sending…';}
   if(msg1)msg1.style.display='none';
   try{
-    // Look for email in appUsers collection
-    var snap=await _db.collection('appUsers').get();
-    var found=null;
-    snap.forEach(function(doc){
-      var d=doc.data();
-      if(d.email&&d.email.toLowerCase()===email.toLowerCase()){ found={uid:doc.id,phone:d.phone||d.phoneNumber||''}; }
-    });
-    if(!found){
-      _fpwShowMsg(1,'No account found with this email address.','error');
-    } else {
-      _fpwFoundUid=found.uid; _fpwFoundEmail=email;
-      // show step 2
-      var s1=document.getElementById('fpwStep1'),s2=document.getElementById('fpwStep2');
-      if(s1)s1.style.display='none'; if(s2)s2.style.display='';
-      setTimeout(function(){var pe=document.getElementById('fpwPhone');if(pe)pe.focus();},120);
-    }
+    await _auth.sendPasswordResetEmail(email,{url:window.location.href});
+    _fpwFoundEmail=email;
+    // Show step 3 (success) directly — step 2 (phone) is no longer used
+    var s1=document.getElementById('fpwStep1'),s3=document.getElementById('fpwStep3');
+    if(s1)s1.style.display='none'; if(s3)s3.style.display='';
+    var sm=document.getElementById('fpwSuccessMsg');
+    if(sm)sm.textContent='A password reset link has been sent to '+email+'. Click the link in the email to set a new password.';
   } catch(e){
-    _fpwShowMsg(1,'Error: '+e.message,'error');
+    var errText=e.message;
+    if(e.code==='auth/invalid-email') errText='❌ Email format galat hai!';
+    if(e.code==='auth/user-not-found') errText='❌ Yeh email registered nahi hai!';
+    if(e.code==='auth/too-many-requests') errText='❌ Bahut zyada requests! Kuch der baad try karo.';
+    _fpwShowMsg(1,errText,'error');
   }
-  if(btn){btn.disabled=false;btn.textContent='Continue →';}
+  if(btn){btn.disabled=false;btn.textContent='Send Reset Link';}
 }
 
-// ─── Forgot Password: Step 2 — verify phone then send reset link ─
-async function fpwVerifyPhone(){
-  if(!_fpwFoundUid){ fpwGoBack(); return; }
-  var phoneEl=document.getElementById('fpwPhone');
-  var phone=(phoneEl&&phoneEl.value||'').replace(/\D/g,'').trim();
-  if(!phone||phone.length<8){ _fpwShowMsg(2,'Please enter a valid phone number.','error'); return; }
-  var btn=document.getElementById('fpwBtn2');
-  if(btn){btn.disabled=true;btn.textContent='Verifying…';}
-  _fpwShowMsg(2,'','');
-  try{
-    var doc=await _db.collection('appUsers').doc(_fpwFoundUid).get();
-    var stored='';
-    if(doc.exists){ var d=doc.data(); stored=(d.phone||d.phoneNumber||'').replace(/\D/g,''); }
-    // Compare last 10 digits for flexibility
-    var inputLast=phone.slice(-10), storedLast=stored.slice(-10);
-    if(!stored||inputLast!==storedLast){
-      _fpwShowMsg(2,'Phone number does not match our records. Please try again.','error');
-      if(btn){btn.disabled=false;btn.textContent='Send Reset Link';}
-      return;
-    }
-    // Phone verified — send Firebase reset email
-    await _auth.sendPasswordResetEmail(_fpwFoundEmail,{url:window.location.href});
-    // Show step 3
-    var s2=document.getElementById('fpwStep2'),s3=document.getElementById('fpwStep3');
-    if(s2)s2.style.display='none'; if(s3)s3.style.display='';
-    var sm=document.getElementById('fpwSuccessMsg');
-    if(sm)sm.textContent='A password reset link has been sent to '+_fpwFoundEmail+'. Click the link in the email to set a new password.';
-    _fpwFoundUid=null; _fpwFoundEmail='';
-  } catch(e){
-    _fpwShowMsg(2,'Error: '+e.message,'error');
-    if(btn){btn.disabled=false;btn.textContent='Send Reset Link';}
-  }
-}
+// Kept for backward compatibility with any lingering references — no longer
+// part of the active UI flow (phone verification step was removed).
+async function fpwVerifyPhone(){ fpwGoBack(); }
 
 function fpwGoBack(){
   _fpwFoundUid=null;
-  var s1=document.getElementById('fpwStep1'),s2=document.getElementById('fpwStep2');
+  var s1=document.getElementById('fpwStep1'),s2=document.getElementById('fpwStep2'),s3=document.getElementById('fpwStep3');
   var m2=document.getElementById('fpwMsg2');
-  if(s1)s1.style.display=''; if(s2)s2.style.display='none';
+  if(s1)s1.style.display=''; if(s2)s2.style.display='none'; if(s3)s3.style.display='none';
   if(m2)m2.style.display='none';
 }
 
