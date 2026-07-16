@@ -21148,13 +21148,19 @@ var ADMIN_EMAIL = 'amitsinghtomar1211@gmail.com'; // 👑 Admin Gmail
 // ⚠️  ADMIN KA SECRET MASTER KEY — sirf admin jaanta hai, code mein fixed hai
 //     Yeh kabhi Firestore mein nahi jaata — sirf local check hota hai
 //     Change karna ho to yahan edit karo aur naya HTML upload karo
-var ADMIN_MASTER_KEY = 'ADMIN-EPP-9X7K2'; // 👑 Admin ka permanent private key
+var ADMIN_MASTER_KEY = 'ADMIN-EPP-K9X72M'; // 👑 Admin ka permanent private key (changed)
 var USER_ACCESS_KEY  = 'FRIEND-EPP-2025';  // 🔑 Dosto ke liye shared key — ise badlo aur file share karo
 // 🔐 ADMIN AUTO-LOGIN: Yahan admin ka Firebase email/password daalo → master key daalte hi seedha login
 // Agar khali rakho to manually email+pass dalna padega
 var ADMIN_AUTO_EMAIL = 'amitsinghtomar1211@gmail.com'; // admin ka registered email
 var ADMIN_AUTO_PASS  = '12345678';  // ← Yahan apna Firebase password daalo (sirf email/password auth ke liye)
 var _isAdmin = false;
+// ══════════════════════════════════════════════════════════════
+// 🔒 SINGLE ADMIN SESSION LOCK — Multiple admin login se bachao
+// ══════════════════════════════════════════════════════════════
+var _adminSessionId      = '';    // Is device ka unique session token
+var _adminSessionLocked  = false; // true = kisi aur device pe admin active hai, saves blocked
+var _adminSessionListener = null; // Firestore listener handle
 // Per-user feature permissions loaded from Firebase
 var _userPerms = {quiz:false,quizvault:false,history:false,gamevault:false,stats:false,exams:false,testseries:false,aichat:false,smartnotes:false,savedFacts:false,studycoach:false,highlight:false,notesEdit:false,masterNotes:false,aiDraw:false,flashcards:false,pdfNotes:false,ytNotes:false,cloudSave:false,dataBackup:false,apiSettings:false};
 var _ALL_FEATURES = [
@@ -21313,6 +21319,17 @@ function initFirebase(){
         if(_isAdmin){
           _effectiveUID = user.uid; ADMIN_UID_STORED = user.uid;
           try{ await _db.collection('appConfig').doc('admin').set({ uid: user.uid, email: user.email, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }); } catch(e){}
+          // 🔒 SINGLE SESSION LOCK — naya session token generate karo
+          _adminSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2,9);
+          _adminSessionLocked = false;
+          localStorage.setItem('epp_admin_session', _adminSessionId);
+          try{
+            await _db.collection('appConfig').doc('adminSession').set({
+              sessionId: _adminSessionId,
+              device: (navigator.userAgent||'').substr(0,80),
+              loginAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+          }catch(e){ console.warn('[AdminSession] Write failed:', e.message); }
           _registerAppUser(user, true);
           _eppKeyPassed = true; _eppKeyIsAdmin = true;
           hideLoginScreen();
@@ -21331,15 +21348,19 @@ function initFirebase(){
           } catch(e){ console.error('[Auth] User check failed:', e.code, e.message); showToast('⚠️ Account check failed. Dobara try karo.','error'); setTimeout(()=>_auth.signOut(),2000); return; }
         }
         applyAccessMode(); hideLoginScreen(); updateUserUI(user);
-        loadFromFirebase().then(function(){ _attachRealtimeListener(); _initUpdatesListener(); if(_isAdmin) setTimeout(_adminLoadRecentUpdates, 1500); if(!_isAdmin && _currentUser) loadUserPermissions(_currentUser.uid); });
+        loadFromFirebase().then(function(){ _attachRealtimeListener(); _initUpdatesListener(); if(_isAdmin){ _startAdminSessionWatch(); setTimeout(_adminLoadRecentUpdates, 1500); } if(!_isAdmin && _currentUser) loadUserPermissions(_currentUser.uid); });
       } else {
         _currentUser = null; _isAdmin = false; _effectiveUID = null; _userPerms = {quiz:false,quizvault:false,history:false,gamevault:false,stats:false,exams:false,testseries:false,aichat:false,smartnotes:false,savedFacts:false,studycoach:false,highlight:false,notesEdit:false,masterNotes:false,aiDraw:false,flashcards:false,pdfNotes:false,ytNotes:false,cloudSave:false,dataBackup:false,apiSettings:false};
         _eppKeyPassed = false; _eppKeyIsAdmin = false;
         if(_realtimeListener){ _realtimeListener(); _realtimeListener = null; }
+        if(_adminSessionListener){ _adminSessionListener(); _adminSessionListener = null; }
+        _adminSessionId = ''; _adminSessionLocked = false;
+        var _asBanner = document.getElementById('_adminSessionBanner'); if(_asBanner) _asBanner.remove();
         if(window._tsQuizListener){ try{ window._tsQuizListener(); }catch(e){} window._tsQuizListener = null; }
         if(window._tsAttemptListener){ try{ window._tsAttemptListener(); }catch(e){} window._tsAttemptListener = null; }
         if(typeof _stopUpdatesListener === 'function') _stopUpdatesListener();
         localStorage.removeItem('epp_session');
+        localStorage.removeItem('epp_admin_session');
         updateUserUI(null);
         showLoginScreen();
       }
@@ -29626,6 +29647,12 @@ async function saveToFirebase(){
   if(!_db || !_currentUser) return;
   // 🔒 READ-ONLY: Sirf admin data save kar sakta hai
   if(!_isAdmin){ console.log('[saveToFirebase] User is read-only — save blocked.'); return; }
+  // 🔒 SINGLE SESSION LOCK: Dusri jagah se admin active hai to yahan save band
+  if(_adminSessionLocked){
+    showToast('⚠️ Save BLOCKED — Admin kisi aur device pe logged in hai! Upar banner mein "Yahan Login Karo" dabao.','error');
+    setSyncStatus('error');
+    return;
+  }
   setSyncStatus('syncing');
   try{
     var uid = _effectiveUID;
@@ -30576,6 +30603,60 @@ function _refreshUpdatesBadge(){
     badge.textContent   = unread > 9 ? '9+' : String(unread);
   } else {
     badge.style.display = 'none';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// 🔒 ADMIN SINGLE-SESSION WATCH — Multiple login detect karo
+// ══════════════════════════════════════════════════════════════
+function _startAdminSessionWatch(){
+  if(_adminSessionListener){ _adminSessionListener(); _adminSessionListener = null; }
+  if(!_isAdmin || !_db) return;
+
+  _adminSessionListener = _db.collection('appConfig').doc('adminSession')
+    .onSnapshot(function(doc){
+      if(!doc.exists || !_isAdmin) return;
+      var remoteId = (doc.data() && doc.data().sessionId) || '';
+      // Agar remote session ID alag hai to koi aur admin logged in hai
+      if(_adminSessionId && remoteId && remoteId !== _adminSessionId){
+        _adminSessionLocked = true;
+        showToast('⚠️ Admin kisi aur device se login hua hai! Saves BLOCKED hain.','error');
+        // Persistent warning banner show karo
+        var b = document.getElementById('_adminSessionBanner');
+        if(!b){
+          b = document.createElement('div');
+          b.id = '_adminSessionBanner';
+          b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#b71c1c;color:#fff;padding:13px 16px;font-weight:700;font-size:0.88rem;text-align:center;box-shadow:0 3px 12px rgba(0,0,0,0.4);';
+          b.innerHTML = '⚠️ Admin kisi aur device pe active hai — Saves BLOCKED! '
+            + '<button onclick="_reclaimAdminSession()" style="background:#fff;color:#b71c1c;border:none;border-radius:8px;padding:5px 14px;font-weight:800;cursor:pointer;margin-left:12px;font-size:0.85rem;">✅ Yahan Login Karo (Session Lo)</button>';
+          document.body.prepend(b);
+        }
+      } else if(remoteId === _adminSessionId){
+        // Apna hi session confirm hua — sab theek hai
+        _adminSessionLocked = false;
+        var b2 = document.getElementById('_adminSessionBanner');
+        if(b2) b2.remove();
+      }
+    }, function(e){ console.warn('[AdminSession] Watch error:', e.message); });
+}
+
+// Admin session wapas lo (agar dusri jagah se login ho gaya tha)
+async function _reclaimAdminSession(){
+  if(!_isAdmin || !_db){ showToast('❌ Admin login nahi hai.','error'); return; }
+  try{
+    _adminSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2,9);
+    await _db.collection('appConfig').doc('adminSession').set({
+      sessionId: _adminSessionId,
+      device: (navigator.userAgent||'').substr(0,80),
+      loginAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    _adminSessionLocked = false;
+    localStorage.setItem('epp_admin_session', _adminSessionId);
+    var b = document.getElementById('_adminSessionBanner');
+    if(b) b.remove();
+    showToast('✅ Admin session aapke paas aa gaya! Ab aap save kar sakte hain.','success');
+  }catch(e){
+    showToast('❌ Session reclaim fail: ' + e.message,'error');
   }
 }
 
