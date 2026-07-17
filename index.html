@@ -20118,15 +20118,30 @@ async function saveEditedNote() {
     } catch(e) { console.warn('Image IDB error on save:', e); }
   }
   var ok = _doSaveNoteData();
+  console.log('[💾 saveEditedNote] _doSaveNoteData result: '+ok+' | sid:'+_editorState.sid+' tid:'+_editorState.tid+' noteIdx:'+_editorState.noteIdx+' type:'+(_editorState.specialType||'note'));
   if(!ok) {
+    console.error('[💾 saveEditedNote] ❌ _doSaveNoteData failed — data save blocked');
     showToast('Save nahi ho saka!', 'error');
     return;
   }
 
   save(); // localStorage mein save
-  // ✅ CRITICAL FIX: Admin ke edits turant Firebase mein bhi save karo
-  // (Pehle sirf localStorage update hota tha, Firebase miss hota tha)
-  if(_isAdmin && _currentUser && _db) saveToFirebase();
+  console.info('[💾 saveEditedNote] ✅ localStorage updated');
+
+  // ✅ CRITICAL FIX: Admin ke edits turant Firebase mein bhi AWAITED save karo
+  var _fbResult = null;
+  if(_isAdmin && _currentUser && _db){
+    console.info('[💾 saveEditedNote] Firebase save shuru ho raha hai...');
+    _fbResult = await saveToFirebase();
+    if(_fbResult && _fbResult.ok){
+      console.info('[💾 saveEditedNote] ✅ Firebase update SUCCESS — ops:'+_fbResult.ops+' time:'+_fbResult.ms+'ms');
+    } else if(_fbResult){
+      console.error('[💾 saveEditedNote] ❌ Firebase update FAILED — '+_fbResult.error+' ('+_fbResult.code+')');
+    }
+  } else {
+    console.warn('[💾 saveEditedNote] Firebase skip — isAdmin:'+_isAdmin+' user:'+!!_currentUser+' db:'+!!_db);
+  }
+
   _editorState.modified = false;
 
   // Save button: "Saved!" dikhao, phir hide karo
@@ -20159,27 +20174,46 @@ async function saveEditedNote() {
     viewTopic(_editorState.sid, _editorState.secid, _editorState.tid);
   }
 
-  showSaveSuccessPopup();
+  showSaveSuccessPopup(_fbResult);
 }
-function showSaveSuccessPopup() {
+function showSaveSuccessPopup(fbResult) {
   // Remove purana agar hai
   const old = document.getElementById('saveSuccessPopup');
   if(old) old.remove();
+
+  // Firebase status determine karo
+  var fbOk   = fbResult && fbResult.ok;
+  var fbFail = fbResult && !fbResult.ok;
+  var fbSkip = !fbResult; // admin nahi tha ya db nahi tha
+
+  // Border/icon/text decide karo
+  var borderColor = fbOk ? 'var(--green)' : fbFail ? '#e65100' : 'var(--border)';
+  var mainIcon    = fbOk ? '✅' : fbFail ? '⚠️' : '💾';
+  var fbLine      = '';
+  if(fbOk)   fbLine = '<div style="margin-top:8px;font-size:0.72rem;padding:4px 10px;border-radius:20px;background:rgba(46,125,50,0.10);color:var(--green);display:inline-block;">☁️ Firebase: UPDATE SUCCESSFUL ('+fbResult.ms+'ms)</div>';
+  if(fbFail) fbLine = '<div style="margin-top:8px;font-size:0.72rem;padding:4px 10px;border-radius:20px;background:rgba(198,40,40,0.10);color:var(--red);display:inline-block;">❌ Firebase ERROR: '+fbResult.error+'<br>Code: '+(fbResult.code||'?')+'</div>';
+  if(fbSkip) fbLine = '<div style="margin-top:8px;font-size:0.72rem;padding:4px 10px;border-radius:20px;background:rgba(0,0,0,0.05);color:var(--text2);display:inline-block;">📦 Local save only (Firebase skip)</div>';
 
   const popup = document.createElement('div');
   popup.id = 'saveSuccessPopup';
   popup.style.cssText = `
     position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.8);
-    background:var(--surface);border:2px solid var(--green);border-radius:16px;
-    padding:24px 28px;z-index:9998;text-align:center;
+    background:var(--surface);border:2px solid ${borderColor};border-radius:16px;
+    padding:22px 24px;z-index:9998;text-align:center;
     box-shadow:0 8px 40px rgba(0,0,0,0.18);
     opacity:0;transition:all 0.25s cubic-bezier(0.34,1.56,0.64,1);
-    max-width:280px;width:90%;
+    max-width:320px;width:92%;
   `;
   popup.innerHTML = `
-    <div style="font-size:2.2rem;margin-bottom:8px;">✅</div>
-    <div style="font-size:1rem;font-weight:800;color:var(--green);margin-bottom:4px;">Notes Save Ho Gaye!</div>
-    <div style="font-size:0.78rem;color:var(--text2);line-height:1.5;">Aapke changes safely save ho gaye hain.<br>Aap inhe dobara edit karke phir se save kar sakte hain.</div>
+    <div style="font-size:2rem;margin-bottom:6px;">${mainIcon}</div>
+    <div style="font-size:0.95rem;font-weight:800;color:${fbFail?'var(--accent2)':'var(--green)'};margin-bottom:4px;">
+      ${fbFail ? 'Local Save Hua — Firebase Error!' : 'Notes Save Ho Gaye!'}
+    </div>
+    <div style="font-size:0.75rem;color:var(--text2);line-height:1.5;">
+      📦 LocalStorage: ✅ Updated<br>
+      ${fbLine}
+    </div>
+    ${fbFail ? '<div style="margin-top:8px;font-size:0.7rem;color:var(--text2);">Debug console (10x tap) mein poori detail dekhein</div>' : ''}
   `;
   document.body.appendChild(popup);
 
@@ -20191,12 +20225,13 @@ function showSaveSuccessPopup() {
     });
   });
 
-  // Auto hide after 2 seconds
+  // Auto hide — error ho to zyada der raho
+  var hideDelay = fbFail ? 5000 : 2500;
   setTimeout(() => {
     popup.style.opacity = '0';
     popup.style.transform = 'translate(-50%,-50%) scale(0.8)';
     setTimeout(() => popup.remove(), 300);
-  }, 2000);
+  }, hideDelay);
 }
 
 // ---- Viewer mode (read-only, no edit tab) ----
@@ -21390,7 +21425,21 @@ function initFirebase(){
           } catch(e){ console.error('[Auth] User check failed:', e.code, e.message); showToast('⚠️ Account check failed. Dobara try karo.','error'); setTimeout(()=>_auth.signOut(),2000); return; }
         }
         applyAccessMode(); hideLoginScreen(); updateUserUI(user);
-        loadFromFirebase().then(function(){ _attachRealtimeListener(); _initUpdatesListener(); if(_isAdmin){ _startAdminSessionWatch(); setTimeout(_adminLoadRecentUpdates, 1500); } if(!_isAdmin && _currentUser) loadUserPermissions(_currentUser.uid); setTimeout(function(){ if(typeof pullFromCloud==='function' && _currentUser && _db) pullFromCloud(); }, 1500); });
+        console.info('[🔐 AUTH] Login successful — email:'+user.email+' | isAdmin:'+_isAdmin+' | effectiveUID:'+_effectiveUID);
+        loadFromFirebase().then(function(){
+          console.info('[🔐 AUTH] loadFromFirebase complete — ab listeners attach ho rahe hain');
+          _attachRealtimeListener(); _initUpdatesListener();
+          if(_isAdmin){ _startAdminSessionWatch(); setTimeout(_adminLoadRecentUpdates, 1500); }
+          if(!_isAdmin && _currentUser) loadUserPermissions(_currentUser.uid);
+          setTimeout(function(){
+            if(typeof pullFromCloud==='function' && _currentUser && _db){
+              console.info('[🔐 AUTH] Auto pullFromCloud start (1.5s delay ke baad)');
+              pullFromCloud();
+            } else {
+              console.warn('[🔐 AUTH] Auto pullFromCloud SKIP — pullFromCloud:'+typeof pullFromCloud+' user:'+!!_currentUser+' db:'+!!_db);
+            }
+          }, 1500);
+        });
       } else {
         _currentUser = null; _isAdmin = false; _effectiveUID = null; _userPerms = {quiz:false,quizvault:false,history:false,gamevault:false,stats:false,exams:false,testseries:false,aichat:false,smartnotes:false,savedFacts:false,studycoach:false,highlight:false,notesEdit:false,masterNotes:false,aiDraw:false,flashcards:false,pdfNotes:false,ytNotes:false,cloudSave:false,dataBackup:false,apiSettings:false};
         _eppKeyPassed = false; _eppKeyIsAdmin = false;
@@ -29686,15 +29735,19 @@ async function saveMetaToFirebase(){
 // ⚡ FULL SAVE — initial login / syncNow
 // ══���═══════════════════════════════════════
 async function saveToFirebase(){
-  if(!_db || !_currentUser) return;
+  if(!_db || !_currentUser){ console.warn('[🔥 saveToFirebase] SKIP: db='+!!_db+' user='+!!_currentUser); return; }
   // 🔒 READ-ONLY: Sirf admin data save kar sakta hai
-  if(!_isAdmin){ console.log('[saveToFirebase] User is read-only — save blocked.'); return; }
+  if(!_isAdmin){ console.log('[🔥 saveToFirebase] BLOCKED: user is NOT admin — read-only mode'); return; }
   // 🔒 SINGLE SESSION LOCK: Dusri jagah se admin active hai to yahan save band
   if(_adminSessionLocked){
+    console.error('[🔥 saveToFirebase] BLOCKED: admin session locked (another device active)');
     showToast('⚠️ Save BLOCKED — Admin kisi aur device pe logged in hai! Upar banner mein "Yahan Login Karo" dabao.','error');
     setSyncStatus('error');
     return;
   }
+  var _saveStartTime = Date.now();
+  var _topicCount = (S.subjects||[]).reduce(function(a,s){ return a+s.sections.reduce(function(b,sec){ return b+sec.topics.length; },0); },0);
+  console.info('[🔥 saveToFirebase] START — uid:'+_effectiveUID+' | subjects:'+((S.subjects||[]).length)+' | topics:'+_topicCount+' | isAdmin:'+_isAdmin);
   setSyncStatus('syncing');
   try{
     var uid = _effectiveUID;
@@ -29746,29 +29799,36 @@ async function saveToFirebase(){
     });
 
     // Batch commit in chunks of 499
+    console.log('[🔥 saveToFirebase] Total ops to commit: '+allOps.length+' (batches: '+Math.ceil(allOps.length/499)+')');
     for(var i=0; i<allOps.length; i+=499){
       var chunk = allOps.slice(i, i+499);
       var batch = _db.batch();
       chunk.forEach(function(op){ batch.set(op.ref, op.data, {merge:true}); });
       await batch.commit();
+      console.log('[🔥 saveToFirebase] Batch '+(Math.floor(i/499)+1)+' committed ('+chunk.length+' ops)');
     }
 
     // After full save, re-attach topic listeners for any new topics
     _attachTopicListeners();
 
+    var _elapsed = Date.now() - _saveStartTime;
+    console.info('[🔥 saveToFirebase] ✅ SUCCESS — '+allOps.length+' ops in '+_elapsed+'ms | uid:'+uid);
     setSyncStatus('synced');
+    return { ok: true, ops: allOps.length, ms: _elapsed };
   }catch(e){
-    console.error('Firebase full save error:', e);
+    console.error('[🔥 saveToFirebase] ❌ ERROR — code:'+e.code+' | msg:'+e.message+' | uid:'+_effectiveUID);
     setSyncStatus('error');
     showToast('Sync error — data local mein safe hai', 'error');
+    return { ok: false, error: e.message, code: e.code };
   }
 }
 
 async function loadFromFirebase(){
-  if(!_db || !_currentUser) return;
+  if(!_db || !_currentUser){ console.warn('[📥 loadFromFirebase] SKIP: db='+!!_db+' user='+!!_currentUser); return; }
 
   if(_justRestored){
     _justRestored = false;
+    console.info('[📥 loadFromFirebase] _justRestored=true → uploading local data to Firebase');
     setSyncStatus('syncing');
     await saveToFirebase();
     setSyncStatus('synced');
@@ -29776,14 +29836,17 @@ async function loadFromFirebase(){
     return;
   }
 
+  var _loadStart = Date.now();
   setSyncStatus('syncing');
   try{
     const uid = _effectiveUID;
     const localTopicCount = (S.subjects||[]).reduce(
       (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
+    console.info('[📥 loadFromFirebase] START — uid:'+uid+' | isAdmin:'+_isAdmin+' | localTopics:'+localTopicCount);
 
     const metaDoc = await _db.collection('users').doc(uid).get();
     if(!metaDoc.exists){
+      console.warn('[📥 loadFromFirebase] Cloud mein koi doc nahi (pehli baar) — localTopics:'+localTopicCount);
       // Pehli baar — local upload karo
       if(localTopicCount > 0){ await saveToFirebase(); showToast('Data cloud pe save ho gaya! ☁️','success'); }
       // Test series bhi load karo (agar kisi aur collection mein pehle se hai)
@@ -29794,6 +29857,7 @@ async function loadFromFirebase(){
     const meta = metaDoc.data();
     const isV2 = meta.topicFormat === 'v2';
     const subjectIds = meta.subjectIds || [];
+    console.log('[📥 loadFromFirebase] Cloud meta found — format:'+(isV2?'v2':'v1/legacy')+' | subjectIds:'+subjectIds.length+' | lastSync:'+(meta.lastSync ? meta.lastSync.toDate ? meta.lastSync.toDate().toLocaleString('hi-IN') : meta.lastSync : 'N/A'));
 
     var cloudTopicCount = 0;
     var loadedSubjects = null;
@@ -29855,8 +29919,11 @@ async function loadFromFirebase(){
         (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
     }
 
+    console.log('[📥 loadFromFirebase] Cloud topics counted: '+cloudTopicCount+' | local topics: '+localTopicCount);
+
     // Cloud bilkul khaali hai (pehli baar ya delete hua) → sirf tab local upload karo
     if(!loadedSubjects || cloudTopicCount === 0){
+      console.warn('[📥 loadFromFirebase] PATH: Cloud khaali → '+((_isAdmin && localTopicCount>0)?'local upload karega':'kuch nahi karega'));
       if(_isAdmin && localTopicCount > 0){
         await saveToFirebase();
         showToast('Data cloud pe save ho gaya! ☁️ (' + localTopicCount + ' topics)', 'success');
@@ -29864,8 +29931,7 @@ async function loadFromFirebase(){
       setSyncStatus('synced'); return;
     }
     // ✅ FIX: Agar cloud mein data hai to HAMESHA cloud se lo, local count se compare mat karo
-    // (Admin ke edits ab saveEditedNote() + _saveAndClose() se directly Firebase mein jaate hain)
-    // Purani galat logic: localTopicCount > cloudTopicCount → upload (stale local se Firebase overwrite hoti thi)
+    console.info('[📥 loadFromFirebase] PATH: Cloud se load karega ('+cloudTopicCount+' topics) — cloud is source of truth');
 
     // Cloud data load + local editor HTML merge
     // ✅ FIX: sirf LOCAL editor data preserve karo jab local NEWER ho (timestamp compare)
@@ -29928,6 +29994,7 @@ async function loadFromFirebase(){
     renderExamSwitcher(); renderLibrarySelects(); renderLibraryTree();
     renderExamsList(); updateQuizSelects(); renderStats(); updateModePill();
     updateHistBadge(); updateSavedBadge(); updateVaultBadge(); if(typeof updateGameVaultBadge==="function") updateGameVaultBadge(); checkPausedQuiz();
+    console.info('[📥 loadFromFirebase] ✅ SUCCESS — '+cloudTopicCount+' topics loaded in '+(Date.now()-_loadStart)+'ms');
     showToast('Cloud se data load ho gaya! ☁️ (' + cloudTopicCount + ' topics)', 'success');
     setSyncStatus('synced');
 
@@ -29939,10 +30006,10 @@ async function loadFromFirebase(){
     if(typeof tsLoadFromCloud === 'function') tsLoadFromCloud();
 
     // Agar purana format tha to naye format mein re-save karo
-    if(!isV2){ setTimeout(function(){ saveToFirebase(); }, 2000); }
+    if(!isV2){ console.warn('[📥 loadFromFirebase] Old format (v1) → re-saving in v2 format after 2s'); setTimeout(function(){ saveToFirebase(); }, 2000); }
 
   }catch(e){
-    console.error('Firebase load error:', e);
+    console.error('[📥 loadFromFirebase] ❌ ERROR — code:'+e.code+' | msg:'+e.message);
     setSyncStatus('error');
     if(e.message && e.message.includes('offline')){
       showToast('Offline — local data use ho raha hai','success');
@@ -29963,16 +30030,19 @@ async function syncNow(){
 
 // ✅ PULL FROM CLOUD — dusri device ke latest notes force-fetch karo
 async function pullFromCloud(){
-  if(!_db || !_currentUser){ showToast('Pehle login karo!','error'); return; }
+  if(!_db || !_currentUser){ console.warn('[⬇️ pullFromCloud] SKIP: db='+!!_db+' user='+!!_currentUser); showToast('Pehle login karo!','error'); return; }
   closeModal('userMenuModal');
+  var _pullStart = Date.now();
+  console.info('[⬇️ pullFromCloud] START — uid:'+_effectiveUID+' | isAdmin:'+_isAdmin);
   showToast('☁️ Cloud se latest notes la rahe hain...', 'info');
   try {
     var uid = _effectiveUID;
     var metaDoc = await _db.collection('users').doc(uid).get();
-    if(!metaDoc.exists){ showToast('Cloud par koi data nahi mila.','error'); return; }
+    if(!metaDoc.exists){ console.warn('[⬇️ pullFromCloud] Cloud mein koi doc nahi mila — uid:'+uid); showToast('Cloud par koi data nahi mila.','error'); return; }
     var meta = metaDoc.data();
     var subjectIds = meta.subjectIds || [];
-    if(!subjectIds.length){ showToast('Cloud par koi subject nahi mila.','error'); return; }
+    console.log('[⬇️ pullFromCloud] Cloud meta — subjectIds:'+subjectIds.length+' | lastSync:'+(meta.lastSync ? meta.lastSync.toDate ? meta.lastSync.toDate().toLocaleString('hi-IN') : meta.lastSync : 'N/A'));
+    if(!subjectIds.length){ console.warn('[⬇️ pullFromCloud] subjectIds khaali — koi subjects nahi'); showToast('Cloud par koi subject nahi mila.','error'); return; }
 
     var shellDocs = await Promise.all(
       subjectIds.map(function(id){
@@ -30001,7 +30071,9 @@ async function pullFromCloud(){
         return shell;
       }).filter(Boolean);
 
-    if(!newSubjects.length){ showToast('Cloud data load nahi hua.','error'); return; }
+    var _pullTopicCount = newSubjects.reduce(function(a,s){ return a+s.sections.reduce(function(b,sec){ return b+sec.topics.length; },0); },0);
+    console.log('[⬇️ pullFromCloud] Loaded: '+newSubjects.length+' subjects, '+_pullTopicCount+' topics');
+    if(!newSubjects.length){ console.error('[⬇️ pullFromCloud] ❌ newSubjects khaali — koi data nahi mila'); showToast('Cloud data load nahi hua.','error'); return; }
 
     // Directly update S — koi comparison nahi, cloud ka data final hai
     S.subjects          = newSubjects;
@@ -30024,9 +30096,10 @@ async function pullFromCloud(){
     _loadGameVaultFromFirebase();
     _attachGameVaultRealtimeListener();
     if(typeof tsLoadFromCloud === 'function') tsLoadFromCloud();
+    console.info('[⬇️ pullFromCloud] ✅ SUCCESS — '+_pullTopicCount+' topics in '+(Date.now()-_pullStart)+'ms');
     showToast('✅ Latest notes aa gaye!', 'success');
   } catch(e) {
-    console.error('[PULL] Error:', e.code, e.message, e);
+    console.error('[⬇️ pullFromCloud] ❌ ERROR — code:'+e.code+' | msg:'+e.message);
     showToast('❌ Pull error: ' + (e.message || 'Unknown'), 'error');
   }
 }
