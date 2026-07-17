@@ -21425,6 +21425,7 @@ function initFirebase(){
           } catch(e){ console.error('[Auth] User check failed:', e.code, e.message); showToast('⚠️ Account check failed. Dobara try karo.','error'); setTimeout(()=>_auth.signOut(),2000); return; }
         }
         applyAccessMode(); hideLoginScreen(); updateUserUI(user);
+        showDataLoadingOverlay(); // ← Progress bar: "Latest Data Updating..."
         console.info('[🔐 AUTH] Login successful — email:'+user.email+' | isAdmin:'+_isAdmin+' | effectiveUID:'+_effectiveUID);
         loadFromFirebase().then(function(){
           console.info('[🔐 AUTH] loadFromFirebase complete — ab listeners attach ho rahe hain');
@@ -21437,6 +21438,7 @@ function initFirebase(){
               pullFromCloud();
             } else {
               console.warn('[🔐 AUTH] Auto pullFromCloud SKIP — pullFromCloud:'+typeof pullFromCloud+' user:'+!!_currentUser+' db:'+!!_db);
+              hideDataLoadingOverlay(); // pullFromCloud nahi chala — overlay manually band karo
             }
           }, 1500);
         });
@@ -30097,9 +30099,11 @@ async function pullFromCloud(){
     _attachGameVaultRealtimeListener();
     if(typeof tsLoadFromCloud === 'function') tsLoadFromCloud();
     console.info('[⬇️ pullFromCloud] ✅ SUCCESS — '+_pullTopicCount+' topics in '+(Date.now()-_pullStart)+'ms');
+    hideDataLoadingOverlay(); // ← Progress bar band karo
     showToast('✅ Latest notes aa gaye!', 'success');
   } catch(e) {
     console.error('[⬇️ pullFromCloud] ❌ ERROR — code:'+e.code+' | msg:'+e.message);
+    hideDataLoadingOverlay(); // ← Error par bhi band karo
     showToast('❌ Pull error: ' + (e.message || 'Unknown'), 'error');
   }
 }
@@ -59209,13 +59213,21 @@ function applyAccessMode(){
 async function _registerAppUser(user, isAdmin){
   if(!_db || !user) return;
   try {
+    // Read existing doc to shift loginHistory (last 3 logins)
+    var existingDoc = await _db.collection('appUsers').doc(user.uid).get();
+    var existingHistory = (existingDoc.exists && existingDoc.data().loginHistory) ? existingDoc.data().loginHistory : [];
+    var newEntry = { ts: new Date().toISOString(), device: (navigator.userAgent||'').substr(0,80) };
+    // Prepend new login, keep only last 3
+    var updatedHistory = [newEntry].concat(existingHistory).slice(0, 3);
+
     await _db.collection('appUsers').doc(user.uid).set({
       uid: user.uid,
       email: user.email || '',
       name: user.displayName || (user.email ? user.email.split('@')[0] : 'User'),
       photoURL: user.photoURL || null,
       isAdmin: isAdmin,
-      lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+      lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
+      loginHistory: updatedHistory
     }, { merge: true });
   } catch(e){ /* ignore */ }
 }
@@ -59556,6 +59568,34 @@ function renderAdminUserList(users){
     if(u.phone) h += '<div style="font-size:0.68rem;color:var(--text2);">📱 ' + u.phone + '</div>';
     if(u.exam) h += '<div style="font-size:0.68rem;color:var(--text2);">📚 ' + u.exam + (u.gender ? ' · ' + u.gender : '') + '</div>';
     if(regAt) h += '<div style="font-size:0.65rem;color:var(--text2);">🗓️ Registered: ' + regAt + '</div>';
+
+    // ── LOGIN HISTORY (last 3) ──
+    if(u.loginHistory && u.loginHistory.length){
+      h += '<div style="margin-top:6px;padding:6px 8px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);">';
+      h += '<div style="font-size:0.63rem;font-weight:800;color:var(--text2);margin-bottom:4px;letter-spacing:0.5px;">🕐 LAST LOGINS</div>';
+      u.loginHistory.slice(0,3).forEach(function(entry, i){
+        var ts = entry && entry.ts ? new Date(entry.ts) : null;
+        if(!ts || isNaN(ts)) return;
+        var now = Date.now();
+        var diff = now - ts.getTime();
+        var relTime = diff < 60000 ? 'Abhi' :
+                      diff < 3600000 ? Math.floor(diff/60000) + ' min pehle' :
+                      diff < 86400000 ? Math.floor(diff/3600000) + ' ghante pehle' :
+                      diff < 604800000 ? Math.floor(diff/86400000) + ' din pehle' :
+                      ts.toLocaleDateString('hi-IN');
+        var dateStr = ts.toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true});
+        var dotColor = i===0 ? 'var(--green)' : 'var(--text2)';
+        h += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:' + (i<2?'3px':'0') + ';">';
+        h += '<span style="width:6px;height:6px;border-radius:50%;background:'+dotColor+';flex-shrink:0;"></span>';
+        h += '<span style="font-size:0.62rem;color:var(--text);flex:1;">' + dateStr + '</span>';
+        h += '<span style="font-size:0.6rem;color:var(--text2);background:var(--surface);padding:1px 5px;border-radius:10px;">' + relTime + '</span>';
+        h += '</div>';
+      });
+      h += '</div>';
+    } else {
+      h += '<div style="font-size:0.63rem;color:var(--text2);margin-top:4px;">🕐 Login history nahi mili</div>';
+    }
+
     h += '</div>';
     if(!u.isAdmin){
       h += '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">';
@@ -61713,6 +61753,91 @@ function _done(msg) {
 })();
 </script>
 <!-- ===== END ORGANIZE FUNCTIONS ===== -->
+
+<!-- ══════════════════════════════════════════════════════════════════
+     DATA LOADING OVERLAY  —  Login ke baad "Latest Data Updating..."
+     ══════════════════════════════════════════════════════════════════ -->
+<div id="dataLoadingOverlay" style="
+  display:none;position:fixed;inset:0;
+  background:linear-gradient(135deg,#0a1628 0%,#0d2644 40%,#1a4080 80%,#1565c0 100%);
+  z-index:99998;flex-direction:column;align-items:center;justify-content:center;
+  padding:32px;opacity:0;transition:opacity 0.35s ease;">
+  <div style="position:absolute;inset:0;overflow:hidden;pointer-events:none;">
+    <div style="position:absolute;width:340px;height:340px;border-radius:50%;
+      background:radial-gradient(circle,rgba(25,118,210,0.25) 0%,transparent 70%);
+      top:50%;left:50%;transform:translate(-50%,-60%);animation:dlBlob 3s ease-in-out infinite alternate;"></div>
+  </div>
+  <div style="position:relative;text-align:center;max-width:320px;width:100%;">
+    <div style="font-size:3rem;margin-bottom:18px;animation:dlPulse 1.5s ease-in-out infinite;">📚</div>
+    <div style="font-size:1.1rem;font-weight:800;color:#fff;margin-bottom:6px;letter-spacing:0.3px;">Latest Data Updating...</div>
+    <div id="dlSubtitle" style="font-size:0.78rem;color:rgba(255,255,255,0.6);margin-bottom:28px;line-height:1.5;">Aapka data cloud se sync ho raha hai</div>
+    <div style="background:rgba(255,255,255,0.12);border-radius:99px;height:7px;overflow:hidden;margin-bottom:14px;">
+      <div id="dlProgressBar" style="height:100%;border-radius:99px;width:0%;
+        background:linear-gradient(90deg,#42a5f5,#90caf9,#42a5f5);background-size:200% 100%;
+        transition:width 0.4s ease;animation:dlBarShimmer 1.8s linear infinite;"></div>
+    </div>
+    <div id="dlPercent" style="font-size:0.7rem;color:rgba(255,255,255,0.45);letter-spacing:0.5px;">Connecting...</div>
+  </div>
+</div>
+<style>
+@keyframes dlBlob      { from{transform:translate(-50%,-60%) scale(1);}    to{transform:translate(-50%,-55%) scale(1.12);}    }
+@keyframes dlPulse     { 0%,100%{transform:scale(1);opacity:1;}            50%{transform:scale(1.08);opacity:0.85;}           }
+@keyframes dlBarShimmer{ 0%{background-position:200% 0;}                   100%{background-position:-200% 0;}                 }
+</style>
+<script>
+var _dlTimer=null;
+function showDataLoadingOverlay(){
+  var el=document.getElementById('dataLoadingOverlay');
+  if(!el)return;
+  var bar=document.getElementById('dlProgressBar');
+  var pct=document.getElementById('dlPercent');
+  var sub=document.getElementById('dlSubtitle');
+  if(bar){bar.style.width='0%';bar.style.background='';bar.style.animation='dlBarShimmer 1.8s linear infinite';}
+  if(pct){pct.textContent='Connecting...';pct.style.color='';}
+  if(sub) sub.textContent='Aapka data cloud se sync ho raha hai';
+  el.style.display='flex';
+  requestAnimationFrame(function(){requestAnimationFrame(function(){el.style.opacity='1';});});
+  // Staged progress steps
+  var steps=[
+    {at:350, w:15, pct:'15%', sub:'Firebase se connect ho raha hai...'},
+    {at:900, w:32, pct:'32%', sub:'Login verify ho gaya ✓'},
+    {at:1800,w:50, pct:'50%', sub:'Subjects aur sections la rahe hain...'},
+    {at:3000,w:65, pct:'65%', sub:'Topics download ho rahe hain...'},
+    {at:4500,w:76, pct:'76%', sub:'Notes sync ho rahe hain...'},
+    {at:6200,w:85, pct:'85%', sub:'Almost done — final check...'},
+    {at:8000,w:90, pct:'90%', sub:'Thoda aur...'},
+  ];
+  steps.forEach(function(s){
+    setTimeout(function(){
+      if(!document.getElementById('dataLoadingOverlay')||document.getElementById('dataLoadingOverlay').style.display==='none')return;
+      if(bar) bar.style.width=s.w+'%';
+      if(pct) pct.textContent=s.pct;
+      if(sub) sub.textContent=s.sub;
+    },s.at);
+  });
+  if(_dlTimer) clearTimeout(_dlTimer);
+  _dlTimer=setTimeout(function(){hideDataLoadingOverlay();},15000);
+}
+function hideDataLoadingOverlay(){
+  if(_dlTimer){clearTimeout(_dlTimer);_dlTimer=null;}
+  var el=document.getElementById('dataLoadingOverlay');
+  var bar=document.getElementById('dlProgressBar');
+  var pct=document.getElementById('dlPercent');
+  var sub=document.getElementById('dlSubtitle');
+  if(!el||el.style.display==='none')return;
+  if(bar){bar.style.width='100%';bar.style.animation='none';bar.style.background='linear-gradient(90deg,#66bb6a,#a5d6a7)';}
+  if(pct){pct.textContent='100% ✓';pct.style.color='#a5d6a7';}
+  if(sub) sub.textContent='Notes ready hain! 🎉';
+  setTimeout(function(){
+    el.style.opacity='0';
+    setTimeout(function(){
+      el.style.display='none';
+      if(bar){bar.style.width='0%';bar.style.animation='';bar.style.background='';}
+      if(pct) pct.style.color='';
+    },400);
+  },650);
+}
+</script>
 
 </body>
 </html>
