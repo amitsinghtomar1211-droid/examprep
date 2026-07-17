@@ -15619,20 +15619,28 @@ async function _saveAndClose() {
     } catch(e) { console.warn('Image process error on save:', e); }
   }
   var ok = _doSaveNoteData();
+  var _fbResult = null;
   if(ok) {
     save();
-    // ✅ CRITICAL FIX: Admin ke edits Firebase mein bhi save karo (editor close par bhi)
-    if(_isAdmin && _currentUser && _db) saveToFirebase();
+    _editorState.modified = false; // ← Immediately clear so "Save and Exit" dialog nahi aata
+    // ✅ CRITICAL FIX: Admin ke edits Firebase mein bhi AWAITED save karo (editor close par bhi)
+    if(_isAdmin && _currentUser && _db){
+      console.info('[💾 _saveAndClose] Firebase save shuru — awaiting result...');
+      _fbResult = await saveToFirebase();
+      if(_fbResult && _fbResult.ok) console.info('[💾 _saveAndClose] ✅ Firebase OK — '+_fbResult.ms+'ms');
+      else if(_fbResult)            console.error('[💾 _saveAndClose] ❌ Firebase FAIL — '+_fbResult.error+' ('+_fbResult.code+')');
+    }
     renderLibraryTree();
     var tvModal = document.getElementById('topicViewModal');
     if(tvModal && tvModal.classList.contains('show')) {
       viewTopic(_editorState.sid, _editorState.secid, _editorState.tid);
     }
+  } else {
+    _editorState.modified = false;
   }
-  _editorState.modified = false;
   _forceCloseEditor();
   _editorClosing = false;
-  if(ok) setTimeout(function(){ showSaveSuccessPopup(); }, 150);
+  if(ok) setTimeout(function(){ showSaveSuccessPopup(_fbResult); }, 150);
 }
 
 // Load content into the editable area
@@ -20117,16 +20125,25 @@ async function saveEditedNote() {
       }
     } catch(e) { console.warn('Image IDB error on save:', e); }
   }
+  // ── DEBOUNCE: ek save chal raha ho to doosra shuru mat karo ──
+  if(saveEditedNote._saving){
+    console.warn('[💾 saveEditedNote] Already saving — debounced, skip');
+    return;
+  }
+  saveEditedNote._saving = true;
+
   var ok = _doSaveNoteData();
   console.log('[💾 saveEditedNote] _doSaveNoteData result: '+ok+' | sid:'+_editorState.sid+' tid:'+_editorState.tid+' noteIdx:'+_editorState.noteIdx+' type:'+(_editorState.specialType||'note'));
   if(!ok) {
+    saveEditedNote._saving = false;
     console.error('[💾 saveEditedNote] ❌ _doSaveNoteData failed — data save blocked');
     showToast('Save nahi ho saka!', 'error');
     return;
   }
 
   save(); // localStorage mein save
-  console.info('[💾 saveEditedNote] ✅ localStorage updated');
+  _editorState.modified = false; // ← Immediately clear — "Save and Exit" dialog nahi aayega during async wait
+  console.info('[💾 saveEditedNote] ✅ localStorage updated, modified=false');
 
   // ✅ CRITICAL FIX: Admin ke edits turant Firebase mein bhi AWAITED save karo
   var _fbResult = null;
@@ -20136,13 +20153,13 @@ async function saveEditedNote() {
     if(_fbResult && _fbResult.ok){
       console.info('[💾 saveEditedNote] ✅ Firebase update SUCCESS — ops:'+_fbResult.ops+' time:'+_fbResult.ms+'ms');
     } else if(_fbResult){
-      console.error('[💾 saveEditedNote] ❌ Firebase update FAILED — '+_fbResult.error+' ('+_fbResult.code+')');
+      console.error('[💾 saveEditedNote] ❌ Firebase update FAILED — code:'+_fbResult.code+' | '+_fbResult.error);
     }
   } else {
     console.warn('[💾 saveEditedNote] Firebase skip — isAdmin:'+_isAdmin+' user:'+!!_currentUser+' db:'+!!_db);
   }
 
-  _editorState.modified = false;
+  saveEditedNote._saving = false;
 
   // Save button: "Saved!" dikhao, phir hide karo
   var saveBtn = document.getElementById('saveNoteBtn');
@@ -20177,61 +20194,82 @@ async function saveEditedNote() {
   showSaveSuccessPopup(_fbResult);
 }
 function showSaveSuccessPopup(fbResult) {
-  // Remove purana agar hai
   const old = document.getElementById('saveSuccessPopup');
   if(old) old.remove();
 
-  // Firebase status determine karo
-  var fbOk   = fbResult && fbResult.ok;
-  var fbFail = fbResult && !fbResult.ok;
-  var fbSkip = !fbResult; // admin nahi tha ya db nahi tha
+  var fbOk          = fbResult && fbResult.ok;
+  var fbFail        = fbResult && !fbResult.ok;
+  var fbSkip        = !fbResult;
+  var isSessionLock = fbResult && fbResult.code === 'SESSION_LOCKED';
 
-  // Border/icon/text decide karo
-  var borderColor = fbOk ? 'var(--green)' : fbFail ? '#e65100' : 'var(--border)';
-  var mainIcon    = fbOk ? '✅' : fbFail ? '⚠️' : '💾';
-  var fbLine      = '';
-  if(fbOk)   fbLine = '<div style="margin-top:8px;font-size:0.72rem;padding:4px 10px;border-radius:20px;background:rgba(46,125,50,0.10);color:var(--green);display:inline-block;">☁️ Firebase: UPDATE SUCCESSFUL ('+fbResult.ms+'ms)</div>';
-  if(fbFail) fbLine = '<div style="margin-top:8px;font-size:0.72rem;padding:4px 10px;border-radius:20px;background:rgba(198,40,40,0.10);color:var(--red);display:inline-block;">❌ Firebase ERROR: '+fbResult.error+'<br>Code: '+(fbResult.code||'?')+'</div>';
-  if(fbSkip) fbLine = '<div style="margin-top:8px;font-size:0.72rem;padding:4px 10px;border-radius:20px;background:rgba(0,0,0,0.05);color:var(--text2);display:inline-block;">📦 Local save only (Firebase skip)</div>';
+  var borderColor = fbOk ? 'var(--green)' : isSessionLock ? '#b71c1c' : fbFail ? '#e65100' : 'var(--border)';
+  var mainIcon    = fbOk ? '✅' : isSessionLock ? '🔒' : fbFail ? '⚠️' : '💾';
+
+  // Firebase status line
+  var fbLine = '';
+  if(fbOk){
+    fbLine = '<div style="margin-top:8px;font-size:0.72rem;padding:4px 10px;border-radius:20px;'
+           + 'background:rgba(46,125,50,0.10);color:var(--green);display:inline-block;">'
+           + '☁️ Firebase: UPDATED ✓ ('+fbResult.ms+'ms)</div>';
+  } else if(isSessionLock){
+    fbLine = '<div style="margin-top:10px;background:rgba(183,28,28,0.08);border:1.5px solid rgba(183,28,28,0.3);'
+           + 'border-radius:10px;padding:10px 12px;font-size:0.73rem;color:#b71c1c;line-height:1.6;">'
+           + '<strong>🔒 Firebase save NAHI hua!</strong><br>'
+           + 'Kisi aur device/tab ne admin session le liya hai.<br>'
+           + '<em style="color:var(--text2);font-size:0.68rem;">Upar ke banner mein "✅ Yahan Raho" dabao, phir dobara save karo.</em>'
+           + '</div>'
+           + '<button onclick="_reclaimAdminSession();var p=document.getElementById(\'saveSuccessPopup\');if(p)p.remove();" '
+           + 'style="margin-top:10px;background:#b71c1c;color:#fff;border:none;border-radius:10px;'
+           + 'padding:9px 18px;font-weight:800;font-size:0.8rem;cursor:pointer;width:100%;">'
+           + '🔒 Session Wapas Lo — Phir Save Karo</button>';
+  } else if(fbFail){
+    fbLine = '<div style="margin-top:8px;font-size:0.72rem;padding:6px 10px;border-radius:10px;'
+           + 'background:rgba(198,40,40,0.08);color:var(--red);line-height:1.6;">'
+           + '❌ Firebase error: '+(fbResult.error||'Unknown')+'<br>'
+           + '<span style="opacity:0.7;">Code: '+(fbResult.code||'?')+'</span></div>'
+           + '<div style="margin-top:6px;font-size:0.68rem;color:var(--text2);">Debug console (10x tap) mein detail dekhein</div>';
+  } else {
+    fbLine = '<div style="margin-top:8px;font-size:0.72rem;padding:4px 10px;border-radius:20px;'
+           + 'background:rgba(0,0,0,0.05);color:var(--text2);display:inline-block;">📦 Local save only</div>';
+  }
+
+  // Title
+  var titleText  = fbOk ? 'Notes Save Ho Gaye!' : isSessionLock ? 'Local Save ✓ — Firebase BLOCKED!' : fbFail ? 'Local Save Hua — Firebase Error!' : 'Notes Save Ho Gaye!';
+  var titleColor = fbOk ? 'var(--green)' : isSessionLock ? '#b71c1c' : fbFail ? 'var(--red)' : 'var(--green)';
 
   const popup = document.createElement('div');
   popup.id = 'saveSuccessPopup';
-  popup.style.cssText = `
-    position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.8);
-    background:var(--surface);border:2px solid ${borderColor};border-radius:16px;
-    padding:22px 24px;z-index:9998;text-align:center;
-    box-shadow:0 8px 40px rgba(0,0,0,0.18);
-    opacity:0;transition:all 0.25s cubic-bezier(0.34,1.56,0.64,1);
-    max-width:320px;width:92%;
-  `;
-  popup.innerHTML = `
-    <div style="font-size:2rem;margin-bottom:6px;">${mainIcon}</div>
-    <div style="font-size:0.95rem;font-weight:800;color:${fbFail?'var(--accent2)':'var(--green)'};margin-bottom:4px;">
-      ${fbFail ? 'Local Save Hua — Firebase Error!' : 'Notes Save Ho Gaye!'}
-    </div>
-    <div style="font-size:0.75rem;color:var(--text2);line-height:1.5;">
-      📦 LocalStorage: ✅ Updated<br>
-      ${fbLine}
-    </div>
-    ${fbFail ? '<div style="margin-top:8px;font-size:0.7rem;color:var(--text2);">Debug console (10x tap) mein poori detail dekhein</div>' : ''}
-  `;
+  popup.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.8);'
+    + 'background:var(--surface);border:2px solid '+borderColor+';border-radius:16px;'
+    + 'padding:20px 22px;z-index:9999;text-align:center;'
+    + 'box-shadow:0 8px 40px rgba(0,0,0,0.22);'
+    + 'opacity:0;transition:all 0.25s cubic-bezier(0.34,1.56,0.64,1);'
+    + 'max-width:320px;width:92%;';
+
+  popup.innerHTML = '<div style="font-size:2rem;margin-bottom:6px;">'+mainIcon+'</div>'
+    + '<div style="font-size:0.92rem;font-weight:800;color:'+titleColor+';margin-bottom:4px;">'+titleText+'</div>'
+    + '<div style="font-size:0.73rem;color:var(--text2);line-height:1.5;">📦 LocalStorage: ✅ Saved</div>'
+    + fbLine
+    + (isSessionLock ? '' : '<div style="margin-top:8px;"><button onclick="var p=document.getElementById(\'saveSuccessPopup\');if(p)p.remove();" '
+      + 'style="background:none;border:1px solid var(--border);border-radius:8px;padding:4px 14px;'
+      + 'font-size:0.7rem;color:var(--text2);cursor:pointer;">✕ Band Karo</button></div>');
+
   document.body.appendChild(popup);
 
-  // Animate in
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      popup.style.opacity = '1';
-      popup.style.transform = 'translate(-50%,-50%) scale(1)';
-    });
-  });
+  requestAnimationFrame(function(){ requestAnimationFrame(function(){
+    popup.style.opacity = '1';
+    popup.style.transform = 'translate(-50%,-50%) scale(1)';
+  }); });
 
-  // Auto hide — error ho to zyada der raho
-  var hideDelay = fbFail ? 5000 : 2500;
-  setTimeout(() => {
-    popup.style.opacity = '0';
-    popup.style.transform = 'translate(-50%,-50%) scale(0.8)';
-    setTimeout(() => popup.remove(), 300);
-  }, hideDelay);
+  // Auto-hide: success=2.5s, skip=2.5s, error=6s, session lock = NO auto-hide (user must act)
+  if(!isSessionLock){
+    var hideDelay = fbFail ? 6000 : 2500;
+    setTimeout(function(){
+      popup.style.opacity = '0';
+      popup.style.transform = 'translate(-50%,-50%) scale(0.85)';
+      setTimeout(function(){ if(popup.parentNode) popup.remove(); }, 350);
+    }, hideDelay);
+  }
 }
 
 // ---- Viewer mode (read-only, no edit tab) ----
@@ -29737,15 +29775,15 @@ async function saveMetaToFirebase(){
 // ⚡ FULL SAVE — initial login / syncNow
 // ══���═══════════════════════════════════════
 async function saveToFirebase(){
-  if(!_db || !_currentUser){ console.warn('[🔥 saveToFirebase] SKIP: db='+!!_db+' user='+!!_currentUser); return; }
+  if(!_db || !_currentUser){ console.warn('[🔥 saveToFirebase] SKIP: db='+!!_db+' user='+!!_currentUser); return {ok:false, error:'Firebase ya user ready nahi', code:'NO_AUTH'}; }
   // 🔒 READ-ONLY: Sirf admin data save kar sakta hai
-  if(!_isAdmin){ console.log('[🔥 saveToFirebase] BLOCKED: user is NOT admin — read-only mode'); return; }
+  if(!_isAdmin){ console.log('[🔥 saveToFirebase] BLOCKED: user is NOT admin — read-only mode'); return {ok:false, error:'Admin nahi hain aap', code:'NOT_ADMIN'}; }
   // 🔒 SINGLE SESSION LOCK: Dusri jagah se admin active hai to yahan save band
   if(_adminSessionLocked){
     console.error('[🔥 saveToFirebase] BLOCKED: admin session locked (another device active)');
-    showToast('⚠️ Save BLOCKED — Admin kisi aur device pe logged in hai! Upar banner mein "Yahan Login Karo" dabao.','error');
+    showToast('⚠️ Save BLOCKED — Admin kisi aur device pe logged in hai! Upar banner mein "Yahan Raho" dabao.','error');
     setSyncStatus('error');
-    return;
+    return {ok:false, error:'Kisi aur device ne admin session le liya — Firebase save nahi hua!', code:'SESSION_LOCKED'};
   }
   var _saveStartTime = Date.now();
   var _topicCount = (S.subjects||[]).reduce(function(a,s){ return a+s.sections.reduce(function(b,sec){ return b+sec.topics.length; },0); },0);
