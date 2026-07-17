@@ -20145,15 +20145,26 @@ async function saveEditedNote() {
   _editorState.modified = false; // ← Immediately clear — "Save and Exit" dialog nahi aayega during async wait
   console.info('[💾 saveEditedNote] ✅ localStorage updated, modified=false');
 
-  // ✅ CRITICAL FIX: Admin ke edits turant Firebase mein bhi AWAITED save karo
-  var _fbResult = null;
+  // ⚡ GRANULAR SAVE: Sirf edited topic Firebase mein bhejo — pura dump nahi!
   if(_isAdmin && _currentUser && _db){
-    console.info('[💾 saveEditedNote] Firebase save shuru ho raha hai...');
-    _fbResult = await saveToFirebase();
-    if(_fbResult && _fbResult.ok){
-      console.info('[💾 saveEditedNote] ✅ Firebase update SUCCESS — ops:'+_fbResult.ops+' time:'+_fbResult.ms+'ms');
-    } else if(_fbResult){
-      console.error('[💾 saveEditedNote] ❌ Firebase update FAILED — code:'+_fbResult.code+' | '+_fbResult.error);
+    var _gTid   = _editorState.tid;
+    var _gSid   = _editorState.sid;
+    var _gSecid = _editorState.secid;
+    if(_gTid){
+      // save() ne 300ms debounce timer set kiya hai — use cancel karo (hum abhi seedha save kar rahe hain)
+      if(typeof _topicSyncTimers !== 'undefined'){
+        var _gKey = String(_gTid);
+        if(_topicSyncTimers[_gKey]){ clearTimeout(_topicSyncTimers[_gKey]); delete _topicSyncTimers[_gKey]; }
+      }
+      console.info('[💾 saveEditedNote] ⚡ Granular topic save — tid:'+_gTid);
+      try{
+        await saveTopicToFirebase(_gTid, _gSid, _gSecid);
+        setSyncStatus('synced');
+        console.info('[💾 saveEditedNote] ✅ Topic Firebase update SUCCESS — tid:'+_gTid);
+      }catch(e){
+        setSyncStatus('error');
+        console.error('[💾 saveEditedNote] ❌ Topic Firebase update FAILED — '+e.message);
+      }
     }
   } else {
     console.warn('[💾 saveEditedNote] Firebase skip — isAdmin:'+_isAdmin+' user:'+!!_currentUser+' db:'+!!_db);
