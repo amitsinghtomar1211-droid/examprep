@@ -21439,11 +21439,17 @@ function initFirebase(){
           _adminSessionLocked = false;
           localStorage.setItem('epp_admin_session', _adminSessionId);
           try{
+            // forceLogout:true — purane sabhi sessions turant logout ho jayenge
             await _db.collection('appConfig').doc('adminSession').set({
               sessionId: _adminSessionId,
               device: (navigator.userAgent||'').substr(0,80),
-              loginAt: firebase.firestore.FieldValue.serverTimestamp()
+              loginAt: firebase.firestore.FieldValue.serverTimestamp(),
+              forceLogout: true
             });
+            // 3 second baad forceLogout flag hata do (ek baar sab logout ho jaayein)
+            setTimeout(async function(){
+              try{ await _db.collection('appConfig').doc('adminSession').update({ forceLogout: false }); }catch(e){}
+            }, 3000);
           }catch(e){ console.warn('[AdminSession] Write failed:', e.message); }
           _registerAppUser(user, true);
           _eppKeyPassed = true; _eppKeyIsAdmin = true;
@@ -30822,18 +30828,10 @@ function _startAdminSessionWatch(){
       // ── Settings card update karo ──
       _updateAdminSessionCard(remoteId, remoteDevice, data);
 
-      // ── Force-logout flag check: doosre admin ne "Logout All" dabaya ──
-      if(forceLogout && _adminSessionId && remoteId !== _adminSessionId){
-        showToast('🚫 Admin ne doosre device se aapko logout kar diya!','error');
-        setTimeout(function(){ _auth && _auth.signOut(); }, 2000);
-        return;
-      }
-
+      // ── Kisi bhi naye session pe — TURANT logout (koi countdown nahi, koi "Yahan Raho" button nahi) ──
       if(_adminSessionId && remoteId && remoteId !== _adminSessionId){
-        // Dusra device active ho gaya — is device ko auto-logout karo
         _adminSessionLocked = true;
-        showToast('⚠️ Admin kisi aur device se login hua — aap 8 second mein logout honge!','error');
-        // Countdown banner dikhao
+        // Banner dikhao aur seedha logout
         var b = document.getElementById('_adminSessionBanner');
         if(!b){
           b = document.createElement('div');
@@ -30841,20 +30839,10 @@ function _startAdminSessionWatch(){
           b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#b71c1c;color:#fff;padding:13px 16px;font-weight:700;font-size:0.88rem;text-align:center;box-shadow:0 3px 12px rgba(0,0,0,0.4);';
           document.body.prepend(b);
         }
-        var _asCount = 8;
-        var _asTimer = setInterval(function(){
-          var bEl = document.getElementById('_adminSessionBanner');
-          if(!bEl){ clearInterval(_asTimer); return; }
-          if(_asCount <= 0){
-            clearInterval(_asTimer);
-            bEl.innerHTML = '🔴 Logout ho raha hai...';
-            setTimeout(function(){ _auth && _auth.signOut(); }, 800);
-            return;
-          }
-          bEl.innerHTML = '⚠️ Kisi aur device ne admin login kiya — <strong>' + _asCount + ' second</strong> mein logout! '
-            + '<button onclick="_reclaimAdminSession()" style="background:#fff;color:#b71c1c;border:none;border-radius:8px;padding:5px 14px;font-weight:800;cursor:pointer;margin-left:12px;font-size:0.85rem;">✅ Yahan Raho (Session Lo)</button>';
-          _asCount--;
-        }, 1000);
+        b.innerHTML = '🔴 Admin ne doosri jagah se login kiya — aap abhi logout ho rahe hain...';
+        showToast('🚫 Doosri jagah admin login hua — yahan se logout ho raha hai!','error');
+        setTimeout(function(){ _auth && _auth.signOut(); }, 1500);
+        return;
       } else if(remoteId === _adminSessionId){
         // Apna hi session confirm hua — sab theek hai
         _adminSessionLocked = false;
