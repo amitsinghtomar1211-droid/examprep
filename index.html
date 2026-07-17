@@ -5762,6 +5762,33 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
         </div>
       </div>
 
+      <!-- ✅ ADMIN SINGLE-SESSION CONTROL CARD — sirf admin ko dikhega -->
+      <div class="card" id="adminSessionCard" style="display:none;background:linear-gradient(135deg,rgba(74,20,140,0.07),rgba(74,20,140,0.02));border:1.5px solid rgba(106,27,154,0.25);">
+        <div class="card-title" style="color:#4a148c;">🔒 Admin Session Control</div>
+        <div id="adminSessionStatus" style="font-size:0.82rem;margin-bottom:12px;padding:10px 12px;border-radius:9px;background:rgba(74,20,140,0.06);border:1px solid rgba(106,27,154,0.15);line-height:1.7;">
+          <span id="adminSessionStatusText">🔄 Checking...</span>
+        </div>
+        <div style="font-size:0.77rem;color:var(--text2);margin-bottom:12px;padding:8px 10px;background:rgba(0,0,0,0.03);border-radius:8px;line-height:1.6;" id="adminThisDeviceInfo">
+          <strong>📱 Yeh Device:</strong><br>
+          <span id="adminThisDeviceUA" style="font-family:monospace;font-size:0.72rem;word-break:break-all;"></span>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-danger btn-sm" id="adminForceLogoutBtn"
+            onclick="_forceLogoutOtherAdminDevices()"
+            style="background:linear-gradient(135deg,#b71c1c,#c62828);border:none;color:#fff;display:none;">
+            🚫 Sabhi Other Devices Logout Karo
+          </button>
+          <button class="btn btn-sm" id="adminReclaimBtn"
+            onclick="_reclaimAdminSession()"
+            style="background:linear-gradient(135deg,#1565c0,#1976d2);border:none;color:#fff;display:none;">
+            ✅ Yeh Device Active Karo
+          </button>
+        </div>
+        <div style="margin-top:8px;font-size:0.72rem;color:#78909c;line-height:1.5;">
+          💡 <strong>Kaise kaam karta hai:</strong> Admin sirf ek device par active ho sakta hai. Doosre device par admin login hone par saves BLOCK ho jaate hain. "Logout Karo" dabane se baaki sab devices turant logout ho jaayenge.
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-title">📦 Backup & Restore</div>
         <div class="btn-row">
@@ -8548,6 +8575,15 @@ function showPage(p,el,_skipHistory){
   }
   if(p==='testseries')tsRenderHome();
   if(p==='admin'){ if(_isAdmin){ loadAdminUsers(); updateAdminPageInfo(); _adminLoadRecentUpdates(); } else { showToast('❌ Admin access nahi hai!','error'); showPage('library',document.querySelector('[data-page=library]')); } }
+  if(p==='settings'){
+    // Admin session card visibility update
+    var _asc = document.getElementById('adminSessionCard');
+    if(_asc) _asc.style.display = _isAdmin ? 'block' : 'none';
+    if(_isAdmin){
+      var uaEl = document.getElementById('adminThisDeviceUA');
+      if(uaEl) uaEl.textContent = (navigator.userAgent||'').substr(0,120);
+    }
+  }
   if(window.innerWidth<=768){document.getElementById('sidebar').classList.remove('open');document.getElementById('sidebarOverlay').classList.remove('show');}
   if(!_skipHistory){history.pushState({type:'page',page:p},'');}
 }
@@ -30646,24 +30682,54 @@ function _startAdminSessionWatch(){
   if(_adminSessionListener){ _adminSessionListener(); _adminSessionListener = null; }
   if(!_isAdmin || !_db) return;
 
+  // Apni device ka info settings card mein dikhao
+  var uaEl = document.getElementById('adminThisDeviceUA');
+  if(uaEl) uaEl.textContent = (navigator.userAgent||'').substr(0,120);
+
   _adminSessionListener = _db.collection('appConfig').doc('adminSession')
     .onSnapshot(function(doc){
-      if(!doc.exists || !_isAdmin) return;
-      var remoteId = (doc.data() && doc.data().sessionId) || '';
-      // Agar remote session ID alag hai to koi aur admin logged in hai
+      if(!_isAdmin) return;
+      var data = doc.exists ? doc.data() : {};
+      var remoteId   = (data && data.sessionId) || '';
+      var remoteDevice = (data && data.device)  || 'Unknown device';
+      var forceLogout  = (data && data.forceLogout) || false;
+
+      // ── Settings card update karo ──
+      _updateAdminSessionCard(remoteId, remoteDevice, data);
+
+      // ── Force-logout flag check: doosre admin ne "Logout All" dabaya ──
+      if(forceLogout && _adminSessionId && remoteId !== _adminSessionId){
+        showToast('🚫 Admin ne doosre device se aapko logout kar diya!','error');
+        setTimeout(function(){ _auth && _auth.signOut(); }, 2000);
+        return;
+      }
+
       if(_adminSessionId && remoteId && remoteId !== _adminSessionId){
+        // Dusra device active ho gaya — is device ko auto-logout karo
         _adminSessionLocked = true;
-        showToast('⚠️ Admin kisi aur device se login hua hai! Saves BLOCKED hain.','error');
-        // Persistent warning banner show karo
+        showToast('⚠️ Admin kisi aur device se login hua — aap 8 second mein logout honge!','error');
+        // Countdown banner dikhao
         var b = document.getElementById('_adminSessionBanner');
         if(!b){
           b = document.createElement('div');
           b.id = '_adminSessionBanner';
           b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#b71c1c;color:#fff;padding:13px 16px;font-weight:700;font-size:0.88rem;text-align:center;box-shadow:0 3px 12px rgba(0,0,0,0.4);';
-          b.innerHTML = '⚠️ Admin kisi aur device pe active hai — Saves BLOCKED! '
-            + '<button onclick="_reclaimAdminSession()" style="background:#fff;color:#b71c1c;border:none;border-radius:8px;padding:5px 14px;font-weight:800;cursor:pointer;margin-left:12px;font-size:0.85rem;">✅ Yahan Login Karo (Session Lo)</button>';
           document.body.prepend(b);
         }
+        var _asCount = 8;
+        var _asTimer = setInterval(function(){
+          var bEl = document.getElementById('_adminSessionBanner');
+          if(!bEl){ clearInterval(_asTimer); return; }
+          if(_asCount <= 0){
+            clearInterval(_asTimer);
+            bEl.innerHTML = '🔴 Logout ho raha hai...';
+            setTimeout(function(){ _auth && _auth.signOut(); }, 800);
+            return;
+          }
+          bEl.innerHTML = '⚠️ Kisi aur device ne admin login kiya — <strong>' + _asCount + ' second</strong> mein logout! '
+            + '<button onclick="_reclaimAdminSession()" style="background:#fff;color:#b71c1c;border:none;border-radius:8px;padding:5px 14px;font-weight:800;cursor:pointer;margin-left:12px;font-size:0.85rem;">✅ Yahan Raho (Session Lo)</button>';
+          _asCount--;
+        }, 1000);
       } else if(remoteId === _adminSessionId){
         // Apna hi session confirm hua — sab theek hai
         _adminSessionLocked = false;
@@ -30673,23 +30739,92 @@ function _startAdminSessionWatch(){
     }, function(e){ console.warn('[AdminSession] Watch error:', e.message); });
 }
 
+// Settings card ko live update karo
+function _updateAdminSessionCard(remoteId, remoteDevice, data){
+  var card = document.getElementById('adminSessionCard');
+  if(!card || !_isAdmin){ if(card) card.style.display='none'; return; }
+  card.style.display = 'block';
+
+  var statusEl   = document.getElementById('adminSessionStatusText');
+  var logoutBtn  = document.getElementById('adminForceLogoutBtn');
+  var reclaimBtn = document.getElementById('adminReclaimBtn');
+
+  var loginAtTs = data && data.loginAt && data.loginAt.toDate ? data.loginAt.toDate() : null;
+  var loginStr  = loginAtTs ? loginAtTs.toLocaleString('en-IN', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short'}) : 'Abhi';
+
+  if(!remoteId){
+    if(statusEl) statusEl.innerHTML = '✅ <strong>Sirf aap logged in hain.</strong> Koi aur device active nahi hai.';
+    if(logoutBtn) logoutBtn.style.display = 'none';
+    if(reclaimBtn) reclaimBtn.style.display = 'none';
+  } else if(remoteId === _adminSessionId){
+    if(statusEl) statusEl.innerHTML = '✅ <strong>Yeh device active hai.</strong> Last login: ' + loginStr + '<br>Koi aur admin device active nahi hai.';
+    if(logoutBtn) logoutBtn.style.display = 'none';
+    if(reclaimBtn) reclaimBtn.style.display = 'none';
+  } else {
+    // Koi aur device active hai
+    if(statusEl) statusEl.innerHTML = '⚠️ <strong>Doosra device active hai!</strong><br>'
+      + '📱 Device: <code style="font-size:0.7rem;">' + (remoteDevice||'').substr(0,60) + '</code><br>'
+      + '🕐 Login: ' + loginStr + '<br>'
+      + '<span style="color:#b71c1c;font-weight:700;">Aapke saves BLOCKED hain jab tak aap session wapas nahi lete.</span>';
+    if(logoutBtn) logoutBtn.style.display = 'inline-flex';
+    if(reclaimBtn) reclaimBtn.style.display = 'inline-flex';
+  }
+}
+
 // Admin session wapas lo (agar dusri jagah se login ho gaya tha)
 async function _reclaimAdminSession(){
   if(!_isAdmin || !_db){ showToast('❌ Admin login nahi hai.','error'); return; }
   try{
     _adminSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2,9);
+    // forceLogout: true — doosre devices ke listeners isse detect karke sign-out karenge
     await _db.collection('appConfig').doc('adminSession').set({
       sessionId: _adminSessionId,
       device: (navigator.userAgent||'').substr(0,80),
-      loginAt: firebase.firestore.FieldValue.serverTimestamp()
+      loginAt: firebase.firestore.FieldValue.serverTimestamp(),
+      forceLogout: false
     });
     _adminSessionLocked = false;
     localStorage.setItem('epp_admin_session', _adminSessionId);
     var b = document.getElementById('_adminSessionBanner');
     if(b) b.remove();
     showToast('✅ Admin session aapke paas aa gaya! Ab aap save kar sakte hain.','success');
+    _updateAdminSessionCard(_adminSessionId, (navigator.userAgent||'').substr(0,80), {});
   }catch(e){
     showToast('❌ Session reclaim fail: ' + e.message,'error');
+  }
+}
+
+// Settings se: sabhi other devices ko FORCE LOGOUT karo
+async function _forceLogoutOtherAdminDevices(){
+  if(!_isAdmin || !_db){ showToast('❌ Admin login nahi hai.','error'); return; }
+  var btn = document.getElementById('adminForceLogoutBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Logout kar raha hai...'; }
+  try{
+    _adminSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2,9);
+    // forceLogout: true likhne se doosre devices ke onSnapshot listeners turant signOut call karenge
+    await _db.collection('appConfig').doc('adminSession').set({
+      sessionId: _adminSessionId,
+      device: (navigator.userAgent||'').substr(0,80),
+      loginAt: firebase.firestore.FieldValue.serverTimestamp(),
+      forceLogout: true
+    });
+    // 2 second baad forceLogout flag hata do (ek baar sab logout ho jaayein)
+    setTimeout(async function(){
+      try{
+        await _db.collection('appConfig').doc('adminSession').update({ forceLogout: false });
+      }catch(e){}
+    }, 3000);
+    _adminSessionLocked = false;
+    localStorage.setItem('epp_admin_session', _adminSessionId);
+    var b = document.getElementById('_adminSessionBanner');
+    if(b) b.remove();
+    showToast('✅ Sabhi doosre devices logout kar diye gaye! Sirf yeh device active hai.','success');
+    _updateAdminSessionCard(_adminSessionId, (navigator.userAgent||'').substr(0,80), {});
+  }catch(e){
+    showToast('❌ Force logout fail: ' + e.message,'error');
+    if(btn){ btn.disabled = false; btn.textContent = '🚫 Sabhi Other Devices Logout Karo'; }
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = '🚫 Sabhi Other Devices Logout Karo'; }
   }
 }
 
