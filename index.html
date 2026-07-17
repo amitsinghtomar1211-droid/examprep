@@ -15621,6 +15621,8 @@ async function _saveAndClose() {
   var ok = _doSaveNoteData();
   if(ok) {
     save();
+    // ✅ CRITICAL FIX: Admin ke edits Firebase mein bhi save karo (editor close par bhi)
+    if(_isAdmin && _currentUser && _db) saveToFirebase();
     renderLibraryTree();
     var tvModal = document.getElementById('topicViewModal');
     if(tvModal && tvModal.classList.contains('show')) {
@@ -20121,7 +20123,10 @@ async function saveEditedNote() {
     return;
   }
 
-  save(); // localStorage mein save + Firebase sync trigger
+  save(); // localStorage mein save
+  // ✅ CRITICAL FIX: Admin ke edits turant Firebase mein bhi save karo
+  // (Pehle sirf localStorage update hota tha, Firebase miss hota tha)
+  if(_isAdmin && _currentUser && _db) saveToFirebase();
   _editorState.modified = false;
 
   // Save button: "Saved!" dikhao, phir hide karo
@@ -29850,12 +29855,17 @@ async function loadFromFirebase(){
         (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
     }
 
-    // Local zyada → upload
-    if(!loadedSubjects || cloudTopicCount === 0 || localTopicCount > cloudTopicCount){
-      await saveToFirebase();
-      showToast('Local data cloud pe sync ho gaya! ☁️ (' + localTopicCount + ' topics)', 'success');
+    // Cloud bilkul khaali hai (pehli baar ya delete hua) → sirf tab local upload karo
+    if(!loadedSubjects || cloudTopicCount === 0){
+      if(_isAdmin && localTopicCount > 0){
+        await saveToFirebase();
+        showToast('Data cloud pe save ho gaya! ☁️ (' + localTopicCount + ' topics)', 'success');
+      }
       setSyncStatus('synced'); return;
     }
+    // ✅ FIX: Agar cloud mein data hai to HAMESHA cloud se lo, local count se compare mat karo
+    // (Admin ke edits ab saveEditedNote() + _saveAndClose() se directly Firebase mein jaate hain)
+    // Purani galat logic: localTopicCount > cloudTopicCount → upload (stale local se Firebase overwrite hoti thi)
 
     // Cloud data load + local editor HTML merge
     // ✅ FIX: sirf LOCAL editor data preserve karo jab local NEWER ho (timestamp compare)
