@@ -15562,6 +15562,7 @@ function _doSaveNoteData() {
     
     n.editorHighlights = _editorState.highlights.slice();
     n.editorRichHTML   = area.innerHTML;
+    n.editorSavedAt    = Date.now(); // ✅ FIX: timestamp so cloud-vs-local merge uses newer version
     if(canvasObjs)  n.canvasObjs  = canvasObjs;
     if(drawStrokes) n.drawStrokes = drawStrokes;
     if(qmapData)    n.qmapData    = qmapData;
@@ -29821,13 +29822,14 @@ async function loadFromFirebase(){
     }
 
     // Cloud data load + local editor HTML merge
+    // ✅ FIX: sirf LOCAL editor data preserve karo jab local NEWER ho (timestamp compare)
     var localEditorData = {};
     (S.subjects||[]).forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
-      if(t.finalNotesHTML) localEditorData['fn_'+t.id] = t.finalNotesHTML;
-      if(t.smartNotesHTML) localEditorData['sn_'+t.id] = t.smartNotesHTML;
-      if(t.masterNotesHTML) localEditorData['mn_'+t.id] = t.masterNotesHTML;
+      if(t.finalNotesHTML) localEditorData['fn_'+t.id] = { html: t.finalNotesHTML, ts: t.finalNotesAt || 0 };
+      if(t.smartNotesHTML) localEditorData['sn_'+t.id] = { html: t.smartNotesHTML, ts: t.smartNotesAt || 0 };
+      if(t.masterNotesHTML) localEditorData['mn_'+t.id] = { html: t.masterNotesHTML, ts: t.masterNotesAt || 0 };
       (t.notes||[]).forEach(function(n){
-        if(n.editorRichHTML) localEditorData['n_'+n.id] = { richHTML:n.editorRichHTML, highlights:n.editorHighlights||[] };
+        if(n.editorRichHTML) localEditorData['n_'+n.id] = { richHTML:n.editorRichHTML, highlights:n.editorHighlights||[], ts: n.editorSavedAt || 0 };
       });
     }); }); });
 
@@ -29849,17 +29851,32 @@ async function loadFromFirebase(){
       if(!t.savedFacts) t.savedFacts=[];
       if(!t.notes) t.notes=[];
       delete t.finalNotesCanvasPNG; delete t.smartNotesCanvasPNG; delete t.masterNotesCanvasPNG;
-      if(localEditorData['fn_'+t.id]) t.finalNotesHTML  = localEditorData['fn_'+t.id];
-      if(localEditorData['sn_'+t.id]) t.smartNotesHTML  = localEditorData['sn_'+t.id];
-      if(localEditorData['mn_'+t.id]) t.masterNotesHTML = localEditorData['mn_'+t.id];
+      // ✅ FIX: sirf tab local HTML lagao jab local NEWER ho cloud se
+      var _fnLocal = localEditorData['fn_'+t.id];
+      if(_fnLocal && _fnLocal.html && (_fnLocal.ts || 0) > (t.finalNotesAt || 0)) t.finalNotesHTML = _fnLocal.html;
+      var _snLocal = localEditorData['sn_'+t.id];
+      if(_snLocal && _snLocal.html && (_snLocal.ts || 0) > (t.smartNotesAt || 0)) t.smartNotesHTML = _snLocal.html;
+      var _mnLocal = localEditorData['mn_'+t.id];
+      if(_mnLocal && _mnLocal.html && (_mnLocal.ts || 0) > (t.masterNotesAt || 0)) t.masterNotesHTML = _mnLocal.html;
       t.notes.forEach(function(n){
         if(!n.editorHighlights) n.editorHighlights=[];
         if(n.editorRichHTML===undefined) n.editorRichHTML=null;
         delete n.canvasPNG;
         var ld = localEditorData['n_'+n.id];
-        if(ld && ld.richHTML){ n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[]; }
+        // ✅ FIX: sirf tab local richHTML lagao jab local timestamp zyada ho (newer)
+        if(ld && ld.richHTML && (ld.ts || 0) > (n.editorSavedAt || 0)){
+          n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[];
+        }
       });
     }); }); });
+
+    // ✅ FIX: _lastSavedSnapshot update karo taaki next save() spurious re-uploads na kare
+    try{
+      (S.subjects||[]).forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
+        var td = (typeof _cleanTopic === 'function') ? _cleanTopic(t) : t;
+        _lastSavedSnapshot[String(t.id)] = JSON.stringify(td);
+      }); }); });
+    }catch(_e2){}
 
     try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
     renderExamSwitcher(); renderLibrarySelects(); renderLibraryTree();
@@ -30405,11 +30422,12 @@ async function _silentReloadFromFirebase(){
     if(!newSubjects.length){ _syncInProgress=false; return; }
 
     // Preserve local editor data
+    // ✅ FIX: timestamps save karo taaki merge mein newer version win kare
     var localEditorData = {};
     (S.subjects||[]).forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
-      if(t.finalNotesHTML)  localEditorData['fn_'+t.id] = t.finalNotesHTML;
-      if(t.smartNotesHTML)  localEditorData['sn_'+t.id] = t.smartNotesHTML;
-      if(t.masterNotesHTML) localEditorData['mn_'+t.id] = t.masterNotesHTML;
+      if(t.finalNotesHTML)  localEditorData['fn_'+t.id] = { html: t.finalNotesHTML, ts: t.finalNotesAt || 0 };
+      if(t.smartNotesHTML)  localEditorData['sn_'+t.id] = { html: t.smartNotesHTML, ts: t.smartNotesAt || 0 };
+      if(t.masterNotesHTML) localEditorData['mn_'+t.id] = { html: t.masterNotesHTML, ts: t.masterNotesAt || 0 };
       // ── FIX: studyCanvas bhi preserve karo — live-update se canvas data na wipe ho ──
       if(t.studyCanvas && t.studyCanvas.slides && t.studyCanvas.slides.length) {
         localEditorData['sc_'+t.id] = t.studyCanvas;
@@ -30423,7 +30441,7 @@ async function _silentReloadFromFirebase(){
         };
       }
       (t.notes||[]).forEach(function(n){
-        if(n.editorRichHTML !== undefined) localEditorData['n_'+n.id] = { richHTML: n.editorRichHTML, highlights: n.editorHighlights||[] };
+        if(n.editorRichHTML !== undefined) localEditorData['n_'+n.id] = { richHTML: n.editorRichHTML, highlights: n.editorHighlights||[], ts: n.editorSavedAt || 0 };
       });
     }); }); });
 
@@ -30443,9 +30461,13 @@ async function _silentReloadFromFirebase(){
       if(!t.highlights) t.highlights=[];
       if(!t.savedFacts) t.savedFacts=[];
       if(!t.notes) t.notes=[];
-      if(localEditorData['fn_'+t.id]) t.finalNotesHTML  = localEditorData['fn_'+t.id];
-      if(localEditorData['sn_'+t.id]) t.smartNotesHTML  = localEditorData['sn_'+t.id];
-      if(localEditorData['mn_'+t.id]) t.masterNotesHTML = localEditorData['mn_'+t.id];
+      // ✅ FIX: sirf tab local HTML lagao jab local NEWER ho
+      var _fnL = localEditorData['fn_'+t.id];
+      if(_fnL && _fnL.html && (_fnL.ts || 0) > (t.finalNotesAt || 0)) t.finalNotesHTML = _fnL.html;
+      var _snL = localEditorData['sn_'+t.id];
+      if(_snL && _snL.html && (_snL.ts || 0) > (t.smartNotesAt || 0)) t.smartNotesHTML = _snL.html;
+      var _mnL = localEditorData['mn_'+t.id];
+      if(_mnL && _mnL.html && (_mnL.ts || 0) > (t.masterNotesAt || 0)) t.masterNotesHTML = _mnL.html;
       // ── FIX: studyCanvas restore karo (live in-memory version ko priority do) ──
       var _liveSc = localEditorData['sc_live_'+t.id];
       var _savedSc = localEditorData['sc_'+t.id];
@@ -30464,9 +30486,20 @@ async function _silentReloadFromFirebase(){
       t.notes.forEach(function(n){
         if(!n.editorHighlights) n.editorHighlights=[];
         var ld = localEditorData['n_'+n.id];
-        if(ld && ld.richHTML){ n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[]; }
+        // ✅ FIX: sirf tab local richHTML lagao jab local NEWER ho cloud se
+        if(ld && ld.richHTML && (ld.ts || 0) > (n.editorSavedAt || 0)){
+          n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[];
+        }
       });
     }); }); });
+
+    // ✅ FIX: _lastSavedSnapshot update karo — warna next save() sab topics spuriously re-upload karega
+    try{
+      (S.subjects||[]).forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
+        var td = (typeof _cleanTopic === 'function') ? _cleanTopic(t) : t;
+        _lastSavedSnapshot[String(t.id)] = JSON.stringify(td);
+      }); }); });
+    }catch(_e3){}
 
     try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
 
