@@ -62489,23 +62489,102 @@ function _fg(label, inner) {
 function _note(txt) { return "<div style=\"font-size:0.8rem;color:var(--text2);margin-bottom:10px;\">" + txt + "</div>"; }
 function _warn(txt) { return "<div style=\"font-size:0.71rem;color:var(--red);font-weight:600;padding:8px;background:rgba(198,40,40,0.06);border-radius:8px;\">⚠️ " + txt + "</div>"; }
 
-/* ===== MOVE ===== */
+/* ===== MOVE — full sub-hierarchy cascading ===== */
+var _orgMv = {};
+
+/* Build sub-subject dropdown block for a given subject */
+function _omvSSBlock(subjId, selSsId) {
+  var subj = getSubj(subjId);
+  if (!subj || !(subj.subSubjects && subj.subSubjects.length)) return "";
+  var opts = "<option value=\"\">📂 Direct (koi sub-subject nahi)</option>"
+    + subj.subSubjects.map(function(ss){
+        return "<option value=\"" + ss.id + "\"" + (ss.id == selSsId ? " selected" : "") + ">\u21B3 " + _eh(ss.name) + "</option>";
+      }).join("");
+  return _fg("📗 Sub-Subject (optional):", "<select class=\"inp\" id=\"omvSS\" onchange=\"omvOnSS(this.value)\">" + opts + "</select>");
+}
+
+/* Build section dropdown for (subjId, ssId|null) */
+function _omvSecBlock(subjId, ssId, selSecId) {
+  var sections = [];
+  if (ssId) {
+    var sj = getSubj(subjId);
+    var ss = sj && (sj.subSubjects || []).find(function(x){ return x.id == ssId; });
+    sections = ss ? (ss.sections || []) : [];
+  } else {
+    var sj2 = getSubj(subjId);
+    sections = sj2 ? (sj2.sections || []) : [];
+  }
+  var opts = "<option value=\"\">-- Section select karo --</option>"
+    + sections.map(function(s){
+        return "<option value=\"" + s.id + "\"" + (s.id == selSecId ? " selected" : "") + ">" + _eh(s.name) + "</option>";
+      }).join("");
+  return _fg("📘 Section:", "<select class=\"inp\" id=\"omvSec\" onchange=\"omvOnSec(this.value)\">" + opts + "</select>");
+}
+
+/* Build sub-section dropdown for a given section */
+function _omvSSECBlock(subjId, secId, selSsecId) {
+  var sec = getSec(subjId, secId);
+  if (!sec || !(sec.subSections && sec.subSections.length)) return "";
+  var opts = "<option value=\"\">📂 Direct (koi sub-section nahi)</option>"
+    + sec.subSections.map(function(ss){
+        return "<option value=\"" + ss.id + "\"" + (ss.id == selSsecId ? " selected" : "") + ">\u21B3 " + _eh(ss.name) + "</option>";
+      }).join("");
+  return _fg("📘 Sub-Section (optional):", "<select class=\"inp\" id=\"omvSSEC\" onchange=\"omvOnSSEC(this.value)\">" + opts + "</select>");
+}
+
+/* Cascade handlers */
+window.omvOnSubj = function(v) {
+  v = parseInt(v) || 0;
+  _orgMv.subjId = v; _orgMv.ssId = null; _orgMv.secId = null; _orgMv.ssecId = null;
+  var ssBox   = document.getElementById("omvSSBox");
+  var secBox  = document.getElementById("omvSecBox");
+  var ssecBox = document.getElementById("omvSSECBox");
+  if (ssBox)   ssBox.innerHTML   = v ? _omvSSBlock(v, null) : "";
+  if (secBox)  secBox.innerHTML  = v ? _omvSecBlock(v, null, null) : "";
+  if (ssecBox) ssecBox.innerHTML = "";
+};
+window.omvOnSS = function(v) {
+  v = v ? (parseInt(v) || null) : null;
+  _orgMv.ssId = v; _orgMv.secId = null; _orgMv.ssecId = null;
+  var secBox  = document.getElementById("omvSecBox");
+  var ssecBox = document.getElementById("omvSSECBox");
+  if (secBox)  secBox.innerHTML  = _omvSecBlock(_orgMv.subjId, v, null);
+  if (ssecBox) ssecBox.innerHTML = "";
+};
+window.omvOnSec = function(v) {
+  v = parseInt(v) || 0;
+  _orgMv.secId = v || null; _orgMv.ssecId = null;
+  var ssecBox = document.getElementById("omvSSECBox");
+  if (ssecBox) ssecBox.innerHTML = v ? _omvSSECBlock(_orgMv.subjId, v, null) : "";
+};
+window.omvOnSSEC = function(v) {
+  _orgMv.ssecId = v ? (parseInt(v) || null) : null;
+};
+
 function orgMoveHTML(type, sid, secid, tid) {
   if (type === "topic") {
-    return _note("📙 Topic ko dusre Subject/Section mein move karo — original wahan se hat jaega")
-      + _fg("📗 Destination Subject:", _subjSel(sid, true))
-      + _fg("📘 Destination Section:", _secSel(sid, secid));
+    _orgMv = { subjId: sid, ssId: null, secId: secid, ssecId: null };
+    var subjOpts = (S.subjects || []).map(function(s){
+      return "<option value=\"" + s.id + "\"" + (s.id == sid ? " selected" : "") + ">" + _eh(s.name) + "</option>";
+    }).join("");
+    return _note("📙 Topic ko hierarchy mein kisi bhi jagah move karo — Subject \u2192 Sub-Subject \u2192 Section \u2192 Sub-Section tak")
+      + _fg("📗 Subject:", "<select class=\"inp\" id=\"omvSubj\" onchange=\"omvOnSubj(this.value)\"><option value=\"\">-- Select karo --</option>" + subjOpts + "</select>")
+      + "<div id=\"omvSSBox\">"   + _omvSSBlock(sid, null)         + "</div>"
+      + "<div id=\"omvSecBox\">"  + _omvSecBlock(sid, null, secid)  + "</div>"
+      + "<div id=\"omvSSECBox\">" + _omvSSECBlock(sid, secid, null) + "</div>";
   }
   if (type === "section") {
-    var opts = (S.subjects || []).filter(function(s){ return s.id != sid; }).map(function(s){
-      return "<option value=\"" + s.id + "\">" + _eh(s.name) + "</option>";
+    _orgMv = { subjId: sid, ssId: null };
+    var subjOpts2 = (S.subjects || []).map(function(s){
+      return "<option value=\"" + s.id + "\"" + (s.id == sid ? " selected" : "") + ">" + _eh(s.name) + "</option>";
     }).join("");
-    return _note("📘 Section ko dusre Subject mein move karo — original wahan se hat jaega")
-      + _fg("📗 Destination Subject:", "<select class=\"inp\" id=\"orgDestSubj\"><option value=\"\">-- Select karo --</option>" + opts + "</select>");
+    return _note("📘 Section ko kisi bhi Subject ya uske Sub-Subject mein move karo")
+      + _fg("📗 Destination Subject:", "<select class=\"inp\" id=\"omvSubj\" onchange=\"omvOnSubj(this.value)\"><option value=\"\">-- Select karo --</option>" + subjOpts2 + "</select>")
+      + "<div id=\"omvSSBox\">" + _omvSSBlock(sid, null) + "</div>";
   }
-  /* subject */
+  /* subject position */
   var posOpts = (S.subjects || []).map(function(s, i){
-    return "<option value=\"" + i + "\"" + (s.id == sid ? " selected" : "") + ">" + (i+1) + ". " + _eh(s.name) + (s.id == sid ? " ◀ current" : "") + "</option>";
+    return "<option value=\"" + i + "\"" + (s.id == sid ? " selected" : "") + ">" + (i+1) + ". " + _eh(s.name) + (s.id == sid ? " \u25C4 current" : "") + "</option>";
   }).join("");
   return _note("📗 Library mein Subject ka position change karo")
     + _fg("Position:", "<select class=\"inp\" id=\"orgDestPos\">" + posOpts + "</select>");
@@ -62617,35 +62696,86 @@ window.orgConfirm = function() {
   else if (tab === "reorder")   orgDoReorder(t, sid, secid, tid);
 };
 
-/* ===== MOVE logic ===== */
+/* ===== MOVE logic — hierarchy-aware ===== */
 function orgDoMove(type, sid, secid, tid) {
   if (type === "topic") {
-    var destSid = _gi("orgDestSubj"), destSecid = _gi("orgDestSec");
-    if (!destSid || !destSecid) { showToast("Subject aur Section dono select karo!", "error"); return; }
-    var srcSec = getSec(sid, secid), destSec = getSec(destSid, destSecid);
-    if (!srcSec || !destSec) return;
-    var tp = srcSec.topics.find(function(x){ return x.id == tid; });
-    if (!tp) return;
-    srcSec.topics = srcSec.topics.filter(function(x){ return x.id != tid; });
-    destSec.topics.push(tp);
-    _done("\"" + tp.name + "\" move ho gaya! ✅");
+    var dSubjId = _orgMv.subjId, dSsId = _orgMv.ssId, dSecId = _orgMv.secId, dSsecId = _orgMv.ssecId;
+    if (!dSubjId || !dSecId) { showToast("Subject aur Section dono select karo!", "error"); return; }
+
+    /* --- find & detach topic from source --- */
+    var tp = null;
+    var srcSec = getSec(sid, secid);
+    if (srcSec) {
+      tp = srcSec.topics.find(function(x){ return x.id == tid; });
+      if (tp) {
+        srcSec.topics = srcSec.topics.filter(function(x){ return x.id != tid; });
+      } else {
+        /* check sub-sections of source */
+        (srcSec.subSections || []).forEach(function(ss) {
+          if (tp) return;
+          var found = (ss.topics || []).find(function(x){ return x.id == tid; });
+          if (found) { tp = found; ss.topics = ss.topics.filter(function(x){ return x.id != tid; }); }
+        });
+      }
+    }
+    if (!tp) { showToast("Topic source mein nahi mila!", "error"); return; }
+
+    /* --- find destination container --- */
+    var destContainer = null;
+    if (dSsecId) {
+      var dSec = getSec(dSubjId, dSecId);
+      var dSsec = dSec && (dSec.subSections || []).find(function(x){ return x.id == dSsecId; });
+      if (dSsec) { dSsec.topics = dSsec.topics || []; destContainer = dSsec; }
+    } else {
+      destContainer = getSec(dSubjId, dSecId);
+    }
+    if (!destContainer) { showToast("Destination section nahi mila!", "error"); return; }
+    (destContainer.topics = destContainer.topics || []).push(tp);
+    _done("\"" + tp.name + "\" move ho gaya! \u2705");
+
   } else if (type === "section") {
-    var destSid2 = _gi("orgDestSubj");
-    if (!destSid2) { showToast("Destination Subject select karo!", "error"); return; }
-    var srcSubj = getSubj(sid), destSubj = getSubj(destSid2);
-    if (!srcSubj || !destSubj) return;
-    var sc = srcSubj.sections.find(function(x){ return x.id == secid; });
-    if (!sc) return;
-    srcSubj.sections = srcSubj.sections.filter(function(x){ return x.id != secid; });
-    destSubj.sections.push(sc);
-    _done("\"" + sc.name + "\" section move ho gaya! ✅");
+    var dSubjId2 = _orgMv.subjId, dSsId2 = _orgMv.ssId;
+    if (!dSubjId2) { showToast("Destination Subject select karo!", "error"); return; }
+
+    /* --- find & detach section from source --- */
+    var sc = null;
+    var srcSubj = getSubj(sid);
+    if (srcSubj) {
+      sc = srcSubj.sections.find(function(x){ return x.id == secid; });
+      if (sc) {
+        srcSubj.sections = srcSubj.sections.filter(function(x){ return x.id != secid; });
+      } else {
+        /* check sub-subjects of source */
+        (srcSubj.subSubjects || []).forEach(function(ss) {
+          if (sc) return;
+          var found = (ss.sections || []).find(function(x){ return x.id == secid; });
+          if (found) { sc = found; ss.sections = ss.sections.filter(function(x){ return x.id != secid; }); }
+        });
+      }
+    }
+    if (!sc) { showToast("Section source mein nahi mila!", "error"); return; }
+
+    /* --- attach to destination --- */
+    if (dSsId2) {
+      var dSubjObj = getSubj(dSubjId2);
+      var dSS = dSubjObj && (dSubjObj.subSubjects || []).find(function(x){ return x.id == dSsId2; });
+      if (!dSS) { showToast("Destination Sub-Subject nahi mila!", "error"); return; }
+      (dSS.sections = dSS.sections || []).push(sc);
+    } else {
+      var dSubjObj2 = getSubj(dSubjId2);
+      if (!dSubjObj2) { showToast("Destination Subject nahi mila!", "error"); return; }
+      dSubjObj2.sections.push(sc);
+    }
+    _done("\"" + sc.name + "\" section move ho gaya! \u2705");
+
   } else {
+    /* subject reposition */
     var pos = _gi("orgDestPos");
     var idx = S.subjects.findIndex(function(x){ return x.id == sid; });
     if (idx < 0) return;
     var rem = S.subjects.splice(idx, 1)[0];
     S.subjects.splice(pos, 0, rem);
-    _done("\"" + rem.name + "\" position change ho gaya! ✅");
+    _done("\"" + rem.name + "\" position change ho gaya! \u2705");
   }
 }
 
