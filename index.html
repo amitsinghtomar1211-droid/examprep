@@ -8468,6 +8468,12 @@ body.night-mode #drawCanvas { background: #1a1a2e; }
     <button id="rdRmHlBtn" class="rd-btn" onclick="rdRmToggleHl();event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;" title="Highlight karo">🖊</button>
     <button id="rdRmEsBtn" class="rd-btn" onclick="rdRmToggleEraser();event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;" title="Highlight hatao">🧹</button>
 
+    <div style="width:1px;height:22px;background:rgba(128,128,128,0.25);flex-shrink:0;"></div>
+
+    <!-- Undo / Redo -->
+    <button id="rdRmUndoBtn" class="rd-btn" onclick="rdRmUndo();event.stopPropagation();" style="padding:5px 11px;font-size:0.9rem;opacity:0.35;" title="Undo" disabled>↩</button>
+    <button id="rdRmRedoBtn" class="rd-btn" onclick="rdRmRedo();event.stopPropagation();" style="padding:5px 11px;font-size:0.9rem;opacity:0.35;" title="Redo" disabled>↪</button>
+
     <div style="flex:1;"></div>
 
     <!-- Info -->
@@ -19510,7 +19516,8 @@ function applyHighlightFromRange(range, text) {
   const scrollEl = document.getElementById('neBody') || document.querySelector('.notes-editor-body');
   const savedScroll = scrollEl ? scrollEl.scrollTop : 0;
 
-  // Skip undo snapshot when highlighting inside the reading overlay
+  // Skip editor undo snapshot when highlighting inside the reading overlay;
+  // reading overlay has its own undo stack (_rdHlUndoStack)
   if(!_rdReadingOpen) neSaveSnapshot();
 
   const color = _editorState.hlColor;
@@ -19526,8 +19533,8 @@ function applyHighlightFromRange(range, text) {
   var _inRdMode = (_rdContentEl && _rdContentEl.contains(range.commonAncestorContainer));
   const area = _inRdMode ? _rdContentEl : document.getElementById('noteEditableArea');
   if(!area || !area.contains(range.commonAncestorContainer)) return;
-  // Skip undo snapshot when highlighting in reading overlay (content is a visual copy)
-  if(_inRdMode) { /* no snapshot needed for reading overlay */ }
+  // Reading overlay: save to its own undo stack before modifying
+  if(_inRdMode) { _rdHlSaveSnapshot(); }
 
   // ── STEP 1: Range ke andar ke saare text nodes collect karo ──
   function collectTextNodes(range) {
@@ -20882,6 +20889,8 @@ function closeReadingMode() {
   _rdReadingOpen = false;
   // Turn off highlight mode when closing
   if(typeof setHlMode === 'function') setHlMode('off');
+  // Clear undo/redo stacks — fresh start next time
+  _rdHlClearStacks();
   var cb = document.getElementById('rdHlColorbar');
   if(cb) { cb.classList.remove('cb-show'); cb.classList.remove('rd-hidden'); }
   if(document.fullscreenElement || document.webkitFullscreenElement) {
@@ -20940,6 +20949,66 @@ document.addEventListener('fullscreenchange', () => {
 // READING OVERLAY — Highlight System (attached to rdContent)
 // ═══════════════════════════════════════════════════════════
 
+// ── Undo / Redo stack for reading overlay highlights ──
+var _rdHlUndoStack = [];  // array of innerHTML strings
+var _rdHlRedoStack = [];
+var _RD_HL_MAX_STACK = 30;
+
+function _rdHlSaveSnapshot() {
+  var ct = document.getElementById('rdContent');
+  if(!ct) return;
+  _rdHlUndoStack.push(ct.innerHTML);
+  if(_rdHlUndoStack.length > _RD_HL_MAX_STACK) _rdHlUndoStack.shift();
+  _rdHlRedoStack = []; // new action — redo chain clears
+  _rdRmUpdateUndoRedoBtns();
+}
+
+function _rdRmUpdateUndoRedoBtns() {
+  var uBtn = document.getElementById('rdRmUndoBtn');
+  var rBtn = document.getElementById('rdRmRedoBtn');
+  var canUndo = _rdHlUndoStack.length > 0;
+  var canRedo = _rdHlRedoStack.length > 0;
+  if(uBtn) { uBtn.disabled = !canUndo; uBtn.style.opacity = canUndo ? '1' : '0.35'; }
+  if(rBtn) { rBtn.disabled = !canRedo; rBtn.style.opacity = canRedo ? '1' : '0.35'; }
+}
+
+window.rdRmUndo = function() {
+  if(!_rdHlUndoStack.length) return;
+  var ct = document.getElementById('rdContent');
+  if(!ct) return;
+  _rdHlRedoStack.push(ct.innerHTML);       // save current → redo
+  ct.innerHTML = _rdHlUndoStack.pop();     // restore previous
+  _rdRmUpdateUndoRedoBtns();
+  _rdRmReattachEraserToMarks();
+  showToast && showToast('↩ Undo', 'info');
+};
+
+window.rdRmRedo = function() {
+  if(!_rdHlRedoStack.length) return;
+  var ct = document.getElementById('rdContent');
+  if(!ct) return;
+  _rdHlUndoStack.push(ct.innerHTML);       // save current → undo
+  ct.innerHTML = _rdHlRedoStack.pop();     // restore next
+  _rdRmUpdateUndoRedoBtns();
+  _rdRmReattachEraserToMarks();
+  showToast && showToast('↪ Redo', 'info');
+};
+
+// After undo/redo, re-attach eraser click to any restored marks
+function _rdRmReattachEraserToMarks() {
+  var ct = document.getElementById('rdContent');
+  if(!ct) return;
+  // The existing click-delegation listener on ct already handles this,
+  // so nothing extra needed — marks are matched by tagName at click time.
+}
+
+// Clear undo/redo stacks when reading mode closes (fresh start next open)
+function _rdHlClearStacks() {
+  _rdHlUndoStack = [];
+  _rdHlRedoStack = [];
+  _rdRmUpdateUndoRedoBtns();
+}
+
 // Attach touch + mouse listeners to rdContent so the existing
 // highlight engine works inside the reading overlay
 function _rdAttachHlListeners() {
@@ -20950,13 +21019,15 @@ function _rdAttachHlListeners() {
   ct.addEventListener('touchmove',  function(e){ if(_rdReadingOpen) onNETouchMove(e);  }, { passive: false });
   ct.addEventListener('touchend',   function(e){ if(_rdReadingOpen) onNETouchEnd(e);   }, { passive: true });
   ct.addEventListener('mouseup',    function(e){ if(_rdReadingOpen) onNEMouseUp(e);    });
-  // Tap on marks = unhighlight (eraser-equivalent)
+  // Tap on marks = unhighlight when eraser mode is ON
   ct.addEventListener('click', function(e) {
     if(!_rdReadingOpen) return;
     var tgt = e.target;
     if(tgt && tgt.tagName === 'MARK' && (typeof _hlCurrentMode !== 'undefined') && _hlCurrentMode === 'eraser') {
+      _rdHlSaveSnapshot(); // save before erasing so undo works
       tgt.replaceWith(document.createTextNode(tgt.textContent));
       _rdRmSyncButtons();
+      _rdRmUpdateUndoRedoBtns();
     }
   });
 }
