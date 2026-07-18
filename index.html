@@ -20773,7 +20773,8 @@ let _rdState = {
 var _rdControlsVisible = true;
 var _rdAutoHideTimer = null;
 var _rdIsRich = false;
-var _rdReadingOpen = false; // true when reading overlay is visible
+var _rdReadingOpen = false;      // true when reading overlay is visible
+var _rdSyncBackOnClose = false;  // true when opened from notes editor → sync highlights back on close
 
 function _rdShowControls() {
   _rdControlsVisible = true;
@@ -20817,7 +20818,9 @@ function rdHandleTap(e) {
   }
 }
 
-function openReadingMode(title, text, richHtml) {
+function openReadingMode(title, text, richHtml, syncBack) {
+  // syncBack override: if explicitly passed, use it; otherwise keep whatever was set by caller
+  if(typeof syncBack !== 'undefined') _rdSyncBackOnClose = !!syncBack;
   var overlay = document.getElementById('readingOverlay');
   var contentEl = document.getElementById('rdContent');
   var titleEl = document.getElementById('rdTitle');
@@ -20880,6 +20883,28 @@ function openReadingMode(title, text, richHtml) {
 }
 
 function closeReadingMode() {
+  // ── Sync highlights back to noteEditableArea before closing ──
+  if(_rdSyncBackOnClose) {
+    var rdCt  = document.getElementById('rdContent');
+    var area  = document.getElementById('noteEditableArea');
+    if(rdCt && area) {
+      var hadHighlights = rdCt.querySelector('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red');
+      if(hadHighlights) {
+        // Write highlighted content back to the live editor
+        area.innerHTML = rdCt.innerHTML;
+        // Re-attach eraser listeners on the newly inserted marks
+        if(typeof neAttachEraserToMarks === 'function') neAttachEraserToMarks();
+        // Mark as modified and auto-save to Firebase
+        if(typeof markModified === 'function') markModified();
+        if(typeof saveEditedNote === 'function') {
+          showToast && showToast('📌 Highlights save ho rahi hain…', 'info');
+          setTimeout(function(){ saveEditedNote(); }, 120);
+        }
+      }
+    }
+    _rdSyncBackOnClose = false;
+  }
+
   document.getElementById('readingOverlay').classList.remove('show');
   var fill = document.getElementById('rdProgress');
   if(fill) fill.style.width = '0%';
@@ -45691,6 +45716,8 @@ window.neToggleFullRead = function neToggleFullRead() {
     showToast && showToast('Note mein koi content nahi hai', 'warn');
     return;
   }
+  // Mark that this session should sync highlights back to noteEditableArea on close
+  _rdSyncBackOnClose = true;
   openReadingMode(nc.title, nc.text, nc.richHtml);
 };
 
