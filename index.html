@@ -9038,14 +9038,18 @@ function onSectionChange(){
     if(sec){
       // Direct topics
       sec.topics.forEach(t=>{ts.innerHTML+=`<option value="${t.id}">${t.name}</option>`;});
-      // Sub-sections' topics (grouped)
-      (sec.subSections||[]).forEach(ss=>{
-        if(ss.topics&&ss.topics.length){
-          ts.innerHTML+=`<optgroup label="↳ ${ss.name}">`;
-          (ss.topics||[]).forEach(t=>{ts.innerHTML+=`<option value="${t.id}">[${ss.name}] ${t.name}</option>`;});
-          ts.innerHTML+='</optgroup>';
-        }
-      });
+      // ✅ FIX: RECURSIVE — nested sub-sections (kitni bhi depth) ke topics bhi dikhao
+      (function _addTopicGroupsInit(node, pathLabel){
+        (node.subSections||[]).forEach(ss=>{
+          var label = pathLabel ? (pathLabel + ' ↳ ' + ss.name) : ss.name;
+          if(ss.topics&&ss.topics.length){
+            ts.innerHTML+=`<optgroup label="↳ ${label}">`;
+            (ss.topics||[]).forEach(t=>{ts.innerHTML+=`<option value="${t.id}">[${label}] ${t.name}</option>`;});
+            ts.innerHTML+='</optgroup>';
+          }
+          _addTopicGroupsInit(ss, label);
+        });
+      })(sec, '');
       _populateSubSectionSelect(sec);
       document.getElementById('subSectionRow').style.display=(_isAdmin||(sec.subSections&&sec.subSections.length))?'grid':'none';
     }
@@ -9058,10 +9062,28 @@ function onSectionChange(){
   document.getElementById('notesArea').style.display='none';
   document.getElementById('finalNotesCard').style.display='none';
 }
+// ✅ FIX: RECURSIVE — kitni bhi depth tak nested sub-sections ho sakte hain
+// (bich se parent-folder banane par). Pehle yeh sirf 1 level list karta tha,
+// isliye deep-nested folders "Add Content" mein destination ke roop mein
+// kabhi dikhte hi nahi the.
+function _findSecNode(node, targetId){
+  if(String(node.id)===String(targetId)) return node;
+  for(var i=0;i<(node.subSections||[]).length;i++){
+    var r=_findSecNode(node.subSections[i],targetId); if(r) return r;
+  }
+  return null;
+}
 function _populateSubSectionSelect(sec){
   const sel=document.getElementById('selSubSection'); if(!sel) return;
   sel.innerHTML='<option value="">— Direct Section mein (sub-group nahi) —</option>';
-  (sec.subSections||[]).forEach(ss=>{sel.innerHTML+=`<option value="${ss.id}">${ss.name}</option>`;});
+  function _addOpts(node, depth){
+    (node.subSections||[]).forEach(ss=>{
+      const indent='\u2003'.repeat(depth) + '↳ ';
+      sel.innerHTML+=`<option value="${ss.id}">${indent}${ss.name}</option>`;
+      _addOpts(ss, depth+1);
+    });
+  }
+  _addOpts(sec, 0);
 }
 function onSubSectionChange(){
   const val=document.getElementById('selSubSection').value;
@@ -9071,15 +9093,21 @@ function onSubSectionChange(){
   const sec=getSec(S.ui.sid,S.ui.secid); if(!sec) return;
   if(!S.ui.subSecid){
     sec.topics.forEach(t=>{ts.innerHTML+=`<option value="${t.id}">${t.name}</option>`;});
-    (sec.subSections||[]).forEach(ss=>{
-      if(ss.topics&&ss.topics.length){
-        ts.innerHTML+=`<optgroup label="↳ ${ss.name}">`;
-        (ss.topics||[]).forEach(t=>{ts.innerHTML+=`<option value="${t.id}">[${ss.name}] ${t.name}</option>`;});
-        ts.innerHTML+='</optgroup>';
-      }
-    });
+    // ✅ FIX: recursive — nested sub-sections ke topics bhi dikhao (grouped by depth)
+    function _addTopicGroups(node, pathLabel){
+      (node.subSections||[]).forEach(ss=>{
+        var label = pathLabel ? (pathLabel + ' ↳ ' + ss.name) : ss.name;
+        if(ss.topics&&ss.topics.length){
+          ts.innerHTML+=`<optgroup label="↳ ${label}">`;
+          (ss.topics||[]).forEach(t=>{ts.innerHTML+=`<option value="${t.id}">[${label}] ${t.name}</option>`;});
+          ts.innerHTML+='</optgroup>';
+        }
+        _addTopicGroups(ss, label);
+      });
+    }
+    _addTopicGroups(sec, '');
   } else {
-    const subSec=(sec.subSections||[]).find(x=>x.id==S.ui.subSecid);
+    const subSec=_findSecNode(sec, S.ui.subSecid);
     if(subSec)(subSec.topics||[]).forEach(t=>{ts.innerHTML+=`<option value="${t.id}">${t.name}</option>`;});
   }
 }
@@ -9128,7 +9156,15 @@ function getSec(sid,secid){
 function getTop(sid,secid,tid){
   const s=getSec(sid,secid); if(!s) return null;
   let t=s.topics.find(x=>x.id==tid); if(t) return t;
-  for(const ss of (s.subSections||[])){ t=(ss.topics||[]).find(x=>x.id==tid); if(t) return t; }
+  // ✅ FIX: RECURSIVE search — kitni bhi depth tak nested sub-sections mein
+  // topic dhoondho. Pehle sirf 1 level tak hi jaata tha, isliye 2nd-level+
+  // nested folder ke andar bane topics kai jagah access hi nahi hote the.
+  function _findInSS(ss){
+    let f=(ss.topics||[]).find(x=>x.id==tid); if(f) return f;
+    for(const ss2 of (ss.subSections||[])){ const f2=_findInSS(ss2); if(f2) return f2; }
+    return null;
+  }
+  for(const ss of (s.subSections||[])){ t=_findInSS(ss); if(t) return t; }
   return null;
 }
 // Get all sections of a subject including ALL nested sub-subjects' sections (✅ recursive)
@@ -9145,8 +9181,13 @@ function _getAllSections(subj){
 }
 // Get all topics of a section including sub-sections' topics
 function _getAllTopics(sec){
+  // ✅ FIX: RECURSIVE — kitni bhi depth tak nested sub-sections ke topics collect karo
   const ts=[...(sec.topics||[])];
-  for(const ss of (sec.subSections||[])) ts.push(...(ss.topics||[]));
+  function _collect(ss){
+    ts.push(...(ss.topics||[]));
+    (ss.subSections||[]).forEach(_collect);
+  }
+  (sec.subSections||[]).forEach(_collect);
   return ts;
 }
 
@@ -9162,17 +9203,29 @@ function _visTop(t){ return _isAdmin || !t.hidden; }
 // (a hidden subject/section also hides everything nested inside it).
 function visibleSubjectsTree(){
   if(_isAdmin) return S.subjects;
+  // ✅ FIX: RECURSIVE — nested sub-sections (kitni bhi depth) ke liye bhi
+  // hidden-filtering aur visibility apply karo. Pehle sirf 1 level tak hi
+  // jaata tha, isliye deep-nested sub-sections normal users ko kabhi
+  // dikhti hi nahi thi chahe hidden na ho.
+  const filterSubSec=ss=>({...ss,
+    topics:(ss.topics||[]).filter(t=>!t.hidden),
+    subSections:(ss.subSections||[]).filter(ss2=>!ss2.hidden).map(filterSubSec)
+  });
   const filterSec=sec=>({...sec,
     topics:(sec.topics||[]).filter(t=>!t.hidden),
-    subSections:(sec.subSections||[]).filter(ss=>!ss.hidden).map(ss=>({...ss,topics:(ss.topics||[]).filter(t=>!t.hidden)}))
+    subSections:(sec.subSections||[]).filter(ss=>!ss.hidden).map(filterSubSec)
+  });
+  // ✅ FIX: RECURSIVE — subSubjects ke andar bhi nested subSubjects ho sakte
+  // hain (kitni bhi depth), unhe bhi recursively filter karo.
+  const filterSubSubj=ss=>({
+    ...ss,
+    sections:(ss.sections||[]).filter(sec=>!sec.hidden).map(filterSec),
+    subSubjects:(ss.subSubjects||[]).filter(ss2=>!ss2.hidden).map(filterSubSubj)
   });
   return S.subjects.filter(s=>!s.hidden).map(s=>({
     ...s,
     sections:(s.sections||[]).filter(sec=>!sec.hidden).map(filterSec),
-    subSubjects:(s.subSubjects||[]).filter(ss=>!ss.hidden).map(ss=>({
-      ...ss,
-      sections:(ss.sections||[]).filter(sec=>!sec.hidden).map(filterSec)
-    }))
+    subSubjects:(s.subSubjects||[]).filter(ss=>!ss.hidden).map(filterSubSubj)
   }));
 }
 function toggleSubjectVisibility(sid,e){
@@ -10417,7 +10470,10 @@ function _addNestedSubSec(sid, secid, parentSsecId){
   if(parent.subSections.find(function(s){return s.name.toLowerCase()===nm.toLowerCase();})){showToast('Yeh naam pehle se hai!','error');return;}
   var ns={id:Date.now()+Math.floor(Math.random()*9999),name:nm,topics:[],subSections:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
   parent.subSections.push(ns);
-  save(); if(typeof saveToFirebaseFast==='function') saveToFirebaseFast();
+  // ✅ FIX: subjId (sid) pass karo taaki targeted+fast shell save ho — pehle
+  // yeh khaali call thi jo (theek se kaam to kar rahi thi via fallback,
+  // lekin) har baar SAARE subjects ke shells resend karti thi, jo slow hai.
+  save(); if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(sid);
   if(typeof renderLibraryTree==='function') renderLibraryTree();
   if(typeof renderLibrarySelects==='function') renderLibrarySelects();
   if(typeof updateQuizSelects==='function') updateQuizSelects();
@@ -31044,6 +31100,18 @@ function _cleanTopic(t){
 
 // ── Build subject shell (no topics array — only IDs) ──
 function _buildSubjShell(subj){
+  // ✅ FIX: RECURSIVE — sub-section ke andar bhi (kitni bhi depth tak) nested
+  // sub-sections ho sakte hain (infinite nesting addSubSection() mein allowed hai).
+  // Pehle yeh sirf EK level deep tak jaata tha — 2nd-level+ nested sub-section
+  // folders shell mein serialize hi nahi hote the, isliye Firebase mein kabhi
+  // save hi nahi hote the aur refresh/relogin par gayab ho jaate the.
+  function _subSecMeta(ss){
+    return {
+      id: ss.id, name: ss.name, hidden: !!ss.hidden,
+      topicIds: (ss.topics||[]).map(function(t){ return t.id; }),
+      subSectionMeta: (ss.subSections||[]).map(function(ss2){ return _subSecMeta(ss2); })
+    };
+  }
   function _secMeta(sec){
     return {
       id:    sec.id,
@@ -31051,12 +31119,7 @@ function _buildSubjShell(subj){
       facts: sec.facts||[],
       hidden: !!sec.hidden,
       topicIds: (sec.topics||[]).map(function(t){ return t.id; }),
-      subSectionMeta: (sec.subSections||[]).map(function(ss){
-        return {
-          id: ss.id, name: ss.name, hidden: !!ss.hidden,
-          topicIds: (ss.topics||[]).map(function(t){ return t.id; })
-        };
-      })
+      subSectionMeta: (sec.subSections||[]).map(function(ss){ return _subSecMeta(ss); })
     };
   }
   // ✅ FIX: RECURSIVE — subSubject ke andar bhi subSubjects save karo
@@ -31575,21 +31638,26 @@ async function loadFromFirebase(){
       });
 
       // Reassemble subjects from shells + topics
-      // ✅ FIX: helper — section rebuild with subSections
+      // ✅ FIX: RECURSIVE rebuild — matches recursive _subSecMeta() in _buildSubjShell().
+      // Pehle yeh sirf EK level deep tak sub-sections rebuild karta tha, isliye
+      // 2nd-level+ nested sub-section folders load hi nahi hote the.
+      function _rebuildSubSec(ssm){
+        ssm.topics = (ssm.topicIds||[]).map(function(tid){
+          var td = topicMap[String(tid)];
+          return td ? td.topic : null;
+        }).filter(Boolean);
+        delete ssm.topicIds;
+        ssm.subSections = (ssm.subSectionMeta||[]).map(function(ssm2){ return _rebuildSubSec(ssm2); });
+        delete ssm.subSectionMeta;
+        return ssm;
+      }
       function _rebuildSec(sm){
         sm.topics = (sm.topicIds||[]).map(function(tid){
           var td = topicMap[String(tid)];
           return td ? td.topic : null;
         }).filter(Boolean);
         delete sm.topicIds;
-        sm.subSections = (sm.subSectionMeta||[]).map(function(ssm){
-          ssm.topics = (ssm.topicIds||[]).map(function(tid){
-            var td = topicMap[String(tid)];
-            return td ? td.topic : null;
-          }).filter(Boolean);
-          delete ssm.topicIds;
-          return ssm;
-        });
+        sm.subSections = (sm.subSectionMeta||[]).map(function(ssm){ return _rebuildSubSec(ssm); });
         delete sm.subSectionMeta;
         return sm;
       }
