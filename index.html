@@ -63695,7 +63695,6 @@ function orgDoMove(type, sid, secid, tid) {
 
     /* --- find & detach topic from source --- */
     var tp = null;
-    var oldTid = String(tid); // purana Firebase doc ID (delete karna hai)
     var srcSec = getSec(sid, secid);
     if (srcSec) {
       tp = srcSec.topics.find(function(x){ return x.id == tid; });
@@ -63712,8 +63711,10 @@ function orgDoMove(type, sid, secid, tid) {
     }
     if (!tp) { showToast("Topic source mein nahi mila!", "error"); return; }
 
-    // ✅ NEW ID assign karo — destination par FRESH doc banega Firebase mein
-    tp.id = _nid();
+    // ✅ FIX: ID SAME rehta hai — move par naya Firebase doc NAHI banega.
+    // Same doc ID ('topics/{tp.id}') par hi naye subjId/secId/ssecId fields
+    // ke saath overwrite (merge) ho jaayega — is se document sahi tarah
+    // apni nayi jagah par "move" hota hai, duplicate nahi banta.
 
     /* --- find destination container --- */
     var destContainer = null;
@@ -63726,14 +63727,6 @@ function orgDoMove(type, sid, secid, tid) {
     }
     if (!destContainer) { showToast("Destination section nahi mila!", "error"); return; }
     (destContainer.topics = destContainer.topics || []).push(tp);
-
-    // ✅ Old Firebase doc delete karo (stale entry saaf ho)
-    try {
-      if(typeof _db !== 'undefined' && _db && typeof _effectiveUID !== 'undefined' && _effectiveUID) {
-        _db.collection('users').doc(_effectiveUID).collection('topics').doc(oldTid).delete()
-          .catch(function(e){ console.warn('[orgDoMove] Old topic doc delete error:', e); });
-      }
-    } catch(e) { console.warn('[orgDoMove] Delete attempt error:', e); }
 
     _done("\"" + tp.name + "\" move ho gaya! \u2705");
 
