@@ -9198,7 +9198,7 @@ function toggleSubSubjectVisibility(sid, ssid, e){
   if(e) e.stopPropagation();
   if(!_isAdmin){ showToast('❌ Sirf admin visibility control kar sakta hai.','error'); return; }
   const ss=getSubSubjDeep(sid, ssid); if(!ss) return;
-  ss.hidden=!ss.hidden; save(); if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(); renderLibraryTree(); updateQuizSelects();
+  ss.hidden=!ss.hidden; save(); if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(sid); renderLibraryTree(); updateQuizSelects();
   showToast(ss.hidden?`🚫 "${ss.name}" users se hide kar diya`:`✅ "${ss.name}" users ko dikhega`,'success');
 }
 // ✅ NEW: Delete sub-subject at any nesting depth
@@ -9210,7 +9210,7 @@ function delSubSubjDeep(sid, ssid, parentSsid, e){
   var parentNode = parentSsid ? getSubSubjDeep(sid, parentSsid) : null;
   if(!parentNode) parentNode = subj;
   parentNode.subSubjects=(parentNode.subSubjects||[]).filter(x=>String(x.id)!==String(ssid));
-  save(); if(typeof saveToFirebaseFast==='function') saveToFirebaseFast();
+  save(); if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(sid);
   renderLibrarySelects(); renderLibraryTree(); updateQuizSelects();
   showToast('Sub-Subject delete ho gaya','success');
 }
@@ -9259,7 +9259,7 @@ function toggleSubSecVisibility(sid, secid, ssecid, e){
   }
   const ssec=_findSSec2(sec);
   if(!ssec) return;
-  ssec.hidden=!ssec.hidden; save(); if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(); renderLibraryTree(); updateQuizSelects();
+  ssec.hidden=!ssec.hidden; save(); if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(sid); renderLibraryTree(); updateQuizSelects();
   showToast(ssec.hidden?`🚫 "${ssec.name}" hide!`:`✅ "${ssec.name}" dikhega!`,'success');
 }
 function toggleSectionVisibility(sid,secid,e){
@@ -9286,8 +9286,7 @@ function addSubject(){
   if(S.subjects.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Pehle se hai!','error');return;}
   S.subjects.push({id:Date.now(),name,sections:[],facts:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')});
   save(); document.getElementById('newSubject').value='';
-  if(typeof saveToFirebaseFast==='function') saveToFirebaseFast();
-  console.info('[📗 addSubject] Firebase sync shuru — name:'+name);
+  if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(S.subjects[S.subjects.length-1].id);
   renderLibrarySelects(); renderLibraryTree(); updateQuizSelects();
   document.getElementById('selSubject').value=S.subjects[S.subjects.length-1].id;
   onSubjectChange();
@@ -9307,8 +9306,7 @@ function addSection(){
   if(container.sections.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Pehle se hai!','error');return;}
   const ns={id:Date.now(),name,topics:[],facts:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
   container.sections.push(ns);save();
-  if(typeof saveToFirebaseFast==='function') saveToFirebaseFast();
-  console.info('[📘 addSection] Firebase sync shuru — name:'+name);
+  if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(S.ui.sid);
   document.getElementById('newSection').value='';
   onSubjectChange();
   document.getElementById('selSection').value=ns.id; onSectionChange();
@@ -9331,8 +9329,11 @@ function addTopic(){
   container.topics.push(nt);save();
   // ⚡ Attach listener for new topic immediately
   if(typeof _attachSingleTopicListener === 'function') _attachSingleTopicListener(nt.id);
-  if(typeof saveToFirebaseFast==='function') saveToFirebaseFast();
-  console.info('[📙 addTopic] Firebase sync shuru — name:'+name+' id:'+nt.id);
+  // ✅ FIX: naya topic khud ek NAYA Firestore document hai (topics collection mein) —
+  // sirf shell save karne se yeh doc kabhi banta hi nahi. Isliye topic doc + shell
+  // dono turant (fast) save karo.
+  if(typeof saveTopicToFirebase==='function') saveTopicToFirebase(nt.id, S.ui.sid, S.ui.secid);
+  else if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(S.ui.sid);
   document.getElementById('newTopic').value='';
   onSectionChange();
   document.getElementById('selTopic').value=nt.id; onTopicChange();
@@ -9368,7 +9369,7 @@ function addSubSubject(){
   if(parent.subSubjects.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Is level par yeh sub-subject pehle se hai! Alag naam do ya alag jagah select karo.','error');return;}
   const ns={id:Date.now()+Math.floor(Math.random()*9999),name,sections:[],subSubjects:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
   parent.subSubjects.push(ns);save();
-  if(typeof saveToFirebaseFast==='function') saveToFirebaseFast();
+  if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(S.ui.sid);
   document.getElementById('newSubSubject').value='';
   S.ui.subSid=ns.id;
   _populateSubSubjectSelect(subj);
@@ -9396,7 +9397,7 @@ function addSubSection(){
   if(parent.subSections.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Is level par yeh sub-section pehle se hai! Alag naam do ya alag jagah select karo.','error');return;}
   const ns={id:Date.now()+Math.floor(Math.random()*9999),name,topics:[],subSections:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
   parent.subSections.push(ns);save();
-  if(typeof saveToFirebaseFast==='function') saveToFirebaseFast();
+  if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(S.ui.sid);
   document.getElementById('newSubSection').value='';
   S.ui.subSecid=ns.id;
   _populateSubSectionSelect(sec);
@@ -9436,27 +9437,27 @@ function openSplitModal(type,sid,secid,tid){
     if(!subj.subSubjects) subj.subSubjects=[];
     if(subj.subSubjects.find(s=>s.name.toLowerCase()===nm.toLowerCase())){showToast('Pehle se hai!','error');return;}
     subj.subSubjects.push({id:Date.now()+Math.floor(Math.random()*9999),name:nm,sections:[],subSubjects:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')});
-    save();if(typeof saveToFirebaseFast==='function') saveToFirebaseFast();renderLibraryTree();renderLibrarySelects();updateQuizSelects();
+    save();if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(sid);renderLibraryTree();renderLibrarySelects();updateQuizSelects();
     showToast(`"${nm}" sub-subject "${subj.name}" mein add! 📗↳`,'success');
   } else if(type==='section'){
     const sec=getSec(sid,secid); if(!sec) return;
     if(!sec.subSections) sec.subSections=[];
     if(sec.subSections.find(s=>s.name.toLowerCase()===nm.toLowerCase())){showToast('Pehle se hai!','error');return;}
     sec.subSections.push({id:Date.now()+Math.floor(Math.random()*9999),name:nm,topics:[],subSections:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')});
-    save();if(typeof saveToFirebaseFast==='function') saveToFirebaseFast();renderLibraryTree();
+    save();if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(sid);renderLibraryTree();
     showToast(`"${nm}" sub-section "${sec.name}" mein add! 📘↳`,'success');
   } else if(type==='topic'){
     const t=getTop(sid,secid,tid); if(!t) return;
     if(!t.subTopics) t.subTopics=[];
     if(t.subTopics.find(s=>s.name.toLowerCase()===nm.toLowerCase())){showToast('Pehle se hai!','error');return;}
     t.subTopics.push({id:Date.now(),name:nm,notes:[],finalNotes:'',finalNotesRaw:[],newPoints:[],highlights:[],savedFacts:[],finalNotesAt:null,hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')});
-    save();renderLibraryTree();
+    save();if(typeof saveTopicToFirebase==='function') saveTopicToFirebase(t.id, sid, secid);renderLibraryTree();
     showToast(`"${nm}" sub-topic "${t.name}" mein add! 📙↳`,'success');
   }
 }
 
-function delSubSubj(sid,ssid,e){if(e)e.stopPropagation();if(!_isAdmin){showToast('Sirf admin delete kar sakta hai','error');return;}if(!confirm('Sub-Subject aur uske saare sections delete honge!'))return;const subj=getSubj(sid);if(!subj)return;subj.subSubjects=(subj.subSubjects||[]).filter(x=>x.id!==ssid);save();if(typeof saveToFirebase==='function') saveToFirebase();renderLibrarySelects();renderLibraryTree();updateQuizSelects();showToast('Sub-Subject delete ho gaya','success');}
-function delSubSec(sid,secid,ssid,e){if(e)e.stopPropagation();if(!_isAdmin){showToast('Sirf admin delete kar sakta hai','error');return;}if(!confirm('Sub-Section aur uske saare topics delete honge!'))return;const sec=getSec(sid,secid);if(!sec)return;sec.subSections=(sec.subSections||[]).filter(x=>x.id!==ssid);save();if(typeof saveToFirebase==='function') saveToFirebase();renderLibraryTree();showToast('Sub-Section delete ho gaya','success');}
+function delSubSubj(sid,ssid,e){if(e)e.stopPropagation();if(!_isAdmin){showToast('Sirf admin delete kar sakta hai','error');return;}if(!confirm('Sub-Subject aur uske saare sections delete honge!'))return;const subj=getSubj(sid);if(!subj)return;subj.subSubjects=(subj.subSubjects||[]).filter(x=>x.id!==ssid);save();if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(sid);renderLibrarySelects();renderLibraryTree();updateQuizSelects();showToast('Sub-Subject delete ho gaya','success');}
+function delSubSec(sid,secid,ssid,e){if(e)e.stopPropagation();if(!_isAdmin){showToast('Sirf admin delete kar sakta hai','error');return;}if(!confirm('Sub-Section aur uske saare topics delete honge!'))return;const sec=getSec(sid,secid);if(!sec)return;sec.subSections=(sec.subSections||[]).filter(x=>x.id!==ssid);save();if(typeof saveToFirebaseFast==='function') saveToFirebaseFast(sid);renderLibraryTree();showToast('Sub-Section delete ho gaya','success');}
 function delSubTop(sid,secid,tid,stid,e){if(e)e.stopPropagation();if(!_isAdmin){showToast('Sirf admin delete kar sakta hai','error');return;}if(!confirm('Sub-Topic delete karna hai?'))return;const t=getTop(sid,secid,tid);if(!t)return;t.subTopics=(t.subTopics||[]).filter(x=>x.id!==stid);save();renderLibraryTree();showToast('Sub-Topic delete ho gaya','success');}
 
 // ==================== NOTES ====================
@@ -11959,9 +11960,14 @@ function copyFinalNotesById(tid,sid,secid){
   navigator.clipboard.writeText(clean).then(()=>showToast('Copy ho gaya! 📋','success'));
 }
 
-function delSubj(id,e){e.stopPropagation();if(!_isAdmin){showToast("Sirf admin delete kar sakta hai","error");return;}if(!confirm('Subject delete karna hai?'))return;S.subjects=S.subjects.filter(x=>x.id!==id);save();if(typeof saveToFirebase==='function'){saveToFirebase().then(r=>r&&r.ok?console.info('[🗑 delSubj] Firebase deleted OK'):console.error('[🗑 delSubj] Firebase error',r));}renderLibrarySelects();renderLibraryTree();updateQuizSelects();showToast('Delete ho gaya','success');}
-function delSec(sid,secid,e){e.stopPropagation();if(!_isAdmin){showToast("Sirf admin delete kar sakta hai","error");return;}if(!confirm('Section delete karna hai?'))return;const s=getSubj(sid);s.sections=s.sections.filter(x=>x.id!==secid);save();if(typeof saveToFirebase==='function'){saveToFirebase().then(r=>r&&r.ok?console.info('[🗑 delSec] Firebase deleted OK'):console.error('[🗑 delSec] Firebase error',r));}renderLibraryTree();showToast('Delete ho gaya','success');}
-function delTop(sid,secid,tid,e){e.stopPropagation();if(!_isAdmin){showToast("Sirf admin delete kar sakta hai","error");return;}if(!confirm('Topic delete karna hai?'))return;const sec=getSec(sid,secid);sec.topics=sec.topics.filter(x=>x.id!==tid);save();if(typeof saveToFirebase==='function'){saveToFirebase().then(r=>r&&r.ok?console.info('[🗑 delTop] Firebase deleted OK'):console.error('[🗑 delTop] Firebase error',r));}renderLibraryTree();updateQuizSelects();showToast('Delete ho gaya','success');}
+function delSubj(id,e){e.stopPropagation();if(!_isAdmin){showToast("Sirf admin delete kar sakta hai","error");return;}if(!confirm('Subject delete karna hai?'))return;S.subjects=S.subjects.filter(x=>x.id!==id);save();if(typeof saveToFirebaseFast==='function'){saveToFirebaseFast().then(r=>r&&r.ok?console.info('[🗑 delSubj] Firebase deleted OK'):console.error('[🗑 delSubj] Firebase error',r));}
+  // ✅ Subject delete hone par uska purana Firestore doc bhi hata do (stale na reh jaaye)
+  try{ if(_db && _effectiveUID){ _db.collection('users').doc(_effectiveUID).collection('subjects').doc(String(id)).delete().catch(function(e){console.warn('[delSubj] shell delete error:',e);}); } }catch(e){}
+  renderLibrarySelects();renderLibraryTree();updateQuizSelects();showToast('Delete ho gaya','success');}
+function delSec(sid,secid,e){e.stopPropagation();if(!_isAdmin){showToast("Sirf admin delete kar sakta hai","error");return;}if(!confirm('Section delete karna hai?'))return;const s=getSubj(sid);s.sections=s.sections.filter(x=>x.id!==secid);save();if(typeof saveToFirebaseFast==='function'){saveToFirebaseFast(sid).then(r=>r&&r.ok?console.info('[🗑 delSec] Firebase deleted OK'):console.error('[🗑 delSec] Firebase error',r));}renderLibraryTree();showToast('Delete ho gaya','success');}
+function delTop(sid,secid,tid,e){e.stopPropagation();if(!_isAdmin){showToast("Sirf admin delete kar sakta hai","error");return;}if(!confirm('Topic delete karna hai?'))return;const sec=getSec(sid,secid);sec.topics=sec.topics.filter(x=>x.id!==tid);save();if(typeof saveToFirebaseFast==='function'){saveToFirebaseFast(sid).then(r=>r&&r.ok?console.info('[🗑 delTop] Firebase deleted OK'):console.error('[🗑 delTop] Firebase error',r));}
+  try{ if(_db && _effectiveUID){ _db.collection('users').doc(_effectiveUID).collection('topics').doc(String(tid)).delete().catch(function(e){console.warn('[delTop] topic doc delete error:',e);}); } }catch(e){}
+  renderLibraryTree();updateQuizSelects();showToast('Delete ho gaya','success');}
 
 // ==================== EXAMS ====================
 function createExam(){
@@ -31285,39 +31291,95 @@ function saveToFirebaseDebounced(delay){
     saveToFirebase();
   }, delay);
 }
-// ✅ FIX: STRUCTURE CHANGES ke liye IMMEDIATE save — koi debounce wait nahi.
-// Kyun zaroori hai: subject/section/topic/sub-subject/sub-section create, delete,
-// hide-toggle, ya organize (move/reorder/split/merge) jaise DISCRETE ek-baar-ke
-// operations agar debounce (300-1500ms) ke bharose chhode jaayein, to PWA/mobile
-// app agar us window ke andar hi suspend/band ho jaaye (jo bahut common hai —
-// "app band karke phir kholna" pura JS reload guarantee nahi karta aur pending
-// setTimeout bhi cancel ho sakta hai), to woh change Firebase tak kabhi pahochta
-// hi nahi — sirf local mein reh jaata hai, aur agli baar login par cloud ka
-// (purana) data usse silently overwrite kar deta hai.
-// Isliye structure-changing actions ab turant (0ms) Firebase call karte hain,
-// pending debounce timer bhi turant clear kar dete hain taaki double-save na ho.
-function saveToFirebaseFast(){
+// ✅ FIX: STRUCTURE CHANGES ke liye TARGETED + IMMEDIATE save.
+// PURANI PROBLEM: saveToFirebase() (full save) HAR baar chalne par sabhi
+// subjects ke shells + SABHI topics (57-58+ operations) ek hi batch mein
+// phir se bhejta tha — chahe sirf EK naya sub-folder bana ho. Isse ek save
+// mein 24-45 SECOND tak lag jaate the (jitne zyada topics utna zyada time).
+// Itni lambi write-duration hi sabse bada risk factor thi: agar PWA/mobile
+// app is beech kabhi bhi suspend/band ho jaaye ya network connection
+// thodi der ke liye bhi drop ho (jo common hai), to poora save incomplete
+// reh jaata — naya structure change kabhi Firebase tak pahochta hi nahi.
+//
+// NAYA FIX: structure-changing actions (create/organize/toggle/delete) ab
+// sirf META DOC + us SPECIFIC SUBJECT ka shell save karte hain — sirf
+// 2 chhoti operations, jo 1-2 second mein hi complete ho jaati hain.
+// Poora "sab kuch phir se bhejna" sirf syncNow()/pullFromCloud jaisi
+// manual "full resync" situations ke liye reserved hai.
+async function saveSubjectShellFast(subjId){
+  if(!_db || !_currentUser) return {ok:false, error:'Firebase ya user ready nahi', code:'NO_AUTH'};
+  if(!_isAdmin){ return {ok:false, error:'Admin nahi hain aap', code:'NOT_ADMIN'}; }
+  if(_adminSessionLocked){
+    showToast('⚠️ Save BLOCKED — Admin kisi aur device pe logged in hai!','error');
+    return {ok:false, error:'Session locked', code:'SESSION_LOCKED'};
+  }
+  var _t0 = Date.now();
+  try{
+    var uid = _effectiveUID;
+    var subj = subjId ? getSubj(subjId) : null;
+    var batch = _db.batch();
+    var opsCount = 0;
+
+    // Meta doc — chhota, fast (stats/exams/subjectIds waghera)
+    var wid = _genWriteId();
+    _myWriteId = wid;
+    _lastSaveTime = Date.now();
+    batch.set(_db.collection('users').doc(uid), {
+      activeExamId:      S.activeExamId||'',
+      model:             S.model||'meta-llama/llama-4-scout-17b-16e-instruct',
+      subjectIds:        (S.subjects||[]).map(function(s){ return s.id; }),
+      topicFormat:       'v2',
+      lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
+      writeId:           wid
+    }, {merge:true});
+    opsCount++;
+
+    if(subj){
+      batch.set(_db.collection('users').doc(uid).collection('subjects').doc(String(subj.id)), {
+        shell:     _buildSubjShell(subj),
+        updatedAt: Date.now()
+      }, {merge:true});
+      opsCount++;
+    } else {
+      // subjId nahi mila (jaise subject reposition jisme koi single subj target nahi) —
+      // safety ke liye SABHI subject shells bhejo (phir bhi topics nahi bhejte, isliye fast rahega)
+      (S.subjects||[]).forEach(function(s){
+        batch.set(_db.collection('users').doc(uid).collection('subjects').doc(String(s.id)), {
+          shell:     _buildSubjShell(s),
+          updatedAt: Date.now()
+        }, {merge:true});
+        opsCount++;
+      });
+    }
+
+    await batch.commit();
+    var _elapsed = Date.now() - _t0;
+    console.info('[⚡ saveSubjectShellFast] ✅ SUCCESS — '+opsCount+' ops in '+_elapsed+'ms | subjId:'+subjId);
+    setSyncStatus('synced');
+    return { ok:true, ops:opsCount, ms:_elapsed };
+  }catch(e){
+    console.error('[⚡ saveSubjectShellFast] ❌ ERROR — code:'+e.code+' | msg:'+e.message);
+    setSyncStatus('error');
+    return { ok:false, error:e.message, code:e.code };
+  }
+}
+
+// Backward-compatible entry point — call sites pass optional subjId ab.
+// Agar subjId nahi diya (purane call sites), to bhi yeh sirf shells save karega,
+// sabhi topics phir se nahi bhejega — bahut fast rahega.
+function saveToFirebaseFast(subjId){
   if(_fbSaveTimer){ clearTimeout(_fbSaveTimer); _fbSaveTimer = null; }
-  if(_fbSaveInProgress){
-    console.warn('[🔥 saveToFirebaseFast] pehle se ek save chal raha hai — is baar bhi turant queue karte hain');
-    _fbSaveInProgress = false; // stuck na ho, turant retry allow karo
-  }
-  var _p = saveToFirebase();
-  // ✅ FIX: agar structural save fail ho jaaye (network/permission/etc), turant
-  // saaf error dikhao — taaki user "app band" karne se pehle pata chal jaaye
-  // ki abhi cloud pe save nahi hua, aur wo thoda ruk kar retry kar sake.
-  if(_p && typeof _p.then === 'function'){
-    _p.then(function(res){
-      if(res && res.ok === false){
-        console.error('[🔥 saveToFirebaseFast] ❌ Structure save FAIL — code:'+res.code+' msg:'+res.error);
-        if(res.code !== 'NOT_ADMIN'){ // NOT_ADMIN already read-only mode mein expected hai, alag se dikhane ki zaroorat nahi
-          showToast('⚠️ Cloud save nahi hua abhi! App band mat karo, thoda ruko ya "Sync Now" try karo.', 'error');
-        }
+  var _p = saveSubjectShellFast(subjId);
+  _p.then(function(res){
+    if(res && res.ok === false){
+      console.error('[🔥 saveToFirebaseFast] ❌ Structure save FAIL — code:'+res.code+' msg:'+res.error);
+      if(res.code !== 'NOT_ADMIN'){
+        showToast('⚠️ Cloud save nahi hua abhi! App band mat karo, thoda ruko ya "Sync Now" try karo.', 'error');
       }
-    }).catch(function(e){
-      console.error('[🔥 saveToFirebaseFast] ❌ Unexpected error:', e);
-    });
-  }
+    }
+  }).catch(function(e){
+    console.error('[🔥 saveToFirebaseFast] ❌ Unexpected error:', e);
+  });
   return _p;
 }
 async function saveToFirebase(){
@@ -63809,9 +63871,17 @@ function orgDoReorder(type, sid, secid, tid) {
 function _done(msg) {
   save();
   // ✅ Firebase sync after organize — IMMEDIATE, debounce nahi (structure change hai)
+  // Organize se item apni SOURCE subject se DESTINATION subject (agar alag ho) mein
+  // move ho sakta hai — dono subjects ke shells save karo taaki dono jagah update reflect ho.
   if (typeof saveToFirebaseFast === "function") {
-    saveToFirebaseFast();
-    console.info('[📦 orgDone] Firebase sync shuru (immediate) — op:' + (_orgCtx ? _orgCtx.tab : '?') + ' type:' + (_orgCtx ? _orgCtx.type : '?'));
+    var _srcSubjId = _orgCtx ? _orgCtx.sid : null;
+    var _dstSubjId = (typeof _orgMv !== 'undefined' && _orgMv && _orgMv.subjId) ? _orgMv.subjId : null;
+    saveToFirebaseFast(_srcSubjId).then(function(){
+      if(_dstSubjId && String(_dstSubjId) !== String(_srcSubjId)){
+        saveToFirebaseFast(_dstSubjId);
+      }
+    });
+    console.info('[📦 orgDone] Firebase sync shuru (immediate) — op:' + (_orgCtx ? _orgCtx.tab : '?') + ' type:' + (_orgCtx ? _orgCtx.type : '?') + ' src:'+_srcSubjId+' dst:'+_dstSubjId);
   }
   if (typeof renderLibraryTree === "function") renderLibraryTree();
   if (typeof renderLibrarySelects === "function") renderLibrarySelects();
