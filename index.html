@@ -8977,14 +8977,18 @@ function onSubjectChange(){
     if(subj){
       // Direct sections
       subj.sections.forEach(s=>{ss.innerHTML+=`<option value="${s.id}">${s.name}</option>`;});
-      // Sub-subjects' sections (grouped)
-      (subj.subSubjects||[]).forEach(ss2=>{
-        if(ss2.sections&&ss2.sections.length){
-          ss.innerHTML+=`<optgroup label="↳ ${ss2.name}">`;
-          (ss2.sections||[]).forEach(s=>{ss.innerHTML+=`<option value="${s.id}">[${ss2.name}] ${s.name}</option>`;});
-          ss.innerHTML+='</optgroup>';
-        }
-      });
+      // ✅ FIX: recursive — nested sub-subjects (kitni bhi depth) ke sections bhi grouped dikhao
+      (function _addSecGroupsTop(node, pathLabel){
+        (node.subSubjects||[]).forEach(ss2=>{
+          var label = pathLabel ? (pathLabel + ' ↳ ' + ss2.name) : ss2.name;
+          if(ss2.sections&&ss2.sections.length){
+            ss.innerHTML+=`<optgroup label="↳ ${label}">`;
+            (ss2.sections||[]).forEach(s=>{ss.innerHTML+=`<option value="${s.id}">[${label}] ${s.name}</option>`;});
+            ss.innerHTML+='</optgroup>';
+          }
+          _addSecGroupsTop(ss2, label);
+        });
+      })(subj, '');
       // Populate sub-subject selector
       _populateSubSubjectSelect(subj);
       // Show sub-subject row for admin always; for others only if sub-subjects exist
@@ -9001,10 +9005,28 @@ function onSubjectChange(){
   document.getElementById('notesArea').style.display='none';
   document.getElementById('finalNotesCard').style.display='none';
 }
+// ✅ FIX: RECURSIVE — kitni bhi depth tak nested sub-subjects ho sakte hain
+// (subject ke andar group ke andar group). Pehle yeh sirf 1 level list karta
+// tha, isliye deep-nested subject-folders "Add Content" mein kabhi dikhte hi
+// nahi the — sirf top-level sub-subject select ho pata tha.
+function _findSubSubjNode(node, targetId){
+  for(var i=0;i<(node.subSubjects||[]).length;i++){
+    if(String(node.subSubjects[i].id)===String(targetId)) return node.subSubjects[i];
+    var r=_findSubSubjNode(node.subSubjects[i],targetId); if(r) return r;
+  }
+  return null;
+}
 function _populateSubSubjectSelect(subj){
   const sel=document.getElementById('selSubSubject'); if(!sel) return;
   sel.innerHTML='<option value="">— Direct Subject mein (sub-group nahi) —</option>';
-  (subj.subSubjects||[]).forEach(ss=>{sel.innerHTML+=`<option value="${ss.id}">${ss.name}</option>`;});
+  function _addOpts(node, depth){
+    (node.subSubjects||[]).forEach(ss=>{
+      const indent='\u2003'.repeat(depth) + '↳ ';
+      sel.innerHTML+=`<option value="${ss.id}">${indent}${ss.name}</option>`;
+      _addOpts(ss, depth+1);
+    });
+  }
+  _addOpts(subj, 0);
 }
 function onSubSubjectChange(){
   const val=document.getElementById('selSubSubject').value;
@@ -9015,15 +9037,20 @@ function onSubSubjectChange(){
   const subj=getSubj(S.ui.sid); if(!subj) return;
   if(!S.ui.subSid){
     subj.sections.forEach(s=>{ss.innerHTML+=`<option value="${s.id}">${s.name}</option>`;});
-    (subj.subSubjects||[]).forEach(ss2=>{
-      if(ss2.sections&&ss2.sections.length){
-        ss.innerHTML+=`<optgroup label="↳ ${ss2.name}">`;
-        (ss2.sections||[]).forEach(s=>{ss.innerHTML+=`<option value="${s.id}">[${ss2.name}] ${s.name}</option>`;});
-        ss.innerHTML+='</optgroup>';
-      }
-    });
+    // ✅ FIX: recursive — nested sub-subjects (kitni bhi depth) ke sections bhi dikhao
+    (function _addSecGroupsInit(node, pathLabel){
+      (node.subSubjects||[]).forEach(ss2=>{
+        var label = pathLabel ? (pathLabel + ' ↳ ' + ss2.name) : ss2.name;
+        if(ss2.sections&&ss2.sections.length){
+          ss.innerHTML+=`<optgroup label="↳ ${label}">`;
+          (ss2.sections||[]).forEach(s=>{ss.innerHTML+=`<option value="${s.id}">[${label}] ${s.name}</option>`;});
+          ss.innerHTML+='</optgroup>';
+        }
+        _addSecGroupsInit(ss2, label);
+      });
+    })(subj, '');
   } else {
-    const subSubj=(subj.subSubjects||[]).find(x=>x.id==S.ui.subSid);
+    const subSubj=_findSubSubjNode(subj, S.ui.subSid);
     if(subSubj)(subSubj.sections||[]).forEach(s=>{ss.innerHTML+=`<option value="${s.id}">${s.name}</option>`;});
   }
 }
@@ -9352,9 +9379,9 @@ function addSection(){
   const name=document.getElementById('newSection').value.trim();
   if(!name){showToast('Naam daalo!','error');return;}
   const subj=getSubj(S.ui.sid);
-  // Route to sub-subject if one is selected
+  // ✅ FIX: Route to selected sub-subject (kitni bhi depth par ho, recursive search)
   let container=subj;
-  if(S.ui.subSid){const ss=(subj.subSubjects||[]).find(x=>x.id==S.ui.subSid);if(ss)container=ss;}
+  if(S.ui.subSid){const ss=_findSubSubjNode(subj,S.ui.subSid);if(ss)container=ss;}
   if(!container.sections) container.sections=[];
   if(container.sections.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Pehle se hai!','error');return;}
   const ns={id:Date.now(),name,topics:[],facts:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
@@ -9373,9 +9400,9 @@ function addTopic(){
   const name=document.getElementById('newTopic').value.trim();
   if(!name){showToast('Naam daalo!','error');return;}
   const sec=getSec(S.ui.sid,S.ui.secid);
-  // Route to sub-section if one is selected
+  // ✅ FIX: Route to selected sub-section (kitni bhi depth par ho, recursive search)
   let container=sec;
-  if(S.ui.subSecid){const ss=(sec.subSections||[]).find(x=>x.id==S.ui.subSecid);if(ss)container=ss;}
+  if(S.ui.subSecid){const ss=_findSecNode(sec,S.ui.subSecid);if(ss)container=ss;}
   if(!container.topics) container.topics=[];
   if(container.topics.find(t=>t.name.toLowerCase()===name.toLowerCase())){showToast('Pehle se hai!','error');return;}
   const nt={id:Date.now(),name,notes:[],finalNotes:'',finalNotesRaw:[],newPoints:[],highlights:[],savedFacts:[],finalNotesAt:null,hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
