@@ -9074,8 +9074,15 @@ function onSubTopicChange(){
 function getSubj(sid){return S.subjects.find(x=>x.id==sid);}
 function getSec(sid,secid){
   const s=getSubj(sid); if(!s) return null;
-  let sec=s.sections.find(x=>x.id==secid); if(sec) return sec;
-  for(const ss of (s.subSubjects||[])){ sec=(ss.sections||[]).find(x=>x.id==secid); if(sec) return sec; }
+  let sec=(s.sections||[]).find(x=>x.id==secid); if(sec) return sec;
+  // ✅ FIX: Recursive deep search for infinite nesting
+  function _searchSS(ss){
+    if(!ss) return null;
+    const f=(ss.sections||[]).find(x=>x.id==secid); if(f) return f;
+    for(const ss2 of (ss.subSubjects||[])){ const f2=_searchSS(ss2); if(f2) return f2; }
+    return null;
+  }
+  for(const ss of (s.subSubjects||[])){ const f=_searchSS(ss); if(f) return f; }
   return null;
 }
 function getTop(sid,secid,tid){
@@ -9084,10 +9091,16 @@ function getTop(sid,secid,tid){
   for(const ss of (s.subSections||[])){ t=(ss.topics||[]).find(x=>x.id==tid); if(t) return t; }
   return null;
 }
-// Get all sections of a subject including sub-subjects' sections
+// Get all sections of a subject including ALL nested sub-subjects' sections (✅ recursive)
 function _getAllSections(subj){
+  if(!subj) return [];
   const secs=[...(subj.sections||[])];
-  for(const ss of (subj.subSubjects||[])) secs.push(...(ss.sections||[]));
+  function _collectSS(ss){
+    if(!ss) return;
+    secs.push(...(ss.sections||[]));
+    (ss.subSubjects||[]).forEach(function(ss2){ _collectSS(ss2); });
+  }
+  (subj.subSubjects||[]).forEach(function(ss){ _collectSS(ss); });
   return secs;
 }
 // Get all topics of a section including sub-sections' topics
@@ -9128,6 +9141,86 @@ function toggleSubjectVisibility(sid,e){
   const s=getSubj(sid); if(!s) return;
   s.hidden=!s.hidden; save(); renderLibraryTree(); updateQuizSelects();
   showToast(s.hidden?`🚫 "${s.name}" users se hide kar diya`:`✅ "${s.name}" users ko dikhega`,'success');
+}
+// ✅ NEW: Deep search sub-subject by id (infinite nesting)
+function getSubSubjDeep(sid, ssid){
+  const subj=getSubj(sid); if(!subj) return null;
+  function _find(node){
+    if(String(node.id)===String(ssid)) return node;
+    for(const ss2 of (node.subSubjects||[])){ const r=_find(ss2); if(r) return r; }
+    return null;
+  }
+  for(const ss of (subj.subSubjects||[])){ const r=_find(ss); if(r) return r; }
+  return null;
+}
+// ✅ NEW: Toggle sub-subject visibility (any depth)
+function toggleSubSubjectVisibility(sid, ssid, e){
+  if(e) e.stopPropagation();
+  if(!_isAdmin){ showToast('❌ Sirf admin visibility control kar sakta hai.','error'); return; }
+  const ss=getSubSubjDeep(sid, ssid); if(!ss) return;
+  ss.hidden=!ss.hidden; save(); if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(1500); renderLibraryTree(); updateQuizSelects();
+  showToast(ss.hidden?`🚫 "${ss.name}" users se hide kar diya`:`✅ "${ss.name}" users ko dikhega`,'success');
+}
+// ✅ NEW: Delete sub-subject at any nesting depth
+function delSubSubjDeep(sid, ssid, parentSsid, e){
+  if(e) e.stopPropagation();
+  if(!_isAdmin){showToast('Sirf admin delete kar sakta hai','error');return;}
+  if(!confirm('Sub-Subject aur uske saare contents delete honge!')) return;
+  const subj=getSubj(sid); if(!subj) return;
+  var parentNode = parentSsid ? getSubSubjDeep(sid, parentSsid) : null;
+  if(!parentNode) parentNode = subj;
+  parentNode.subSubjects=(parentNode.subSubjects||[]).filter(x=>String(x.id)!==String(ssid));
+  save(); if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(1500);
+  renderLibrarySelects(); renderLibraryTree(); updateQuizSelects();
+  showToast('Sub-Subject delete ho gaya','success');
+}
+// ✅ NEW: Rename sub-subject prompt
+function doRenameSubSubj(sid, ssid, e){
+  if(e) e.stopPropagation();
+  if(!_isAdmin){ if(typeof _showLockedToast==='function') _showLockedToast(); return; }
+  const ss=getSubSubjDeep(sid, ssid); if(!ss) return;
+  _renameCtx = { type:'subSubject', sid:sid, ssid:ssid };
+  document.getElementById('renameModalTitle').textContent = '✏️ Sub-Subject Rename Karo';
+  document.getElementById('renameModalLabel').textContent = '📗 Sub-Subject ka naya naam:';
+  const inp=document.getElementById('renameInput');
+  inp.value = ss.name || '';
+  document.getElementById('renameModal').classList.add('show');
+  setTimeout(function(){ inp.focus(); inp.select(); }, 200);
+}
+// ✅ NEW: Rename sub-section
+function doRenameSubSec(sid, secid, ssecid, e){
+  if(e) e.stopPropagation();
+  if(!_isAdmin){ if(typeof _showLockedToast==='function') _showLockedToast(); return; }
+  const sec=getSec(sid, secid); if(!sec) return;
+  function _findSSec(node){
+    if(String(node.id)===String(ssecid)) return node;
+    for(const s2 of (node.subSections||[])){ const r=_findSSec(s2); if(r) return r; }
+    return null;
+  }
+  const ssec = _findSSec(sec);
+  if(!ssec) return;
+  _renameCtx = { type:'subSection', sid:sid, secid:secid, ssecid:ssecid };
+  document.getElementById('renameModalTitle').textContent = '✏️ Sub-Section Rename Karo';
+  document.getElementById('renameModalLabel').textContent = '📘 Sub-Section ka naya naam:';
+  const inp=document.getElementById('renameInput');
+  inp.value = ssec.name || '';
+  document.getElementById('renameModal').classList.add('show');
+  setTimeout(function(){ inp.focus(); inp.select(); }, 200);
+}
+// ✅ NEW: Toggle sub-section visibility
+function toggleSubSecVisibility(sid, secid, ssecid, e){
+  if(e) e.stopPropagation();
+  if(!_isAdmin){ showToast('❌ Sirf admin visibility control kar sakta hai.','error'); return; }
+  const sec=getSec(sid, secid); if(!sec) return;
+  function _findSSec2(node){
+    if(String(node.id)===String(ssecid)) return node;
+    for(const s2 of (node.subSections||[])){ const r=_findSSec2(s2); if(r) return r; }
+    return null;
+  }
+  const ssec=_findSSec2(sec);
+  if(!ssec) return;
+  ssec.hidden=!ssec.hidden; save(); if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(1500); renderLibraryTree(); updateQuizSelects();
+  showToast(ssec.hidden?`🚫 "${ssec.name}" hide!`:`✅ "${ssec.name}" dikhega!`,'success');
 }
 function toggleSectionVisibility(sid,secid,e){
   if(e) e.stopPropagation();
@@ -10152,6 +10245,135 @@ function updateSavedBadge() {
 }
 
 // ==================== LIBRARY TREE ====================
+// ============================================================
+// ✅ NEW: Recursive sub-subject renderer with FULL controls at every level
+// ============================================================
+function _renderSubSubjBlock(subj, ss, parentSsid, depth){
+  const ssHid=!!ss.hidden;
+  const hasNestedSS = ss.subSubjects && ss.subSubjects.length > 0;
+  const _cntSSTc=function(node){
+    let c=(node.sections||[]).reduce(function(a,sec){return a+(sec.topics||[]).length+(sec.subSections||[]).reduce(function(b,sss){return b+(sss.topics||[]).length;},0);},0);
+    (node.subSubjects||[]).forEach(function(ss2){c+=_cntSSTc(ss2);});
+    return c;
+  };
+  const ssTc=_cntSSTc(ss);
+  const depthColors=['#6a1b9a','#0277bd','#2e7d32','#e65100','#c62828'];
+  const depthBgs=['rgba(106,27,154,0.06)','rgba(2,119,189,0.06)','rgba(46,125,50,0.06)','rgba(230,81,0,0.06)','rgba(198,40,40,0.06)'];
+  const depthBars=['linear-gradient(160deg,#6a1b9a,#8e24aa)','linear-gradient(160deg,#0277bd,#0288d1)','linear-gradient(160deg,#2e7d32,#43a047)','linear-gradient(160deg,#e65100,#f57c00)','linear-gradient(160deg,#c62828,#e53935)'];
+  const depthIcons=['linear-gradient(135deg,#f3e5f5,#e1bee7)','linear-gradient(135deg,#e1f5fe,#b3e5fc)','linear-gradient(135deg,#e8f5e9,#c8e6c9)','linear-gradient(135deg,#fff3e0,#ffe0b2)','linear-gradient(135deg,#ffebee,#ffcdd2)'];
+  const dI = depth % depthColors.length;
+  const dColor = depthColors[dI];
+  const dBg = depthBgs[dI];
+  const dBar = depthBars[dI];
+  const dIcon = depthIcons[dI];
+  const marginL = depth > 0 ? 'margin-left:'+(depth*6)+'px;' : '';
+  const secList = (ss.sections||[]).map(function(sec){
+    const secHid=!!sec.hidden;
+    const secSS=(sec.subSections||[]).length;
+    const secTc=(sec.topics||[]).length+(sec.subSections||[]).reduce(function(a,sss){return a+(sss.topics||[]).length;},0);
+    const topItems=(sec.topics||[]).map(function(t,ti){
+      const tClrs=['#1565c0','#6a1b9a','#00695c','#c62828'];
+      const tClr=tClrs[ti%4];
+      const tHid=!!t.hidden;
+      const hasST=t.subTopics&&t.subTopics.length;
+      return '<div class="topic-item" style="--tc:'+tClr+';'+(tHid?'opacity:0.55;':'')+'">'+
+        '<div class="topic-item-left">'+
+          '<div class="topic-name-el">'+t.name+'&nbsp;<button onclick="event.stopPropagation();doRename(\'topic\','+subj.id+','+sec.id+','+t.id+',null)" title="Rename" style="background:none;border:none;cursor:pointer;font-size:0.6rem;opacity:0.4;padding:0 1px;vertical-align:middle;">\u270f\ufe0f</button>'+
+          (hasST?'<span class="lib-chip" style="background:rgba(230,81,0,0.1);color:#e65100;margin-left:4px;">\u21b3 '+t.subTopics.length+' sub</span>':'')+
+          (tHid?' <span class="lib-chip" style="background:rgba(198,40,40,0.1);color:#c62828;">\ud83d\udeab</span>':'')+
+          '</div>'+
+          '<div class="topic-meta-el"><span>\ud83d\udcdd '+(t.notes||[]).length+' notes</span>'+(t.finalNotes?'<span class="lib-chip" style="background:rgba(230,81,0,0.1);color:#e65100;">\u2b50</span>':'')+
+          '</div>'+
+        '</div>'+
+        '<div style="display:flex;gap:3px;align-items:center;flex-shrink:0;">'+
+        (_isAdmin?'<button class="lib-action-btn admin-only" onclick="toggleTopicVisibility('+subj.id+','+sec.id+','+t.id+',event)" title="'+(tHid?'Users ko dikhao':'Users se hide karo')+'" style="'+(tHid?'color:#c62828;':'color:#2e7d32;')+'">'+(tHid?'\ud83d\udeab':'\ud83d\udc41\ufe0f')+'</button>':'')+
+        (_isAdmin?'<button class="lib-action-btn admin-only" onclick="event.stopPropagation();openSplitModal(\'topic\','+subj.id+','+sec.id+','+t.id+')" title="Sub-Topic banao" style="color:#e65100;font-size:0.72rem;font-weight:800;padding:3px 5px;">\u2295Sub</button>':'')+
+        '<button class="lib-action-btn" onclick="viewTopic('+subj.id+','+sec.id+','+t.id+')" title="View">\ud83d\udc40</button>'+
+        '<button class="lib-action-btn" onclick="event.stopPropagation();openOrgModal(\'topic\','+subj.id+','+sec.id+','+t.id+')" title="Organize">\ud83d\udce6</button>'+
+        (_isAdmin?'<button class="lib-action-btn danger" onclick="delTop('+subj.id+','+sec.id+','+t.id+',event)" title="Delete">\ud83d\uddd1\ufe0f</button>':'')+
+        '</div>'+
+      '</div>';
+    }).join('');
+    return '<div class="section-block"'+(secHid?' style="opacity:0.55;"':'')+'>'+
+      '<div class="section-header" onclick="toggleBlock(\'sc4-'+sec.id+'\')">'+
+        '<div class="sec-header-left">'+
+          '<div class="sec-icon">\ud83d\udcd1</div>'+
+          '<div>'+
+            '<div class="sec-name">'+sec.name+'&nbsp;<button onclick="event.stopPropagation();doRename(\'section\','+subj.id+','+sec.id+',null,null)" title="Rename" style="background:none;border:none;cursor:pointer;font-size:0.65rem;opacity:0.4;padding:0 1px;vertical-align:middle;">\u270f\ufe0f</button>'+
+            (secHid?'<span class="lib-chip" style="background:rgba(198,40,40,0.1);color:#c62828;margin-left:4px;">\ud83d\udeab</span>':'')+
+            '</div>'+
+            '<div class="sec-meta">\ud83d\udcd9 '+secTc+' topics'+(secSS?' + '+secSS+' sub-sections':'')+
+            '</div>'+
+          '</div>'+
+        '</div>'+
+        '<div style="display:flex;gap:4px;align-items:center;">'+
+        (_isAdmin?'<button class="lib-action-btn admin-only" onclick="toggleSectionVisibility('+subj.id+','+sec.id+',event)" title="'+(secHid?'Users ko dikhao':'Users se hide karo')+'" style="'+(secHid?'color:#c62828;':'color:#2e7d32;')+'">'+(secHid?'\ud83d\udeab':'\ud83d\udc41\ufe0f')+'</button>':'')+
+        (_isAdmin?'<button class="lib-action-btn admin-only" onclick="event.stopPropagation();openSplitModal(\'section\','+subj.id+','+sec.id+',null)" title="Sub-Section banao" style="color:#00695c;font-size:0.72rem;font-weight:800;padding:3px 5px;">\u2295Sub</button>':'')+
+        '<button class="lib-action-btn" onclick="event.stopPropagation();openOrgModal(\'section\','+subj.id+','+sec.id+',null)" title="Organize">\ud83d\udce6</button>'+
+        (_isAdmin?'<button class="lib-action-btn danger" onclick="delSec('+subj.id+','+sec.id+',event)" title="Delete">\ud83d\uddd1\ufe0f</button>':'')+
+        '<span id="sc4-'+sec.id+'-arr" style="font-size:0.7rem;color:var(--text2);">\u25bc</span>'+
+        '</div>'+
+      '</div>'+
+      '<div class="topic-list" id="sc4-'+sec.id+'" style="display:none;">'+
+      (!secTc&&!secSS?'<div style="text-align:center;padding:10px;color:var(--text2);font-size:0.72rem;font-style:italic;">\ud83d\udcad Koi topic nahi</div>':topItems)+
+      _ssRenderSubSecs(subj.id, sec)+
+      '</div>'+
+    '</div>';
+  }).join('');
+  const nestedSSBlock = hasNestedSS
+    ? '<div style="margin-top:6px;padding:5px 6px;background:rgba(106,27,154,0.03);border-radius:8px;border-left:2px solid rgba(106,27,154,0.2);">'+
+      '<div style="font-size:0.59rem;color:#6a1b9a;font-weight:800;margin-bottom:3px;letter-spacing:0.4px;">\ud83d\udcd7 NESTED SUB-GROUPS (\u21b3 '+ss.name+')</div>'+
+      (ss.subSubjects||[]).map(function(ss2){ return _renderSubSubjBlock(subj, ss2, ss.id, depth+1); }).join('')+
+      '</div>'
+    : '';
+  return '<div class="subject-block" style="margin-bottom:6px;'+marginL+(ssHid?'opacity:0.55;':'')+'">'+
+    '<div class="subject-header" onclick="toggleBlock(\'ssb-'+ss.id+'\')" style="background:'+dBg+';border-radius:10px;">'+
+      '<div class="subj-accent-bar" style="background:'+dBar+';"></div>'+
+      '<div class="subj-header-content">'+
+        '<div class="subj-left">'+
+          '<div class="subj-icon-wrap" style="background:'+dIcon+';width:28px;height:28px;"><span style="font-size:0.9rem;">\ud83d\udcd7</span></div>'+
+          '<div>'+
+            '<div class="subj-name" style="color:'+dColor+';font-size:0.82rem;">'+ss.name+'&nbsp;<button onclick="event.stopPropagation();doRenameSubSubj('+subj.id+','+ss.id+',event)" title="Rename" style="background:none;border:none;cursor:pointer;font-size:0.65rem;opacity:0.4;padding:0 1px;vertical-align:middle;">\u270f\ufe0f</button>'+
+            (ssHid?'<span class="lib-chip" style="background:rgba(198,40,40,0.1);color:#c62828;margin-left:4px;">\ud83d\udeab Hidden</span>':'')+
+            ' <span style="font-size:0.6rem;background:rgba(106,27,154,0.1);border-radius:3px;padding:0 4px;color:'+dColor+';vertical-align:middle;">sub'+(depth>0?' (L'+(depth+1)+')':'')+'</span></div>'+
+            '<div class="subj-meta"><span class="subj-pill">\ud83d\udcc2 '+(ss.sections||[]).length+' sections'+(hasNestedSS?' + '+ss.subSubjects.length+' sub-groups':'')+
+            '</span><span class="subj-pill">\ud83d\udcd9 '+ssTc+' topics</span></div>'+
+          '</div>'+
+        '</div>'+
+        '<div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">'+
+        (_isAdmin?'<button class="lib-action-btn admin-only" onclick="toggleSubSubjectVisibility('+subj.id+','+ss.id+',event)" title="'+(ssHid?'Users ko dikhao':'Users se hide karo')+'" style="'+(ssHid?'color:#c62828;':'color:#2e7d32;')+'">'+(ssHid?'\ud83d\udeab':'\ud83d\udc41\ufe0f')+'</button>':'')+
+        (_isAdmin?'<button class="lib-action-btn admin-only" onclick="event.stopPropagation();_addNestedSubSubj('+subj.id+','+ss.id+')" title="Nested Sub-Subject banao" style="color:'+dColor+';font-size:0.72rem;font-weight:800;padding:3px 6px;">\u2295Sub</button>':'')+
+        '<button class="lib-action-btn" onclick="event.stopPropagation();openOrgModal(\'subject\','+subj.id+',null,null)" title="Organize">\ud83d\udce6</button>'+
+        (_isAdmin?'<button class="lib-action-btn danger" onclick="delSubSubjDeep('+subj.id+','+ss.id+','+(parentSsid||'null')+',event)" title="Delete">\ud83d\uddd1\ufe0f</button>':'')+
+        '<span id="ssb-'+ss.id+'-arr" style="font-size:0.7rem;color:var(--text2);">\u25bc</span>'+
+        '</div>'+
+      '</div>'+
+    '</div>'+
+    '<div class="subject-body" id="ssb-'+ss.id+'" style="padding-left:8px;">'+
+    (!(ss.sections&&ss.sections.length)&&!hasNestedSS
+      ?'<div style="text-align:center;padding:12px 8px;color:var(--text2);font-size:0.73rem;font-style:italic;">\ud83d\udcc2 Koi section nahi — Add Content se add karo</div>'
+      : secList + nestedSSBlock)+
+    '</div>'+
+  '</div>';
+}
+
+// ✅ NEW: Add nested sub-subject from library tree ⊕Sub button
+function _addNestedSubSubj(subjId, parentSsId){
+  if(!_isAdmin){showToast('\u274c Sirf admin sub-subjects add kar sakta hai.','error');return;}
+  if(!_checkWriteAccess()) return;
+  const nm=(prompt('Nested Sub-Subject ka naam likho:','')||'').trim();
+  if(!nm) return;
+  const parent=getSubSubjDeep(subjId, parentSsId);
+  if(!parent){showToast('Parent nahi mila!','error');return;}
+  if(!parent.subSubjects) parent.subSubjects=[];
+  if(parent.subSubjects.find(function(s){return s.name.toLowerCase()===nm.toLowerCase();})){showToast('Pehle se hai!','error');return;}
+  const ns={id:Date.now()+Math.floor(Math.random()*9999),name:nm,sections:[],subSubjects:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
+  parent.subSubjects.push(ns);
+  save(); if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(1000);
+  renderLibraryTree(); renderLibrarySelects(); updateQuizSelects();
+  showToast('"'+nm+'" nested sub-subject add ho gaya! \ud83d\udcd7\u21b3','success');
+}
+
 function renderLibraryTree(){
   const el=document.getElementById('libraryTree');
   const ae=S.exams.find(e=>e.id==S.activeExamId);
@@ -10279,57 +10501,9 @@ function renderLibraryTree(){
             </div>
           </div>`;
         }).join('')}
-        ${hasSubSubj?`<div style="margin-top:6px;padding:6px 8px;background:rgba(106,27,154,0.04);border-radius:10px;border-left:3px solid rgba(106,27,154,0.25);">
-          <div style="font-size:0.65rem;color:#6a1b9a;font-weight:800;margin-bottom:5px;letter-spacing:0.5px;">📗 SUB-SUBJECTS (↳ ${subj.name} ke andar groups)</div>
-          ${subj.subSubjects.map(ss=>{
-            const ssHid=!!ss.hidden;
-            const ssTc=(ss.sections||[]).reduce((a,s)=>a+s.topics.length+(s.subSections||[]).reduce((b,sss)=>b+(sss.topics||[]).length,0),0);
-            return `<div class="subject-block" style="margin-bottom:6px;${ssHid?'opacity:0.55;':''}">
-              <div class="subject-header" onclick="toggleBlock('ssb-${ss.id}')" style="background:rgba(106,27,154,0.06);border-radius:10px;">
-                <div class="subj-accent-bar" style="background:linear-gradient(160deg,#6a1b9a,#8e24aa);"></div>
-                <div class="subj-header-content">
-                  <div class="subj-left">
-                    <div class="subj-icon-wrap" style="background:linear-gradient(135deg,#f3e5f5,#e1bee7);width:28px;height:28px;"><span style="font-size:0.9rem;">📗</span></div>
-                    <div>
-                      <div class="subj-name" style="color:#6a1b9a;font-size:0.82rem;">${ss.name} <span style="font-size:0.6rem;background:rgba(106,27,154,0.1);border-radius:3px;padding:0 4px;color:#6a1b9a;vertical-align:middle;">sub-subject</span></div>
-                      <div class="subj-meta"><span class="subj-pill">📂 ${(ss.sections||[]).length} sections</span><span class="subj-pill">📙 ${ssTc} topics</span></div>
-                    </div>
-                  </div>
-                  <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
-                    ${_isAdmin?`<button class="lib-action-btn danger" onclick="delSubSubj(${subj.id},${ss.id},event)" title="Delete Sub-Subject">🗑️</button>`:''}
-                    <span id="ssb-${ss.id}-arr" style="font-size:0.7rem;color:var(--text2);">▼</span>
-                  </div>
-                </div>
-              </div>
-              <div class="subject-body" id="ssb-${ss.id}" style="padding-left:10px;">
-                ${!(ss.sections&&ss.sections.length)
-                  ?'<div style="text-align:center;padding:12px 8px;color:var(--text2);font-size:0.73rem;font-style:italic;">📂 Koi section nahi — Add Content > Sub-Subject select karke add karo</div>'
-                  :ss.sections.map(sec=>{
-                    const secHidden=!!sec.hidden;
-                    const secTopTot2=sec.topics.length+(sec.subSections||[]).reduce((a,sss)=>a+(sss.topics||[]).length,0);
-                    return `<div class="section-block" style="${secHidden?'opacity:0.55;':''}">
-                      <div class="section-header" onclick="toggleBlock('sc2-${sec.id}')">
-                        <div class="sec-header-left">
-                          <div class="sec-icon">📑</div>
-                          <div><div class="sec-name">${sec.name}${secHidden?' <span class="lib-chip" style="background:rgba(198,40,40,0.1);color:#c62828;">🚫</span>':''}</div>
-                          <div class="sec-meta">📙 ${secTopTot2} topics</div></div>
-                        </div>
-                        <div style="display:flex;gap:4px;align-items:center;">
-                          ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="event.stopPropagation();openSplitModal('section',${subj.id},${sec.id},null)" title="Sub-Section banao" style="color:#00695c;font-size:0.72rem;font-weight:800;padding:3px 5px;">⊕Sub</button>`:''}
-                          <button class="lib-action-btn danger" onclick="delSec(${subj.id},${sec.id},event)" title="Delete">🗑️</button>
-                          <span id="sc2-${sec.id}-arr" style="font-size:0.7rem;color:var(--text2);">▼</span>
-                        </div>
-                      </div>
-                      <div class="topic-list" id="sc2-${sec.id}" style="display:none;">
-                        ${!sec.topics.length?'<div style="text-align:center;padding:10px;color:var(--text2);font-size:0.72rem;font-style:italic;">📭 Koi topic nahi</div>'
-                          :sec.topics.map((t,ti)=>{const tClrs2=['#1565c0','#6a1b9a','#00695c','#c62828'];const tClr2=tClrs2[ti%4];const tHid=!!t.hidden;const hasST=t.subTopics&&t.subTopics.length;
-                            return `<div class="topic-item" style="--tc:${tClr2};${tHid?'opacity:0.55;':''}"><div class="topic-item-left"><div class="topic-name-el">${t.name}${hasST?'<span class="lib-chip" style="background:rgba(230,81,0,0.1);color:#e65100;margin-left:4px;">↳ '+t.subTopics.length+' sub</span>':''}</div><div class="topic-meta-el"><span>📝 ${(t.notes||[]).length} notes</span>${t.finalNotes?'<span class="lib-chip" style="background:rgba(230,81,0,0.1);color:#e65100;">⭐</span>':''}</div></div><div style="display:flex;gap:3px;align-items:center;flex-shrink:0;">${_isAdmin?`<button class="lib-action-btn admin-only" onclick="event.stopPropagation();openSplitModal('topic',${subj.id},${sec.id},${t.id})" title="Sub-Topic banao" style="color:#e65100;font-size:0.72rem;font-weight:800;padding:3px 5px;">⊕Sub</button>`:''}<button class="lib-action-btn" onclick="viewTopic(${subj.id},${sec.id},${t.id})" title="View">👀</button>${_isAdmin?`<button class="lib-action-btn danger" onclick="delTop(${subj.id},${sec.id},${t.id},event)" title="Delete">🗑️</button>`:''}</div></div>
-                            ${hasST?`<div style="margin:1px 0 3px 10px;padding:3px 5px;background:rgba(230,81,0,0.04);border-radius:5px;border-left:2px solid rgba(230,81,0,0.2);"><div style="font-size:0.59rem;color:#e65100;font-weight:800;margin-bottom:2px;">📙 Sub-Topics</div>${t.subTopics.map(st=>`<div class="topic-item" style="--tc:#e65100;padding:2px 5px;"><div class="topic-item-left"><div class="topic-name-el" style="font-size:0.75rem;">${st.name}</div></div><div style="display:flex;gap:3px;align-items:center;flex-shrink:0;"><button class="lib-action-btn" onclick="viewTopic(${subj.id},${sec.id},${t.id})" title="View">👀</button>${_isAdmin?`<button class="lib-action-btn danger" onclick="delSubTop(${subj.id},${sec.id},${t.id},${st.id},event)">🗑️</button>`:''}</div></div>`).join('')}</div>`:''}`; }).join('')}
-                        ${_ssRenderSubSecs(subj.id,sec)}
-                      </div>
-                    </div>`;}).join('')}
-              </div>
-            </div>`;}).join('')}
+        ${hasSubSubj?`<div style="margin-top:6px;padding:5px 6px;background:rgba(106,27,154,0.03);border-radius:8px;border-left:2px solid rgba(106,27,154,0.22);">
+          <div style="font-size:0.62rem;color:#6a1b9a;font-weight:800;margin-bottom:4px;letter-spacing:0.4px;">📗 SUB-SUBJECTS (↳ ${subj.name} ke andar nested groups)</div>
+          ${subj.subSubjects.map(ss=>_renderSubSubjBlock(subj,ss,null,0)).join('')}
         </div>`:''}
       </div>
     </div>`;
@@ -10342,20 +10516,30 @@ function toggleBlock(id){
   if(el){const open=el.style.display!=='block';el.style.display=open?'block':'none';if(arr)arr.textContent=open?'▲':'▼';}
 }
 
-// Render sub-sections within a section's topic-list (returns HTML string)
+// Render sub-sections within a section's topic-list (returns HTML string) — ✅ ENHANCED with full controls
 function _ssRenderSubSecs(sid, sec){
   if(!(sec.subSections&&sec.subSections.length)) return '';
-  return `<div style="margin-top:5px;padding:5px 6px;background:rgba(0,105,92,0.04);border-radius:8px;border-left:3px solid rgba(0,105,92,0.22);">
-    <div style="font-size:0.62rem;color:#00695c;font-weight:800;margin-bottom:3px;letter-spacing:0.4px;">📘 SUB-SECTIONS (↳ ${sec.name})</div>
-    ${(sec.subSections||[]).map(ss=>{const ssHid=!!ss.hidden;return `<div class="section-block" style="margin-bottom:4px;${ssHid?'opacity:0.55;':''}">
-      <div class="section-header" onclick="toggleBlock('sss-${ss.id}')" style="background:rgba(0,105,92,0.06);border-radius:7px;padding:6px 8px;">
+  function _renderSSec(ss, sid, secid, depth){
+    const ssHid=!!ss.hidden;
+    const indent = depth > 0 ? 'margin-left:'+(depth*8)+'px;' : '';
+    const depthClr = depth===0 ? '#00695c' : depth===1 ? '#0277bd' : '#6a1b9a';
+    const depthBg = depth===0 ? 'rgba(0,105,92,0.04)' : depth===1 ? 'rgba(2,119,189,0.04)' : 'rgba(106,27,154,0.04)';
+    const depthBorder = depth===0 ? 'rgba(0,105,92,0.22)' : depth===1 ? 'rgba(2,119,189,0.22)' : 'rgba(106,27,154,0.22)';
+    const hasNestedSSecs = ss.subSections && ss.subSections.length > 0;
+    return `<div class="section-block" style="margin-bottom:4px;${indent}${ssHid?'opacity:0.55;':''}">
+      <div class="section-header" onclick="toggleBlock('sss-${ss.id}')" style="background:${depthBg};border-radius:7px;padding:6px 8px;">
         <div class="sec-header-left">
           <div class="sec-icon" style="font-size:0.85rem;">📑</div>
-          <div><div class="sec-name" style="font-size:0.78rem;">${ss.name} <span style="font-size:0.57rem;background:rgba(0,105,92,0.1);border-radius:3px;padding:0 3px;color:#00695c;">sub-section</span></div>
-          <div class="sec-meta">📙 ${(ss.topics||[]).length} topics</div></div>
+          <div>
+            <div class="sec-name" style="font-size:0.78rem;color:${depthClr};">${ss.name}&nbsp;<button onclick="event.stopPropagation();doRenameSubSec(${sid},${secid},${ss.id},event)" title="Rename" style="background:none;border:none;cursor:pointer;font-size:0.65rem;opacity:0.4;padding:0 1px;vertical-align:middle;">✏️</button>${ssHid?'<span class="lib-chip" style="background:rgba(198,40,40,0.1);color:#c62828;margin-left:4px;">🚫 Hidden</span>':''} <span style="font-size:0.57rem;background:rgba(0,105,92,0.1);border-radius:3px;padding:0 3px;color:${depthClr};">sub-section</span></div>
+            <div class="sec-meta">📙 ${(ss.topics||[]).length} topics${hasNestedSSecs?' + '+ss.subSections.length+' sub-sections':''}</div>
+          </div>
         </div>
-        <div style="display:flex;gap:4px;align-items:center;">
-          ${_isAdmin?`<button class="lib-action-btn danger" onclick="delSubSec(${sid},${sec.id},${ss.id},event)" title="Delete Sub-Section">🗑️</button>`:''}
+        <div style="display:flex;gap:3px;align-items:center;">
+          ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="toggleSubSecVisibility(${sid},${secid},${ss.id},event)" title="${ssHid?'Users ko dikhao':'Users se hide karo'}" style="${ssHid?'color:#c62828;':'color:#2e7d32;'}">${ssHid?'🚫':'👁️'}</button>`:''}
+          ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="event.stopPropagation();openSplitModal('section',${sid},${secid},null)" title="Sub-Section banao" style="color:${depthClr};font-size:0.72rem;font-weight:800;padding:3px 5px;">⊕Sub</button>`:''}
+          <button class="lib-action-btn" onclick="event.stopPropagation();openOrgModal('section',${sid},${secid},null)" title="Organize">📦</button>
+          ${_isAdmin?`<button class="lib-action-btn danger" onclick="delSubSec(${sid},${secid},${ss.id},event)" title="Delete">🗑️</button>`:''}
           <span id="sss-${ss.id}-arr" style="font-size:0.7rem;color:var(--text2);">▼</span>
         </div>
       </div>
@@ -10364,13 +10548,15 @@ function _ssRenderSubSecs(sid, sec){
           :(ss.topics||[]).map((t,ti)=>{const tClrs=['#1565c0','#6a1b9a','#00695c','#c62828'];const tClr=tClrs[ti%tClrs.length];const tHid=!!t.hidden;
             return `<div class="topic-item" style="--tc:${tClr};${tHid?'opacity:0.55;':''}">
               <div class="topic-item-left">
-                <div class="topic-name-el">${t.name}${t.subTopics&&t.subTopics.length?`<span class="lib-chip" style="background:rgba(230,81,0,0.1);color:#e65100;margin-left:4px;">↳ ${t.subTopics.length} sub-topics</span>`:''}${tHid?' <span class="lib-chip" style="background:rgba(198,40,40,0.1);color:#c62828;">🚫</span>':''}</div>
+                <div class="topic-name-el">${t.name}&nbsp;<button onclick="event.stopPropagation();doRename('topic',${sid},${secid},${t.id},null)" title="Rename" style="background:none;border:none;cursor:pointer;font-size:0.6rem;opacity:0.4;padding:0 1px;vertical-align:middle;">✏️</button>${t.subTopics&&t.subTopics.length?`<span class="lib-chip" style="background:rgba(230,81,0,0.1);color:#e65100;margin-left:4px;">↳ ${t.subTopics.length} sub-topics</span>`:''}${tHid?' <span class="lib-chip" style="background:rgba(198,40,40,0.1);color:#c62828;">🚫</span>':''}</div>
                 <div class="topic-meta-el"><span>📝 ${(t.notes||[]).length} notes</span>${t.finalNotes?'<span class="lib-chip" style="background:rgba(230,81,0,0.1);color:#e65100;">⭐</span>':''}</div>
               </div>
               <div style="display:flex;gap:3px;align-items:center;flex-shrink:0;">
-                ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="event.stopPropagation();openSplitModal('topic',${sid},${sec.id},${t.id})" title="Sub-Topic banao" style="color:#e65100;font-size:0.75rem;font-weight:800;">⊕Sub</button>`:''}
-                <button class="lib-action-btn" onclick="viewTopic(${sid},${sec.id},${t.id})" title="View">👀</button>
-                ${_isAdmin?`<button class="lib-action-btn danger" onclick="delTop(${sid},${sec.id},${t.id},event)" title="Delete">🗑️</button>`:''}
+                ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="toggleTopicVisibility(${sid},${secid},${t.id},event)" title="${tHid?'Users ko dikhao':'Users se hide karo'}" style="${tHid?'color:#c62828;':'color:#2e7d32;'}">${tHid?'🚫':'👁️'}</button>`:''}
+                ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="event.stopPropagation();openSplitModal('topic',${sid},${secid},${t.id})" title="Sub-Topic banao" style="color:#e65100;font-size:0.75rem;font-weight:800;">⊕Sub</button>`:''}
+                <button class="lib-action-btn" onclick="viewTopic(${sid},${secid},${t.id})" title="View">👀</button>
+                <button class="lib-action-btn" onclick="event.stopPropagation();openOrgModal('topic',${sid},${secid},${t.id})" title="Organize">📦</button>
+                ${_isAdmin?`<button class="lib-action-btn danger" onclick="delTop(${sid},${secid},${t.id},event)" title="Delete">🗑️</button>`:''}
               </div>
             </div>
             ${t.subTopics&&t.subTopics.length?`<div style="margin:2px 0 3px 10px;padding:3px 5px;background:rgba(230,81,0,0.04);border-radius:5px;border-left:2px solid rgba(230,81,0,0.2);">
@@ -10378,16 +10564,21 @@ function _ssRenderSubSecs(sid, sec){
               ${t.subTopics.map(st=>`<div class="topic-item" style="--tc:#e65100;padding:3px 5px;">
                 <div class="topic-item-left"><div class="topic-name-el" style="font-size:0.76rem;">${st.name} <span style="font-size:0.56rem;background:rgba(230,81,0,0.1);border-radius:3px;padding:0 3px;color:#e65100;">sub-topic</span></div></div>
                 <div style="display:flex;gap:3px;align-items:center;flex-shrink:0;">
-                  <button class="lib-action-btn" onclick="viewTopic(${sid},${sec.id},${t.id})" title="Parent Topic View">👀</button>
-                  ${_isAdmin?`<button class="lib-action-btn danger" onclick="delSubTop(${sid},${sec.id},${t.id},${st.id},event)">🗑️</button>`:''}
-                </div>
+                  <button class="lib-action-btn" onclick="viewTopic(${sid},${secid},${t.id})" title="View">👀</button>
+                  ${_isAdmin?`<button class="lib-action-btn danger" onclick="delSubTop(${sid},${secid},${t.id},${st.id},event)">🗑️</button>`:''}</div>
               </div>`).join('')}
             </div>`:''}`;
           }).join('')}
+        ${hasNestedSSecs ? (ss.subSections||[]).map(function(ss2){ return _renderSSec(ss2, sid, secid, depth+1); }).join('') : ''}
       </div>
-    </div>`; }).join('')}
+    </div>`;
+  }
+  return `<div style="margin-top:5px;padding:5px 6px;background:rgba(0,105,92,0.04);border-radius:8px;border-left:3px solid rgba(0,105,92,0.22);">
+    <div style="font-size:0.62rem;color:#00695c;font-weight:800;margin-bottom:3px;letter-spacing:0.4px;">📘 SUB-SECTIONS (↳ ${sec.name})</div>
+    ${(sec.subSections||[]).map(function(ss){ return _renderSSec(ss, sid, sec.id, 0); }).join('')}
   </div>`;
 }
+
 
 function viewTopic(sid,secid,tid){
   const t=getTop(sid,secid,tid), subj=getSubj(sid), sec=getSec(sid,secid);
@@ -23109,7 +23300,22 @@ function confirmRename() {
     const subj = getSubj(ctx.sid);
     if(!subj) return;
     subj.name = newName;
-    
+  } else if(ctx.type === 'subSubject') {
+    // ✅ NEW: sub-subject rename
+    const ss = getSubSubjDeep(ctx.sid, ctx.ssid);
+    if(!ss) return;
+    ss.name = newName;
+  } else if(ctx.type === 'subSection') {
+    // ✅ NEW: sub-section rename
+    const sec2 = getSec(ctx.sid, ctx.secid); if(!sec2) return;
+    function _findSSR(node){
+      if(String(node.id)===String(ctx.ssecid)) return node;
+      for(const s of (node.subSections||[])){ const r=_findSSR(s); if(r) return r; }
+      return null;
+    }
+    const ssec2 = _findSSR(sec2);
+    if(!ssec2) return;
+    ssec2.name = newName;
   } else if(ctx.type === 'section') {
     const sec = getSec(ctx.sid, ctx.secid);
     if(!sec) return;
@@ -31282,15 +31488,20 @@ async function pullFromCloud(){
       var td = d.data();
       if(td && td.topic) topicMap[String(td.topic.id)] = td.topic;
     });
-    // ✅ FIX: shared helper — section rebuild with subSections
+    // ✅ FIX: shared helper — section rebuild with subSections (null-safe)
     function _pullRebuildSec(sm, topicMap){
+      if(!sm) return {id:Date.now(),name:'',topics:[],subSections:[],hidden:false};
       sm.topics = (sm.topicIds||[]).map(function(tid){ return topicMap[String(tid)] || null; }).filter(Boolean);
+      if(!sm.topics) sm.topics=[];
       delete sm.topicIds;
       sm.subSections = (sm.subSectionMeta||[]).map(function(ssm){
+        if(!ssm) return null;
         ssm.topics = (ssm.topicIds||[]).map(function(tid){ return topicMap[String(tid)] || null; }).filter(Boolean);
+        if(!ssm.topics) ssm.topics=[];
         delete ssm.topicIds;
         return ssm;
-      });
+      }).filter(Boolean);
+      if(!sm.subSections) sm.subSections=[];
       delete sm.subSectionMeta;
       return sm;
     }
@@ -31313,7 +31524,15 @@ async function pullFromCloud(){
       .map(function(d){
         var shell = d.data().shell;
         if(!shell) return null;
-        return _pullRebuildSubj(shell, topicMap);
+        try {
+          // ✅ FIX: Ensure arrays always exist (old-format Firebase compat)
+          if(!shell.sections) shell.sections=[];
+          if(!shell.subSubjects) shell.subSubjects=[];
+          return _pullRebuildSubj(shell, topicMap);
+        } catch(rebuildErr) {
+          console.warn('[pullFromCloud] Subject rebuild error:', rebuildErr);
+          return null;
+        }
       }).filter(Boolean);
 
     function _countTopicsDeep(subj){
@@ -31413,11 +31632,11 @@ function _attachTopicListeners(){
   if(!_db || !_currentUser) return;
   var uid = _effectiveUID;
 
-  // Find all current topic IDs
+  // Find all current topic IDs (✅ FIX: _getAllSections recursive — sub-subjects bhi cover)
   var allTids = [];
   (S.subjects||[]).forEach(function(sub){
-    sub.sections.forEach(function(sec){
-      sec.topics.forEach(function(t){ allTids.push(String(t.id)); });
+    _getAllSections(sub).forEach(function(sec){
+      _getAllTopics(sec).forEach(function(t){ allTids.push(String(t.id)); });
     });
   });
 
@@ -62655,23 +62874,28 @@ function _warn(txt) { return "<div style=\"font-size:0.71rem;color:var(--red);fo
 /* ===== MOVE — full sub-hierarchy cascading ===== */
 var _orgMv = {};
 
-/* Build sub-subject dropdown block for a given subject */
+/* Build sub-subject dropdown block for a given subject — HIERARCHICAL (infinite nesting) */
 function _omvSSBlock(subjId, selSsId) {
   var subj = getSubj(subjId);
   if (!subj || !(subj.subSubjects && subj.subSubjects.length)) return "";
-  var opts = "<option value=\"\">📂 Direct (koi sub-subject nahi)</option>"
-    + subj.subSubjects.map(function(ss){
-        return "<option value=\"" + ss.id + "\"" + (ss.id == selSsId ? " selected" : "") + ">\u21B3 " + _eh(ss.name) + "</option>";
-      }).join("");
+  var opts = "<option value=\"\">📂 Direct (koi sub-subject nahi)</option>";
+  function _buildSSOptions(ssList, depth){
+    (ssList||[]).forEach(function(ss){
+      var indent = '';
+      for(var i=0;i<depth;i++) indent += '\u00A0\u00A0\u00A0';
+      opts += "<option value=\"" + ss.id + "\"" + (ss.id == selSsId ? " selected" : "") + ">" + indent + "\u21B3 " + _eh(ss.name) + "</option>";
+      if(ss.subSubjects && ss.subSubjects.length) _buildSSOptions(ss.subSubjects, depth+1);
+    });
+  }
+  _buildSSOptions(subj.subSubjects, 0);
   return _fg("📗 Sub-Subject (optional):", "<select class=\"inp\" id=\"omvSS\" onchange=\"omvOnSS(this.value)\">" + opts + "</select>");
 }
 
-/* Build section dropdown for (subjId, ssId|null) */
+/* Build section dropdown for (subjId, ssId|null) — ✅ FIX: recursive sub-subject search */
 function _omvSecBlock(subjId, ssId, selSecId) {
   var sections = [];
   if (ssId) {
-    var sj = getSubj(subjId);
-    var ss = sj && (sj.subSubjects || []).find(function(x){ return x.id == ssId; });
+    var ss = getSubSubjDeep(subjId, ssId);
     sections = ss ? (ss.sections || []) : [];
   } else {
     var sj2 = getSubj(subjId);
@@ -62863,7 +63087,9 @@ window.orgConfirm = function() {
 function orgDoMove(type, sid, secid, tid) {
   if (type === "topic") {
     var dSubjId = _orgMv.subjId, dSsId = _orgMv.ssId, dSecId = _orgMv.secId, dSsecId = _orgMv.ssecId;
-    if (!dSubjId || !dSecId) { showToast("Subject aur Section dono select karo!", "error"); return; }
+    if (!dSubjId) { showToast("Destination Subject select karo!", "error"); return; }
+    // ✅ FIX: Topics MUST have a section, but give a clear error
+    if (!dSecId) { showToast("Destination Section select karo! (Topic ko section chahiye)", "error"); return; }
 
     /* --- find & detach topic from source --- */
     var tp = null;
@@ -63130,9 +63356,9 @@ function orgDoReorder(type, sid, secid, tid) {
 
 function _done(msg) {
   save();
-  // ✅ Firebase debounced sync (write storm se bachne ke liye)
+  // ✅ FIX: Faster Firebase sync after organize (500ms)
   if (typeof saveToFirebaseDebounced === "function") {
-    saveToFirebaseDebounced(1500);
+    saveToFirebaseDebounced(500);
   }
   if (typeof renderLibraryTree === "function") renderLibraryTree();
   if (typeof renderLibrarySelects === "function") renderLibrarySelects();
