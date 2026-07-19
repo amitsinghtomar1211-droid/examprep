@@ -31275,7 +31275,14 @@ function saveToFirebaseDebounced(delay){
   if(_fbSaveTimer) clearTimeout(_fbSaveTimer);
   _fbSaveTimer = setTimeout(function(){
     _fbSaveTimer = null;
-    if(!_fbSaveInProgress) saveToFirebase();
+    if(_fbSaveInProgress){
+      // ✅ FIX: WATCHDOG — agar _fbSaveInProgress kisi bug ki wajah se stuck reh gaya
+      // (purana save kabhi complete/promise-resolve nahi hua), to use force-reset karo
+      // taaki naye saves permanently blocked na rahein. Yeh sirf safety-net hai.
+      console.warn('[🔥 saveToFirebaseDebounced] _fbSaveInProgress stuck tha — force reset kar rahe hain, phir se try karenge');
+      _fbSaveInProgress = false;
+    }
+    saveToFirebase();
   }, delay);
 }
 async function saveToFirebase(){
@@ -31288,6 +31295,7 @@ async function saveToFirebase(){
     console.error('[🔥 saveToFirebase] BLOCKED: admin session locked (another device active)');
     showToast('⚠️ Save BLOCKED — Admin kisi aur device pe logged in hai! Upar banner mein "Yahan Raho" dabao.','error');
     setSyncStatus('error');
+    _fbSaveInProgress = false; // ✅ FIX: yeh reset missing tha — iski wajah se saare future saves permanently silently skip ho jaate the
     return {ok:false, error:'Kisi aur device ne admin session le liya — Firebase save nahi hua!', code:'SESSION_LOCKED'};
   }
   var _saveStartTime = Date.now();
@@ -63820,6 +63828,140 @@ function hideDataLoadingOverlay(){
     },400);
   },650);
 }
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     🐞 DEBUG CONSOLE PANEL — 10-tap kahin bhi screen par se khulta hai
+     - Saare console.log / warn / error yahan capture hote hain
+     - Errors ko copy karne ka button
+     - Clear button
+     ══════════════════════════════════════════════════════════════════ -->
+<div id="_dbgConsolePanel" style="display:none;position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.92);color:#e0e0e0;font-family:monospace;font-size:12px;flex-direction:column;">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#1b1b1b;border-bottom:1px solid #333;">
+    <strong style="color:#4fc3f7;">🐞 Debug Console</strong>
+    <div style="display:flex;gap:8px;">
+      <button id="_dbgCopyErrBtn" style="background:#c62828;color:#fff;border:none;padding:6px 10px;border-radius:6px;font-weight:700;font-size:11px;">📋 Copy Errors</button>
+      <button id="_dbgCopyAllBtn" style="background:#455a64;color:#fff;border:none;padding:6px 10px;border-radius:6px;font-weight:700;font-size:11px;">📋 Copy All</button>
+      <button id="_dbgClearBtn" style="background:#616161;color:#fff;border:none;padding:6px 10px;border-radius:6px;font-weight:700;font-size:11px;">🗑️ Clear</button>
+      <button id="_dbgCloseBtn" style="background:#333;color:#fff;border:none;padding:6px 10px;border-radius:6px;font-weight:700;font-size:11px;">✕ Close</button>
+    </div>
+  </div>
+  <div id="_dbgConsoleBody" style="flex:1;overflow-y:auto;padding:8px 10px;white-space:pre-wrap;word-break:break-word;line-height:1.5;"></div>
+</div>
+
+<script>
+(function(){
+  var MAX_LOGS = 500;
+  var _dbgLogs = []; // {type, msg, ts}
+  var _origLog = console.log, _origWarn = console.warn, _origErr = console.error, _origInfo = console.info;
+
+  function _fmtArg(a){
+    if(a instanceof Error) return (a.stack || a.message || String(a));
+    if(typeof a === 'object'){
+      try{ return JSON.stringify(a); }catch(e){ return String(a); }
+    }
+    return String(a);
+  }
+  function _capture(type, args){
+    var msg = Array.prototype.map.call(args, _fmtArg).join(' ');
+    _dbgLogs.push({ type: type, msg: msg, ts: new Date().toLocaleTimeString('hi-IN') });
+    if(_dbgLogs.length > MAX_LOGS) _dbgLogs.shift();
+    _dbgRender();
+  }
+
+  console.log = function(){ _origLog.apply(console, arguments); _capture('log', arguments); };
+  console.warn = function(){ _origWarn.apply(console, arguments); _capture('warn', arguments); };
+  console.error = function(){ _origErr.apply(console, arguments); _capture('error', arguments); };
+  console.info = function(){ _origInfo.apply(console, arguments); _capture('info', arguments); };
+
+  // Uncaught errors bhi capture karo
+  window.addEventListener('error', function(e){
+    _capture('error', ['[Uncaught] ' + (e.message||'') + ' @ ' + (e.filename||'') + ':' + (e.lineno||'')]);
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason;
+    _capture('error', ['[Unhandled Promise Rejection] ' + (r && r.stack ? r.stack : (r && r.message ? r.message : String(r)))]);
+  });
+
+  var _colors = { log:'#e0e0e0', warn:'#ffca28', error:'#ef5350', info:'#4fc3f7' };
+
+  function _dbgRender(){
+    var body = document.getElementById('_dbgConsoleBody');
+    if(!body || document.getElementById('_dbgConsolePanel').style.display === 'none') return;
+    body.innerHTML = _dbgLogs.map(function(l){
+      var c = _colors[l.type] || '#e0e0e0';
+      var icon = l.type === 'error' ? '❌' : l.type === 'warn' ? '⚠️' : l.type === 'info' ? 'ℹ️' : '▪️';
+      return '<div style="color:'+c+';border-bottom:1px solid #222;padding:3px 0;">'
+        + '<span style="opacity:0.55;">['+l.ts+']</span> ' + icon + ' '
+        + l.msg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        + '</div>';
+    }).join('');
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function _openDbgPanel(){
+    document.getElementById('_dbgConsolePanel').style.display = 'flex';
+    _dbgRender();
+  }
+  function _closeDbgPanel(){
+    document.getElementById('_dbgConsolePanel').style.display = 'none';
+  }
+
+  // ── 10-tap anywhere on screen to open ──
+  var _tapCount = 0, _tapTimer = null;
+  document.addEventListener('click', function(e){
+    if(e.target && e.target.closest && e.target.closest('#_dbgConsolePanel')) return; // panel ke andar ke clicks na ginenge
+    _tapCount++;
+    if(_tapTimer) clearTimeout(_tapTimer);
+    _tapTimer = setTimeout(function(){ _tapCount = 0; }, 2500); // 2.5s ke andar 10 taps chahiye
+    if(_tapCount >= 10){
+      _tapCount = 0;
+      _openDbgPanel();
+    }
+  }, true);
+
+  document.addEventListener('DOMContentLoaded', function(){
+    var copyErrBtn = document.getElementById('_dbgCopyErrBtn');
+    var copyAllBtn = document.getElementById('_dbgCopyAllBtn');
+    var clearBtn   = document.getElementById('_dbgClearBtn');
+    var closeBtn   = document.getElementById('_dbgCloseBtn');
+
+    function _copyToClipboard(text, label){
+      var done = function(){ if(typeof showToast === 'function') showToast('✅ ' + label + ' copy ho gaye!', 'success'); };
+      var fail = function(){
+        // Fallback: textarea select+copy
+        try{
+          var ta = document.createElement('textarea');
+          ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+          document.body.appendChild(ta); ta.focus(); ta.select();
+          document.execCommand('copy'); document.body.removeChild(ta);
+          done();
+        }catch(e2){ if(typeof showToast === 'function') showToast('❌ Copy fail: ' + e2.message, 'error'); }
+      };
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done).catch(fail);
+      } else { fail(); }
+    }
+
+    if(copyErrBtn) copyErrBtn.addEventListener('click', function(){
+      var errs = _dbgLogs.filter(function(l){ return l.type === 'error' || l.type === 'warn'; });
+      if(!errs.length){ if(typeof showToast === 'function') showToast('Koi error/warning nahi mila!', 'info'); return; }
+      var text = errs.map(function(l){ return '['+l.ts+'] ' + l.type.toUpperCase() + ': ' + l.msg; }).join('\n');
+      _copyToClipboard(text, 'Errors/Warnings');
+    });
+    if(copyAllBtn) copyAllBtn.addEventListener('click', function(){
+      if(!_dbgLogs.length){ if(typeof showToast === 'function') showToast('Console khaali hai!', 'info'); return; }
+      var text = _dbgLogs.map(function(l){ return '['+l.ts+'] ' + l.type.toUpperCase() + ': ' + l.msg; }).join('\n');
+      _copyToClipboard(text, 'Saare logs');
+    });
+    if(clearBtn) clearBtn.addEventListener('click', function(){ _dbgLogs = []; _dbgRender(); });
+    if(closeBtn) closeBtn.addEventListener('click', _closeDbgPanel);
+  });
+
+  // Expose for manual trigger if needed (e.g. from browser console: _openDbgConsole())
+  window._openDbgConsole = _openDbgPanel;
+  window._closeDbgConsole = _closeDbgPanel;
+})();
 </script>
 
 </body>
