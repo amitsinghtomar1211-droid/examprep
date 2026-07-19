@@ -141,7 +141,7 @@
   display:flex;flex-direction:column;gap:4px;
   font-size:0.72rem;line-height:1.6;
 }
-#_devConsole ._dc-entry{
+#_devConsole ._dc-entry{display:flex;align-items:flex-start;gap:2px;
   padding:4px 8px;border-radius:4px;
   border-left:3px solid #30363d;
   word-break:break-all;white-space:pre-wrap;
@@ -9286,6 +9286,8 @@ function addSubject(){
   if(S.subjects.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Pehle se hai!','error');return;}
   S.subjects.push({id:Date.now(),name,sections:[],facts:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')});
   save(); document.getElementById('newSubject').value='';
+  if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(800);
+  console.info('[📗 addSubject] Firebase sync shuru — name:'+name);
   renderLibrarySelects(); renderLibraryTree(); updateQuizSelects();
   document.getElementById('selSubject').value=S.subjects[S.subjects.length-1].id;
   onSubjectChange();
@@ -9305,6 +9307,8 @@ function addSection(){
   if(container.sections.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Pehle se hai!','error');return;}
   const ns={id:Date.now(),name,topics:[],facts:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
   container.sections.push(ns);save();
+  if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(800);
+  console.info('[📘 addSection] Firebase sync shuru — name:'+name);
   document.getElementById('newSection').value='';
   onSubjectChange();
   document.getElementById('selSection').value=ns.id; onSectionChange();
@@ -9327,6 +9331,8 @@ function addTopic(){
   container.topics.push(nt);save();
   // ⚡ Attach listener for new topic immediately
   if(typeof _attachSingleTopicListener === 'function') _attachSingleTopicListener(nt.id);
+  if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(800);
+  console.info('[📙 addTopic] Firebase sync shuru — name:'+name+' id:'+nt.id);
   document.getElementById('newTopic').value='';
   onSectionChange();
   document.getElementById('selTopic').value=nt.id; onTopicChange();
@@ -11953,9 +11959,9 @@ function copyFinalNotesById(tid,sid,secid){
   navigator.clipboard.writeText(clean).then(()=>showToast('Copy ho gaya! 📋','success'));
 }
 
-function delSubj(id,e){e.stopPropagation();if(!_isAdmin){showToast("Sirf admin delete kar sakta hai","error");return;}if(!confirm('Subject delete karna hai?'))return;S.subjects=S.subjects.filter(x=>x.id!==id);save();renderLibrarySelects();renderLibraryTree();updateQuizSelects();showToast('Delete ho gaya','success');}
-function delSec(sid,secid,e){e.stopPropagation();if(!_isAdmin){showToast("Sirf admin delete kar sakta hai","error");return;}if(!confirm('Section delete karna hai?'))return;const s=getSubj(sid);s.sections=s.sections.filter(x=>x.id!==secid);save();renderLibraryTree();showToast('Delete ho gaya','success');}
-function delTop(sid,secid,tid,e){e.stopPropagation();if(!_isAdmin){showToast("Sirf admin delete kar sakta hai","error");return;}if(!confirm('Topic delete karna hai?'))return;const sec=getSec(sid,secid);sec.topics=sec.topics.filter(x=>x.id!==tid);save();renderLibraryTree();updateQuizSelects();showToast('Delete ho gaya','success');}
+function delSubj(id,e){e.stopPropagation();if(!_isAdmin){showToast("Sirf admin delete kar sakta hai","error");return;}if(!confirm('Subject delete karna hai?'))return;S.subjects=S.subjects.filter(x=>x.id!==id);save();if(typeof saveToFirebase==='function'){saveToFirebase().then(r=>r&&r.ok?console.info('[🗑 delSubj] Firebase deleted OK'):console.error('[🗑 delSubj] Firebase error',r));}renderLibrarySelects();renderLibraryTree();updateQuizSelects();showToast('Delete ho gaya','success');}
+function delSec(sid,secid,e){e.stopPropagation();if(!_isAdmin){showToast("Sirf admin delete kar sakta hai","error");return;}if(!confirm('Section delete karna hai?'))return;const s=getSubj(sid);s.sections=s.sections.filter(x=>x.id!==secid);save();if(typeof saveToFirebase==='function'){saveToFirebase().then(r=>r&&r.ok?console.info('[🗑 delSec] Firebase deleted OK'):console.error('[🗑 delSec] Firebase error',r));}renderLibraryTree();showToast('Delete ho gaya','success');}
+function delTop(sid,secid,tid,e){e.stopPropagation();if(!_isAdmin){showToast("Sirf admin delete kar sakta hai","error");return;}if(!confirm('Topic delete karna hai?'))return;const sec=getSec(sid,secid);sec.topics=sec.topics.filter(x=>x.id!==tid);save();if(typeof saveToFirebase==='function'){saveToFirebase().then(r=>r&&r.ok?console.info('[🗑 delTop] Firebase deleted OK'):console.error('[🗑 delTop] Firebase error',r));}renderLibraryTree();updateQuizSelects();showToast('Delete ho gaya','success');}
 
 // ==================== EXAMS ====================
 function createExam(){
@@ -23504,6 +23510,8 @@ function confirmRename() {
   }
   
   save();
+  if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(800);
+  console.info('[✏️ confirmRename] Firebase sync shuru — type:'+ctx.type+' newName:'+newName);
   closeModal('renameModal');
   
   // Refresh UI
@@ -59622,8 +59630,22 @@ mark.nes-hl.nes-hl-active{
 
   window._dcCopy = function(){
     var text = _dcLogs.map(function(e){ return '['+e.type.toUpperCase()+'] '+e.ts+' '+e.msg; }).join('\n');
-    try{ navigator.clipboard.writeText(text).then(function(){ alert('Copied!'); }); }
-    catch(e){ alert(text.substring(0,500)); }
+    function _fbCopyFallback(t){
+      var ta=document.createElement('textarea');
+      ta.value=t; ta.style.cssText='position:fixed;top:-9999px;left:-9999px;opacity:0;';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      try{ document.execCommand('copy'); if(typeof showToast==='function') showToast('✅ Console copy ho gaya!','success'); else alert('Copied!'); }
+      catch(e2){ alert('Copy failed: '+e2.message); }
+      document.body.removeChild(ta);
+    }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){
+        if(typeof showToast==='function') showToast('✅ Console logs copy ho gaye! ('+_dcLogs.length+' entries)','success');
+        else alert('Copied!');
+      }).catch(function(){ _fbCopyFallback(text); });
+    } else {
+      _fbCopyFallback(text);
+    }
   };
 
   function _dcScrollBottom(){
@@ -59650,7 +59672,9 @@ mark.nes-hl.nes-hl-active{
     if(el){
       var div = document.createElement('div');
       div.className = '_dc-entry ' + type;
-      div.innerHTML = '<span class="_dc-ts">'+ts+'</span>' + _escHtml(msg);
+      var entryText = '['+type.toUpperCase()+'] '+ts+' '+msg;
+      div.innerHTML = '<span class="_dc-ts">'+ts+'</span>' + _escHtml(msg) +
+        '<button onclick="(function(t){if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(function(){if(typeof showToast===\'function\') showToast(\'✅ Copied!\',\'success\');}).catch(function(){var ta=document.createElement(\'textarea\');ta.value=t;ta.style.cssText=\'position:fixed;top:-9999px;left:-9999px;opacity:0;\';document.body.appendChild(ta);ta.focus();ta.select();document.execCommand(\'copy\');document.body.removeChild(ta);if(typeof showToast===\'function\') showToast(\'✅ Copied!\',\'success\');});}else{var ta=document.createElement(\'textarea\');ta.value=t;ta.style.cssText=\'position:fixed;top:-9999px;left:-9999px;opacity:0;\';document.body.appendChild(ta);ta.focus();ta.select();document.execCommand(\'copy\');document.body.removeChild(ta);if(typeof showToast===\'function\') showToast(\'✅ Copied!\',\'success\');}})(\''+entryText.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n')+'\');" style="margin-left:6px;padding:1px 5px;font-size:0.58rem;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.07);color:#8b949e;border-radius:4px;cursor:pointer;vertical-align:middle;font-family:inherit;flex-shrink:0;" title="Copy this entry">📋</button>';
       el.appendChild(div);
       if(el.children.length > 200) el.removeChild(el.firstChild);
       if(_dcOpen) el.scrollTop = el.scrollHeight;
@@ -63697,9 +63721,10 @@ function orgDoReorder(type, sid, secid, tid) {
 
 function _done(msg) {
   save();
-  // ✅ FIX: Faster Firebase sync after organize (500ms)
+  // ✅ Firebase sync after organize
   if (typeof saveToFirebaseDebounced === "function") {
-    saveToFirebaseDebounced(500);
+    saveToFirebaseDebounced(300);
+    console.info('[📦 orgDone] Firebase sync shuru — op:' + (_orgCtx ? _orgCtx.tab : '?') + ' type:' + (_orgCtx ? _orgCtx.type : '?'));
   }
   if (typeof renderLibraryTree === "function") renderLibraryTree();
   if (typeof renderLibrarySelects === "function") renderLibrarySelects();
