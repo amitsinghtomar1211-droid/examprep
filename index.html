@@ -63459,23 +63459,30 @@ function _omvSecBlock(subjId, ssId, selSecId) {
   return _fg("📘 Section:", "<select class=\"inp\" id=\"omvSec\" onchange=\"omvOnSec(this.value)\">" + opts + "</select>");
 }
 
-/* Build sub-section dropdown for a given section — ✅ FIX: recursive (infinite nesting),
-   pehle sirf 1-level-deep tak dikhata tha, ab kitni bhi depth ki nested sub-sections
-   indent ke saath dikhengi aur destination ke roop mein select ho sakengi. */
+/* Build sub-section dropdown for a given section — ✅ FIX: CASCADING levels
+   (infinite nesting). Pehle sirf 1-level-deep tak dikhata tha aur user
+   deeper nested sub-section tak select hi nahi kar pata tha. Ab har level
+   ka apna dropdown hai — jaise hi ek sub-section select hoti hai jiske
+   andar aage aur sub-sections hain, uske neeche turant agla dropdown
+   khud-ba-khud khul jaata hai — jitni bhi depth ho, utni chain banti jaati hai. */
 function _omvSSECBlock(subjId, secId, selSsecId) {
   var sec = getSec(subjId, secId);
   if (!sec || !(sec.subSections && sec.subSections.length)) return "";
-  var opts = "<option value=\"\">📂 Direct (koi sub-section nahi)</option>";
-  function _buildSSECOptions(list, depth) {
-    (list || []).forEach(function(ss) {
-      var indent = '';
-      for (var i = 0; i < depth; i++) indent += '\u00A0\u00A0\u00A0';
-      opts += "<option value=\"" + ss.id + "\"" + (ss.id == selSsecId ? " selected" : "") + ">" + indent + "\u21B3 " + _eh(ss.name) + "</option>";
-      if (ss.subSections && ss.subSections.length) _buildSSECOptions(ss.subSections, depth + 1);
-    });
-  }
-  _buildSSECOptions(sec.subSections, 0);
-  return _fg("📘 Sub-Section (optional):", "<select class=\"inp\" id=\"omvSSEC\" onchange=\"omvOnSSEC(this.value)\">" + opts + "</select>");
+  return "<div id=\"omvSSECLevels\">" + _omvSSECLevelHTML(sec.subSections, 0, null) + "</div>";
+}
+
+/* Ek level ka dropdown HTML banata hai (list = is level ke subSections) */
+function _omvSSECLevelHTML(list, depth, selId) {
+  if (!list || !list.length) return "";
+  var opts = "<option value=\"\">📂 Direct (yahin tak — aage koi sub-section nahi)</option>"
+    + list.map(function(ss){
+        var hasChildren = ss.subSections && ss.subSections.length;
+        return "<option value=\"" + ss.id + "\"" + (ss.id == selId ? " selected" : "") + ">"
+          + "\u21B3 " + _eh(ss.name) + (hasChildren ? " \u2022 " + ss.subSections.length + " nested" : "") + "</option>";
+      }).join("");
+  var label = depth === 0 ? "📘 Sub-Section (optional):" : "\u00A0\u00A0\u00A0\u21B3 Aage Sub-Section (optional):";
+  return _fg(label, "<select class=\"inp\" id=\"omvSSEC_" + depth + "\" data-depth=\"" + depth + "\" onchange=\"omvOnSSECLevel(" + depth + ",this.value)\">" + opts + "</select>")
+    + "<div id=\"omvSSECNext_" + depth + "\"></div>";
 }
 
 /* Cascade handlers */
@@ -63503,9 +63510,43 @@ window.omvOnSec = function(v) {
   var ssecBox = document.getElementById("omvSSECBox");
   if (ssecBox) ssecBox.innerHTML = v ? _omvSSECBlock(_orgMv.subjId, v, null) : "";
 };
-window.omvOnSSEC = function(v) {
-  _orgMv.ssecId = v ? (parseInt(v) || null) : null;
+/* ✅ Cascading sub-section levels — depth 0,1,2... jitni bhi nesting ho.
+   Jab kisi level par selection hoti hai:
+   - us se aage ke (deeper) levels ka DOM saaf kar dete hain (purana chain hata do)
+   - agar selected sub-section ke andar aur nested sub-sections hain, to
+     turant agla level ka dropdown render kar dete hain
+   - _orgMv.ssecId hamesha sabse GAHRI (deepest) selected sub-section rakhta hai,
+     wahi asli destination hai */
+window.omvOnSSECLevel = function(depth, v) {
+  v = v ? (parseInt(v) || null) : null;
+  var nextBox = document.getElementById("omvSSECNext_" + depth);
+  if (nextBox) nextBox.innerHTML = "";
+  if (!v) {
+    // Is level se upar wala jo bhi selected tha, wahi ab deepest destination hai
+    var prevSel = document.getElementById("omvSSEC_" + depth);
+    _orgMv.ssecId = depth === 0 ? null : _orgMv.ssecId;
+    if (depth === 0) _orgMv.ssecId = null;
+    return;
+  }
+  _orgMv.ssecId = v;
+  // Is level ki subSections list mein se selected node dhoondo, uske children ho to agla level render karo
+  var subj = getSubj(_orgMv.subjId);
+  var sec = subj ? getSec(_orgMv.subjId, _orgMv.secId) : null;
+  var node = sec ? _findSSECInTree(sec.subSections, v) : null;
+  if (node && node.subSections && node.subSections.length && nextBox) {
+    nextBox.innerHTML = _omvSSECLevelHTML(node.subSections, depth + 1, null);
+  }
 };
+/* Helper: subSections tree mein diye gaye id ka node dhoondo (recursive) */
+function _findSSECInTree(list, id) {
+  if (!list) return null;
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].id == id) return list[i];
+    var found = _findSSECInTree(list[i].subSections, id);
+    if (found) return found;
+  }
+  return null;
+}
 
 function orgMoveHTML(type, sid, secid, tid) {
   if (type === "topic") {
