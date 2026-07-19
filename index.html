@@ -9216,11 +9216,20 @@ function addSubSubject(){
   const name=document.getElementById('newSubSubject').value.trim();
   if(!name){showToast('Sub-subject naam daalo!','error');return;}
   const subj=getSubj(S.ui.sid);
-  if(!subj.subSubjects) subj.subSubjects=[];
-  if(subj.subSubjects.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Yeh sub-subject pehle se hai!','error');return;}
-  const ns={id:Date.now(),name,sections:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
-  subj.subSubjects.push(ns);save();
-  if(typeof saveToFirebase==='function') saveToFirebase();
+  // ✅ FIX: Agar sub-subject selected hai to USKE ANDAR add karo (infinite nesting)
+  function _findSS(node, targetId){
+    if(String(node.id)===String(targetId)) return node;
+    for(var i=0;i<(node.subSubjects||[]).length;i++){var r=_findSS(node.subSubjects[i],targetId);if(r)return r;}
+    return null;
+  }
+  var parent = S.ui.subSid ? _findSS(subj, S.ui.subSid) : subj;
+  if(!parent){parent=subj;}
+  if(!parent.subSubjects) parent.subSubjects=[];
+  // ID based unique check (name check sirf same parent level pe)
+  if(parent.subSubjects.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Is level par yeh sub-subject pehle se hai! Alag naam do ya alag jagah select karo.','error');return;}
+  const ns={id:Date.now()+Math.floor(Math.random()*9999),name,sections:[],subSubjects:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
+  parent.subSubjects.push(ns);save();
+  if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(1500);
   document.getElementById('newSubSubject').value='';
   S.ui.subSid=ns.id;
   _populateSubSubjectSelect(subj);
@@ -9236,11 +9245,19 @@ function addSubSection(){
   const name=document.getElementById('newSubSection').value.trim();
   if(!name){showToast('Sub-section naam daalo!','error');return;}
   const sec=getSec(S.ui.sid,S.ui.secid);
-  if(!sec.subSections) sec.subSections=[];
-  if(sec.subSections.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Yeh sub-section pehle se hai!','error');return;}
-  const ns={id:Date.now(),name,topics:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
-  sec.subSections.push(ns);save();
-  if(typeof saveToFirebase==='function') saveToFirebase();
+  // ✅ FIX: Agar subSection selected hai to USKE ANDAR add karo (infinite nesting)
+  function _findSec(node, targetId){
+    if(String(node.id)===String(targetId)) return node;
+    for(var i=0;i<(node.subSections||[]).length;i++){var r=_findSec(node.subSections[i],targetId);if(r)return r;}
+    return null;
+  }
+  var parent = S.ui.subSecid ? _findSec(sec, S.ui.subSecid) : sec;
+  if(!parent){parent=sec;}
+  if(!parent.subSections) parent.subSections=[];
+  if(parent.subSections.find(s=>s.name.toLowerCase()===name.toLowerCase())){showToast('Is level par yeh sub-section pehle se hai! Alag naam do ya alag jagah select karo.','error');return;}
+  const ns={id:Date.now()+Math.floor(Math.random()*9999),name,topics:[],subSections:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
+  parent.subSections.push(ns);save();
+  if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(1500);
   document.getElementById('newSubSection').value='';
   S.ui.subSecid=ns.id;
   _populateSubSectionSelect(sec);
@@ -9279,15 +9296,15 @@ function openSplitModal(type,sid,secid,tid){
     const subj=getSubj(sid); if(!subj) return;
     if(!subj.subSubjects) subj.subSubjects=[];
     if(subj.subSubjects.find(s=>s.name.toLowerCase()===nm.toLowerCase())){showToast('Pehle se hai!','error');return;}
-    subj.subSubjects.push({id:Date.now(),name:nm,sections:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')});
-    save();if(typeof saveToFirebase==='function') saveToFirebase();renderLibraryTree();renderLibrarySelects();updateQuizSelects();
+    subj.subSubjects.push({id:Date.now()+Math.floor(Math.random()*9999),name:nm,sections:[],subSubjects:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')});
+    save();if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(1500);renderLibraryTree();renderLibrarySelects();updateQuizSelects();
     showToast(`"${nm}" sub-subject "${subj.name}" mein add! 📗↳`,'success');
   } else if(type==='section'){
     const sec=getSec(sid,secid); if(!sec) return;
     if(!sec.subSections) sec.subSections=[];
     if(sec.subSections.find(s=>s.name.toLowerCase()===nm.toLowerCase())){showToast('Pehle se hai!','error');return;}
-    sec.subSections.push({id:Date.now(),name:nm,topics:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')});
-    save();if(typeof saveToFirebase==='function') saveToFirebase();renderLibraryTree();
+    sec.subSections.push({id:Date.now()+Math.floor(Math.random()*9999),name:nm,topics:[],subSections:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')});
+    save();if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(1500);renderLibraryTree();
     showToast(`"${nm}" sub-section "${sec.name}" mein add! 📘↳`,'success');
   } else if(type==='topic'){
     const t=getTop(sid,secid,tid); if(!t) return;
@@ -10141,7 +10158,12 @@ function renderLibraryTree(){
   // Admin sees everything (with hide/show controls); normal users only see
   // subjects/sections/topics the admin has NOT hidden.
   const subjList=visibleSubjectsTree();
-  const _cntTs=s=>{let c=s.sections.reduce((a,sec)=>a+sec.topics.length+(sec.subSections||[]).reduce((b,ss)=>b+ss.topics.length,0),0);(s.subSubjects||[]).forEach(ss=>ss.sections.forEach(sec=>{c+=sec.topics.length+(sec.subSections||[]).reduce((b,sss)=>b+sss.topics.length,0);}));return c;};
+  const _cntTs=s=>{
+    let c=(s.sections||[]).reduce((a,sec)=>a+(sec.topics||[]).length+(sec.subSections||[]).reduce((b,ss)=>b+(ss.topics||[]).length,0),0);
+    function _cntSub(ss){let x=(ss.sections||[]).reduce((a,sec)=>a+(sec.topics||[]).length+(sec.subSections||[]).reduce((b,sss)=>b+(sss.topics||[]).length,0),0);(ss.subSubjects||[]).forEach(s2=>x+=_cntSub(s2));return x;}
+    (s.subSubjects||[]).forEach(ss=>c+=_cntSub(ss));
+    return c;
+  };
   const ts=subjList.reduce((a,s)=>a+_cntTs(s),0);
   const ssCnt=subjList.reduce((a,s)=>a+(s.subSubjects||[]).length,0);
   document.getElementById('libStats').textContent=`— ${subjList.length} subjects${ssCnt?', '+ssCnt+' sub-groups':''}, ${ts} topics${_isAdmin?'':''}`;
@@ -30648,17 +30670,20 @@ function _buildSubjShell(subj){
       })
     };
   }
+  // ✅ FIX: RECURSIVE — subSubject ke andar bhi subSubjects save karo
+  function _ssShell(ss){
+    return {
+      id: ss.id, name: ss.name, hidden: !!ss.hidden,
+      sectionMeta: (ss.sections||[]).map(function(sec){ return _secMeta(sec); }),
+      subSubjects: (ss.subSubjects||[]).map(function(ss2){ return _ssShell(ss2); })
+    };
+  }
   return {
     id:   subj.id,
     name: subj.name,
     facts: subj.facts||[],
     hidden: !!subj.hidden,
-    subSubjects: (subj.subSubjects||[]).map(function(ss){
-      return {
-        id: ss.id, name: ss.name, hidden: !!ss.hidden,
-        sectionMeta: (ss.sections||[]).map(function(sec){ return _secMeta(sec); })
-      };
-    }),
+    subSubjects: (subj.subSubjects||[]).map(function(ss){ return _ssShell(ss); }),
     sectionMeta: (subj.sections||[]).map(function(sec){ return _secMeta(sec); })
   };
 }
@@ -30859,10 +30884,22 @@ async function saveMetaToFirebase(){
 // ══════════════════════════════════════════
 // ⚡ FULL SAVE — initial login / syncNow
 // ══���═══════════════════════════════════════
+// ✅ FIX: Debounce — Firebase mein baar baar write rokne ke liye
+var _fbSaveTimer = null;
+var _fbSaveInProgress = false;
+function saveToFirebaseDebounced(delay){
+  delay = delay || 2000;
+  if(_fbSaveTimer) clearTimeout(_fbSaveTimer);
+  _fbSaveTimer = setTimeout(function(){
+    _fbSaveTimer = null;
+    if(!_fbSaveInProgress) saveToFirebase();
+  }, delay);
+}
 async function saveToFirebase(){
-  if(!_db || !_currentUser){ console.warn('[🔥 saveToFirebase] SKIP: db='+!!_db+' user='+!!_currentUser); return {ok:false, error:'Firebase ya user ready nahi', code:'NO_AUTH'}; }
+  _fbSaveInProgress = true;
+  if(!_db || !_currentUser){ console.warn('[🔥 saveToFirebase] SKIP: db='+!!_db+' user='+!!_currentUser); _fbSaveInProgress=false; return {ok:false, error:'Firebase ya user ready nahi', code:'NO_AUTH'}; }
   // 🔒 READ-ONLY: Sirf admin data save kar sakta hai
-  if(!_isAdmin){ console.log('[🔥 saveToFirebase] BLOCKED: user is NOT admin — read-only mode'); return {ok:false, error:'Admin nahi hain aap', code:'NOT_ADMIN'}; }
+  if(!_isAdmin){ console.log('[🔥 saveToFirebase] BLOCKED: user is NOT admin — read-only mode'); _fbSaveInProgress=false; return {ok:false, error:'Admin nahi hain aap', code:'NOT_ADMIN'}; }
   // 🔒 SINGLE SESSION LOCK: Dusri jagah se admin active hai to yahan save band
   if(_adminSessionLocked){
     console.error('[🔥 saveToFirebase] BLOCKED: admin session locked (another device active)');
@@ -30934,8 +30971,8 @@ async function saveToFirebase(){
           });
         });
       });
-      // ✅ FIX: subSubject ke andar ke sections + subSections ke topics bhi save karo
-      (subj.subSubjects||[]).forEach(function(sss){
+      // ✅ FIX: RECURSIVE subSubjects — nested subSubjects ke topics bhi save karo
+      function _saveSubSubjTopics(sss, subjId){
         (sss.sections||[]).forEach(function(sec){
           (sec.topics||[]).forEach(function(t){
             var twid = _genWriteId();
@@ -30944,7 +30981,7 @@ async function saveToFirebase(){
             td.writeId = twid;
             allOps.push({
               ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)),
-              data: { topic: td, subjId: subj.id, ssId: sss.id, secId: sec.id, updatedAt: Date.now(), writeId: twid }
+              data: { topic: td, subjId: subjId, ssId: sss.id, secId: sec.id, updatedAt: Date.now(), writeId: twid }
             });
           });
           (sec.subSections||[]).forEach(function(ss){
@@ -30955,12 +30992,15 @@ async function saveToFirebase(){
               td.writeId = twid;
               allOps.push({
                 ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)),
-                data: { topic: td, subjId: subj.id, ssId: sss.id, secId: sec.id, ssecId: ss.id, updatedAt: Date.now(), writeId: twid }
+                data: { topic: td, subjId: subjId, ssId: sss.id, secId: sec.id, ssecId: ss.id, updatedAt: Date.now(), writeId: twid }
               });
             });
           });
         });
-      });
+        // ✅ nested subSubjects (infinite hierarchy)
+        (sss.subSubjects||[]).forEach(function(ss2){ _saveSubSubjTopics(ss2, subjId); });
+      }
+      (subj.subSubjects||[]).forEach(function(sss){ _saveSubSubjTopics(sss, subj.id); });
     });
 
     // Batch commit in chunks of 499
@@ -30979,10 +31019,12 @@ async function saveToFirebase(){
     var _elapsed = Date.now() - _saveStartTime;
     console.info('[🔥 saveToFirebase] ✅ SUCCESS — '+allOps.length+' ops in '+_elapsed+'ms | uid:'+uid);
     setSyncStatus('synced');
+    _fbSaveInProgress = false;
     return { ok: true, ops: allOps.length, ms: _elapsed };
   }catch(e){
     console.error('[🔥 saveToFirebase] ❌ ERROR — code:'+e.code+' | msg:'+e.message+' | uid:'+_effectiveUID);
     setSyncStatus('error');
+    _fbSaveInProgress = false;
     showToast('Sync error — data local mein safe hai', 'error');
     return { ok: false, error: e.message, code: e.code };
   }
@@ -31063,6 +31105,13 @@ async function loadFromFirebase(){
         delete sm.subSectionMeta;
         return sm;
       }
+      // ✅ FIX: RECURSIVE — subSubject ke andar bhi subSubjects rebuild karo
+      function _rebuildSubSubj(ss){
+        ss.sections = (ss.sectionMeta||[]).map(function(sm){ return _rebuildSec(sm); });
+        delete ss.sectionMeta;
+        ss.subSubjects = (ss.subSubjects||[]).map(function(ss2){ return _rebuildSubSubj(ss2); });
+        return ss;
+      }
       loadedSubjects = shellDocs
         .filter(function(d){ return d.exists; })
         .map(function(d){
@@ -31070,12 +31119,8 @@ async function loadFromFirebase(){
           if(!shell) return null;
           shell.sections = (shell.sectionMeta||[]).map(function(sm){ return _rebuildSec(sm); });
           delete shell.sectionMeta;
-          // ✅ FIX: subSubjects restore karo
-          shell.subSubjects = (shell.subSubjects||[]).map(function(ss){
-            ss.sections = (ss.sectionMeta||[]).map(function(sm){ return _rebuildSec(sm); });
-            delete ss.sectionMeta;
-            return ss;
-          });
+          // ✅ FIX: subSubjects recursively restore karo
+          shell.subSubjects = (shell.subSubjects||[]).map(function(ss){ return _rebuildSubSubj(ss); });
           return shell;
         }).filter(Boolean);
 
@@ -31237,23 +31282,50 @@ async function pullFromCloud(){
       var td = d.data();
       if(td && td.topic) topicMap[String(td.topic.id)] = td.topic;
     });
+    // ✅ FIX: shared helper — section rebuild with subSections
+    function _pullRebuildSec(sm, topicMap){
+      sm.topics = (sm.topicIds||[]).map(function(tid){ return topicMap[String(tid)] || null; }).filter(Boolean);
+      delete sm.topicIds;
+      sm.subSections = (sm.subSectionMeta||[]).map(function(ssm){
+        ssm.topics = (ssm.topicIds||[]).map(function(tid){ return topicMap[String(tid)] || null; }).filter(Boolean);
+        delete ssm.topicIds;
+        return ssm;
+      });
+      delete sm.subSectionMeta;
+      return sm;
+    }
+    // ✅ FIX: recursive — subSubject ke andar subSubjects bhi rebuild karo
+    function _pullRebuildSubj(shell, topicMap){
+      shell.sections = (shell.sectionMeta||[]).map(function(sm){ return _pullRebuildSec(sm, topicMap); });
+      delete shell.sectionMeta;
+      shell.subSubjects = (shell.subSubjects||[]).map(function(ss){
+        // subSubject ke sections rebuild karo
+        ss.sections = (ss.sectionMeta||[]).map(function(sm){ return _pullRebuildSec(sm, topicMap); });
+        delete ss.sectionMeta;
+        // subSubject ke andar bhi subSubjects ho sakti hain (infinite hierarchy)
+        ss.subSubjects = (ss.subSubjects||[]).map(function(ss2){ return _pullRebuildSubj(ss2, topicMap); });
+        return ss;
+      });
+      return shell;
+    }
     var newSubjects = shellDocs
       .filter(function(d){ return d.exists; })
       .map(function(d){
         var shell = d.data().shell;
         if(!shell) return null;
-        shell.sections = (shell.sectionMeta||[]).map(function(sm){
-          sm.topics = (sm.topicIds||[]).map(function(tid){
-            return topicMap[String(tid)] || null;
-          }).filter(Boolean);
-          delete sm.topicIds;
-          return sm;
-        });
-        delete shell.sectionMeta;
-        return shell;
+        return _pullRebuildSubj(shell, topicMap);
       }).filter(Boolean);
 
-    var _pullTopicCount = newSubjects.reduce(function(a,s){ return a+s.sections.reduce(function(b,sec){ return b+sec.topics.length; },0); },0);
+    function _countTopicsDeep(subj){
+      var c = 0;
+      (subj.sections||[]).forEach(function(sec){
+        c += (sec.topics||[]).length;
+        (sec.subSections||[]).forEach(function(ss){ c += (ss.topics||[]).length; });
+      });
+      (subj.subSubjects||[]).forEach(function(ss){ c += _countTopicsDeep(ss); });
+      return c;
+    }
+    var _pullTopicCount = newSubjects.reduce(function(a,s){ return a+_countTopicsDeep(s); },0);
     console.log('[⬇️ pullFromCloud] Loaded: '+newSubjects.length+' subjects, '+_pullTopicCount+' topics');
     if(!newSubjects.length){ console.error('[⬇️ pullFromCloud] ❌ newSubjects khaali — koi data nahi mila'); showToast('Cloud data load nahi hua.','error'); return; }
 
@@ -63058,9 +63130,9 @@ function orgDoReorder(type, sid, secid, tid) {
 
 function _done(msg) {
   save();
-  // ✅ Firebase mein bhi turant update karo
-  if (typeof saveToFirebase === "function") {
-    saveToFirebase().catch(function(e){ console.warn("[_done] Firebase sync error:", e); });
+  // ✅ Firebase debounced sync (write storm se bachne ke liye)
+  if (typeof saveToFirebaseDebounced === "function") {
+    saveToFirebaseDebounced(1500);
   }
   if (typeof renderLibraryTree === "function") renderLibraryTree();
   if (typeof renderLibrarySelects === "function") renderLibrarySelects();
