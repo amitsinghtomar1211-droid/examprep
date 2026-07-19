@@ -31548,6 +31548,30 @@ async function loadFromFirebase(){
       }
       setSyncStatus('synced'); return;
     }
+
+    // ✅ FIX: RACE-CONDITION GUARD — agar admin ke local mein cloud se ZYADA topics hain
+    // (matlab abhi-abhi kuch naya create/organize kiya tha jiska Firebase save debounce
+    // hone ki wajah se abhi tak complete nahi hua — jaise turant refresh/relogin karna),
+    // to cloud ka PURANA (kam) data local ke NAYE data ko silently overwrite kar deta tha
+    // aur naya subject/section/topic hamesha ke liye gayab ho jaata tha.
+    // Fix: pehle local ka pending data poori tarah Firebase mein push karo (saveToFirebase),
+    // tabhi cloud se fresh copy dubara load karo — taaki koi bhi unsynced change kho na jaaye.
+    if(_isAdmin && localTopicCount > cloudTopicCount){
+      console.warn('[📥 loadFromFirebase] ⚠️ GUARD: local topics ('+localTopicCount+') > cloud topics ('+cloudTopicCount+') — pending unsynced local changes ho sakte hain. Pehle local ko Firebase push kar rahe hain, phir load karenge.');
+      showToast('⏳ Local mein unsynced changes mile — pehle cloud pe save kar rahe hain...', 'info');
+      var _pushResult = await saveToFirebase();
+      if(_pushResult && _pushResult.ok){
+        console.info('[📥 loadFromFirebase] ✅ GUARD: local push safal — ab dobara cloud se load karenge');
+        setSyncStatus('synced');
+        return loadFromFirebase(); // ✅ Ab local == cloud, safe recursive re-load
+      } else {
+        console.error('[📥 loadFromFirebase] ❌ GUARD: local push FAIL hua — safety ke liye local data hi rakhenge, cloud overwrite NAHI karenge. Error:', _pushResult);
+        showToast('⚠️ Cloud push fail hua — aapka local data safe rakha gaya hai (overwrite nahi hua)', 'error');
+        setSyncStatus('error');
+        return;
+      }
+    }
+
     // ✅ FIX: Agar cloud mein data hai to HAMESHA cloud se lo, local count se compare mat karo
     console.info('[📥 loadFromFirebase] PATH: Cloud se load karega ('+cloudTopicCount+' topics) — cloud is source of truth');
 
@@ -31732,6 +31756,26 @@ async function pullFromCloud(){
     var _pullTopicCount = newSubjects.reduce(function(a,s){ return a+_countTopicsDeep(s); },0);
     console.log('[⬇️ pullFromCloud] Loaded: '+newSubjects.length+' subjects, '+_pullTopicCount+' topics');
     if(!newSubjects.length){ console.error('[⬇️ pullFromCloud] ❌ newSubjects khaali — koi data nahi mila'); showToast('Cloud data load nahi hua.','error'); return; }
+
+    // ✅ FIX: RACE-CONDITION GUARD — same as loadFromFirebase.
+    // Agar admin ke paas local mein cloud se zyada topics hain, to iska matlab
+    // koi naya create/organize change abhi tak Firebase mein sync nahi hua.
+    // Aise mein cloud ka purana data local ko overwrite NAHI karna chahiye.
+    var _localTopicCountNow = (S.subjects||[]).reduce(function(a,s){ return a + _countTopicsDeep(s); }, 0);
+    if(_isAdmin && _localTopicCountNow > _pullTopicCount){
+      console.warn('[⬇️ pullFromCloud] ⚠️ GUARD: local topics ('+_localTopicCountNow+') > cloud topics ('+_pullTopicCount+') — pehle local push karenge, cloud overwrite nahi karenge abhi');
+      showToast('⏳ Local mein unsynced changes hain — pehle cloud pe save kar rahe hain...', 'info');
+      var _pushResult2 = await saveToFirebase();
+      hideDataLoadingOverlay();
+      if(_pushResult2 && _pushResult2.ok){
+        console.info('[⬇️ pullFromCloud] ✅ GUARD: local push safal — local data hi final rakha gaya');
+        showToast('✅ Aapke naye changes cloud pe save ho gaye!', 'success');
+      } else {
+        console.error('[⬇️ pullFromCloud] ❌ GUARD: local push FAIL — local data safe rakha gaya (overwrite nahi hua). Error:', _pushResult2);
+        showToast('⚠️ Cloud push fail — local data safe hai', 'error');
+      }
+      return;
+    }
 
     // Directly update S — koi comparison nahi, cloud ka data final hai
     S.subjects          = newSubjects;
