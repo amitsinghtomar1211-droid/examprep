@@ -10398,6 +10398,25 @@ function _renderSubSubjBlock(subj, ss, parentSsid, depth){
 }
 
 // ✅ NEW: Add nested sub-subject from library tree ⊕Sub button
+function _addNestedSubSec(sid, secid, parentSsecId){
+  if(!_isAdmin){showToast('❌ Sirf admin sub-sections add kar sakta hai.','error');return;}
+  if(typeof _checkWriteAccess==='function' && !_checkWriteAccess()) return;
+  var nm=(prompt('Naya Sub-Section folder ka naam likho:','')||'').trim();
+  if(!nm) return;
+  var sec=getSec(sid,secid); if(!sec){showToast('Section nahi mila!','error');return;}
+  function _fndSS(node,id){if(String(node.id)===String(id))return node;for(var i=0;i<(node.subSections||[]).length;i++){var r=_fndSS(node.subSections[i],id);if(r)return r;}return null;}
+  var parent=_fndSS(sec,parentSsecId); if(!parent){showToast('Parent sub-section nahi mila!','error');return;}
+  if(!parent.subSections) parent.subSections=[];
+  if(parent.subSections.find(function(s){return s.name.toLowerCase()===nm.toLowerCase();})){showToast('Yeh naam pehle se hai!','error');return;}
+  var ns={id:Date.now()+Math.floor(Math.random()*9999),name:nm,topics:[],subSections:[],hidden:false,createdAt:new Date().toLocaleDateString('hi-IN')};
+  parent.subSections.push(ns);
+  save(); if(typeof saveToFirebaseDebounced==='function') saveToFirebaseDebounced(1000);
+  if(typeof renderLibraryTree==='function') renderLibraryTree();
+  if(typeof renderLibrarySelects==='function') renderLibrarySelects();
+  if(typeof updateQuizSelects==='function') updateQuizSelects();
+  showToast('"'+nm+'" nested sub-section add ho gaya! 📑↳','success');
+}
+
 function _addNestedSubSubj(subjId, parentSsId){
   if(!_isAdmin){showToast('\u274c Sirf admin sub-subjects add kar sakta hai.','error');return;}
   if(!_checkWriteAccess()) return;
@@ -10573,6 +10592,7 @@ function renderLibraryTree(){
           <div class="lib-folder-meta"><span>📙 ${ssTc} topics</span>${nestedSSCnt?`<span>📂 ${nestedSSCnt} sub-sections</span>`:''}</div>
           <div class="lib-folder-actions" onclick="event.stopPropagation();">
              <button class="lib-action-btn" onclick="event.stopPropagation();openOrgModal('subsection',${current.sid},${current.secid},${ss.id})" title="Organize">📦</button>
+            ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="event.stopPropagation();_addNestedSubSec(${current.sid},${current.secid},${ss.id})" title="Iske andar naya sub-section folder banao">📁+</button>`:''}
             ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="toggleSubSecVisibility(${current.sid},${current.secid},${ss.id},event)" title="${ssHid?'Dikhao':'Hide karo'}" style="${ssHid?'color:#c62828;':'color:#2e7d32;'}">${ssHid?'🚫':'👁️'}</button>`:''}
             ${_isAdmin?`<button class="lib-action-btn danger" onclick="delSubSec(${current.sid},${current.secid},${ss.id},event)" title="Delete">🗑️</button>`:''}
           </div>
@@ -10603,6 +10623,7 @@ function renderLibraryTree(){
           <div class="lib-folder-meta"><span>📙 ${nssTc} topics</span></div>
           <div class="lib-folder-actions" onclick="event.stopPropagation();">
              <button class="lib-action-btn" onclick="event.stopPropagation();openOrgModal('subsection',${current.sid},${current.secid},${nss.id})" title="Organize">📦</button>
+            ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="event.stopPropagation();_addNestedSubSec(${current.sid},${current.secid},${nss.id})" title="Iske andar naya sub-section folder banao">📁+</button>`:''}
              ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="toggleSubSecVisibility(${current.sid},${current.secid},${nss.id},event)" title="Toggle visibility" style="color:#2e7d32;">👁️</button>`:''}
             ${_isAdmin?`<button class="lib-action-btn danger" onclick="delSubSec(${current.sid},${current.secid},${nss.id},event)" title="Delete">🗑️</button>`:''}
           </div>
@@ -27926,18 +27947,6 @@ function _nedResetKalman() {
   if(typeof KalmanFilter === 'function') {
     _nedKfX = new KalmanFilter();
     _nedKfY = new KalmanFilter();
-  } else if (type === "subsection" && _orgReorderMode === "topics") {
-    var ss_dr = _getSubSec(sid, secid, tid); if (!ss_dr) return;
-    var map_ss = {}; (ss_dr.topics || []).forEach(function(t){ map_ss[t.id] = t; });
-    ss_dr.topics = newIds.map(function(id){ return map_ss[id]; }).filter(Boolean);
-    _done("Topics reorder ho gaye!");
-
-  } else if (type === "subsection" && _orgReorderMode === "subsections") {
-    var ss_dr2 = _getSubSec(sid, secid, tid); if (!ss_dr2) return;
-    var sssmap = {}; (ss_dr2.subSections || []).forEach(function(sss){ sssmap[sss.id] = sss; });
-    ss_dr2.subSections = newIds.map(function(id){ return sssmap[id]; }).filter(Boolean);
-    _done("Nested Sub-Sections reorder ho gaye!");
-
   } else {
     // Fallback simple EMA if KalmanFilter not loaded
     _nedKfX = { filter: function(z){ this.x = this.x===undefined ? z : this.x*0.7 + z*0.3; return this.x; } };
@@ -63556,6 +63565,7 @@ function orgDoSplit(type, sid, secid, tid) {
 
 /* ===== REORDER ===== */
 var _orgReorderList = [];
+var _orgReorderMode = "";
 
 function orgReorderHTML(type, sid, secid, tid) {
   var items = [], label = "";
