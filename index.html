@@ -63459,14 +63459,22 @@ function _omvSecBlock(subjId, ssId, selSecId) {
   return _fg("📘 Section:", "<select class=\"inp\" id=\"omvSec\" onchange=\"omvOnSec(this.value)\">" + opts + "</select>");
 }
 
-/* Build sub-section dropdown for a given section */
+/* Build sub-section dropdown for a given section — ✅ FIX: recursive (infinite nesting),
+   pehle sirf 1-level-deep tak dikhata tha, ab kitni bhi depth ki nested sub-sections
+   indent ke saath dikhengi aur destination ke roop mein select ho sakengi. */
 function _omvSSECBlock(subjId, secId, selSsecId) {
   var sec = getSec(subjId, secId);
   if (!sec || !(sec.subSections && sec.subSections.length)) return "";
-  var opts = "<option value=\"\">📂 Direct (koi sub-section nahi)</option>"
-    + sec.subSections.map(function(ss){
-        return "<option value=\"" + ss.id + "\"" + (ss.id == selSsecId ? " selected" : "") + ">\u21B3 " + _eh(ss.name) + "</option>";
-      }).join("");
+  var opts = "<option value=\"\">📂 Direct (koi sub-section nahi)</option>";
+  function _buildSSECOptions(list, depth) {
+    (list || []).forEach(function(ss) {
+      var indent = '';
+      for (var i = 0; i < depth; i++) indent += '\u00A0\u00A0\u00A0';
+      opts += "<option value=\"" + ss.id + "\"" + (ss.id == selSsecId ? " selected" : "") + ">" + indent + "\u21B3 " + _eh(ss.name) + "</option>";
+      if (ss.subSections && ss.subSections.length) _buildSSECOptions(ss.subSections, depth + 1);
+    });
+  }
+  _buildSSECOptions(sec.subSections, 0);
   return _fg("📘 Sub-Section (optional):", "<select class=\"inp\" id=\"omvSSEC\" onchange=\"omvOnSSEC(this.value)\">" + opts + "</select>");
 }
 
@@ -63717,10 +63725,11 @@ function orgDoMove(type, sid, secid, tid) {
     // apni nayi jagah par "move" hota hai, duplicate nahi banta.
 
     /* --- find destination container --- */
+    // ✅ FIX: recursive lookup — pehle sirf 1-level-deep subSection tak jaata tha,
+    // ab kitni bhi depth ki nested sub-section destination ban sakti hai.
     var destContainer = null;
     if (dSsecId) {
-      var dSec = getSec(dSubjId, dSecId);
-      var dSsec = dSec && (dSec.subSections || []).find(function(x){ return x.id == dSsecId; });
+      var dSsec = _getSubSec(dSubjId, dSecId, dSsecId);
       if (dSsec) { dSsec.topics = dSsec.topics || []; destContainer = dSsec; }
     } else {
       destContainer = getSec(dSubjId, dSecId);
