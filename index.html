@@ -30699,11 +30699,30 @@ async function saveTopicToFirebase(tid, subjId, secId){
     var uid = _effectiveUID;
     // Find topic
     var t = null;
-    var foundSubj = null, foundSec = null;
+    var foundSubj = null, foundSec = null, foundSsec = null;
     (S.subjects||[]).forEach(function(sub){
       sub.sections.forEach(function(sec){
         sec.topics.forEach(function(tp){
           if(String(tp.id) === String(tid)){ t=tp; foundSubj=sub; foundSec=sec; }
+        });
+        // ✅ FIX: subSection ke andar bhi dhundo
+        (sec.subSections||[]).forEach(function(ss){
+          (ss.topics||[]).forEach(function(tp){
+            if(String(tp.id) === String(tid)){ t=tp; foundSubj=sub; foundSec=sec; foundSsec=ss; }
+          });
+        });
+      });
+      // ✅ FIX: subSubject ke sections mein bhi dhundo
+      (sub.subSubjects||[]).forEach(function(sss){
+        (sss.sections||[]).forEach(function(sec){
+          sec.topics.forEach(function(tp){
+            if(String(tp.id) === String(tid)){ t=tp; foundSubj=sub; foundSec=sec; }
+          });
+          (sec.subSections||[]).forEach(function(ss){
+            (ss.topics||[]).forEach(function(tp){
+              if(String(tp.id) === String(tid)){ t=tp; foundSubj=sub; foundSec=sec; foundSsec=ss; }
+            });
+          });
         });
       });
     });
@@ -30901,7 +30920,7 @@ async function saveToFirebase(){
             data: { topic: td, subjId: subj.id, secId: sec.id, updatedAt: Date.now(), writeId: twid }
           });
         });
-        // ✅ FIX: subSection ke topics bhi save karo
+        // ✅ FIX: subSection ke topics bhi Firebase mein save karo
         (sec.subSections||[]).forEach(function(ss){
           (ss.topics||[]).forEach(function(t){
             var twid = _genWriteId();
@@ -30915,7 +30934,7 @@ async function saveToFirebase(){
           });
         });
       });
-      // ✅ FIX: subSubject ke sections aur unke topics bhi save karo
+      // ✅ FIX: subSubject ke andar ke sections + subSections ke topics bhi save karo
       (subj.subSubjects||[]).forEach(function(sss){
         (sss.sections||[]).forEach(function(sec){
           (sec.topics||[]).forEach(function(t){
@@ -31033,7 +31052,6 @@ async function loadFromFirebase(){
           return td ? td.topic : null;
         }).filter(Boolean);
         delete sm.topicIds;
-        // ✅ FIX: subSections restore karo
         sm.subSections = (sm.subSectionMeta||[]).map(function(ssm){
           ssm.topics = (ssm.topicIds||[]).map(function(tid){
             var td = topicMap[String(tid)];
@@ -62777,6 +62795,7 @@ function orgDoMove(type, sid, secid, tid) {
 
     /* --- find & detach topic from source --- */
     var tp = null;
+    var oldTid = String(tid); // purana Firebase doc ID (delete karna hai)
     var srcSec = getSec(sid, secid);
     if (srcSec) {
       tp = srcSec.topics.find(function(x){ return x.id == tid; });
@@ -62793,6 +62812,9 @@ function orgDoMove(type, sid, secid, tid) {
     }
     if (!tp) { showToast("Topic source mein nahi mila!", "error"); return; }
 
+    // ✅ NEW ID assign karo — destination par FRESH doc banega Firebase mein
+    tp.id = _nid();
+
     /* --- find destination container --- */
     var destContainer = null;
     if (dSsecId) {
@@ -62804,6 +62826,15 @@ function orgDoMove(type, sid, secid, tid) {
     }
     if (!destContainer) { showToast("Destination section nahi mila!", "error"); return; }
     (destContainer.topics = destContainer.topics || []).push(tp);
+
+    // ✅ Old Firebase doc delete karo (stale entry saaf ho)
+    try {
+      if(typeof _db !== 'undefined' && _db && typeof _effectiveUID !== 'undefined' && _effectiveUID) {
+        _db.collection('users').doc(_effectiveUID).collection('topics').doc(oldTid).delete()
+          .catch(function(e){ console.warn('[orgDoMove] Old topic doc delete error:', e); });
+      }
+    } catch(e) { console.warn('[orgDoMove] Delete attempt error:', e); }
+
     _done("\"" + tp.name + "\" move ho gaya! \u2705");
 
   } else if (type === "section") {
@@ -63027,6 +63058,10 @@ function orgDoReorder(type, sid, secid, tid) {
 
 function _done(msg) {
   save();
+  // ✅ Firebase mein bhi turant update karo
+  if (typeof saveToFirebase === "function") {
+    saveToFirebase().catch(function(e){ console.warn("[_done] Firebase sync error:", e); });
+  }
   if (typeof renderLibraryTree === "function") renderLibraryTree();
   if (typeof renderLibrarySelects === "function") renderLibrarySelects();
   if (typeof updateQuizSelects === "function") updateQuizSelects();
