@@ -9986,6 +9986,12 @@ async function addNote(){
     editorHighlights: []
   });
   save(); renderLibraryTree();
+  // ✅ FIX: Firebase save call missing tha — sirf local save hoti thi, isliye
+  // note turant app mein dikhta tha (local memory se) lekin refresh/pullFromCloud
+  // ke baad gayab ho jaata tha kyunki Firebase mein kabhi gaya hi nahi tha.
+  if(_isAdmin && typeof saveTopicToFirebase === 'function'){
+    saveTopicToFirebase(t.id, S.ui.sid, S.ui.secid);
+  }
   if(richEditor) richEditor.innerHTML = '';
   document.getElementById('noteName').value = '';
   document.getElementById('noteFileStatus').style.display = 'none';
@@ -10086,6 +10092,10 @@ Seedha notes do.`;
       t.newPoints=[];
     }
     t.finalNotesAt=today;save();
+    // ✅ FIX: Firebase save call missing tha
+    if(_isAdmin && typeof saveTopicToFirebase === 'function'){
+      saveTopicToFirebase(t.id, S.ui.sid, S.ui.secid);
+    }
     renderFinalNotesCard(); renderLibraryTree();
     showToast(isUpdate?`${(t.newPoints||[]).length} naye points add hue! 🆕`:'Final Notes ready! ⭐','success');
   }catch(e){showToast('Error: '+e.message,'error');}
@@ -10219,23 +10229,23 @@ function saveFact() {
   const topicId = parseInt(document.getElementById('saveFactTopic').value);
   if(!text) { showToast('Kuchh likho!', 'error'); return; }
   
-  // Find topic
-  for(const subj of S.subjects) {
-    for(const sec of subj.sections) {
-      const t = sec.topics.find(t => t.id === topicId);
-      if(t) {
-        t.savedFacts.push({
-          id: Date.now(),
-          text: text,
-          date: new Date().toLocaleDateString('hi-IN')
-        });
-        save();
-        closeModal('saveFactModal');
-        showToast('Fact save ho gaya! 📌', 'success');
-        updateSavedBadge();
-        return;
-      }
+  // Find topic — ✅ FIX: recursive search into nested subSections too
+  const t = findTopicById(topicId);
+  if(t) {
+    t.savedFacts.push({
+      id: Date.now(),
+      text: text,
+      date: new Date().toLocaleDateString('hi-IN')
+    });
+    save();
+    // ✅ FIX: Firebase save call missing tha
+    if(_isAdmin && typeof saveTopicToFirebase === 'function'){
+      saveTopicToFirebase(t.id);
     }
+    closeModal('saveFactModal');
+    showToast('Fact save ho gaya! 📌', 'success');
+    updateSavedBadge();
+    return;
   }
 }
 
@@ -15608,7 +15618,12 @@ Format: Simple Hindi, 300-400 words max. Seedha notes do.`;
   try{
     const text=await callGroq(prompt,2000);
     t.smartNotesAI=text;t.smartNotesAt=new Date().toLocaleDateString('hi-IN');
-    save();renderSmartNotes();showToast('Smart Notes ready! 🧠','success');
+    save();renderSmartNotes();
+    // ✅ FIX: Firebase save call missing tha
+    if(_isAdmin && typeof saveTopicToFirebase === 'function'){
+      saveTopicToFirebase(t.id);
+    }
+    showToast('Smart Notes ready! 🧠','success');
   }catch(e){showToast('Error: '+e.message,'error');}
 }
 
@@ -16408,6 +16423,10 @@ function confirmAddAiNote(){
   }
   save();
   renderLibraryTree();
+  // ✅ FIX: Firebase save call missing tha
+  if(_isAdmin && typeof saveTopicToFirebase === 'function' && subj && sec){
+    saveTopicToFirebase(topic.id, subj.id, sec.id);
+  }
   closeModal('aiNoteAddModal');
   _pendingAiNote=null;
 }
@@ -16605,6 +16624,11 @@ function showUnsavedPopup() {
     if(ok) {
       save(); // localStorage mein save
       _editorState.modified = false;
+      
+      // ✅ FIX: Firebase save call missing tha — sirf local save hoti thi
+      if(_isAdmin && typeof saveTopicToFirebase === 'function'){
+        saveTopicToFirebase(_editorState.tid, _editorState.sid, _editorState.secid);
+      }
       
       // Library tree update karo
       renderLibraryTree();
@@ -31177,30 +31201,30 @@ async function saveTopicToFirebase(tid, subjId, secId){
     // Find topic
     var t = null;
     var foundSubj = null, foundSec = null, foundSsec = null;
-    (S.subjects||[]).forEach(function(sub){
-      sub.sections.forEach(function(sec){
-        sec.topics.forEach(function(tp){
-          if(String(tp.id) === String(tid)){ t=tp; foundSubj=sub; foundSec=sec; }
-        });
-        // ✅ FIX: subSection ke andar bhi dhundo
-        (sec.subSections||[]).forEach(function(ss){
-          (ss.topics||[]).forEach(function(tp){
-            if(String(tp.id) === String(tid)){ t=tp; foundSubj=sub; foundSec=sec; foundSsec=ss; }
-          });
-        });
+    // ✅ FIX: fully recursive subSection search — kitni bhi depth tak jaata hai,
+    // pehle sirf 1-level-deep tak hi jaata tha, isliye 2nd-level+ nested
+    // sub-sections ke topics kabhi Firebase mein save nahi hote the.
+    function _findTopicInSec(sec, sub){
+      sec.topics.forEach(function(tp){
+        if(String(tp.id) === String(tid)){ t=tp; foundSubj=sub; foundSec=sec; foundSsec=null; }
       });
-      // ✅ FIX: subSubject ke sections mein bhi dhundo
+      (sec.subSections||[]).forEach(function(ss){
+        _findTopicInSS(ss, sec, sub);
+      });
+    }
+    function _findTopicInSS(ss, sec, sub){
+      (ss.topics||[]).forEach(function(tp){
+        if(String(tp.id) === String(tid)){ t=tp; foundSubj=sub; foundSec=sec; foundSsec=ss; }
+      });
+      (ss.subSections||[]).forEach(function(ss2){
+        _findTopicInSS(ss2, sec, sub);
+      });
+    }
+    (S.subjects||[]).forEach(function(sub){
+      sub.sections.forEach(function(sec){ _findTopicInSec(sec, sub); });
+      // ✅ subSubject ke sections mein bhi dhundo (recursive)
       (sub.subSubjects||[]).forEach(function(sss){
-        (sss.sections||[]).forEach(function(sec){
-          sec.topics.forEach(function(tp){
-            if(String(tp.id) === String(tid)){ t=tp; foundSubj=sub; foundSec=sec; }
-          });
-          (sec.subSections||[]).forEach(function(ss){
-            (ss.topics||[]).forEach(function(tp){
-              if(String(tp.id) === String(tid)){ t=tp; foundSubj=sub; foundSec=sec; foundSsec=ss; }
-            });
-          });
-        });
+        (sss.sections||[]).forEach(function(sec){ _findTopicInSec(sec, sub); });
       });
     });
     if(!t) return;
@@ -31508,8 +31532,10 @@ async function saveToFirebase(){
             data: { topic: td, subjId: subj.id, secId: sec.id, updatedAt: Date.now(), writeId: twid }
           });
         });
-        // ✅ FIX: subSection ke topics bhi Firebase mein save karo
-        (sec.subSections||[]).forEach(function(ss){
+        // ✅ FIX: subSection ke topics bhi Firebase mein save karo — ab FULLY
+        // RECURSIVE, kitni bhi depth tak nested sub-sections ke topics save honge.
+        // Pehle sirf 1-level-deep tak hi jaata tha.
+        function _saveSubSecTopics(ss){
           (ss.topics||[]).forEach(function(t){
             var twid = _genWriteId();
             _myTopicWriteIds[String(t.id)] = twid;
@@ -31520,7 +31546,9 @@ async function saveToFirebase(){
               data: { topic: td, subjId: subj.id, secId: sec.id, ssecId: ss.id, updatedAt: Date.now(), writeId: twid }
             });
           });
-        });
+          (ss.subSections||[]).forEach(_saveSubSecTopics);
+        }
+        (sec.subSections||[]).forEach(_saveSubSecTopics);
       });
       // ✅ FIX: RECURSIVE subSubjects — nested subSubjects ke topics bhi save karo
       function _saveSubSubjTopics(sss, subjId){
@@ -31535,7 +31563,9 @@ async function saveToFirebase(){
               data: { topic: td, subjId: subjId, ssId: sss.id, secId: sec.id, updatedAt: Date.now(), writeId: twid }
             });
           });
-          (sec.subSections||[]).forEach(function(ss){
+          // ✅ FIX: fully recursive — pehle sirf 1-level-deep tak jaata tha,
+          // ab kitni bhi depth tak nested sub-sections ke topics save honge.
+          function _saveSSSecTopics(ss){
             (ss.topics||[]).forEach(function(t){
               var twid = _genWriteId();
               _myTopicWriteIds[String(t.id)] = twid;
@@ -31546,7 +31576,9 @@ async function saveToFirebase(){
                 data: { topic: td, subjId: subjId, ssId: sss.id, secId: sec.id, ssecId: ss.id, updatedAt: Date.now(), writeId: twid }
               });
             });
-          });
+            (ss.subSections||[]).forEach(_saveSSSecTopics);
+          }
+          (sec.subSections||[]).forEach(_saveSSSecTopics);
         });
         // ✅ nested subSubjects (infinite hierarchy)
         (sss.subSubjects||[]).forEach(function(ss2){ _saveSubSubjTopics(ss2, subjId); });
@@ -31598,8 +31630,22 @@ async function loadFromFirebase(){
   setSyncStatus('syncing');
   try{
     const uid = _effectiveUID;
-    const localTopicCount = (S.subjects||[]).reduce(
-      (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
+    // ✅ FIX: fully recursive topic counter — pehle sirf sec.topics.length count
+    // hota tha, sub-section (kisi bhi depth) ke topics bilkul count nahi hote the.
+    // Isse yeh guard hamesha undercount karta tha jab bhi sub-section-nested
+    // topics hon (bahut common case), jisse race-condition guard galat trigger
+    // ho sakta tha aur cloud purane data se local ko overwrite kar deta.
+    function _countSecTopicsDeep(sec){
+      var c = (sec.topics||[]).length;
+      (sec.subSections||[]).forEach(function(ss){ c += _countSecTopicsDeep(ss); });
+      return c;
+    }
+    function _countSubjTopicsDeep(s){
+      var c = (s.sections||[]).reduce(function(a,sec){ return a+_countSecTopicsDeep(sec); },0);
+      (s.subSubjects||[]).forEach(function(ss){ c += _countSubjTopicsDeep(ss); });
+      return c;
+    }
+    const localTopicCount = (S.subjects||[]).reduce((a,s)=>a+_countSubjTopicsDeep(s), 0);
     console.info('[📥 loadFromFirebase] START — uid:'+uid+' | isAdmin:'+_isAdmin+' | localTopics:'+localTopicCount);
 
     const metaDoc = await _db.collection('users').doc(uid).get();
@@ -31680,8 +31726,7 @@ async function loadFromFirebase(){
           return shell;
         }).filter(Boolean);
 
-      cloudTopicCount = loadedSubjects.reduce(
-        (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
+      cloudTopicCount = loadedSubjects.reduce((a,s)=>a+_countSubjTopicsDeep(s), 0);
 
     } else if(!isV2 && subjectIds.length > 0){
       // ── v1 per-subject format ─��
@@ -31692,14 +31737,12 @@ async function loadFromFirebase(){
       );
       loadedSubjects = subjDocs.filter(function(d){ return d.exists; })
         .map(function(d){ return d.data().data; }).filter(Boolean);
-      cloudTopicCount = loadedSubjects.reduce(
-        (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
+      cloudTopicCount = loadedSubjects.reduce((a,s)=>a+_countSubjTopicsDeep(s), 0);
 
     } else if(meta.subjects && meta.subjects.length > 0){
       // ── Legacy: single doc format ──
       loadedSubjects = meta.subjects;
-      cloudTopicCount = loadedSubjects.reduce(
-        (a,s)=>a+s.sections.reduce((b,sec)=>b+sec.topics.length,0), 0);
+      cloudTopicCount = loadedSubjects.reduce((a,s)=>a+_countSubjTopicsDeep(s), 0);
     }
 
     console.log('[📥 loadFromFirebase] Cloud topics counted: '+cloudTopicCount+' | local topics: '+localTopicCount);
@@ -31742,15 +31785,24 @@ async function loadFromFirebase(){
 
     // Cloud data load + local editor HTML merge
     // ✅ FIX: sirf LOCAL editor data preserve karo jab local NEWER ho (timestamp compare)
+    // ✅ FIX: RECURSIVE — pehle sirf sec.topics tak jaata tha, sub-section (kisi
+    // bhi depth) ke topics ke local editor edits preserve hi nahi hote the.
+    function _forEachTopicDeep(sub, fn){
+      function _walkSec(sec){
+        (sec.topics||[]).forEach(fn);
+        (sec.subSections||[]).forEach(_walkSec);
+      }
+      (sub.sections||[]).forEach(_walkSec);
+    }
     var localEditorData = {};
-    (S.subjects||[]).forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
+    (S.subjects||[]).forEach(function(sub){ _forEachTopicDeep(sub, function(t){
       if(t.finalNotesHTML) localEditorData['fn_'+t.id] = { html: t.finalNotesHTML, ts: t.finalNotesAt || 0 };
       if(t.smartNotesHTML) localEditorData['sn_'+t.id] = { html: t.smartNotesHTML, ts: t.smartNotesAt || 0 };
       if(t.masterNotesHTML) localEditorData['mn_'+t.id] = { html: t.masterNotesHTML, ts: t.masterNotesAt || 0 };
       (t.notes||[]).forEach(function(n){
         if(n.editorRichHTML) localEditorData['n_'+n.id] = { richHTML:n.editorRichHTML, highlights:n.editorHighlights||[], ts: n.editorSavedAt || 0 };
       });
-    }); }); });
+    }); });
 
     S.subjects          = loadedSubjects;
     S.exams             = meta.exams||[];
@@ -31765,7 +31817,10 @@ async function loadFromFirebase(){
     S.quizFactProgress  = meta.quizFactProgress||{};
     S.hlQuizProgress    = meta.hlQuizProgress||{};
 
-    S.subjects.forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
+    // ✅ FIX: RECURSIVE — pehle sirf sec.topics tak jaata tha, isliye sub-section
+    // (kisi bhi depth) ke topics par defaults kabhi lagte hi nahi the, jisse
+    // baad mein t.notes.push jaisi jagah undefined errors aa sakte the.
+    S.subjects.forEach(function(sub){ _forEachTopicDeep(sub, function(t){
       if(!t.highlights) t.highlights=[];
       if(!t.savedFacts) t.savedFacts=[];
       if(!t.notes) t.notes=[];
@@ -31787,14 +31842,16 @@ async function loadFromFirebase(){
           n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[];
         }
       });
-    }); }); });
+    }); });
 
     // ✅ FIX: _lastSavedSnapshot update karo taaki next save() spurious re-uploads na kare
+    // ✅ FIX: RECURSIVE — sub-section ke topics bhi ab is snapshot mein register
+    // hote hain, warna unka future save() spurious re-upload trigger kar sakta tha.
     try{
-      (S.subjects||[]).forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
+      (S.subjects||[]).forEach(function(sub){ _forEachTopicDeep(sub, function(t){
         var td = (typeof _cleanTopic === 'function') ? _cleanTopic(t) : t;
         _lastSavedSnapshot[String(t.id)] = JSON.stringify(td);
-      }); }); });
+      }); });
     }catch(_e2){}
 
     try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
@@ -31862,18 +31919,18 @@ async function pullFromCloud(){
       var td = d.data();
       if(td && td.topic) topicMap[String(td.topic.id)] = td.topic;
     });
-    // ✅ FIX: shared helper — section rebuild with subSections (null-safe)
+    // ✅ FIX: shared helper — section rebuild with subSections, FULLY RECURSIVE.
+    // PEHLE: sirf 1-level-deep tak jaata tha — nested subSectionMeta (2nd level+)
+    // kabhi rebuild nahi hota tha, isliye "Latest Laao" click karne par deep-nested
+    // parent folder (aur uske topics) gayab ho jaate the. Ab kitni bhi depth tak
+    // recursive rebuild hota hai — same pattern jo loadFromFirebase() mein hai.
     function _pullRebuildSec(sm, topicMap){
       if(!sm) return {id:Date.now(),name:'',topics:[],subSections:[],hidden:false};
       sm.topics = (sm.topicIds||[]).map(function(tid){ return topicMap[String(tid)] || null; }).filter(Boolean);
       if(!sm.topics) sm.topics=[];
       delete sm.topicIds;
       sm.subSections = (sm.subSectionMeta||[]).map(function(ssm){
-        if(!ssm) return null;
-        ssm.topics = (ssm.topicIds||[]).map(function(tid){ return topicMap[String(tid)] || null; }).filter(Boolean);
-        if(!ssm.topics) ssm.topics=[];
-        delete ssm.topicIds;
-        return ssm;
+        return _pullRebuildSec(ssm, topicMap);
       }).filter(Boolean);
       if(!sm.subSections) sm.subSections=[];
       delete sm.subSectionMeta;
@@ -31909,12 +31966,17 @@ async function pullFromCloud(){
         }
       }).filter(Boolean);
 
+    // ✅ FIX: fully recursive topic counting — pehle sirf 1-level-deep subSections
+    // tak jaata tha, isse deep-nested folders ke topics count hi nahi hote the aur
+    // niche wala race-condition guard galat undercounts kar raha tha.
+    function _countTopicsInSec(sec){
+      var c = (sec.topics||[]).length;
+      (sec.subSections||[]).forEach(function(ss){ c += _countTopicsInSec(ss); });
+      return c;
+    }
     function _countTopicsDeep(subj){
       var c = 0;
-      (subj.sections||[]).forEach(function(sec){
-        c += (sec.topics||[]).length;
-        (sec.subSections||[]).forEach(function(ss){ c += (ss.topics||[]).length; });
-      });
+      (subj.sections||[]).forEach(function(sec){ c += _countTopicsInSec(sec); });
       (subj.subSubjects||[]).forEach(function(ss){ c += _countTopicsDeep(ss); });
       return c;
     }
@@ -32396,13 +32458,20 @@ async function _silentReloadFromFirebase(){
       .map(function(d){
         var shell = d.data().shell;
         if(!shell) return null;
-        shell.sections = (shell.sectionMeta||[]).map(function(sm){
+        // ✅ FIX: fully recursive rebuild — pehle sirf 1-level-deep tak jaata
+        // tha, isliye silent background sync bhi deep-nested folders drop kar
+        // deta tha (same bug jo pullFromCloud/loadFromFirebase mein tha).
+        function _silentRebuildSec(sm){
+          if(!sm) return null;
           sm.topics = (sm.topicIds||[]).map(function(tid){
             return topicMap[String(tid)] || null;
           }).filter(Boolean);
           delete sm.topicIds;
+          sm.subSections = (sm.subSectionMeta||[]).map(_silentRebuildSec).filter(Boolean);
+          delete sm.subSectionMeta;
           return sm;
-        });
+        }
+        shell.sections = (shell.sectionMeta||[]).map(_silentRebuildSec).filter(Boolean);
         delete shell.sectionMeta;
         return shell;
       }).filter(Boolean);
@@ -32411,8 +32480,17 @@ async function _silentReloadFromFirebase(){
 
     // Preserve local editor data
     // ✅ FIX: timestamps save karo taaki merge mein newer version win kare
+    // ✅ FIX: RECURSIVE — sub-section (kisi bhi depth) ke topics ka local
+    // editor data bhi ab preserve hota hai, pehle sirf sec.topics tak jaata tha.
+    function _silentWalkTopics(sub, fn){
+      function _walk(sec){
+        (sec.topics||[]).forEach(fn);
+        (sec.subSections||[]).forEach(_walk);
+      }
+      (sub.sections||[]).forEach(_walk);
+    }
     var localEditorData = {};
-    (S.subjects||[]).forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
+    (S.subjects||[]).forEach(function(sub){ _silentWalkTopics(sub, function(t){
       if(t.finalNotesHTML)  localEditorData['fn_'+t.id] = { html: t.finalNotesHTML, ts: t.finalNotesAt || 0 };
       if(t.smartNotesHTML)  localEditorData['sn_'+t.id] = { html: t.smartNotesHTML, ts: t.smartNotesAt || 0 };
       if(t.masterNotesHTML) localEditorData['mn_'+t.id] = { html: t.masterNotesHTML, ts: t.masterNotesAt || 0 };
@@ -32431,7 +32509,7 @@ async function _silentReloadFromFirebase(){
       (t.notes||[]).forEach(function(n){
         if(n.editorRichHTML !== undefined) localEditorData['n_'+n.id] = { richHTML: n.editorRichHTML, highlights: n.editorHighlights||[], ts: n.editorSavedAt || 0 };
       });
-    }); }); });
+    }); });
 
     S.subjects          = newSubjects;
     S.exams             = meta.exams             || S.exams || [];
@@ -32445,7 +32523,7 @@ async function _silentReloadFromFirebase(){
     S.quizFactProgress  = meta.quizFactProgress   || S.quizFactProgress || {};
     S.hlQuizProgress    = meta.hlQuizProgress     || S.hlQuizProgress || {};
 
-    S.subjects.forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
+    S.subjects.forEach(function(sub){ _silentWalkTopics(sub, function(t){
       if(!t.highlights) t.highlights=[];
       if(!t.savedFacts) t.savedFacts=[];
       if(!t.notes) t.notes=[];
@@ -32479,14 +32557,14 @@ async function _silentReloadFromFirebase(){
           n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[];
         }
       });
-    }); }); });
+    }); });
 
     // ✅ FIX: _lastSavedSnapshot update karo — warna next save() sab topics spuriously re-upload karega
     try{
-      (S.subjects||[]).forEach(function(sub){ sub.sections.forEach(function(sec){ sec.topics.forEach(function(t){
+      (S.subjects||[]).forEach(function(sub){ _silentWalkTopics(sub, function(t){
         var td = (typeof _cleanTopic === 'function') ? _cleanTopic(t) : t;
         _lastSavedSnapshot[String(t.id)] = JSON.stringify(td);
-      }); }); });
+      }); });
     }catch(_e3){}
 
     try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
@@ -33637,6 +33715,10 @@ function pdfSaveAsNote() {
   t.notes.push(newNote);
   save();
   renderLibraryTree();
+  // ✅ FIX: Firebase save call missing tha
+  if(_isAdmin && typeof saveTopicToFirebase === 'function'){
+    saveTopicToFirebase(t.id, _pdfState.sid, _pdfState.secid);
+  }
   showToast('✅ Notes topic mein save ho gaye!', 'success');
   closePdfModal();
 
@@ -34081,6 +34163,10 @@ function ytSaveAsNote() {
   t.notes.push(newNote);
   save();
   renderLibraryTree();
+  // ✅ FIX: Firebase save call missing tha
+  if(_isAdmin && typeof saveTopicToFirebase === 'function'){
+    saveTopicToFirebase(t.id, _ytState.sid, _ytState.secid);
+  }
   showToast('✅ Notes topic mein save ho gaye!', 'success');
   closeYtModal();
 
@@ -34870,6 +34956,10 @@ function wsSaveToTopic() {
   t.notes.push(note);
   save();
   renderLibraryTree();
+  // ✅ FIX: Firebase save call missing tha
+  if(_isAdmin && typeof saveTopicToFirebase === 'function'){
+    saveTopicToFirebase(t.id, _wsState.sid, _wsState.secid);
+  }
   showToast('✅ Web search notes topic mein save ho gaye!', 'success');
   document.getElementById('quickWebSearchModal').remove();
   document.body.style.overflow = '';
@@ -34896,6 +34986,10 @@ function wsAddToMasterNotes() {
   }
   save();
   renderLibraryTree();
+  // ✅ FIX: Firebase save call missing tha
+  if(_isAdmin && typeof saveTopicToFirebase === 'function'){
+    saveTopicToFirebase(t.id, _wsState.sid, _wsState.secid);
+  }
   showToast('✅ Master Notes mein add ho gaya!', 'success');
   document.getElementById('quickWebSearchModal').remove();
   document.body.style.overflow = '';
@@ -35173,6 +35267,32 @@ function fcSaveFact() {
 
   save();
   renderLibraryTree();
+
+  // ✅ FIX: Firebase save call missing tha — subject/section facts subject-shell
+  // mein hote hain, topic facts topic-doc mein. Dono ko trigger karo, jitni bhi
+  // subjects/topics is save mein touch hui hon (main + tagged destinations).
+  if(_isAdmin){
+    const touchedSubjIds = new Set();
+    const touchedTopics = []; // [tid, sid, secid]
+    if(level === 'subject') { touchedSubjIds.add(sid); }
+    else if(level === 'section') { touchedSubjIds.add(sid); }
+    else { touchedTopics.push([tid, sid, secid]); }
+    _fcState.taggedIds.forEach(tagId => {
+      const tagEl = document.getElementById('tag_' + tagId);
+      if(!tagEl) return;
+      const info = JSON.parse(tagEl.dataset.info);
+      if(info.type === 'subject') touchedSubjIds.add(info.sid);
+      else if(info.type === 'section') touchedSubjIds.add(info.sid);
+      else if(info.type === 'topic') touchedTopics.push([info.tid, info.sid, info.secid]);
+    });
+    if(typeof saveSubjectShellFast === 'function'){
+      touchedSubjIds.forEach(sjid => saveSubjectShellFast(sjid));
+    }
+    if(typeof saveTopicToFirebase === 'function'){
+      touchedTopics.forEach(([ttid, tsid, tsecid]) => saveTopicToFirebase(ttid, tsid, tsecid));
+    }
+  }
+
   showToast('📌 ' + savedCount + ' jagah save ho gaya!', 'success');
   trackActivity('save_fact', { text: text.substring(0,40) });
   closeFactCollector();
@@ -35466,6 +35586,12 @@ function hlExportSelected(sid, secid, tid) {
   save();
   renderLibraryTree();
   updateSavedBadge();
+
+  // ✅ FIX: Firebase save call missing tha
+  if(_isAdmin && savedCount > 0){
+    if(t && typeof saveTopicToFirebase === 'function') saveTopicToFirebase(t.id, destSid, destSecid);
+    else if(typeof saveSubjectShellFast === 'function') saveSubjectShellFast(destSid);
+  }
 
   // User ko clear message do
   if(savedCount > 0 && skippedCount === 0) {
