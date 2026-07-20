@@ -22432,6 +22432,13 @@ function _rdAsResumeNow() {
   if(!_rdAutoScrollOn) return;
   _rdAsClearResumeTimer();
   _rdAsClearHlAutoOffTimer();
+  // Safety: auto-scroll aur highlight-mode kabhi ek saath active nahi hone
+  // chahiye — resume hote waqt highlight already off honi chahiye (normally
+  // timeout callback ye kar chuka hota hai), yahan double-check hai.
+  if(typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode === 'highlight' && !_rdAsWasManualScroll) {
+    if(typeof setHlMode === 'function') setHlMode('off');
+    if(typeof _rdRmSyncButtons === 'function') _rdRmSyncButtons();
+  }
   _rdAutoScrollPaused = false;
   _rdAsSyncButton();
   _rdAsStartLoop();
@@ -22558,6 +22565,18 @@ function _rdAsAttachDetection() {
 
   body.addEventListener('click', function(e) {
     handleTapForAutoScroll(e, e.clientX, e.clientY);
+  });
+
+  // Highlight stroke shuru hote hi timer ko cancel karo — taaki lambi stroke
+  // ke beech mein hi highlight auto-off na ho jaye (jab tak finger/mouse
+  // screen par hai, tab tak auto-scroll resume nahi hona chahiye).
+  body.addEventListener('touchstart', function(e) {
+    if(!_rdReadingOpen || !_rdAutoScrollOn) return;
+    if(typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode === 'highlight') _rdAsClearHlAutoOffTimer();
+  }, { passive: true });
+  body.addEventListener('mousedown', function(e) {
+    if(!_rdReadingOpen || !_rdAutoScrollOn) return;
+    if(typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode === 'highlight') _rdAsClearHlAutoOffTimer();
   });
 
   // Highlight stroke complete hote hi pause ko extend karo (jab tak highlight jaari hai)
