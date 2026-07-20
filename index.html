@@ -1256,6 +1256,23 @@ body.night-mode .ai-chat-dismiss-pill{background:var(--border);}
   box-shadow:0 0 0 3px rgba(255,255,255,0.35);
   transform:scale(1.22);
 }
+/* Auto-Scroll (Study Mode) toggle button active glow */
+#rdAutoScrollBtn.rd-as-on{
+  background:rgba(76,175,80,0.45)!important;
+  border-color:rgba(67,160,71,0.95)!important;
+  box-shadow:0 0 0 2.5px rgba(67,160,71,0.35);
+  animation:rdAsPulse 1.8s ease-in-out infinite;
+}
+@keyframes rdAsPulse{
+  0%,100%{box-shadow:0 0 0 2.5px rgba(67,160,71,0.35);}
+  50%{box-shadow:0 0 0 5px rgba(67,160,71,0.18);}
+}
+/* Small paused indicator dot on the auto-scroll button */
+#rdAutoScrollBtn .rd-as-dot{
+  position:absolute;top:-2px;right:-2px;width:9px;height:9px;border-radius:50%;
+  background:#ffb300;border:1.5px solid rgba(255,255,255,0.9);display:none;
+}
+#rdAutoScrollBtn.rd-as-paused .rd-as-dot{display:block;}
 /* Hl/Eraser button active glow */
 #rdRmHlBtn.rd-hl-on{
   background:rgba(255,235,59,0.45)!important;
@@ -8572,6 +8589,13 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <!-- Undo / Redo -->
     <button id="rdRmUndoBtn" class="rd-btn" onclick="rdRmUndo();event.stopPropagation();" style="padding:5px 11px;font-size:0.9rem;opacity:0.35;" title="Undo" disabled>↩</button>
     <button id="rdRmRedoBtn" class="rd-btn" onclick="rdRmRedo();event.stopPropagation();" style="padding:5px 11px;font-size:0.9rem;opacity:0.35;" title="Redo" disabled>↪</button>
+
+    <div style="width:1px;height:22px;background:rgba(128,128,128,0.25);flex-shrink:0;"></div>
+
+    <!-- Auto-Scroll (Study Mode) -->
+    <button id="rdAutoScrollBtn" class="rd-btn" onclick="rdToggleAutoScroll();event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;position:relative;" title="Auto-Scroll (Study Mode) — dheere dheere khud scroll hoga">
+      🔄<span class="rd-as-dot"></span>
+    </button>
 
     <div style="flex:1;"></div>
 
@@ -21793,6 +21817,14 @@ function openReadingMode(title, text, richHtml, syncBack) {
   _rdResetAutoHide();
   _rdRmSyncButtons();
 
+  // Auto-Scroll (Study Mode) — feature OFF by default; agar user ne pehle
+  // se ON kar rakha hai (saved preference) to yahi se shuru ho jaye
+  _rdAutoScrollPaused = false;
+  if(typeof _rdAsSyncButton === 'function') _rdAsSyncButton();
+  if(_rdAutoScrollOn && typeof _rdAsStartLoop === 'function') {
+    setTimeout(function(){ if(_rdReadingOpen && _rdAutoScrollOn) _rdAsStartLoop(); }, 500);
+  }
+
   // Show one-time tap hint (first visit only)
   if(!localStorage.getItem('rdHintSeen')) {
     localStorage.setItem('rdHintSeen','1');
@@ -21837,6 +21869,11 @@ function closeReadingMode() {
   if(_rdAutoHideTimer) clearTimeout(_rdAutoHideTimer);
   _rdControlsVisible = true;
   _rdReadingOpen = false;
+  // Auto-Scroll (Study Mode) — reading band hote hi rok do, timers saaf karo
+  if(typeof _rdAsStopLoop === 'function') _rdAsStopLoop();
+  if(typeof _rdAsClearResumeTimer === 'function') _rdAsClearResumeTimer();
+  if(typeof _rdAsClearHlAutoOffTimer === 'function') _rdAsClearHlAutoOffTimer();
+  _rdAutoScrollPaused = false;
   // Turn off highlight mode when closing
   if(typeof setHlMode === 'function') setHlMode('off');
   // Clear undo/redo stacks — fresh start next time
@@ -22113,6 +22150,226 @@ window.rdRmSelectColor = function(color) {
   _rdRmSyncButtons();
   _rdShowControls();
 };
+
+// ═══════════════════════════════════════════════════════════
+// READING OVERLAY — Auto-Scroll (Study Mode)
+// ═══════════════════════════════════════════════════════════
+// OFF by default. Jab user is button ko ON kare, screen dheere-dheere
+// khud scroll hoti hai (padhne + yaad karne jitni speed) taaki bina
+// touch kiye continuous study ho sake.
+// - Screen tap (click) → auto-scroll pause + highlight mode auto ON
+// - Highlight na kiya to thodi der baad highlight auto OFF + scroll resume
+// - Manual drag/scroll (touch-move) → highlight ON nahi hota, scroll us
+//   position se resume hota hai jaha user chhodta hai
+var _rdAutoScrollOn      = false;   // feature master switch (persisted)
+var _rdAutoScrollRAF     = null;    // requestAnimationFrame handle
+var _rdAutoScrollPaused  = false;   // true jab tap/scroll ki wajah se ruka hua hai
+var _rdAsResumeTimer     = null;    // idle timer jo pause ke baad resume karega
+var _rdAsHlAutoOffTimer  = null;    // idle timer jo highlight ko auto-off karega
+var _rdAsWasManualScroll = false;   // true agar pause manual drag-scroll ki wajah se hua (highlight na lagayen)
+var _rdAsLastScrollY     = 0;
+var _rdAsPxPerSec        = 14;      // padhne+yaad karne jitni "practical" speed (px/sec)
+var _RD_AS_RESUME_MS     = 2600;    // manual-scroll ke baad itni der ruk kar phir se auto-scroll shuru
+var _RD_AS_HL_IDLE_MS    = 4200;    // tap ke baad highlight na kiya to itni der me auto-off + resume
+
+// Fine per-line pacing: line jitni lambi/chhoti ho, scroll utni der thehre.
+// Practical average reading+recall speed ke hisaab se ek base value; bahut
+// tez ya bahut slow na ho isliye clamp kiya gaya hai.
+function _rdAsComputeSpeed() {
+  var fs = (_rdState && _rdState.fontSize) ? _rdState.fontSize : 17;
+  // Bada font = zyada content per line dikhta hai per line height bhi badi hoti
+  // hai, isलिye speed ko font ke hisaab se halka sa scale karte hain taaki
+  // "ek line padhne + yaad karne" ka time roughly consistent rahe.
+  var speed = 11 + (fs - 14) * 0.35;
+  return Math.max(8, Math.min(26, speed)); // practical range: 8–26 px/sec
+}
+
+window.rdToggleAutoScroll = function() {
+  _rdAutoScrollOn = !_rdAutoScrollOn;
+  try { localStorage.setItem('rdAutoScrollOn', _rdAutoScrollOn ? '1' : '0'); } catch(_){}
+  _rdAsSyncButton();
+  if(_rdAutoScrollOn) {
+    showToast && showToast('🔄 Auto-Scroll ON — padhte-padhte screen khud scroll hogi', 'success');
+    _rdAsClearHlAutoOffTimer();
+    _rdAutoScrollPaused = false;
+    _rdAsStartLoop();
+  } else {
+    showToast && showToast('🔄 Auto-Scroll OFF', 'info');
+    _rdAsStopLoop();
+    _rdAsClearResumeTimer();
+    _rdAsClearHlAutoOffTimer();
+    // Feature off hone par sab kuch pehle jaisa — highlight ko force mat karo/hatao
+  }
+};
+
+function _rdAsSyncButton() {
+  var btn = document.getElementById('rdAutoScrollBtn');
+  if(!btn) return;
+  btn.classList.toggle('rd-as-on', _rdAutoScrollOn && !_rdAutoScrollPaused);
+  btn.classList.toggle('rd-as-paused', _rdAutoScrollOn && _rdAutoScrollPaused);
+}
+
+function _rdAsStartLoop() {
+  if(_rdAutoScrollRAF) return; // already running
+  var body = document.getElementById('rdBody');
+  if(!body) return;
+  var lastTs = null;
+  var pxPerSec = _rdAsComputeSpeed();
+  function step(ts) {
+    if(!_rdAutoScrollOn || _rdAutoScrollPaused) { _rdAutoScrollRAF = null; return; }
+    if(lastTs === null) lastTs = ts;
+    var dt = (ts - lastTs) / 1000;
+    lastTs = ts;
+    var maxScroll = body.scrollHeight - body.clientHeight;
+    if(maxScroll > 0 && body.scrollTop < maxScroll) {
+      body.scrollTop += pxPerSec * dt;
+      rdUpdateProgress();
+    } else {
+      // Document khatam ho gaya — auto-scroll apne aap ruk jaye
+      _rdAutoScrollRAF = null;
+      return;
+    }
+    _rdAutoScrollRAF = requestAnimationFrame(step);
+  }
+  _rdAutoScrollRAF = requestAnimationFrame(step);
+}
+
+function _rdAsStopLoop() {
+  if(_rdAutoScrollRAF) { cancelAnimationFrame(_rdAutoScrollRAF); _rdAutoScrollRAF = null; }
+}
+
+function _rdAsClearResumeTimer() {
+  if(_rdAsResumeTimer) { clearTimeout(_rdAsResumeTimer); _rdAsResumeTimer = null; }
+}
+
+function _rdAsClearHlAutoOffTimer() {
+  if(_rdAsHlAutoOffTimer) { clearTimeout(_rdAsHlAutoOffTimer); _rdAsHlAutoOffTimer = null; }
+}
+
+// ── Pause auto-scroll (tap / manual-scroll) ──
+// isManualScroll = true  → user ne screen ko upar/niche drag kiya (highlight mat lagao)
+// isManualScroll = false → user ne simple tap/click kiya (highlight auto ON karo)
+function _rdAsPause(isManualScroll) {
+  if(!_rdAutoScrollOn) return;
+  _rdAutoScrollPaused = true;
+  _rdAsWasManualScroll = !!isManualScroll;
+  _rdAsStopLoop();
+  _rdAsSyncButton();
+  _rdAsClearResumeTimer();
+  _rdAsClearHlAutoOffTimer();
+
+  if(!isManualScroll) {
+    // Simple tap: highlight mode auto ON, taaki user turant highlight kar sake
+    if(typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode !== 'highlight') {
+      if(typeof setHlMode === 'function') setHlMode('highlight');
+      _rdRmSyncButtons();
+    }
+    // Controls (aur highlight colour bar) dikhne chahiye taaki user turant colour chun sake
+    if(typeof _rdShowControls === 'function') _rdShowControls();
+    _rdAsScheduleHlAutoOff();
+  }
+  // Manual scroll: highlight mode ko chhedo mat — jo tha wahi rahega
+}
+
+// Highlight ON hone ke baad, agar user use na kare to practical idle time
+// ke baad auto-off karke auto-scroll resume karo.
+function _rdAsScheduleHlAutoOff() {
+  _rdAsClearHlAutoOffTimer();
+  _rdAsHlAutoOffTimer = setTimeout(function() {
+    if(!_rdAutoScrollOn) return;
+    var hlOn = (typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode === 'highlight');
+    if(hlOn) {
+      if(typeof setHlMode === 'function') setHlMode('off');
+      _rdRmSyncButtons();
+    }
+    _rdAsResumeNow();
+  }, _RD_AS_HL_IDLE_MS);
+}
+
+// User ne abhi highlight stroke complete kiya — pause ko thoda aur badhao
+// (jab tak wo highlight karte rahenge, auto-scroll resume nahi hoga)
+function _rdAsExtendHlPause() {
+  if(!_rdAutoScrollOn || !_rdAutoScrollPaused || _rdAsWasManualScroll) return;
+  _rdAsScheduleHlAutoOff();
+}
+
+// Manual scroll ke baad thodi der ruk kar, jahan user ne chhoda wahin se
+// auto-scroll continue karo — highlight ko touch mat karo.
+function _rdAsScheduleManualResume() {
+  _rdAsClearResumeTimer();
+  _rdAsResumeTimer = setTimeout(function() { _rdAsResumeNow(); }, _RD_AS_RESUME_MS);
+}
+
+function _rdAsResumeNow() {
+  if(!_rdAutoScrollOn) return;
+  _rdAsClearResumeTimer();
+  _rdAsClearHlAutoOffTimer();
+  _rdAutoScrollPaused = false;
+  _rdAsSyncButton();
+  _rdAsStartLoop();
+}
+
+// ── Wire up tap-vs-scroll detection on rdBody/rdContent ──
+(function _rdAsAttachDetection() {
+  document.addEventListener('DOMContentLoaded', function() {
+    // Restore saved preference (feature default: OFF)
+    try { _rdAutoScrollOn = localStorage.getItem('rdAutoScrollOn') === '1'; } catch(_){ _rdAutoScrollOn = false; }
+
+    var body = document.getElementById('rdBody');
+    if(!body) return;
+
+    var touchStartY = null, touchMoved = false;
+
+    body.addEventListener('touchstart', function(e) {
+      if(!_rdReadingOpen || !_rdAutoScrollOn) return;
+      if(e.touches && e.touches.length === 1) {
+        touchStartY = e.touches[0].clientY;
+        touchMoved = false;
+      }
+    }, { passive: true });
+
+    body.addEventListener('touchmove', function(e) {
+      if(!_rdReadingOpen || !_rdAutoScrollOn) return;
+      if(touchStartY === null) return;
+      var curY = e.touches && e.touches[0] ? e.touches[0].clientY : touchStartY;
+      if(Math.abs(curY - touchStartY) > 8) {
+        touchMoved = true;
+        // User khud scroll kar raha hai — pause (manual), highlight mat chhedo
+        if(!_rdAutoScrollPaused || !_rdAsWasManualScroll) {
+          _rdAsPause(true);
+        }
+      }
+    }, { passive: true });
+
+    body.addEventListener('touchend', function() {
+      if(!_rdReadingOpen || !_rdAutoScrollOn) return;
+      if(touchMoved) {
+        // Drag-scroll khatam — thodi der baad wahin se auto-scroll continue
+        _rdAsScheduleManualResume();
+      }
+      touchStartY = null; touchMoved = false;
+    }, { passive: true });
+
+    // Simple tap/click (no drag) on the content → pause + highlight ON
+    body.addEventListener('click', function(e) {
+      if(!_rdReadingOpen || !_rdAutoScrollOn) return;
+      if(e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'A')) return;
+      if(touchMoved) return; // drag ke baad ka click ignore (already handled by touchmove)
+      // Agar already highlight mode me hai aur user ne mark pe click kiya (eraser flow), usse mat chhedo
+      _rdAsPause(false);
+    });
+
+    // Highlight stroke complete hote hi pause ko extend karo (jab tak highlight jaari hai)
+    body.addEventListener('touchend', function() {
+      if(!_rdReadingOpen || !_rdAutoScrollOn) return;
+      if(typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode === 'highlight') _rdAsExtendHlPause();
+    }, { passive: true });
+    body.addEventListener('mouseup', function() {
+      if(!_rdReadingOpen || !_rdAutoScrollOn) return;
+      if(typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode === 'highlight') _rdAsExtendHlPause();
+    });
+  });
+})();
 
 // ==================== NOTES VIEWER (Padho Mode) ====================
 let _neState = {
