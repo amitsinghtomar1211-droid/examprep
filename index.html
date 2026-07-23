@@ -7641,6 +7641,46 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
         ondragstart="scNoteDragStart(event)"
         style="outline:none;min-height:100%;padding:4px 2px;">
       </div>
+
+      <!-- ══════════════════════════════════════════════════════
+           🃏 FLASHCARD ENTRY — bottom-of-notes, in-flow block
+           Har topic ke notes ke sabse aakhir mein dikhta hai.
+           ══════════════════════════════════════════════════════ -->
+      <div id="fcEntryBlock" style="margin:22px 2px 40px;padding:18px 16px;border-radius:16px;
+        background:linear-gradient(135deg,rgba(106,27,154,0.07),rgba(21,101,192,0.07));
+        border:1.5px dashed rgba(106,27,154,0.28);text-align:center;">
+        <div style="font-size:0.72rem;color:var(--text2);font-weight:700;margin-bottom:10px;">
+          📖 Notes yahan khatam hue
+        </div>
+        <button id="fcOpenPlayBtn" onclick="fcOpenPlayer()" style="
+          display:inline-flex;align-items:center;gap:7px;padding:11px 20px;border-radius:100px;
+          border:none;background:linear-gradient(135deg,#6a1b9a,#1565c0);color:#fff;
+          font-size:0.82rem;font-weight:800;cursor:pointer;font-family:inherit;
+          box-shadow:0 4px 14px rgba(106,27,154,0.35);-webkit-tap-highlight-color:transparent;">
+          🃏 <span id="fcOpenPlayBtnLabel">Flashcards Khelo</span>
+        </button>
+        <div id="fcEntryMeta" style="margin-top:8px;font-size:0.62rem;color:var(--text2);"></div>
+        <button id="fcAdminUploadBtn" onclick="fcOpenAdminUpload()" style="
+          display:none;margin-top:10px;align-items:center;gap:6px;padding:7px 14px;border-radius:100px;
+          border:1.5px solid rgba(21,101,192,0.35);background:var(--surface);color:var(--accent);
+          font-size:0.68rem;font-weight:700;cursor:pointer;font-family:inherit;
+          -webkit-tap-highlight-color:transparent;">
+          ⚙️ Admin: Flashcard HTML Upload/Update
+        </button>
+      </div>
+
+      <!-- Floating reveal button — jab neBody ke sabse niche scroll ho tab dikhta hai -->
+      <button id="fcFloatBtn" onclick="fcOpenPlayer()" title="Flashcards" style="
+        position:fixed;bottom:64px;right:14px;z-index:9810;
+        width:52px;height:52px;border-radius:50%;border:none;
+        background:linear-gradient(135deg,#6a1b9a,#1565c0);color:#fff;
+        font-size:1.35rem;cursor:pointer;display:none;align-items:center;justify-content:center;
+        box-shadow:0 4px 16px rgba(106,27,154,0.45);
+        -webkit-tap-highlight-color:transparent;
+        transition:transform 0.2s ease, opacity 0.2s ease;
+        opacity:0;transform:translateY(8px) scale(0.8);
+      ">🃏</button>
+
       <textarea id="noteEditContent" style="display:none;" oninput="onEditInput()"></textarea>
       <!-- DRAW OVERLAY CANVAS — transparent, sits on top of notes text -->
       <canvas id="neDrawCanvas" title="Draw on notes"></canvas>
@@ -8538,6 +8578,128 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <div class="modal-actions">
       <button class="btn btn-outline btn-sm" onclick="closeModal('fbConfigModal')">Cancel</button>
       <button class="btn btn-primary btn-sm" onclick="saveFbConfig()">✅ Save & Connect</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     🃏 FLASHCARD SYSTEM — Admin Upload Modal + Player Modal
+     ══════════════════════════════════════════════════════════════ -->
+
+<!-- ADMIN: Upload/replace flashcard HTML for current topic -->
+<div class="modal-overlay" id="fcAdminModal">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-title">⚙️ Flashcards — Admin Upload</div>
+    <div class="fb-config-note" style="margin-bottom:10px;">
+      Is topic ke liye flashcard <b>HTML file</b> upload karo (jaisi maine banayi thi —
+      andar ek <code>const deck = [...]</code> array Q/A cards ka hona chahiye).
+      Yeh Firebase mein is topic ki <b>naya ID</b> ke saath save hogi.
+      Dobara upload karne par purani flashcards <b>replace</b> ho jayengi.
+    </div>
+    <input type="file" id="fcAdminFileInput" accept=".html,.htm" style="display:none;" onchange="fcHandleAdminFile(this)">
+    <button class="btn btn-primary btn-sm" style="width:100%;margin-bottom:10px;" onclick="document.getElementById('fcAdminFileInput').click()">
+      📤 HTML File Chuno
+    </button>
+    <div id="fcAdminFileStatus" style="font-size:0.72rem;color:var(--text2);text-align:center;min-height:18px;"></div>
+    <div id="fcAdminPreviewWrap" style="display:none;margin-top:8px;">
+      <div style="font-size:0.72rem;font-weight:700;color:var(--text);margin-bottom:6px;">
+        ✅ <span id="fcAdminPreviewCount">0</span> flashcards mile
+      </div>
+      <div id="fcAdminPreviewList" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;font-size:0.68rem;background:var(--surface2);"></div>
+    </div>
+    <div id="fcAdminError" class="login-error"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('fcAdminModal')">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="fcAdminSaveBtn" style="display:none;" onclick="fcSaveAdminDeck()">☁️ Save to Firebase</button>
+    </div>
+  </div>
+</div>
+
+<!-- PLAYER: Attempt flashcards for current topic, spaced-repetition -->
+<div class="modal-overlay" id="fcPlayerModal">
+  <div class="modal" style="max-width:480px;padding:0;overflow:hidden;background:transparent;box-shadow:none;">
+    <div style="background:linear-gradient(160deg,#1a1230,#1F4E3D 130%);border-radius:20px;padding:0;overflow:hidden;">
+
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 8px;">
+        <div style="font-size:0.8rem;font-weight:800;color:#fff;" id="fcPlayerTitle">🃏 Flashcards</div>
+        <button onclick="fcClosePlayer()" style="width:28px;height:28px;border-radius:50%;border:none;background:rgba(255,255,255,0.15);color:#fff;font-size:0.85rem;cursor:pointer;">✕</button>
+      </div>
+
+      <!-- Progress -->
+      <div style="display:flex;align-items:center;gap:10px;padding:0 16px 10px;">
+        <div style="flex:1;height:6px;background:rgba(255,255,255,0.15);border-radius:100px;overflow:hidden;">
+          <div id="fcProgressFill" style="height:100%;width:0%;background:linear-gradient(90deg,#6FA8DC,#2A6650);border-radius:100px;transition:width .3s ease;"></div>
+        </div>
+        <div id="fcCountLabel" style="font-size:0.68rem;font-weight:700;color:rgba(255,255,255,0.8);white-space:nowrap;">0/0</div>
+      </div>
+
+      <!-- Empty state -->
+      <div id="fcEmptyState" style="display:none;padding:40px 24px;text-align:center;">
+        <div style="font-size:2.2rem;margin-bottom:8px;">🃏</div>
+        <div style="color:#fff;font-weight:700;font-size:0.9rem;margin-bottom:4px;">Is topic ke liye flashcards nahi hain</div>
+        <div style="color:rgba(255,255,255,0.6);font-size:0.72rem;">Admin se add karwao.</div>
+      </div>
+
+      <!-- Done state -->
+      <div id="fcDoneState" style="display:none;padding:36px 24px;text-align:center;">
+        <div style="font-size:2.4rem;margin-bottom:8px;">🎉</div>
+        <div style="color:#fff;font-weight:800;font-size:1rem;margin-bottom:14px;">Session complete!</div>
+        <div style="display:flex;gap:10px;justify-content:center;margin-bottom:16px;">
+          <div style="background:rgba(255,255,255,0.08);border-radius:12px;padding:10px 16px;">
+            <div style="color:#8BC98B;font-weight:800;font-size:1.2rem;" id="fcStatKnew">0</div>
+            <div style="color:rgba(255,255,255,0.6);font-size:0.6rem;text-transform:uppercase;">Knew it</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.08);border-radius:12px;padding:10px 16px;">
+            <div style="color:#F2C744;font-weight:800;font-size:1.2rem;" id="fcStatModerate">0</div>
+            <div style="color:rgba(255,255,255,0.6);font-size:0.6rem;text-transform:uppercase;">Moderate</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.08);border-radius:12px;padding:10px 16px;">
+            <div style="color:#E4633F;font-weight:800;font-size:1.2rem;" id="fcStatHard">0</div>
+            <div style="color:rgba(255,255,255,0.6);font-size:0.6rem;text-transform:uppercase;">Hard</div>
+          </div>
+        </div>
+        <button onclick="fcRestartSession()" style="padding:11px 22px;border-radius:100px;border:none;background:linear-gradient(135deg,#6a1b9a,#1565c0);color:#fff;font-weight:800;font-size:0.8rem;cursor:pointer;">↺ Session Dobara Shuru Karo</button>
+      </div>
+
+      <!-- Card stage -->
+      <div id="fcCardStage" style="padding:6px 16px 14px;">
+        <div style="perspective:1600px;">
+          <div id="fcCard" onclick="fcFlip()" style="position:relative;min-height:230px;border-radius:18px;cursor:pointer;transform-style:preserve-3d;transition:transform .5s cubic-bezier(.4,.2,.2,1);">
+
+            <div class="fc-face" id="fcFaceFront" style="position:absolute;inset:0;border-radius:18px;backface-visibility:hidden;
+              background:linear-gradient(160deg,#2A6650,#1F4E3D);display:flex;flex-direction:column;
+              align-items:center;justify-content:center;text-align:center;padding:24px 20px;box-shadow:0 10px 26px rgba(0,0,0,0.35);">
+              <span id="fcDiffBadgeFront" style="position:absolute;top:12px;left:14px;font-size:0.6rem;font-weight:800;padding:4px 9px;border-radius:100px;"></span>
+              <div style="position:absolute;top:12px;right:14px;font-size:0.62rem;color:rgba(255,255,255,0.55);font-weight:700;" id="fcCardIndexFront"></div>
+              <div id="fcQText" style="color:#fff;font-size:1.05rem;line-height:1.55;font-weight:600;max-width:340px;"></div>
+              <div style="margin-top:16px;font-size:0.62rem;color:rgba(255,255,255,0.55);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Tap karke answer dekho ↺</div>
+            </div>
+
+            <div class="fc-face" id="fcFaceBack" style="position:absolute;inset:0;border-radius:18px;backface-visibility:hidden;
+              transform:rotateY(180deg);background:#FCFAF3;display:flex;flex-direction:column;padding:22px 20px;box-shadow:0 10px 26px rgba(0,0,0,0.35);overflow-y:auto;">
+              <div style="font-size:0.62rem;font-weight:800;color:#E4633F;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">Answer</div>
+              <div id="fcAText" style="color:#2B2620;font-size:0.92rem;line-height:1.6;font-family:'Tiro Devanagari Hindi',serif;"></div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Nav arrows -->
+        <div style="display:flex;justify-content:center;gap:16px;margin-top:12px;">
+          <button onclick="fcPrev()" style="width:40px;height:40px;border-radius:50%;border:none;background:rgba(255,255,255,0.12);color:#fff;font-size:1rem;cursor:pointer;">←</button>
+          <button onclick="fcSkipNoAnswer()" style="width:40px;height:40px;border-radius:50%;border:none;background:rgba(255,255,255,0.12);color:#fff;font-size:1rem;cursor:pointer;" title="Skip">→</button>
+        </div>
+
+        <!-- Difficulty rating (shown after flip) -->
+        <div id="fcRateRow" style="display:none;gap:8px;margin-top:14px;">
+          <button onclick="fcRate('hard')" style="flex:1;padding:11px 4px;border-radius:12px;border:none;background:#E4633F;color:#fff;font-weight:800;font-size:0.72rem;cursor:pointer;">😣 Hard</button>
+          <button onclick="fcRate('moderate')" style="flex:1;padding:11px 4px;border-radius:12px;border:none;background:#F2C744;color:#2B2620;font-weight:800;font-size:0.72rem;cursor:pointer;">🙂 Moderate</button>
+          <button onclick="fcRate('easy')" style="flex:1;padding:11px 4px;border-radius:12px;border:none;background:#6FA8DC;color:#0d1b2a;font-weight:800;font-size:0.72rem;cursor:pointer;">😌 Easy</button>
+          <button onclick="fcRate('knew')" style="flex:1;padding:11px 4px;border-radius:12px;border:none;background:#2A6650;color:#fff;font-weight:800;font-size:0.72rem;cursor:pointer;">✅ I Knew It</button>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -14434,6 +14596,489 @@ function _attachGameVaultRealtimeListener(){
       }catch(e){}
     }, function(err){ console.warn('gameVault listener error:', err && err.message); });
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// 🃏 FLASHCARD SYSTEM — per-topic decks, admin-uploaded HTML → Firebase,
+//    weighted spaced-repetition player (hard > moderate > easy > knew=retired)
+//
+//    Firestore layout (mirrors quizVault / gameVault patterns):
+//      users/{uid}/flashcardSets/{tid}      → { tid, sid, secid, topicName,
+//                                                deckId, cards:[{id,q,a}],
+//                                                uploadedAt, uploadedBy }
+//      users/{uid}/flashcardProgress/{tid}  → { tid, cardStatus:{cardId:'hard'
+//                                                |'moderate'|'easy'|'knew'},
+//                                                lastPlayedAt, updatedAt }
+//
+//    Only ADMIN can write flashcardSets (enforced client-side + should be
+//    mirrored in Firestore rules: flashcardSets writable by admin UID only).
+//    Every user (admin included) can write their OWN flashcardProgress.
+// ═══════════════════════════════════════════════════════════════════════
+
+S.flashcardSets = S.flashcardSets || {};       // {tid: {cards:[...], ...}}
+S.flashcardProgress = S.flashcardProgress || {}; // {tid: {cardStatus:{}, ...}}
+
+var _fcState = {
+  sid:null, secid:null, tid:null,
+  queue:[],        // ordered list of card indices for this session
+  pos:0,
+  flipped:false,
+  sessionStats:{knew:0, easy:0, moderate:0, hard:0},
+  parsedAdminDeck:null // temp holder while admin previews an uploaded file
+};
+
+function _fcTopicKey(sid,secid,tid){ return String(sid)+'_'+String(secid)+'_'+String(tid); }
+
+// ── Extract the `const deck = [...]` array out of an uploaded flashcard HTML file ──
+// The uploaded file is expected to follow the same structure Claude generates:
+// a JS array of {cat,q,a} objects assigned to a variable literally named `deck`.
+function fcParseDeckFromHTML(htmlText){
+  var m = htmlText.match(/const\s+deck\s*=\s*(\[[\s\S]*?\])\s*;\s*\n/);
+  if(!m) {
+    // fallback: greedy match to last closing bracket before a lone ustring like "];"
+    m = htmlText.match(/const\s+deck\s*=\s*(\[[\s\S]*\])\s*;/);
+  }
+  if(!m) return null;
+  var arrText = m[1];
+  var arr;
+  try{
+    // Safer than eval: Function constructor in strict isolated scope, no access to outer vars
+    arr = (new Function('return (' + arrText + ');'))();
+  }catch(e){
+    console.warn('fcParseDeckFromHTML parse error:', e.message);
+    return null;
+  }
+  if(!Array.isArray(arr)) return null;
+  var cards = [];
+  arr.forEach(function(item, i){
+    if(!item || !item.q || !item.a) return;
+    cards.push({
+      id: 'c'+i+'_'+_tgpGameHash(String(item.q)),
+      cat: item.cat || '',
+      q: String(item.q),
+      a: String(item.a)
+    });
+  });
+  return cards.length ? cards : null;
+}
+
+// ── ADMIN: open upload modal for the topic currently in Notes Editor ──
+function fcOpenAdminUpload(){
+  if(!_isAdmin){ showToast('🔒 Sirf admin flashcards upload kar sakta hai','error'); return; }
+  _fcState.parsedAdminDeck = null;
+  document.getElementById('fcAdminFileStatus').textContent = '';
+  document.getElementById('fcAdminPreviewWrap').style.display = 'none';
+  document.getElementById('fcAdminSaveBtn').style.display = 'none';
+  document.getElementById('fcAdminError').classList.remove('show');
+  document.getElementById('fcAdminFileInput').value = '';
+  document.getElementById('fcAdminModal').classList.add('show');
+}
+
+function fcHandleAdminFile(input){
+  var file = input.files && input.files[0];
+  if(!file) return;
+  var statusEl = document.getElementById('fcAdminFileStatus');
+  var errEl = document.getElementById('fcAdminError');
+  errEl.classList.remove('show');
+  statusEl.textContent = '⏳ Padh raha hoon...';
+  var reader = new FileReader();
+  reader.onload = function(e){
+    var text = e.target.result;
+    var cards = fcParseDeckFromHTML(text);
+    if(!cards){
+      statusEl.textContent = '';
+      errEl.textContent = '❌ Is file mein valid "const deck = [...]" nahi mila.';
+      errEl.classList.add('show');
+      return;
+    }
+    _fcState.parsedAdminDeck = cards;
+    statusEl.textContent = '✅ ' + file.name;
+    var previewWrap = document.getElementById('fcAdminPreviewWrap');
+    var previewList = document.getElementById('fcAdminPreviewList');
+    document.getElementById('fcAdminPreviewCount').textContent = cards.length;
+    previewList.innerHTML = cards.slice(0,8).map(function(c,i){
+      return '<div style="padding:4px 0;border-bottom:1px solid var(--border);">'+
+        '<b>'+(i+1)+'. '+_tgpEscHtml(c.q)+'</b></div>';
+    }).join('') + (cards.length>8 ? '<div style="padding:6px 0;opacity:0.6;">...aur '+(cards.length-8)+' cards</div>' : '');
+    previewWrap.style.display = 'block';
+    document.getElementById('fcAdminSaveBtn').style.display = 'inline-flex';
+  };
+  reader.onerror = function(){
+    statusEl.textContent = '';
+    errEl.textContent = '❌ File read nahi ho payi.';
+    errEl.classList.add('show');
+  };
+  reader.readAsText(file);
+}
+
+// ── ADMIN: save parsed deck to Firebase under the CURRENT topic (new/replacing ID) ──
+async function fcSaveAdminDeck(){
+  if(!_isAdmin){ showToast('🔒 Sirf admin save kar sakta hai','error'); return; }
+  var cards = _fcState.parsedAdminDeck;
+  if(!cards || !cards.length){ showToast('Pehle ek valid file chuno','error'); return; }
+  var sid = _editorState.sid, secid = _editorState.secid, tid = _editorState.tid;
+  if(tid==null){ showToast('Koi topic open nahi hai','error'); return; }
+  var t = getTop(sid,secid,tid);
+  var key = _fcTopicKey(sid,secid,tid);
+  var deckId = 'fc_'+key+'_'+Date.now().toString(36); // naya unique ID har upload par
+  var entry = {
+    tid:String(tid), sid:String(sid), secid:String(secid),
+    topicName: t ? t.name : '',
+    deckId: deckId,
+    cards: cards,
+    cardCount: cards.length,
+    uploadedAt: new Date().toLocaleDateString('hi-IN'),
+    uploadedAtRaw: Date.now()
+  };
+  // Local mirror — turant available ho
+  S.flashcardSets[key] = entry;
+  save();
+  fcUpdateEntryBlockUI();
+
+  var btn = document.getElementById('fcAdminSaveBtn');
+  btn.disabled = true; btn.textContent = '⏳ Saving...';
+  try{
+    if(_db && _currentUser){
+      var uid = _effectiveUID;
+      var clean = _fsClean(entry);
+      if(firebase && firebase.firestore && firebase.firestore.FieldValue){
+        clean.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+      }
+      await _db.collection('users').doc(uid).collection('flashcardSets').doc(key).set(clean);
+    }
+    // Naye deck par purani progress reset ho (nayi ID = fresh start), taaki
+    // purane cards ke stale hard/easy tags naye deck par na chipke rahein.
+    delete S.flashcardProgress[key];
+    save();
+    if(_db && _currentUser){
+      try{ await _db.collection('users').doc(_effectiveUID).collection('flashcardProgress').doc(key).delete(); }catch(e){}
+    }
+    showToast('🃏 Flashcards Firebase mein save ho gaye!','success');
+    closeModal('fcAdminModal');
+    fcUpdateEntryBlockUI();
+  }catch(e){
+    console.warn('flashcardSets save error:', e && e.message);
+    showToast('Firebase save mein error aaya','error');
+  }finally{
+    btn.disabled = false; btn.textContent = '☁️ Save to Firebase';
+  }
+}
+
+async function _loadFlashcardSetFromFirebase(sid,secid,tid){
+  if(!_db || !_currentUser) return null;
+  var key = _fcTopicKey(sid,secid,tid);
+  try{
+    var uid = _effectiveUID;
+    var d = await _db.collection('users').doc(uid).collection('flashcardSets').doc(key).get();
+    if(!d.exists) return null;
+    var data = d.data();
+    S.flashcardSets[key] = data;
+    save();
+    return data;
+  }catch(e){
+    console.warn('flashcardSets load error:', e && e.message);
+    return null;
+  }
+}
+
+async function _loadFlashcardProgressFromFirebase(sid,secid,tid){
+  if(!_db || !_currentUser) return null;
+  var key = _fcTopicKey(sid,secid,tid);
+  try{
+    var uid = _effectiveUID;
+    var d = await _db.collection('users').doc(uid).collection('flashcardProgress').doc(key).get();
+    if(!d.exists) return null;
+    var data = d.data();
+    S.flashcardProgress[key] = data;
+    save();
+    return data;
+  }catch(e){
+    console.warn('flashcardProgress load error:', e && e.message);
+    return null;
+  }
+}
+
+async function _saveFlashcardProgressToFirebase(sid,secid,tid){
+  var key = _fcTopicKey(sid,secid,tid);
+  var prog = S.flashcardProgress[key];
+  if(!prog) return;
+  save(); // local always
+  if(!_db || !_currentUser) return;
+  try{
+    var uid = _effectiveUID;
+    var clean = _fsClean(prog);
+    if(firebase && firebase.firestore && firebase.firestore.FieldValue){
+      clean.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+    }
+    await _db.collection('users').doc(uid).collection('flashcardProgress').doc(key).set(clean);
+  }catch(e){
+    console.warn('flashcardProgress save error:', e && e.message);
+  }
+}
+
+// ── Called from openNotesEditor()/scroll-hook: refresh the bottom entry block for current topic ──
+function fcUpdateEntryBlockUI(){
+  var sid = _editorState.sid, secid = _editorState.secid, tid = _editorState.tid;
+  if(tid==null) return;
+  var key = _fcTopicKey(sid,secid,tid);
+  var set = S.flashcardSets[key];
+  var metaEl = document.getElementById('fcEntryMeta');
+  var labelEl = document.getElementById('fcOpenPlayBtnLabel');
+  var adminBtn = document.getElementById('fcAdminUploadBtn');
+
+  if(adminBtn) adminBtn.style.display = _isAdmin ? 'inline-flex' : 'none';
+
+  if(set && set.cards && set.cards.length){
+    if(labelEl) labelEl.textContent = 'Flashcards Khelo (' + set.cards.length + ')';
+    if(metaEl) metaEl.textContent = '';
+  } else {
+    if(labelEl) labelEl.textContent = _isAdmin ? 'Flashcards Add Karo' : 'Flashcards Jald Aayenge';
+    if(metaEl) metaEl.textContent = _isAdmin ? '' : 'Admin abhi is topic ke liye flashcards nahi add kiye.';
+  }
+}
+
+// ── Scroll detection: reveal floating fc button when neBody scrolled near bottom ──
+// Hooked additively alongside existing neUpdateProgress() (does not replace it).
+(function(){
+  var _origNeUpdateProgress = window.neUpdateProgress;
+  window.neUpdateProgress = function(){
+    if(typeof _origNeUpdateProgress === 'function') _origNeUpdateProgress();
+    try{
+      var body = document.getElementById('neBody');
+      var floatBtn = document.getElementById('fcFloatBtn');
+      if(!body || !floatBtn) return;
+      var nearBottom = (body.scrollHeight - body.clientHeight) <= 0 ||
+        (body.scrollTop + body.clientHeight) >= (body.scrollHeight - 24);
+      if(nearBottom){
+        floatBtn.style.display = 'flex';
+        requestAnimationFrame(function(){
+          floatBtn.style.opacity = '1';
+          floatBtn.style.transform = 'translateY(0) scale(1)';
+        });
+      } else {
+        floatBtn.style.opacity = '0';
+        floatBtn.style.transform = 'translateY(8px) scale(0.8)';
+        setTimeout(function(){ if(floatBtn.style.opacity==='0') floatBtn.style.display='none'; }, 200);
+      }
+    }catch(e){}
+  };
+})();
+
+// Patch openNotesEditor to load/refresh flashcard entry block for the opened topic
+(function(){
+  var _origOpenNE = window.openNotesEditor;
+  window.openNotesEditor = function(sid, secid, tid, noteIdx){
+    var r = _origOpenNE.apply(this, arguments);
+    try{
+      var floatBtn = document.getElementById('fcFloatBtn');
+      if(floatBtn){ floatBtn.style.display='none'; floatBtn.style.opacity='0'; floatBtn.style.transform='translateY(8px) scale(0.8)'; }
+      fcUpdateEntryBlockUI();
+      // Pull latest deck + progress from Firebase (in case another device updated it)
+      _loadFlashcardSetFromFirebase(sid,secid,tid).then(function(){ fcUpdateEntryBlockUI(); });
+      _loadFlashcardProgressFromFirebase(sid,secid,tid);
+    }catch(e){}
+    return r;
+  };
+})();
+
+// ═══════════════════════════════════════════════════════════════════════
+// 🃏 PLAYER — weighted spaced-repetition queue
+//    hard cards appear most often, then moderate, then easy;
+//    'knew' cards are retired from rotation until progress is reset.
+// ═══════════════════════════════════════════════════════════════════════
+
+// Weight = how many times a card is inserted into the shuffled play queue per pass.
+var FC_WEIGHTS = { hard:5, moderate:3, easy:1, unrated:2, knew:0 };
+
+function fcBuildQueue(){
+  var key = _fcTopicKey(_fcState.sid,_fcState.secid,_fcState.tid);
+  var set = S.flashcardSets[key];
+  var progress = (S.flashcardProgress[key] && S.flashcardProgress[key].cardStatus) || {};
+  if(!set || !set.cards || !set.cards.length) return [];
+
+  var weighted = [];
+  set.cards.forEach(function(card, idx){
+    var status = progress[card.id] || 'unrated';
+    if(status === 'knew') return; // retired — mastered
+    var w = FC_WEIGHTS[status] != null ? FC_WEIGHTS[status] : FC_WEIGHTS.unrated;
+    for(var i=0;i<w;i++) weighted.push(idx);
+  });
+  // Shuffle (Fisher-Yates)
+  for(var i=weighted.length-1;i>0;i--){
+    var j = Math.floor(Math.random()*(i+1));
+    var tmp=weighted[i]; weighted[i]=weighted[j]; weighted[j]=tmp;
+  }
+  // Avoid the exact same card appearing twice in a row where possible
+  for(var k=1;k<weighted.length;k++){
+    if(weighted[k]===weighted[k-1]){
+      var swapWith = k+1;
+      while(swapWith<weighted.length && weighted[swapWith]===weighted[k-1]) swapWith++;
+      if(swapWith<weighted.length){
+        var t=weighted[k]; weighted[k]=weighted[swapWith]; weighted[swapWith]=t;
+      }
+    }
+  }
+  return weighted;
+}
+
+function fcOpenPlayer(){
+  var sid = _editorState.sid, secid = _editorState.secid, tid = _editorState.tid;
+  if(tid==null){ showToast('Koi topic open nahi hai','error'); return; }
+  _fcState.sid = sid; _fcState.secid = secid; _fcState.tid = tid;
+  _fcState.sessionStats = {knew:0, easy:0, moderate:0, hard:0};
+
+  var key = _fcTopicKey(sid,secid,tid);
+  var set = S.flashcardSets[key];
+  var modal = document.getElementById('fcPlayerModal');
+  var titleEl = document.getElementById('fcPlayerTitle');
+  var t = getTop(sid,secid,tid);
+  titleEl.textContent = '🃏 ' + (t ? t.name : 'Flashcards');
+
+  document.getElementById('fcEmptyState').style.display = 'none';
+  document.getElementById('fcDoneState').style.display = 'none';
+  document.getElementById('fcCardStage').style.display = 'block';
+
+  if(!set || !set.cards || !set.cards.length){
+    document.getElementById('fcCardStage').style.display = 'none';
+    document.getElementById('fcEmptyState').style.display = 'block';
+    modal.classList.add('show');
+    return;
+  }
+
+  _fcState.queue = fcBuildQueue();
+  _fcState.pos = 0;
+  _fcState.flipped = false;
+
+  if(!_fcState.queue.length){
+    // Sab cards 'knew' ho chuke — sabko dobara active kar do (mastery complete)
+    document.getElementById('fcCardStage').style.display = 'none';
+    document.getElementById('fcDoneState').style.display = 'block';
+    document.getElementById('fcStatKnew').textContent = set.cards.length;
+    document.getElementById('fcStatModerate').textContent = 0;
+    document.getElementById('fcStatHard').textContent = 0;
+    modal.classList.add('show');
+    return;
+  }
+
+  modal.classList.add('show');
+  fcRenderCard();
+}
+
+function fcClosePlayer(){
+  document.getElementById('fcPlayerModal').classList.remove('show');
+}
+
+function fcRenderCard(){
+  var key = _fcTopicKey(_fcState.sid,_fcState.secid,_fcState.tid);
+  var set = S.flashcardSets[key];
+  var progress = (S.flashcardProgress[key] && S.flashcardProgress[key].cardStatus) || {};
+  if(!set || _fcState.pos >= _fcState.queue.length){ fcShowDone(); return; }
+
+  var cardIdx = _fcState.queue[_fcState.pos];
+  var card = set.cards[cardIdx];
+  if(!card){ fcNext(); return; }
+
+  _fcState.flipped = false;
+  var cardEl = document.getElementById('fcCard');
+  cardEl.style.transform = 'rotateY(0deg)';
+
+  document.getElementById('fcQText').textContent = card.q;
+  document.getElementById('fcAText').innerHTML = card.a;
+  document.getElementById('fcCardIndexFront').textContent = (_fcState.pos+1) + ' / ' + _fcState.queue.length;
+
+  var status = progress[card.id] || 'unrated';
+  var badgeEl = document.getElementById('fcDiffBadgeFront');
+  var badgeMap = {
+    hard:{bg:'rgba(228,99,63,0.85)', label:'😣 Hard'},
+    moderate:{bg:'rgba(242,199,68,0.85)', label:'🙂 Moderate'},
+    easy:{bg:'rgba(111,168,220,0.85)', label:'😌 Easy'},
+    unrated:{bg:'rgba(255,255,255,0.18)', label:'🆕 New'}
+  };
+  var bm = badgeMap[status] || badgeMap.unrated;
+  badgeEl.style.background = bm.bg;
+  badgeEl.style.color = status==='moderate' ? '#2B2620' : '#fff';
+  badgeEl.textContent = bm.label;
+
+  document.getElementById('fcRateRow').style.display = 'none';
+
+  var pct = Math.round((_fcState.pos / _fcState.queue.length) * 100);
+  document.getElementById('fcProgressFill').style.width = pct + '%';
+  document.getElementById('fcCountLabel').textContent = (_fcState.pos+1) + '/' + _fcState.queue.length;
+}
+
+function fcFlip(){
+  _fcState.flipped = !_fcState.flipped;
+  var cardEl = document.getElementById('fcCard');
+  cardEl.style.transform = _fcState.flipped ? 'rotateY(180deg)' : 'rotateY(0deg)';
+  document.getElementById('fcRateRow').style.display = _fcState.flipped ? 'flex' : 'none';
+}
+
+function fcRate(rating){
+  var key = _fcTopicKey(_fcState.sid,_fcState.secid,_fcState.tid);
+  var set = S.flashcardSets[key];
+  if(!set) return;
+  var cardIdx = _fcState.queue[_fcState.pos];
+  var card = set.cards[cardIdx];
+  if(!card) return;
+
+  S.flashcardProgress[key] = S.flashcardProgress[key] || {tid:String(_fcState.tid), sid:String(_fcState.sid), secid:String(_fcState.secid), cardStatus:{}};
+  S.flashcardProgress[key].cardStatus = S.flashcardProgress[key].cardStatus || {};
+  S.flashcardProgress[key].cardStatus[card.id] = rating;
+  S.flashcardProgress[key].lastPlayedAt = Date.now();
+  _saveFlashcardProgressToFirebase(_fcState.sid,_fcState.secid,_fcState.tid);
+
+  _fcState.sessionStats[rating] = (_fcState.sessionStats[rating]||0) + 1;
+  fcNext();
+}
+
+function fcSkipNoAnswer(){ fcNext(); }
+
+function fcNext(){
+  _fcState.pos++;
+  if(_fcState.pos >= _fcState.queue.length){ fcShowDone(); return; }
+  fcRenderCard();
+}
+
+function fcPrev(){
+  if(_fcState.pos>0){ _fcState.pos--; fcRenderCard(); }
+}
+
+function fcShowDone(){
+  var key = _fcTopicKey(_fcState.sid,_fcState.secid,_fcState.tid);
+  var progress = (S.flashcardProgress[key] && S.flashcardProgress[key].cardStatus) || {};
+  var set = S.flashcardSets[key];
+  var counts = {knew:0, moderate:0, hard:0, easy:0};
+  if(set && set.cards){
+    set.cards.forEach(function(c){
+      var st = progress[c.id];
+      if(st && counts[st]!=null) counts[st]++;
+    });
+  }
+  document.getElementById('fcCardStage').style.display = 'none';
+  document.getElementById('fcDoneState').style.display = 'block';
+  document.getElementById('fcStatKnew').textContent = counts.knew;
+  document.getElementById('fcStatModerate').textContent = counts.moderate + counts.easy;
+  document.getElementById('fcStatHard').textContent = counts.hard;
+  document.getElementById('fcProgressFill').style.width = '100%';
+}
+
+function fcRestartSession(){
+  _fcState.queue = fcBuildQueue();
+  _fcState.pos = 0;
+  if(!_fcState.queue.length){ fcShowDone(); return; }
+  document.getElementById('fcDoneState').style.display = 'none';
+  document.getElementById('fcCardStage').style.display = 'block';
+  fcRenderCard();
+}
+
+// Keyboard support while player modal is open
+document.addEventListener('keydown', function(e){
+  var modal = document.getElementById('fcPlayerModal');
+  if(!modal || !modal.classList.contains('show')) return;
+  if(e.key === ' '){ e.preventDefault(); fcFlip(); }
+  else if(e.key === 'ArrowRight') fcSkipNoAnswer();
+  else if(e.key === 'ArrowLeft') fcPrev();
+  else if(e.key === 'Escape') fcClosePlayer();
+});
 
 // ── Game Vault UI: badge, selects, render, detail, delete ──
 function _tgpEscHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
