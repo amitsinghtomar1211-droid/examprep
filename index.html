@@ -858,6 +858,7 @@ textarea:focus{border-color:var(--accent);background:var(--surface);}
 
 
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:300;display:none;align-items:flex-end;justify-content:center;padding:0;}
+#fcAdminModal,#fcPlayerModal{z-index:900 !important;}
 .modal-overlay.show{display:flex;}
 .modal{background:var(--surface);border-radius:20px 20px 0 0;padding:20px;width:100%;max-width:680px;box-shadow:0 -4px 40px rgba(0,0,0,0.2);max-height:93vh;overflow-y:auto;}
 .modal-title{font-size:1.05rem;font-weight:800;color:var(--text);margin-bottom:14px;padding-bottom:10px;border-bottom:1.5px solid var(--border);}
@@ -14617,7 +14618,7 @@ function _attachGameVaultRealtimeListener(){
 S.flashcardSets = S.flashcardSets || {};       // {tid: {cards:[...], ...}}
 S.flashcardProgress = S.flashcardProgress || {}; // {tid: {cardStatus:{}, ...}}
 
-var _fcState = {
+var _fcPlayState = {
   sid:null, secid:null, tid:null,
   queue:[],        // ordered list of card indices for this session
   pos:0,
@@ -14664,7 +14665,7 @@ function fcParseDeckFromHTML(htmlText){
 // ── ADMIN: open upload modal for the topic currently in Notes Editor ──
 function fcOpenAdminUpload(){
   if(!_isAdmin){ showToast('🔒 Sirf admin flashcards upload kar sakta hai','error'); return; }
-  _fcState.parsedAdminDeck = null;
+  _fcPlayState.parsedAdminDeck = null;
   document.getElementById('fcAdminFileStatus').textContent = '';
   document.getElementById('fcAdminPreviewWrap').style.display = 'none';
   document.getElementById('fcAdminSaveBtn').style.display = 'none';
@@ -14690,7 +14691,7 @@ function fcHandleAdminFile(input){
       errEl.classList.add('show');
       return;
     }
-    _fcState.parsedAdminDeck = cards;
+    _fcPlayState.parsedAdminDeck = cards;
     statusEl.textContent = '✅ ' + file.name;
     var previewWrap = document.getElementById('fcAdminPreviewWrap');
     var previewList = document.getElementById('fcAdminPreviewList');
@@ -14713,7 +14714,7 @@ function fcHandleAdminFile(input){
 // ── ADMIN: save parsed deck to Firebase under the CURRENT topic (new/replacing ID) ──
 async function fcSaveAdminDeck(){
   if(!_isAdmin){ showToast('🔒 Sirf admin save kar sakta hai','error'); return; }
-  var cards = _fcState.parsedAdminDeck;
+  var cards = _fcPlayState.parsedAdminDeck;
   if(!cards || !cards.length){ showToast('Pehle ek valid file chuno','error'); return; }
   var sid = _editorState.sid, secid = _editorState.secid, tid = _editorState.tid;
   if(tid==null){ showToast('Koi topic open nahi hai','error'); return; }
@@ -14890,7 +14891,7 @@ function fcUpdateEntryBlockUI(){
 var FC_WEIGHTS = { hard:5, moderate:3, easy:1, unrated:2, knew:0 };
 
 function fcBuildQueue(){
-  var key = _fcTopicKey(_fcState.sid,_fcState.secid,_fcState.tid);
+  var key = _fcTopicKey(_fcPlayState.sid,_fcPlayState.secid,_fcPlayState.tid);
   var set = S.flashcardSets[key];
   var progress = (S.flashcardProgress[key] && S.flashcardProgress[key].cardStatus) || {};
   if(!set || !set.cards || !set.cards.length) return [];
@@ -14923,8 +14924,8 @@ function fcBuildQueue(){
 function fcOpenPlayer(){
   var sid = _editorState.sid, secid = _editorState.secid, tid = _editorState.tid;
   if(tid==null){ showToast('Koi topic open nahi hai','error'); return; }
-  _fcState.sid = sid; _fcState.secid = secid; _fcState.tid = tid;
-  _fcState.sessionStats = {knew:0, easy:0, moderate:0, hard:0};
+  _fcPlayState.sid = sid; _fcPlayState.secid = secid; _fcPlayState.tid = tid;
+  _fcPlayState.sessionStats = {knew:0, easy:0, moderate:0, hard:0};
 
   var key = _fcTopicKey(sid,secid,tid);
   var set = S.flashcardSets[key];
@@ -14944,11 +14945,11 @@ function fcOpenPlayer(){
     return;
   }
 
-  _fcState.queue = fcBuildQueue();
-  _fcState.pos = 0;
-  _fcState.flipped = false;
+  _fcPlayState.queue = fcBuildQueue();
+  _fcPlayState.pos = 0;
+  _fcPlayState.flipped = false;
 
-  if(!_fcState.queue.length){
+  if(!_fcPlayState.queue.length){
     // Sab cards 'knew' ho chuke — sabko dobara active kar do (mastery complete)
     document.getElementById('fcCardStage').style.display = 'none';
     document.getElementById('fcDoneState').style.display = 'block';
@@ -14968,22 +14969,22 @@ function fcClosePlayer(){
 }
 
 function fcRenderCard(){
-  var key = _fcTopicKey(_fcState.sid,_fcState.secid,_fcState.tid);
+  var key = _fcTopicKey(_fcPlayState.sid,_fcPlayState.secid,_fcPlayState.tid);
   var set = S.flashcardSets[key];
   var progress = (S.flashcardProgress[key] && S.flashcardProgress[key].cardStatus) || {};
-  if(!set || _fcState.pos >= _fcState.queue.length){ fcShowDone(); return; }
+  if(!set || _fcPlayState.pos >= _fcPlayState.queue.length){ fcShowDone(); return; }
 
-  var cardIdx = _fcState.queue[_fcState.pos];
+  var cardIdx = _fcPlayState.queue[_fcPlayState.pos];
   var card = set.cards[cardIdx];
   if(!card){ fcNext(); return; }
 
-  _fcState.flipped = false;
+  _fcPlayState.flipped = false;
   var cardEl = document.getElementById('fcCard');
   cardEl.style.transform = 'rotateY(0deg)';
 
   document.getElementById('fcQText').textContent = card.q;
   document.getElementById('fcAText').innerHTML = card.a;
-  document.getElementById('fcCardIndexFront').textContent = (_fcState.pos+1) + ' / ' + _fcState.queue.length;
+  document.getElementById('fcCardIndexFront').textContent = (_fcPlayState.pos+1) + ' / ' + _fcPlayState.queue.length;
 
   var status = progress[card.id] || 'unrated';
   var badgeEl = document.getElementById('fcDiffBadgeFront');
@@ -15000,50 +15001,50 @@ function fcRenderCard(){
 
   document.getElementById('fcRateRow').style.display = 'none';
 
-  var pct = Math.round((_fcState.pos / _fcState.queue.length) * 100);
+  var pct = Math.round((_fcPlayState.pos / _fcPlayState.queue.length) * 100);
   document.getElementById('fcProgressFill').style.width = pct + '%';
-  document.getElementById('fcCountLabel').textContent = (_fcState.pos+1) + '/' + _fcState.queue.length;
+  document.getElementById('fcCountLabel').textContent = (_fcPlayState.pos+1) + '/' + _fcPlayState.queue.length;
 }
 
 function fcFlip(){
-  _fcState.flipped = !_fcState.flipped;
+  _fcPlayState.flipped = !_fcPlayState.flipped;
   var cardEl = document.getElementById('fcCard');
-  cardEl.style.transform = _fcState.flipped ? 'rotateY(180deg)' : 'rotateY(0deg)';
-  document.getElementById('fcRateRow').style.display = _fcState.flipped ? 'flex' : 'none';
+  cardEl.style.transform = _fcPlayState.flipped ? 'rotateY(180deg)' : 'rotateY(0deg)';
+  document.getElementById('fcRateRow').style.display = _fcPlayState.flipped ? 'flex' : 'none';
 }
 
 function fcRate(rating){
-  var key = _fcTopicKey(_fcState.sid,_fcState.secid,_fcState.tid);
+  var key = _fcTopicKey(_fcPlayState.sid,_fcPlayState.secid,_fcPlayState.tid);
   var set = S.flashcardSets[key];
   if(!set) return;
-  var cardIdx = _fcState.queue[_fcState.pos];
+  var cardIdx = _fcPlayState.queue[_fcPlayState.pos];
   var card = set.cards[cardIdx];
   if(!card) return;
 
-  S.flashcardProgress[key] = S.flashcardProgress[key] || {tid:String(_fcState.tid), sid:String(_fcState.sid), secid:String(_fcState.secid), cardStatus:{}};
+  S.flashcardProgress[key] = S.flashcardProgress[key] || {tid:String(_fcPlayState.tid), sid:String(_fcPlayState.sid), secid:String(_fcPlayState.secid), cardStatus:{}};
   S.flashcardProgress[key].cardStatus = S.flashcardProgress[key].cardStatus || {};
   S.flashcardProgress[key].cardStatus[card.id] = rating;
   S.flashcardProgress[key].lastPlayedAt = Date.now();
-  _saveFlashcardProgressToFirebase(_fcState.sid,_fcState.secid,_fcState.tid);
+  _saveFlashcardProgressToFirebase(_fcPlayState.sid,_fcPlayState.secid,_fcPlayState.tid);
 
-  _fcState.sessionStats[rating] = (_fcState.sessionStats[rating]||0) + 1;
+  _fcPlayState.sessionStats[rating] = (_fcPlayState.sessionStats[rating]||0) + 1;
   fcNext();
 }
 
 function fcSkipNoAnswer(){ fcNext(); }
 
 function fcNext(){
-  _fcState.pos++;
-  if(_fcState.pos >= _fcState.queue.length){ fcShowDone(); return; }
+  _fcPlayState.pos++;
+  if(_fcPlayState.pos >= _fcPlayState.queue.length){ fcShowDone(); return; }
   fcRenderCard();
 }
 
 function fcPrev(){
-  if(_fcState.pos>0){ _fcState.pos--; fcRenderCard(); }
+  if(_fcPlayState.pos>0){ _fcPlayState.pos--; fcRenderCard(); }
 }
 
 function fcShowDone(){
-  var key = _fcTopicKey(_fcState.sid,_fcState.secid,_fcState.tid);
+  var key = _fcTopicKey(_fcPlayState.sid,_fcPlayState.secid,_fcPlayState.tid);
   var progress = (S.flashcardProgress[key] && S.flashcardProgress[key].cardStatus) || {};
   var set = S.flashcardSets[key];
   var counts = {knew:0, moderate:0, hard:0, easy:0};
@@ -15062,9 +15063,9 @@ function fcShowDone(){
 }
 
 function fcRestartSession(){
-  _fcState.queue = fcBuildQueue();
-  _fcState.pos = 0;
-  if(!_fcState.queue.length){ fcShowDone(); return; }
+  _fcPlayState.queue = fcBuildQueue();
+  _fcPlayState.pos = 0;
+  if(!_fcPlayState.queue.length){ fcShowDone(); return; }
   document.getElementById('fcDoneState').style.display = 'none';
   document.getElementById('fcCardStage').style.display = 'block';
   fcRenderCard();
