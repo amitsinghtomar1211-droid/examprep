@@ -7643,45 +7643,6 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
         style="outline:none;min-height:100%;padding:4px 2px;">
       </div>
 
-      <!-- ══════════════════════════════════════════════════════
-           🃏 FLASHCARD ENTRY — bottom-of-notes, in-flow block
-           Har topic ke notes ke sabse aakhir mein dikhta hai.
-           ══════════════════════════════════════════════════════ -->
-      <div id="fcEntryBlock" style="margin:22px 2px 40px;padding:18px 16px;border-radius:16px;
-        background:linear-gradient(135deg,rgba(106,27,154,0.07),rgba(21,101,192,0.07));
-        border:1.5px dashed rgba(106,27,154,0.28);text-align:center;">
-        <div style="font-size:0.72rem;color:var(--text2);font-weight:700;margin-bottom:10px;">
-          📖 Notes yahan khatam hue
-        </div>
-        <button id="fcOpenPlayBtn" onclick="fcOpenPlayer()" style="
-          display:inline-flex;align-items:center;gap:7px;padding:11px 20px;border-radius:100px;
-          border:none;background:linear-gradient(135deg,#6a1b9a,#1565c0);color:#fff;
-          font-size:0.82rem;font-weight:800;cursor:pointer;font-family:inherit;
-          box-shadow:0 4px 14px rgba(106,27,154,0.35);-webkit-tap-highlight-color:transparent;">
-          🃏 <span id="fcOpenPlayBtnLabel">Flashcards Khelo</span>
-        </button>
-        <div id="fcEntryMeta" style="margin-top:8px;font-size:0.62rem;color:var(--text2);"></div>
-        <button id="fcAdminUploadBtn" onclick="fcOpenAdminUpload()" style="
-          display:none;margin-top:10px;align-items:center;gap:6px;padding:7px 14px;border-radius:100px;
-          border:1.5px solid rgba(21,101,192,0.35);background:var(--surface);color:var(--accent);
-          font-size:0.68rem;font-weight:700;cursor:pointer;font-family:inherit;
-          -webkit-tap-highlight-color:transparent;">
-          ⚙️ Admin: Flashcard HTML Upload/Update
-        </button>
-      </div>
-
-      <!-- Floating reveal button — jab neBody ke sabse niche scroll ho tab dikhta hai -->
-      <button id="fcFloatBtn" onclick="fcOpenPlayer()" title="Flashcards" style="
-        position:fixed;bottom:64px;right:14px;z-index:9810;
-        width:52px;height:52px;border-radius:50%;border:none;
-        background:linear-gradient(135deg,#6a1b9a,#1565c0);color:#fff;
-        font-size:1.35rem;cursor:pointer;display:none;align-items:center;justify-content:center;
-        box-shadow:0 4px 16px rgba(106,27,154,0.45);
-        -webkit-tap-highlight-color:transparent;
-        transition:transform 0.2s ease, opacity 0.2s ease;
-        opacity:0;transform:translateY(8px) scale(0.8);
-      ">🃏</button>
-
       <textarea id="noteEditContent" style="display:none;" oninput="onEditInput()"></textarea>
       <!-- DRAW OVERLAY CANVAS — transparent, sits on top of notes text -->
       <canvas id="neDrawCanvas" title="Draw on notes"></canvas>
@@ -14733,7 +14694,6 @@ async function fcSaveAdminDeck(){
   // Local mirror — turant available ho
   S.flashcardSets[key] = entry;
   save();
-  fcUpdateEntryBlockUI();
 
   var btn = document.getElementById('fcAdminSaveBtn');
   btn.disabled = true; btn.textContent = '⏳ Saving...';
@@ -14755,7 +14715,6 @@ async function fcSaveAdminDeck(){
     }
     showToast('🃏 Flashcards Firebase mein save ho gaye!','success');
     closeModal('fcAdminModal');
-    fcUpdateEntryBlockUI();
   }catch(e){
     console.warn('flashcardSets save error:', e && e.message);
     showToast('Firebase save mein error aaya','error');
@@ -14816,70 +14775,7 @@ async function _saveFlashcardProgressToFirebase(sid,secid,tid){
   }
 }
 
-// ── Called from openNotesEditor()/scroll-hook: refresh the bottom entry block for current topic ──
-function fcUpdateEntryBlockUI(){
-  var sid = _editorState.sid, secid = _editorState.secid, tid = _editorState.tid;
-  if(tid==null) return;
-  var key = _fcTopicKey(sid,secid,tid);
-  var set = S.flashcardSets[key];
-  var metaEl = document.getElementById('fcEntryMeta');
-  var labelEl = document.getElementById('fcOpenPlayBtnLabel');
-  var adminBtn = document.getElementById('fcAdminUploadBtn');
-
-  if(adminBtn) adminBtn.style.display = _isAdmin ? 'inline-flex' : 'none';
-
-  if(set && set.cards && set.cards.length){
-    if(labelEl) labelEl.textContent = 'Flashcards Khelo (' + set.cards.length + ')';
-    if(metaEl) metaEl.textContent = '';
-  } else {
-    if(labelEl) labelEl.textContent = _isAdmin ? 'Flashcards Add Karo' : 'Flashcards Jald Aayenge';
-    if(metaEl) metaEl.textContent = _isAdmin ? '' : 'Admin abhi is topic ke liye flashcards nahi add kiye.';
-  }
-}
-
-// ── Scroll detection: reveal floating fc button when neBody scrolled near bottom ──
-// Hooked additively alongside existing neUpdateProgress() (does not replace it).
-(function(){
-  var _origNeUpdateProgress = window.neUpdateProgress;
-  window.neUpdateProgress = function(){
-    if(typeof _origNeUpdateProgress === 'function') _origNeUpdateProgress();
-    try{
-      var body = document.getElementById('neBody');
-      var floatBtn = document.getElementById('fcFloatBtn');
-      if(!body || !floatBtn) return;
-      var nearBottom = (body.scrollHeight - body.clientHeight) <= 0 ||
-        (body.scrollTop + body.clientHeight) >= (body.scrollHeight - 24);
-      if(nearBottom){
-        floatBtn.style.display = 'flex';
-        requestAnimationFrame(function(){
-          floatBtn.style.opacity = '1';
-          floatBtn.style.transform = 'translateY(0) scale(1)';
-        });
-      } else {
-        floatBtn.style.opacity = '0';
-        floatBtn.style.transform = 'translateY(8px) scale(0.8)';
-        setTimeout(function(){ if(floatBtn.style.opacity==='0') floatBtn.style.display='none'; }, 200);
-      }
-    }catch(e){}
-  };
-})();
-
-// Patch openNotesEditor to load/refresh flashcard entry block for the opened topic
-(function(){
-  var _origOpenNE = window.openNotesEditor;
-  window.openNotesEditor = function(sid, secid, tid, noteIdx){
-    var r = _origOpenNE.apply(this, arguments);
-    try{
-      var floatBtn = document.getElementById('fcFloatBtn');
-      if(floatBtn){ floatBtn.style.display='none'; floatBtn.style.opacity='0'; floatBtn.style.transform='translateY(8px) scale(0.8)'; }
-      fcUpdateEntryBlockUI();
-      // Pull latest deck + progress from Firebase (in case another device updated it)
-      _loadFlashcardSetFromFirebase(sid,secid,tid).then(function(){ fcUpdateEntryBlockUI(); });
-      _loadFlashcardProgressFromFirebase(sid,secid,tid);
-    }catch(e){}
-    return r;
-  };
-})();
+// (Notes-editor bottom flashcard entry block + floating button removed — feature hataya gaya)
 
 // ═══════════════════════════════════════════════════════════════════════
 // 🃏 PLAYER — weighted spaced-repetition queue
