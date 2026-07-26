@@ -21701,89 +21701,77 @@ function _folderCollectTopics(node, kind, pathSoFar) {
   return out;
 }
 
-// Build the combined multi-topic export wrapper. Reuses the exact same
-// highlight-color CSS as the single-note export so the look matches.
-async function _folderBuildExportContent(items, folderLabel) {
-  const container = document.createElement('div');
-  container.style.cssText = 'font-family:"Noto Sans",Arial,sans-serif;padding:6px;color:#111;line-height:1.85;font-size:15px;';
-
-  const coverHeading = document.createElement('div');
-  coverHeading.style.cssText = 'margin-bottom:18px;padding-bottom:12px;border-bottom:3px solid #1565c0;';
-  coverHeading.innerHTML =
-    '<div style="font-size:1.5rem;font-weight:800;color:#1565c0;">' + _escHtml(folderLabel) + '</div>' +
-    '<div style="font-size:0.8rem;color:#666;margin-top:4px;">📚 ' + items.length + ' topics — Sabhi nested folders ke notes ek saath</div>';
-  container.appendChild(coverHeading);
-
+// Build export content for exactly ONE topic (used by the chunked,
+// page-by-page folder export below). Kept separate from the old
+// all-in-one builder because html2canvas silently returns a BLANK
+// image once the element/body being captured gets very tall (~30,000px+
+// — see html2canvas issue #882). A folder with 12+ topics easily produces
+// a 40,000-50,000px wrapper if built as one giant div, so instead we now
+// build + capture + add-to-pdf ONE topic at a time, each safely under
+// that height ceiling, and merge the results into a single PDF file.
+async function _folderBuildTopicContent(it, isFirst) {
+  const t = it.topic;
   const exportWidth = NE_PRINT_WIDTH;
 
-  for(let i = 0; i < items.length; i++) {
-    const it = items[i];
-    const t = it.topic;
-    const topicWrap = document.createElement('div');
-    topicWrap.style.cssText = 'page-break-before:' + (i === 0 ? 'auto' : 'always') + ';padding-top:' + (i === 0 ? '0' : '4px') + ';';
+  const topicWrap = document.createElement('div');
+  topicWrap.style.cssText = 'font-family:"Noto Sans",Arial,sans-serif;padding:6px;color:#111;line-height:1.85;font-size:15px;width:' + exportWidth + 'px;';
 
-    const crumb = document.createElement('div');
-    crumb.style.cssText = 'font-size:0.72rem;color:#888;font-weight:700;margin-bottom:4px;letter-spacing:0.2px;';
-    crumb.textContent = '📂 ' + it.path.join(' › ');
-    topicWrap.appendChild(crumb);
+  const crumb = document.createElement('div');
+  crumb.style.cssText = 'font-size:0.72rem;color:#888;font-weight:700;margin-bottom:4px;letter-spacing:0.2px;';
+  crumb.textContent = '📂 ' + it.path.join(' › ');
+  topicWrap.appendChild(crumb);
 
-    const heading = document.createElement('h1');
-    heading.textContent = '📙 ' + (t.name || 'Topic');
-    heading.style.cssText = 'font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;';
-    topicWrap.appendChild(heading);
+  const heading = document.createElement('h1');
+  heading.textContent = '📙 ' + (t.name || 'Topic');
+  heading.style.cssText = 'font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;';
+  topicWrap.appendChild(heading);
 
-    const notes = t.notes || [];
-    if(!notes.length) {
-      const empty = document.createElement('div');
-      empty.style.cssText = 'color:#999;font-style:italic;font-size:0.85rem;padding:8px 0;';
-      empty.textContent = 'Is topic mein koi note nahi hai.';
-      topicWrap.appendChild(empty);
+  const notes = t.notes || [];
+  let anyNoteContent = false;
+  if(!notes.length) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'color:#999;font-style:italic;font-size:0.85rem;padding:8px 0;';
+    empty.textContent = 'Is topic mein koi note nahi hai.';
+    topicWrap.appendChild(empty);
+  }
+
+  for(let ni = 0; ni < notes.length; ni++) {
+    const n = notes[ni];
+    const richSrc = n.editorRichHTML || n.richHTML || '';
+    let rawHtml = richSrc;
+    if(!rawHtml.trim() && (n.content || '').trim()) {
+      rawHtml = '<div style="white-space:pre-wrap;">' + _escHtml(n.content) + '</div>';
+    }
+    if(!rawHtml.trim()) { console.warn('[downloadFolderPDF] Topic "'+(t.name||'?')+'" note "'+(n.name||ni)+'" has no content — skipped.'); continue; }
+    anyNoteContent = true;
+    const resolvedHtml = await _folderResolveNoteHtml(rawHtml);
+
+    if(notes.length > 1) {
+      const noteTitle = document.createElement('div');
+      noteTitle.style.cssText = 'font-size:0.85rem;font-weight:800;color:#00695c;margin:14px 0 6px;padding-left:8px;border-left:3px solid #00695c;';
+      noteTitle.textContent = '📝 ' + (n.name || ('Note ' + (ni + 1)));
+      topicWrap.appendChild(noteTitle);
     }
 
-    for(let ni = 0; ni < notes.length; ni++) {
-      const n = notes[ni];
-      const richSrc = n.editorRichHTML || n.richHTML || '';
-      let rawHtml = richSrc;
-      if(!rawHtml.trim() && (n.content || '').trim()) {
-        // Only a plain-text `content` field is available (older/simple
-        // notes) — escape it and turn newlines into <br> so paragraphs
-        // don't collapse into a single unreadable line in the PDF.
-        rawHtml = '<div style="white-space:pre-wrap;">' + _escHtml(n.content) + '</div>';
-      }
-      if(!rawHtml.trim()) { console.warn('[downloadFolderPDF] Topic "'+(t.name||'?')+'" note "'+(n.name||ni)+'" has no content (editorRichHTML/richHTML/content all empty) — skipped.'); continue; }
-      const resolvedHtml = await _folderResolveNoteHtml(rawHtml);
+    const body = document.createElement('div');
+    body.style.cssText = 'width:' + exportWidth + 'px;max-width:100%;';
+    body.innerHTML = resolvedHtml;
+    body.querySelectorAll('[contenteditable]').forEach(function(el) { el.removeAttribute('contenteditable'); });
 
-      if(notes.length > 1) {
-        const noteTitle = document.createElement('div');
-        noteTitle.style.cssText = 'font-size:0.85rem;font-weight:800;color:#00695c;margin:14px 0 6px;padding-left:8px;border-left:3px solid #00695c;';
-        noteTitle.textContent = '📝 ' + (n.name || ('Note ' + (ni + 1)));
-        topicWrap.appendChild(noteTitle);
-      }
+    body.querySelectorAll('button.ne-link-btn[data-url]').forEach(function(btn) {
+      const a = document.createElement('a');
+      a.href = btn.getAttribute('data-url') || '#';
+      a.setAttribute('target', '_blank');
+      a.setAttribute('rel', 'noopener noreferrer');
+      a.innerHTML = btn.innerHTML;
+      const bg = btn.getAttribute('data-color') || btn.style.background || '#1565c0';
+      a.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:4px 4px 4px 0;' +
+        'background:' + bg + ';color:#fff;border:none;border-radius:20px;font-size:0.78rem;font-weight:700;' +
+        'font-family:inherit;vertical-align:middle;text-decoration:none;';
+      btn.replaceWith(a);
+    });
 
-      const body = document.createElement('div');
-      body.style.cssText = 'width:' + exportWidth + 'px;max-width:100%;';
-      body.innerHTML = resolvedHtml;
-      body.querySelectorAll('[contenteditable]').forEach(function(el) { el.removeAttribute('contenteditable'); });
-
-      // Same link-button → <a href> swap as the single-note export, so
-      // 🔗 buttons stay clickable in the merged PDF too.
-      body.querySelectorAll('button.ne-link-btn[data-url]').forEach(function(btn) {
-        const a = document.createElement('a');
-        a.href = btn.getAttribute('data-url') || '#';
-        a.setAttribute('target', '_blank');
-        a.setAttribute('rel', 'noopener noreferrer');
-        a.innerHTML = btn.innerHTML;
-        const bg = btn.getAttribute('data-color') || btn.style.background || '#1565c0';
-        a.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:6px 14px;margin:4px 4px 4px 0;' +
-          'background:' + bg + ';color:#fff;border:none;border-radius:20px;font-size:0.78rem;font-weight:700;' +
-          'font-family:inherit;vertical-align:middle;text-decoration:none;';
-        btn.replaceWith(a);
-      });
-
-      topicWrap.appendChild(body);
-    }
-
-    container.appendChild(topicWrap);
+    topicWrap.appendChild(body);
   }
 
   const styleTag = document.createElement('style');
@@ -21802,9 +21790,9 @@ async function _folderBuildExportContent(items, folderLabel) {
     td, th { border:1.2px solid #999; padding:6px 8px; text-align:left; }
     img { max-width:100%; border-radius:6px; }
   `;
-  container.appendChild(styleTag);
+  topicWrap.appendChild(styleTag);
 
-  return { wrapper: container, exportWidth: exportWidth };
+  return { wrapper: topicWrap, exportWidth: exportWidth, hasContent: anyNoteContent };
 }
 
 // Entry point wired up to the 📥 download icon on every folder card
@@ -21849,76 +21837,28 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
 
   showToast('⬇️ "' + folderLabel + '" ka poora PDF taiyar ho raha hai (' + items.length + ' topics)...', 'success');
 
-  let wrapper, exportWidth;
-  try {
-    const built = await _folderBuildExportContent(items, folderLabel);
-    wrapper = built.wrapper;
-    exportWidth = built.exportWidth;
-  } catch(err) {
-    console.error('Folder PDF build error:', err);
-    showToast('❌ PDF nahi ban paya: ' + err.message, 'error');
-    return;
-  }
-
-  wrapper.style.width = exportWidth + 'px';
-  wrapper.style.background = '#ffffff';
-
   // Show the overlay FIRST (position:fixed covers the viewport immediately) so
-  // the brief layout shift caused by inserting the wrapper is hidden from the user.
+  // the brief layout shift caused by inserting each topic's wrapper is hidden.
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#0d1b2aee;display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Noto Sans",Arial,sans-serif;font-size:0.95rem;font-weight:600;text-align:center;padding:20px;';
-  overlay.textContent = '📄 "' + folderLabel + '" — ' + items.length + ' topics ka PDF taiyar ho raha hai...';
+  overlay.textContent = '📄 "' + folderLabel + '" — 1/' + items.length + ' topics ka PDF taiyar ho raha hai...';
   document.body.appendChild(overlay);
 
-  // ROOT CAUSE FIX — blank PDF on folder download:
-  // body is display:flex / flex-direction:column. The app-shell child already
-  // fills 100 vh, so any element appended at the END of body lands at
-  // top ≥ 100 vh — completely outside the area html2canvas snapshots, which
-  // causes a fully blank PDF.  Inserting BEFORE the first child puts the
-  // wrapper at y ≈ 0 where html2canvas can always find and render it.
-  // The position:fixed overlay above hides the momentary layout shift.
-  document.body.insertBefore(wrapper, document.body.firstChild);
-
-  // ROOT CAUSE FIX #2 — blank PDF when downloading from a folder card:
-  // downloadFolderPDF fires from deep inside the (often long, scrolled)
-  // Library page. html2canvas computes its capture rectangle for the
-  // target element from getBoundingClientRect() MINUS the scrollX/scrollY
-  // option it's given. The old code hardcoded scrollX:0, scrollY:0 while
-  // the REAL page was still scrolled down (e.g. 800px, to reach a nested
-  // folder deep in the tree) — so html2canvas believed the page was at
-  // the top and captured the wrong, empty region. Result: a fully blank
-  // PDF even though the off-screen wrapper had real note content in it.
-  // Fix: actually scroll the window to the origin right before capture so
-  // scrollX:0 / scrollY:0 is TRUE when html2canvas reads it (not just
-  // asserted), then restore the user's scroll position afterwards.
+  // ROOT CAUSE FIX #2 — page scroll offset (see earlier notes): html2canvas
+  // reads the current window scroll to compute its capture rectangle, so we
+  // reset to (0,0) before capturing and restore it after we're done.
   const _folderPrevScrollX = window.scrollX || window.pageXOffset || 0;
   const _folderPrevScrollY = window.scrollY || window.pageYOffset || 0;
   window.scrollTo(0, 0);
-  console.log('[downloadFolderPDF] Page scroll before capture: x='+_folderPrevScrollX+' y='+_folderPrevScrollY+' → reset to (0,0) for html2canvas. wrapper height='+wrapper.scrollHeight+'px, width='+exportWidth+'px.');
+  console.log('[downloadFolderPDF] Page scroll before capture: x='+_folderPrevScrollX+' y='+_folderPrevScrollY+' → reset to (0,0) for html2canvas.');
 
   const cleanup = () => {
-    if(wrapper.parentNode) document.body.removeChild(wrapper);
     if(overlay.parentNode) document.body.removeChild(overlay);
-    // Put the user back where they were scrolled to in the Library —
-    // the scrollTo(0,0) above was only needed for html2canvas's capture.
     window.scrollTo(_folderPrevScrollX, _folderPrevScrollY);
   };
 
-  const safeName = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g, '').trim() || 'folder';
-  const opt = {
-    margin: [12, 12, 14, 12],
-    filename: safeName + '.pdf',
-    image: { type: 'jpeg', quality: 0.95 },
-    // scrollX/scrollY:0 now correctly matches reality (we just scrolled to
-    // the origin above), so html2canvas captures the right region.
-    html2canvas: { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff', windowWidth: exportWidth, scrollX: 0, scrollY: 0 },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
-    enableLinks: true
-  };
-
-  const waitForImages = () => {
-    const imgs = Array.from(wrapper.querySelectorAll('img'));
+  const waitForImages = (root) => {
+    const imgs = Array.from(root.querySelectorAll('img'));
     return Promise.all(imgs.map((img) => {
       if(img.complete && img.naturalWidth > 0) return Promise.resolve();
       if(typeof img.decode === 'function') return img.decode().catch(() => {});
@@ -21929,27 +21869,133 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
     }));
   };
 
-  // Folder content is built from stored HTML strings (innerHTML), NOT from a
-  // live already-rendered DOM clone like the single-note export.  The browser
-  // needs extra frames to parse, compute layout, and paint all the nodes before
-  // html2canvas takes its snapshot.  Add a 150 ms settle + one extra RAF on
-  // top of the two-RAF + waitForImages used by the single-note export.
-  const captureAndSave = () => new Promise((resolve) => {
-    requestAnimationFrame(() => { requestAnimationFrame(resolve); });
-  }).then(waitForImages)
-    .then(() => new Promise(resolve => setTimeout(resolve, 150)))
-    .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
-    .then(() => html2pdf().set(opt).from(wrapper).save());
+  const safeName = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g, '').trim() || 'folder';
 
-  captureAndSave().then(() => {
+  // ROOT CAUSE FIX #3 — the actual cause of the "50+ blank pages" bug:
+  // html2canvas silently returns a completely BLANK image once the
+  // captured element (or the document body it's temporarily inserted
+  // into) is taller than roughly 30,000px (confirmed html2canvas issue
+  // #882 — "Returns a blank image for any element when the document body
+  // is more than 30,000px tall"). A folder with 10-15 topics, each with
+  // long notes, easily builds a 40,000-90,000px tall combined wrapper —
+  // well past that ceiling — so the ENTIRE multi-page PDF came back
+  // blank even though the content, page count, and "success" toast were
+  // all correct.
+  // Fix: never build one giant wrapper. Render ONE topic at a time (each
+  // individually always well under the height ceiling) to its OWN canvas
+  // via html2canvas directly, slice that canvas into A4-page-height
+  // chunks, and addImage() every chunk onto ONE shared jsPDF document —
+  // the standard way to combine many captures into a single output file
+  // (mirrors how html2pdf.js paginates a single long capture internally,
+  // just applied across topic boundaries too).
+  const A4_WIDTH_MM = 210, A4_HEIGHT_MM = 297;
+  const MARGIN_MM = [12, 12, 14, 12]; // top, right, bottom, left — matches single-note export
+  const usableWidthMM = A4_WIDTH_MM - MARGIN_MM[1] - MARGIN_MM[3];
+  const usableHeightMM = A4_HEIGHT_MM - MARGIN_MM[0] - MARGIN_MM[2];
+
+  const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF || (html2pdf && html2pdf.jsPDF);
+  if(!jsPDFCtor) {
     cleanup();
-    console.log('[downloadFolderPDF] "'+folderLabel+'" PDF saved successfully — ' + items.length + ' topics.');
-    showToast('✅ "' + folderLabel + '" ka PDF download ho gaya!', 'success');
-  }).catch((err) => {
+    console.error('[downloadFolderPDF] jsPDF constructor not found on window — html2pdf bundle may not have loaded fully.');
+    showToast('❌ PDF library load nahi hui — internet check karo', 'error');
+    return;
+  }
+  const mergedPdf = new jsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  let addedAnyPage = false;
+  let topicsRendered = 0;
+  let topicsSkippedEmpty = 0;
+
+  try {
+    for(let i = 0; i < items.length; i++) {
+      const it = items[i];
+      overlay.textContent = '📄 "' + folderLabel + '" — ' + (i + 1) + '/' + items.length + ' topics ka PDF taiyar ho raha hai...';
+
+      const built = await _folderBuildTopicContent(it, i === 0);
+      const topicWrapper = built.wrapper;
+      const topicWidth = built.exportWidth;
+
+      if(!built.hasContent) {
+        topicsSkippedEmpty++;
+        console.log('[downloadFolderPDF] Topic '+(i+1)+'/'+items.length+' "'+(it.topic.name||'?')+'" — no note content, still adding as an empty page for completeness.');
+      }
+
+      topicWrapper.style.background = '#ffffff';
+      // Same off-screen-but-in-flow placement as the single-note export —
+      // inserted at the TOP of body (not appended at the end) so it never
+      // lands below the 100vh app-shell where html2canvas can't see it.
+      document.body.insertBefore(topicWrapper, document.body.firstChild);
+
+      await new Promise((resolve) => { requestAnimationFrame(() => { requestAnimationFrame(resolve); }); });
+      await waitForImages(topicWrapper);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+
+      console.log('[downloadFolderPDF] Capturing topic '+(i+1)+'/'+items.length+' "'+(it.topic.name||'?')+'" — wrapper height='+topicWrapper.scrollHeight+'px (safe, well under 30,000px ceiling).');
+
+      const canvasFn = (typeof html2canvas === 'function') ? html2canvas : (html2pdf && html2pdf.html2canvas);
+      if(typeof canvasFn !== 'function') throw new Error('html2canvas function not available');
+
+      const canvas = await canvasFn(topicWrapper, {
+        scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff',
+        windowWidth: topicWidth, scrollX: 0, scrollY: 0
+      });
+
+      if(topicWrapper.parentNode) document.body.removeChild(topicWrapper);
+
+      if(!canvas || !canvas.width || !canvas.height) {
+        console.warn('[downloadFolderPDF] Topic '+(i+1)+' produced an empty canvas — skipping its page(s).');
+        topicsRendered++;
+        continue;
+      }
+
+      // Slice this topic's canvas into A4-page-height chunks (in canvas
+      // px, matching the mm→px ratio of the full canvas width) and draw
+      // each chunk onto its own PDF page.
+      const pxPerMM = canvas.width / usableWidthMM;
+      const pageHeightPx = Math.floor(usableHeightMM * pxPerMM);
+      const totalPages = Math.max(1, Math.ceil(canvas.height / pageHeightPx));
+
+      for(let p = 0; p < totalPages; p++) {
+        const sliceY = p * pageHeightPx;
+        const sliceH = Math.min(pageHeightPx, canvas.height - sliceY);
+        if(sliceH <= 0) break;
+
+        const sliceCanvas = document.createElement('canvas');
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = sliceH;
+        const ctx = sliceCanvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+        ctx.drawImage(canvas, 0, sliceY, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+
+        const imgData = sliceCanvas.toDataURL('image/jpeg', 0.95);
+        const sliceHeightMM = sliceH / pxPerMM;
+
+        if(addedAnyPage) mergedPdf.addPage();
+        mergedPdf.addImage(imgData, 'JPEG', MARGIN_MM[3], MARGIN_MM[0], usableWidthMM, sliceHeightMM);
+        addedAnyPage = true;
+      }
+
+      topicsRendered++;
+    }
+  } catch(err) {
     cleanup();
-    console.error('[downloadFolderPDF] Export error for "'+folderLabel+'":', err && err.message, err && err.stack);
+    console.error('[downloadFolderPDF] Export error for "'+folderLabel+'" at topic '+(topicsRendered+1)+'/'+items.length+':', err && err.message, err && err.stack);
     showToast('❌ PDF nahi ban paya: ' + err.message, 'error');
-  });
+    return;
+  }
+
+  cleanup();
+
+  if(!addedAnyPage) {
+    console.error('[downloadFolderPDF] No pages were added — nothing to save.');
+    showToast('❌ PDF nahi ban paya: koi content capture nahi hua', 'error');
+    return;
+  }
+
+  mergedPdf.save(safeName + '.pdf');
+  console.log('[downloadFolderPDF] "'+folderLabel+'" PDF saved successfully — ' + topicsRendered + ' topics rendered ('+topicsSkippedEmpty+' had no note content).');
+  showToast('✅ "' + folderLabel + '" ka PDF download ho gaya!', 'success');
 }
 
 function downloadEditorContent() {
