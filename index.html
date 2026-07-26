@@ -21859,12 +21859,22 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
 
   wrapper.style.width = exportWidth + 'px';
   wrapper.style.background = '#ffffff';
-  document.body.appendChild(wrapper);
 
+  // Show the overlay FIRST (position:fixed covers the viewport immediately) so
+  // the brief layout shift caused by inserting the wrapper is hidden from the user.
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#0d1b2aee;display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Noto Sans",Arial,sans-serif;font-size:0.95rem;font-weight:600;text-align:center;padding:20px;';
   overlay.textContent = '📄 "' + folderLabel + '" — ' + items.length + ' topics ka PDF taiyar ho raha hai...';
   document.body.appendChild(overlay);
+
+  // ROOT CAUSE FIX — blank PDF on folder download:
+  // body is display:flex / flex-direction:column. The app-shell child already
+  // fills 100 vh, so any element appended at the END of body lands at
+  // top ≥ 100 vh — completely outside the area html2canvas snapshots, which
+  // causes a fully blank PDF.  Inserting BEFORE the first child puts the
+  // wrapper at y ≈ 0 where html2canvas can always find and render it.
+  // The position:fixed overlay above hides the momentary layout shift.
+  document.body.insertBefore(wrapper, document.body.firstChild);
 
   const cleanup = () => {
     if(wrapper.parentNode) document.body.removeChild(wrapper);
@@ -21876,7 +21886,9 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
     margin: [12, 12, 14, 12],
     filename: safeName + '.pdf',
     image: { type: 'jpeg', quality: 0.95 },
-    html2canvas: { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff', windowWidth: exportWidth },
+    // scrollX/scrollY:0 — tell html2canvas the wrapper is at the document
+    // origin so scroll-position arithmetic doesn't shift the capture rectangle.
+    html2canvas: { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff', windowWidth: exportWidth, scrollX: 0, scrollY: 0 },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
     pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
     enableLinks: true
@@ -21894,9 +21906,17 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
     }));
   };
 
+  // Folder content is built from stored HTML strings (innerHTML), NOT from a
+  // live already-rendered DOM clone like the single-note export.  The browser
+  // needs extra frames to parse, compute layout, and paint all the nodes before
+  // html2canvas takes its snapshot.  Add a 150 ms settle + one extra RAF on
+  // top of the two-RAF + waitForImages used by the single-note export.
   const captureAndSave = () => new Promise((resolve) => {
     requestAnimationFrame(() => { requestAnimationFrame(resolve); });
-  }).then(waitForImages).then(() => html2pdf().set(opt).from(wrapper).save());
+  }).then(waitForImages)
+    .then(() => new Promise(resolve => setTimeout(resolve, 150)))
+    .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
+    .then(() => html2pdf().set(opt).from(wrapper).save());
 
   captureAndSave().then(() => {
     cleanup();
