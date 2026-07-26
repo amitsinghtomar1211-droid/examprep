@@ -21871,36 +21871,17 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
 
   const safeName = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g, '').trim() || 'folder';
 
-  // ROOT CAUSE FIX #3 — the actual cause of the "50+ blank pages" bug:
-  // html2canvas silently returns a completely BLANK image once the
-  // captured element (or the document body it's temporarily inserted
-  // into) is taller than roughly 30,000px (confirmed html2canvas issue
-  // #882 — "Returns a blank image for any element when the document body
-  // is more than 30,000px tall"). A folder with 10-15 topics, each with
-  // long notes, easily builds a 40,000-90,000px tall combined wrapper —
-  // well past that ceiling — so the ENTIRE multi-page PDF came back
-  // blank even though the content, page count, and "success" toast were
-  // all correct.
-  // Fix: never build one giant wrapper. Render ONE topic at a time (each
-  // individually always well under the height ceiling) to its OWN canvas
-  // via html2canvas directly, slice that canvas into A4-page-height
-  // chunks, and addImage() every chunk onto ONE shared jsPDF document —
-  // the standard way to combine many captures into a single output file
-  // (mirrors how html2pdf.js paginates a single long capture internally,
-  // just applied across topic boundaries too).
-  const A4_WIDTH_MM = 210, A4_HEIGHT_MM = 297;
-  const MARGIN_MM = [12, 12, 14, 12]; // top, right, bottom, left — matches single-note export
-  const usableWidthMM = A4_WIDTH_MM - MARGIN_MM[1] - MARGIN_MM[3];
-  const usableHeightMM = A4_HEIGHT_MM - MARGIN_MM[0] - MARGIN_MM[2];
-
-  const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF || (html2pdf && html2pdf.jsPDF);
-  if(!jsPDFCtor) {
-    cleanup();
-    console.error('[downloadFolderPDF] jsPDF constructor not found on window — html2pdf bundle may not have loaded fully.');
-    showToast('❌ PDF library load nahi hui — internet check karo', 'error');
-    return;
-  }
-  const mergedPdf = new jsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  // ROOT CAUSE FIX #4 — jsPDF constructor lookup failed ("jsPDF constructor
+  // not found on window"): html2pdf.bundle.min.js does NOT reliably expose
+  // window.jspdf.jsPDF / window.jsPDF / html2pdf.jsPDF as globals in every
+  // build (confirmed by live testing — html2canvas WAS found as a global,
+  // but none of the jsPDF guesses were). Guessing global variable names is
+  // fragile. The officially documented way to get a real jsPDF instance
+  // out of html2pdf.js is to let html2pdf itself create one via its own
+  // .toPdf().get('pdf') call — html2pdf definitely has internal access to
+  // the jsPDF it depends on, so this always works regardless of how (or
+  // whether) that library separately exposes a global.
+  let mergedPdf = null;
   let addedAnyPage = false;
   let topicsRendered = 0;
   let topicsSkippedEmpty = 0;
@@ -21932,48 +21913,73 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
 
       console.log('[downloadFolderPDF] Capturing topic '+(i+1)+'/'+items.length+' "'+(it.topic.name||'?')+'" — wrapper height='+topicWrapper.scrollHeight+'px (safe, well under 30,000px ceiling).');
 
-      const canvasFn = (typeof html2canvas === 'function') ? html2canvas : (html2pdf && html2pdf.html2canvas);
-      if(typeof canvasFn !== 'function') throw new Error('html2canvas function not available');
+      if(mergedPdf === null) {
+        // First topic: let html2pdf build BOTH the canvas AND a real jsPDF
+        // instance for us in one go, then keep that jsPDF instance (via
+        // .get('pdf')) so every later topic can just addImage/addPage onto
+        // the SAME document instead of creating separate PDF files.
+        const topicOpt = {
+          margin: [12, 12, 14, 12],
+          filename: safeName + '.pdf',
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff', windowWidth: topicWidth, scrollX: 0, scrollY: 0 },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
+          enableLinks: true
+        };
+        mergedPdf = await html2pdf().set(topicOpt).from(topicWrapper).toPdf().get('pdf');
+        if(topicWrapper.parentNode) document.body.removeChild(topicWrapper);
+        if(mergedPdf && typeof mergedPdf.internal.getNumberOfPages === 'function' && mergedPdf.internal.getNumberOfPages() > 0) {
+          addedAnyPage = true;
+        }
+      } else {
+        // Every later topic: capture with html2canvas directly (already
+        // confirmed working as a global in this bundle), then manually
+        // slice + addImage the result onto the SAME mergedPdf instance —
+        // no separate PDF/document objects, no relying on any global
+        // jsPDF constructor lookup.
+        const canvasFn = (typeof html2canvas === 'function') ? html2canvas : (html2pdf && html2pdf.html2canvas);
+        if(typeof canvasFn !== 'function') throw new Error('html2canvas function not available');
 
-      const canvas = await canvasFn(topicWrapper, {
-        scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff',
-        windowWidth: topicWidth, scrollX: 0, scrollY: 0
-      });
+        const canvas = await canvasFn(topicWrapper, {
+          scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff',
+          windowWidth: topicWidth, scrollX: 0, scrollY: 0
+        });
 
-      if(topicWrapper.parentNode) document.body.removeChild(topicWrapper);
+        if(topicWrapper.parentNode) document.body.removeChild(topicWrapper);
 
-      if(!canvas || !canvas.width || !canvas.height) {
-        console.warn('[downloadFolderPDF] Topic '+(i+1)+' produced an empty canvas — skipping its page(s).');
-        topicsRendered++;
-        continue;
-      }
+        if(canvas && canvas.width && canvas.height) {
+          const A4_WIDTH_MM = 210, A4_HEIGHT_MM = 297;
+          const MARGIN_MM = [12, 12, 14, 12];
+          const usableWidthMM = A4_WIDTH_MM - MARGIN_MM[1] - MARGIN_MM[3];
+          const usableHeightMM = A4_HEIGHT_MM - MARGIN_MM[0] - MARGIN_MM[2];
+          const pxPerMM = canvas.width / usableWidthMM;
+          const pageHeightPx = Math.floor(usableHeightMM * pxPerMM);
+          const totalPages = Math.max(1, Math.ceil(canvas.height / pageHeightPx));
 
-      // Slice this topic's canvas into A4-page-height chunks (in canvas
-      // px, matching the mm→px ratio of the full canvas width) and draw
-      // each chunk onto its own PDF page.
-      const pxPerMM = canvas.width / usableWidthMM;
-      const pageHeightPx = Math.floor(usableHeightMM * pxPerMM);
-      const totalPages = Math.max(1, Math.ceil(canvas.height / pageHeightPx));
+          for(let p = 0; p < totalPages; p++) {
+            const sliceY = p * pageHeightPx;
+            const sliceH = Math.min(pageHeightPx, canvas.height - sliceY);
+            if(sliceH <= 0) break;
 
-      for(let p = 0; p < totalPages; p++) {
-        const sliceY = p * pageHeightPx;
-        const sliceH = Math.min(pageHeightPx, canvas.height - sliceY);
-        if(sliceH <= 0) break;
+            const sliceCanvas = document.createElement('canvas');
+            sliceCanvas.width = canvas.width;
+            sliceCanvas.height = sliceH;
+            const ctx = sliceCanvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+            ctx.drawImage(canvas, 0, sliceY, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
 
-        const sliceCanvas = document.createElement('canvas');
-        sliceCanvas.width = canvas.width;
-        sliceCanvas.height = sliceH;
-        const ctx = sliceCanvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
-        ctx.drawImage(canvas, 0, sliceY, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+            const imgData = sliceCanvas.toDataURL('image/jpeg', 0.95);
+            const sliceHeightMM = sliceH / pxPerMM;
 
-        const imgData = sliceCanvas.toDataURL('image/jpeg', 0.95);
-        const sliceHeightMM = sliceH / pxPerMM;
-
-        if(addedAnyPage) mergedPdf.addPage();
-        mergedPdf.addImage(imgData, 'JPEG', MARGIN_MM[3], MARGIN_MM[0], usableWidthMM, sliceHeightMM);
-        addedAnyPage = true;
+            mergedPdf.addPage();
+            mergedPdf.addImage(imgData, 'JPEG', MARGIN_MM[3], MARGIN_MM[0], usableWidthMM, sliceHeightMM);
+            addedAnyPage = true;
+          }
+        } else {
+          console.warn('[downloadFolderPDF] Topic '+(i+1)+' produced an empty canvas — skipping its page(s).');
+        }
       }
 
       topicsRendered++;
@@ -21987,7 +21993,7 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
 
   cleanup();
 
-  if(!addedAnyPage) {
+  if(!addedAnyPage || !mergedPdf) {
     console.error('[downloadFolderPDF] No pages were added — nothing to save.');
     showToast('❌ PDF nahi ban paya: koi content capture nahi hua', 'error');
     return;
@@ -23978,7 +23984,7 @@ function registerSW(){
     // Blob URL GitHub Pages pe support nahi hota — gracefully skip karo
     try {
       const swCode = `
-const CACHE = 'examprep-v13';
+const CACHE = 'examprep-v15';
 const ASSETS = [location.href];
 
 self.addEventListener('install', e => {
@@ -61513,6 +61519,7 @@ mark.nes-hl.nes-hl-active{
   })();
 
   console.info('[DevConsole] Ready — Logo ko 10x tap karo console kholne ke liye');
+  console.info('[BUILD] Folder PDF fix: per-topic chunked capture v3 — real jsPDF via html2pdf.toPdf().get(\'pdf\') (2026-07-26) — agar "Capturing topic X/Y" log na dikhe to purani cached file chal rahi hai, hard-refresh karo.');
 })();
 </script>
 <script>
