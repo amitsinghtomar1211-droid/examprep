@@ -21708,7 +21708,6 @@ async function _folderBuildExportContent(items, folderLabel) {
   container.style.cssText = 'font-family:"Noto Sans",Arial,sans-serif;padding:6px;color:#111;line-height:1.85;font-size:15px;';
 
   const coverHeading = document.createElement('div');
-  coverHeading.setAttribute('data-folder-block', '1');
   coverHeading.style.cssText = 'margin-bottom:18px;padding-bottom:12px;border-bottom:3px solid #1565c0;';
   coverHeading.innerHTML =
     '<div style="font-size:1.5rem;font-weight:800;color:#1565c0;">' + _escHtml(folderLabel) + '</div>' +
@@ -21721,14 +21720,7 @@ async function _folderBuildExportContent(items, folderLabel) {
     const it = items[i];
     const t = it.topic;
     const topicWrap = document.createElement('div');
-    // NOTE: intentionally NOT setting page-break-before here. html2pdf's
-    // pagebreak mode ['css','legacy'] combo, when given many stacked
-    // page-break-before:always blocks, was slicing the whole capture into
-    // dozens of blank pages (root cause of the "blank folder PDF" bug).
-    // downloadFolderPDF() now paginates manually per data-folder-block
-    // instead, so no CSS page-break hint is needed here at all.
-    topicWrap.setAttribute('data-folder-block', '1');
-    topicWrap.style.cssText = 'padding-top:4px;';
+    topicWrap.style.cssText = 'page-break-before:' + (i === 0 ? 'auto' : 'always') + ';padding-top:' + (i === 0 ? '0' : '4px') + ';';
 
     const crumb = document.createElement('div');
     crumb.style.cssText = 'font-size:0.72rem;color:#888;font-weight:700;margin-bottom:4px;letter-spacing:0.2px;';
@@ -21758,7 +21750,7 @@ async function _folderBuildExportContent(items, folderLabel) {
         // don't collapse into a single unreadable line in the PDF.
         rawHtml = '<div style="white-space:pre-wrap;">' + _escHtml(n.content) + '</div>';
       }
-      if(!rawHtml.trim()) continue;
+      if(!rawHtml.trim()) { console.warn('[downloadFolderPDF] Topic "'+(t.name||'?')+'" note "'+(n.name||ni)+'" has no content (editorRichHTML/richHTML/content all empty) — skipped.'); continue; }
       const resolvedHtml = await _folderResolveNoteHtml(rawHtml);
 
       if(notes.length > 1) {
@@ -21842,15 +21834,18 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
     folderLabel = node ? node.name : 'Sub-Section';
   }
 
-  if(!node) { showToast('❌ Folder nahi mila', 'error'); return; }
+  if(!node) { console.error('[downloadFolderPDF] Folder not found. kind='+kind+' sid='+sid+' secid='+secid+' ssid='+ssid); showToast('❌ Folder nahi mila', 'error'); return; }
 
   const items = _folderCollectTopics(node, kind, [folderLabel]);
+  console.log('[downloadFolderPDF] "'+folderLabel+'" — '+items.length+' topic(s) collected across all nested folders.');
   if(!items.length) { showToast('⚠️ Is folder mein koi topic/notes nahi hai', 'error'); return; }
 
-  const hasAnyContent = items.some(it => (it.topic.notes || []).some(n => (n.editorRichHTML || n.richHTML || n.content || '').trim()));
-  if(!hasAnyContent) { showToast('⚠️ Is folder ke topics mein koi note content nahi hai', 'error'); return; }
+  const notesWithContentCount = items.reduce((n, it) => n + (it.topic.notes || []).filter(n2 => (n2.editorRichHTML || n2.richHTML || n2.content || '').trim()).length, 0);
+  console.log('[downloadFolderPDF] Notes with actual content found: ' + notesWithContentCount);
+  const hasAnyContent = notesWithContentCount > 0;
+  if(!hasAnyContent) { console.warn('[downloadFolderPDF] No topic under "'+folderLabel+'" has any note content (editorRichHTML/richHTML/content all empty).'); showToast('⚠️ Is folder ke topics mein koi note content nahi hai', 'error'); return; }
 
-  if(typeof html2pdf === 'undefined') { showToast('❌ PDF library load nahi hui — internet check karo', 'error'); return; }
+  if(typeof html2pdf === 'undefined') { console.error('[downloadFolderPDF] html2pdf library not loaded.'); showToast('❌ PDF library load nahi hui — internet check karo', 'error'); return; }
 
   showToast('⬇️ "' + folderLabel + '" ka poora PDF taiyar ho raha hai (' + items.length + ' topics)...', 'success');
 
@@ -21884,15 +21879,46 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
   // The position:fixed overlay above hides the momentary layout shift.
   document.body.insertBefore(wrapper, document.body.firstChild);
 
+  // ROOT CAUSE FIX #2 — blank PDF when downloading from a folder card:
+  // downloadFolderPDF fires from deep inside the (often long, scrolled)
+  // Library page. html2canvas computes its capture rectangle for the
+  // target element from getBoundingClientRect() MINUS the scrollX/scrollY
+  // option it's given. The old code hardcoded scrollX:0, scrollY:0 while
+  // the REAL page was still scrolled down (e.g. 800px, to reach a nested
+  // folder deep in the tree) — so html2canvas believed the page was at
+  // the top and captured the wrong, empty region. Result: a fully blank
+  // PDF even though the off-screen wrapper had real note content in it.
+  // Fix: actually scroll the window to the origin right before capture so
+  // scrollX:0 / scrollY:0 is TRUE when html2canvas reads it (not just
+  // asserted), then restore the user's scroll position afterwards.
+  const _folderPrevScrollX = window.scrollX || window.pageXOffset || 0;
+  const _folderPrevScrollY = window.scrollY || window.pageYOffset || 0;
+  window.scrollTo(0, 0);
+  console.log('[downloadFolderPDF] Page scroll before capture: x='+_folderPrevScrollX+' y='+_folderPrevScrollY+' → reset to (0,0) for html2canvas. wrapper height='+wrapper.scrollHeight+'px, width='+exportWidth+'px.');
+
   const cleanup = () => {
     if(wrapper.parentNode) document.body.removeChild(wrapper);
     if(overlay.parentNode) document.body.removeChild(overlay);
+    // Put the user back where they were scrolled to in the Library —
+    // the scrollTo(0,0) above was only needed for html2canvas's capture.
+    window.scrollTo(_folderPrevScrollX, _folderPrevScrollY);
   };
 
   const safeName = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g, '').trim() || 'folder';
+  const opt = {
+    margin: [12, 12, 14, 12],
+    filename: safeName + '.pdf',
+    image: { type: 'jpeg', quality: 0.95 },
+    // scrollX/scrollY:0 now correctly matches reality (we just scrolled to
+    // the origin above), so html2canvas captures the right region.
+    html2canvas: { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff', windowWidth: exportWidth, scrollX: 0, scrollY: 0 },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
+    enableLinks: true
+  };
 
-  const waitForImages = (root) => {
-    const imgs = Array.from(root.querySelectorAll('img'));
+  const waitForImages = () => {
+    const imgs = Array.from(wrapper.querySelectorAll('img'));
     return Promise.all(imgs.map((img) => {
       if(img.complete && img.naturalWidth > 0) return Promise.resolve();
       if(typeof img.decode === 'function') return img.decode().catch(() => {});
@@ -21903,135 +21929,25 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
     }));
   };
 
-  // ── ROOT-CAUSE FIX for "blank folder PDF" ──────────────────────────
-  // html2pdf's built-in pagebreak engine (mode: ['css','legacy']) does its
-  // own DOM-walking + canvas re-slicing to turn `page-break-before:always`
-  // hints into page boundaries. With 20-60+ stacked topic blocks in one
-  // container, that engine was slicing the whole capture into dozens of
-  // boundaries that mostly landed on empty inter-block padding — producing
-  // a PDF that LOOKS like it has pages (jsPDF header says N pages, one
-  // real link annotation even survived) but whose embedded page images
-  // are blank white, because the slice math and the actual content
-  // fell out of sync.
-  //
-  // Fix: don't hand the multi-block container to html2pdf's automatic
-  // pagebreak logic at all. Instead, walk each [data-folder-block]
-  // ourselves, html2canvas-capture it ALONE (same reliable path the
-  // single-note export already uses successfully), and manually slice +
-  // append each block's canvas onto a shared jsPDF document page by page.
-  // This guarantees every page's pixels come from a block that was
-  // actually captured and measured immediately before slicing it.
-  async function captureAndSaveManually() {
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    await waitForImages(wrapper);
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+  // Folder content is built from stored HTML strings (innerHTML), NOT from a
+  // live already-rendered DOM clone like the single-note export.  The browser
+  // needs extra frames to parse, compute layout, and paint all the nodes before
+  // html2canvas takes its snapshot.  Add a 150 ms settle + one extra RAF on
+  // top of the two-RAF + waitForImages used by the single-note export.
+  const captureAndSave = () => new Promise((resolve) => {
+    requestAnimationFrame(() => { requestAnimationFrame(resolve); });
+  }).then(waitForImages)
+    .then(() => new Promise(resolve => setTimeout(resolve, 150)))
+    .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
+    .then(() => html2pdf().set(opt).from(wrapper).save());
 
-    const blocks = Array.from(wrapper.querySelectorAll('[data-folder-block]'));
-    if(!blocks.length) throw new Error('Koi content block nahi mila');
-
-    // Get a real jsPDF instance. Different html2pdf.js CDN builds expose the
-    // jsPDF constructor under different globals (window.jspdf.jsPDF,
-    // window.jsPDF, or not at all as a standalone global) — rather than
-    // guess, ask html2pdf.js itself for one via its own worker chain, since
-    // html2pdf() is already confirmed working elsewhere in this app.
-    let pdf = null;
-    if(window.jspdf && window.jspdf.jsPDF) {
-      pdf = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
-    } else if(window.jsPDF) {
-      pdf = new window.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
-    } else if(typeof html2pdf === 'function') {
-      // html2pdf.js's worker chain always has a live jsPDF instance internally
-      // (that's what .save() eventually calls .output() on) — .get('pdf')
-      // hands that same instance back to us before anything is rendered onto it.
-      pdf = await html2pdf().set({ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } }).toPdf().get('pdf');
-    }
-    if(!pdf) throw new Error('jsPDF library nahi mili');
-    // Fresh jsPDF instances (both from a real constructor and from
-    // html2pdf's toPdf().get('pdf')) start with exactly one blank page —
-    // remove any stray content on it and track that no image has been
-    // placed yet so our own pagination below starts clean.
-    if(typeof pdf.deletePage === 'function' && pdf.internal.getNumberOfPages() > 1) {
-      while(pdf.internal.getNumberOfPages() > 1) pdf.deletePage(pdf.internal.getNumberOfPages());
-    }
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const marginX = 12, marginTop = 12, marginBottom = 14;
-    const usableW = pageW - marginX * 2;
-    const usableH = pageH - marginTop - marginBottom;
-
-    let cursorY = marginTop;       // where on the CURRENT pdf page the next block should start
-    let pageHasContent = false;
-
-    for(let bi = 0; bi < blocks.length; bi++) {
-      const block = blocks[bi];
-
-      // Capture this block completely on its own — mirrors exactly how the
-      // single-note export (downloadEditorContent) captures its one wrapper,
-      // which is the path that has always worked reliably.
-      const canvas = await html2canvas(block, {
-        scale: 2, useCORS: true, allowTaint: true,
-        backgroundColor: '#ffffff', windowWidth: exportWidth
-      });
-
-      if(canvas.width === 0 || canvas.height === 0) continue; // nothing painted, skip silently
-
-      const blockHmm = (canvas.height * usableW) / canvas.width; // scaled height in mm at full usable width
-
-      // Always start a fresh page for a new topic block if the current
-      // page already has something on it and this block won't fit in the
-      // remaining space — keeps a topic from being awkwardly split right
-      // after its heading whenever reasonably possible.
-      if(pageHasContent && (cursorY + Math.min(blockHmm, usableH) > marginTop + usableH)) {
-        pdf.addPage();
-        cursorY = marginTop;
-        pageHasContent = false;
-      }
-
-      if(blockHmm <= usableH) {
-        // Whole block fits on the (remaining space of the) current page.
-        if(cursorY + blockHmm > marginTop + usableH) { pdf.addPage(); cursorY = marginTop; pageHasContent = false; }
-        const imgData = canvas.toDataURL('image/jpeg', 0.95);
-        pdf.addImage(imgData, 'JPEG', marginX, cursorY, usableW, blockHmm);
-        cursorY += blockHmm + 4;
-        pageHasContent = true;
-      } else {
-        // Block taller than one page (a single very long note) — slice its
-        // canvas into page-height chunks and add each as its own page,
-        // same pixel-slicing approach html2pdf's "legacy" mode intends,
-        // just done explicitly so it can't desync from the content.
-        const pxPerMm = canvas.width / usableW;
-        const sliceHeightPx = Math.floor(usableH * pxPerMm);
-        let renderedPx = 0;
-        while(renderedPx < canvas.height) {
-          if(pageHasContent) { pdf.addPage(); cursorY = marginTop; }
-          const thisSlicePx = Math.min(sliceHeightPx, canvas.height - renderedPx);
-          const sliceCanvas = document.createElement('canvas');
-          sliceCanvas.width = canvas.width;
-          sliceCanvas.height = thisSlicePx;
-          const ctx = sliceCanvas.getContext('2d');
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
-          ctx.drawImage(canvas, 0, renderedPx, canvas.width, thisSlicePx, 0, 0, canvas.width, thisSlicePx);
-          const sliceHmm = (thisSlicePx * usableW) / canvas.width;
-          const imgData = sliceCanvas.toDataURL('image/jpeg', 0.95);
-          pdf.addImage(imgData, 'JPEG', marginX, marginTop, usableW, sliceHmm);
-          renderedPx += thisSlicePx;
-          cursorY = marginTop + sliceHmm + 4;
-          pageHasContent = true;
-        }
-      }
-    }
-
-    pdf.save(safeName + '.pdf');
-  }
-
-  captureAndSaveManually().then(() => {
+  captureAndSave().then(() => {
     cleanup();
+    console.log('[downloadFolderPDF] "'+folderLabel+'" PDF saved successfully — ' + items.length + ' topics.');
     showToast('✅ "' + folderLabel + '" ka PDF download ho gaya!', 'success');
   }).catch((err) => {
     cleanup();
-    console.error('Folder PDF export error:', err);
+    console.error('[downloadFolderPDF] Export error for "'+folderLabel+'":', err && err.message, err && err.stack);
     showToast('❌ PDF nahi ban paya: ' + err.message, 'error');
   });
 }
