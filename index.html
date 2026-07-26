@@ -21930,10 +21930,30 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
     const blocks = Array.from(wrapper.querySelectorAll('[data-folder-block]'));
     if(!blocks.length) throw new Error('Koi content block nahi mila');
 
-    const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : (window.jsPDF || null);
-    if(!jsPDFCtor) throw new Error('jsPDF library nahi mili');
-
-    const pdf = new jsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+    // Get a real jsPDF instance. Different html2pdf.js CDN builds expose the
+    // jsPDF constructor under different globals (window.jspdf.jsPDF,
+    // window.jsPDF, or not at all as a standalone global) — rather than
+    // guess, ask html2pdf.js itself for one via its own worker chain, since
+    // html2pdf() is already confirmed working elsewhere in this app.
+    let pdf = null;
+    if(window.jspdf && window.jspdf.jsPDF) {
+      pdf = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+    } else if(window.jsPDF) {
+      pdf = new window.jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+    } else if(typeof html2pdf === 'function') {
+      // html2pdf.js's worker chain always has a live jsPDF instance internally
+      // (that's what .save() eventually calls .output() on) — .get('pdf')
+      // hands that same instance back to us before anything is rendered onto it.
+      pdf = await html2pdf().set({ jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } }).toPdf().get('pdf');
+    }
+    if(!pdf) throw new Error('jsPDF library nahi mili');
+    // Fresh jsPDF instances (both from a real constructor and from
+    // html2pdf's toPdf().get('pdf')) start with exactly one blank page —
+    // remove any stray content on it and track that no image has been
+    // placed yet so our own pagination below starts clean.
+    if(typeof pdf.deletePage === 'function' && pdf.internal.getNumberOfPages() > 1) {
+      while(pdf.internal.getNumberOfPages() > 1) pdf.deletePage(pdf.internal.getNumberOfPages());
+    }
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
     const marginX = 12, marginTop = 12, marginBottom = 14;
