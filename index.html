@@ -1163,11 +1163,15 @@ body.night-mode .ai-chat-dismiss-pill{background:var(--border);}
 .rd-bottombar{
   position:fixed;bottom:0;left:0;right:0;
   z-index:3010;
-  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  display:flex;align-items:center;gap:8px;flex-wrap:nowrap;
   padding:8px 14px;
   padding-bottom:calc(8px + env(safe-area-inset-bottom));
   transition:transform 0.3s cubic-bezier(0.4,0,0.2,1), opacity 0.3s;
+  overflow-x:auto;overflow-y:hidden;
+  -webkit-overflow-scrolling:touch;
+  -ms-overflow-style:none;scrollbar-width:none;
 }
+.rd-bottombar::-webkit-scrollbar{display:none;}
 .light .rd-bottombar{background:rgba(249,247,244,0.95);border-top:1px solid rgba(0,0,0,0.08);backdrop-filter:blur(12px);}
 .dark  .rd-bottombar{background:rgba(17,19,24,0.95);border-top:1px solid rgba(255,255,255,0.07);backdrop-filter:blur(12px);}
 .sepia .rd-bottombar{background:rgba(240,232,210,0.96);border-top:1px solid rgba(100,70,30,0.15);backdrop-filter:blur(12px);}
@@ -1227,7 +1231,7 @@ body.night-mode .ai-chat-dismiss-pill{background:var(--border);}
 /* ── HIGHLIGHT COLOR BAR (floats above bottombar) ── */
 .rd-hl-colorbar{
   position:fixed;
-  bottom:62px;
+  bottom:var(--rd-bottombar-h, 62px);
   left:50%;transform:translateX(-50%) translateY(14px);
   display:flex;align-items:center;gap:14px;
   padding:10px 20px;
@@ -1238,7 +1242,10 @@ body.night-mode .ai-chat-dismiss-pill{background:var(--border);}
   opacity:0;pointer-events:none;
   transition:transform 0.25s cubic-bezier(0.4,0,0.2,1),opacity 0.25s;
   box-shadow:0 4px 22px rgba(0,0,0,0.35);
+  max-width:calc(100vw - 16px);
+  overflow-x:auto;-ms-overflow-style:none;scrollbar-width:none;
 }
+.rd-hl-colorbar::-webkit-scrollbar{display:none;}
 .rd-hl-colorbar.cb-show{
   opacity:1;pointer-events:auto;
   transform:translateX(-50%) translateY(0);
@@ -22923,6 +22930,7 @@ function closeReadingMode() {
   _rdAutoScrollPaused = false;
   // Turn off highlight mode when closing
   if(typeof setHlMode === 'function') setHlMode('off');
+  if(typeof _rdHlModeClearTimer === 'function') _rdHlModeClearTimer();
   // Clear undo/redo stacks — fresh start next time
   _rdHlClearStacks();
   var cb = document.getElementById('rdHlColorbar');
@@ -23095,6 +23103,7 @@ window.rdRmUndo = function() {
   _rdRmUpdateUndoRedoBtns();
   _rdRmReattachEraserToMarks();
   showToast && showToast('↩ Undo', 'info');
+  if(typeof _rdHlModeRearm === 'function') _rdHlModeRearm();
 };
 
 window.rdRmRedo = function() {
@@ -23106,6 +23115,7 @@ window.rdRmRedo = function() {
   _rdRmUpdateUndoRedoBtns();
   _rdRmReattachEraserToMarks();
   showToast && showToast('↪ Redo', 'info');
+  if(typeof _rdHlModeRearm === 'function') _rdHlModeRearm();
 };
 
 // After undo/redo, re-attach eraser click to any restored marks
@@ -23131,8 +23141,8 @@ function _rdAttachHlListeners() {
   ct._rdHlAttached = true;
   ct.addEventListener('touchstart', function(e){ if(_rdReadingOpen) onNETouchStart(e); }, { passive: true });
   ct.addEventListener('touchmove',  function(e){ if(_rdReadingOpen) onNETouchMove(e);  }, { passive: false });
-  ct.addEventListener('touchend',   function(e){ if(_rdReadingOpen) onNETouchEnd(e);   }, { passive: true });
-  ct.addEventListener('mouseup',    function(e){ if(_rdReadingOpen) onNEMouseUp(e);    });
+  ct.addEventListener('touchend',   function(e){ if(_rdReadingOpen) { onNETouchEnd(e); if(typeof _rdHlModeRearm === 'function') _rdHlModeRearm(); } }, { passive: true });
+  ct.addEventListener('mouseup',    function(e){ if(_rdReadingOpen) { onNEMouseUp(e); if(typeof _rdHlModeRearm === 'function') _rdHlModeRearm(); } });
   // Tap on marks = unhighlight when eraser mode is ON
   ct.addEventListener('click', function(e) {
     if(!_rdReadingOpen) return;
@@ -23142,6 +23152,7 @@ function _rdAttachHlListeners() {
       tgt.replaceWith(document.createTextNode(tgt.textContent));
       _rdRmSyncButtons();
       _rdRmUpdateUndoRedoBtns();
+      if(typeof _rdHlModeRearm === 'function') _rdHlModeRearm();
     }
   });
 }
@@ -23172,11 +23183,68 @@ function _rdRmSyncColorDots() {
   });
 }
 
+// ── Keep the highlight colorbar positioned exactly above the bottombar,
+// however tall the bottombar actually is, so buttons never overlap ──
+(function _rdSyncColorbarOffset() {
+  function _apply() {
+    var bar = document.getElementById('rdBottombar');
+    var overlay = document.getElementById('readingOverlay');
+    if(!bar || !overlay) return;
+    var h = bar.getBoundingClientRect().height;
+    if(h > 0) overlay.style.setProperty('--rd-bottombar-h', (h + 8) + 'px');
+  }
+  var ro = (typeof ResizeObserver !== 'undefined') ? new ResizeObserver(_apply) : null;
+  function _init() {
+    var bar = document.getElementById('rdBottombar');
+    if(!bar) { setTimeout(_init, 500); return; }
+    _apply();
+    if(ro) ro.observe(bar);
+    window.addEventListener('resize', _apply);
+    window.addEventListener('orientationchange', _apply);
+  }
+  document.addEventListener('DOMContentLoaded', function() { setTimeout(_init, 800); });
+})();
+
+// ═══════════════════════════════════════════════════════════
+// READING OVERLAY — Highlight mode auto-off timer (independent
+// of Auto-Scroll/Study Mode — works any time highlight/eraser
+// is ON inside the reading overlay). 3 second idle window that
+// restarts on every highlight, erase, colour change, undo, redo.
+// ═══════════════════════════════════════════════════════════
+var _RD_HL_MODE_IDLE_MS = 3000;
+var _rdHlModeIdleTimer = null;
+
+function _rdHlModeClearTimer() {
+  if(_rdHlModeIdleTimer) { clearTimeout(_rdHlModeIdleTimer); _rdHlModeIdleTimer = null; }
+}
+
+function _rdHlModeStartTimer() {
+  _rdHlModeClearTimer();
+  _rdHlModeIdleTimer = setTimeout(function() {
+    if(!_rdReadingOpen) return;
+    var mode = (typeof _hlCurrentMode !== 'undefined') ? _hlCurrentMode : 'off';
+    if(mode === 'highlight' || mode === 'eraser') {
+      if(typeof setHlMode === 'function') setHlMode('off');
+      _rdRmSyncButtons();
+      showToast && showToast('🖊 Highlight auto-off — dobara tap karo', 'info');
+    }
+  }, _RD_HL_MODE_IDLE_MS);
+}
+
+// Any "activity" (new highlight stroke, erase, colour pick, undo, redo)
+// rearms the 3-second window from scratch.
+function _rdHlModeRearm() {
+  var mode = (typeof _hlCurrentMode !== 'undefined') ? _hlCurrentMode : 'off';
+  if(_rdReadingOpen && (mode === 'highlight' || mode === 'eraser')) _rdHlModeStartTimer();
+}
+window._rdHlModeRearm = _rdHlModeRearm;
+
 window.rdRmToggleHl = function() {
   var hlOn = (typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode === 'highlight');
   if(typeof setHlMode === 'function') setHlMode(hlOn ? 'off' : 'highlight');
   _rdRmSyncButtons();
   _rdShowControls(); // keep controls visible while highlighting
+  if(hlOn) _rdHlModeClearTimer(); else _rdHlModeStartTimer();
 };
 
 window.rdRmToggleEraser = function() {
@@ -23184,6 +23252,7 @@ window.rdRmToggleEraser = function() {
   if(typeof setHlMode === 'function') setHlMode(esOn ? 'off' : 'eraser');
   _rdRmSyncButtons();
   _rdShowControls();
+  if(esOn) _rdHlModeClearTimer(); else _rdHlModeStartTimer();
 };
 
 window.rdRmSelectColor = function(color) {
@@ -23196,6 +23265,8 @@ window.rdRmSelectColor = function(color) {
   }
   _rdRmSyncButtons();
   _rdShowControls();
+  // Colour badalna bhi activity hai — 3-second window fir se shuru
+  _rdHlModeStartTimer();
 };
 
 // ═══════════════════════════════════════════════════════════
