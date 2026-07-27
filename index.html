@@ -7252,6 +7252,9 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       box-shadow:0 4px 24px rgba(0,0,0,0.32);
       touch-action:none;
       min-width:0;
+      max-width:calc(100vw - 12px);
+      flex-wrap:nowrap;overflow-x:auto;overflow-y:visible;
+      -ms-overflow-style:none;scrollbar-width:none;
     ">
       <!-- Drag handle — baayi taraf grip dots -->
       <div id="neRmDragHandle" title="Drag to move" style="
@@ -7353,6 +7356,11 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       <div id="neRmPillToggle" style="display:none;">🖊</div>
       <div id="neRmPillTools" style="display:none;"></div>
     </div>
+    <style>
+      /* Hide horizontal scrollbar on the reading-mode pill (overflow allowed so buttons never overlap) */
+      #neReadMiniPill::-webkit-scrollbar{display:none;}
+      #neReadMiniPill{-webkit-overflow-scrolling:touch;}
+    </style>
 
     <!-- ══ DROPDOWN PANEL (opens below thin bar) ══ -->
     <div id="neDropdownPanel" style="
@@ -20457,6 +20465,7 @@ function neUndo() {
   if(prev.ncoList) _neRestoreCanvas(prev.ncoList);
   markModified();
   showToast('Undo ✅', 'success');
+  if(typeof window._neRmRearmIfActive === 'function') window._neRmRearmIfActive();
 }
 
 // Redo
@@ -20480,6 +20489,7 @@ function neRedo() {
   if(next.ncoList) _neRestoreCanvas(next.ncoList);
   markModified();
   showToast('Redo ✅', 'success');
+  if(typeof window._neRmRearmIfActive === 'function') window._neRmRearmIfActive();
 }
 
 // Highlight - text select se
@@ -21234,6 +21244,7 @@ function neAttachUnhighlightToMark(mark) {
     showToast('Highlight hata diya 🧹', 'success');
     // Update highlights→canvas button badge
     setTimeout(neUpdateHlCanvasBtn, 50);
+    if(typeof window._neRmRearmIfActive === 'function') window._neRmRearmIfActive();
   };
   mark.addEventListener('pointerdown', mark._unhighlightFn);
 }
@@ -48897,7 +48908,7 @@ function _scRmSyncButtons() {
 
 // ── NOTES EDITOR PILL ──
 var _neRmHlAutoTimer = null;
-var _NE_HL_AUTO_SEC  = 15;
+var _NE_HL_AUTO_SEC  = 3;
 
 window.neRmPillToggleExpand = function() {
   var tools = document.getElementById('neRmPillTools');
@@ -49171,15 +49182,23 @@ function _neRmStartAutoTimer() {
 }
 
 (function _patchNeHlStrokeAutoTimer() {
+  function _rearmIfActive() {
+    if(_neFullReadMode && typeof _hlCurrentMode!=='undefined' && _hlCurrentMode!=='off') _neRmStartAutoTimer();
+  }
   document.addEventListener('DOMContentLoaded', function() {
     setTimeout(function() {
+      // Reading-mode highlighting actually happens inside #readingOverlay / #rdContent,
+      // which sits outside .notes-editor-body — listen on both so the timer always resets.
       var body = document.querySelector('.notes-editor-body');
-      if(!body) return;
-      body.addEventListener('pointerup', function() {
-        if(_neFullReadMode && typeof _hlCurrentMode!=='undefined' && _hlCurrentMode!=='off') _neRmStartAutoTimer();
-      });
+      if(body) body.addEventListener('pointerup', _rearmIfActive);
+      var overlay = document.getElementById('readingOverlay');
+      if(overlay) overlay.addEventListener('pointerup', _rearmIfActive);
+      var rdCt = document.getElementById('rdContent');
+      if(rdCt) rdCt.addEventListener('pointerup', _rearmIfActive);
     }, 2000);
   });
+  // Expose so other actions (erase, undo, redo, color change) can rearm the timer too
+  window._neRmRearmIfActive = _rearmIfActive;
 })();
 
 function _neRmSyncButtons() {
@@ -49207,8 +49226,9 @@ window.neRmSelectColor = function(color) {
   // Highlight mode ON karo agar abhi OFF tha
   if(typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode !== 'highlight') {
     if(typeof setHlMode === 'function') setHlMode('highlight');
-    _neRmStartAutoTimer();
   }
+  // Colour badalna bhi "activity" hai — 3-second window har baar fir se shuru ho
+  _neRmStartAutoTimer();
   _neRmSyncButtons();
 };
 
