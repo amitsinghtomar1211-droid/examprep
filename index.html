@@ -1343,6 +1343,7 @@ body.night-mode .ai-chat-dismiss-pill{background:var(--border);}
 #rdContent mark.user-hl-green  {background:rgba(100,220,130,0.45);border-radius:2px;cursor:pointer;}
 #rdContent mark.user-hl-blue   {background:rgba(100,160,255,0.45);border-radius:2px;cursor:pointer;}
 #rdContent mark.user-hl-red    {background:rgba(139,0,0,0.38);border-radius:2px;cursor:pointer;}
+#rdContent mark.user-hl-custom {border-radius:2px;cursor:pointer;}
 
 /* legacy compat — hide old elements */
 .reading-topbar,.reading-controls-bar,.reading-bottombar,.reading-progress,
@@ -2630,10 +2631,12 @@ body.night-mode .sc-color-dot:hover { border-color: rgba(255,255,255,0.7); }
 .note-read-area mark.user-hl-pink{background:#fce4ec;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
 .note-read-area mark.user-hl-green{background:#CCFF90;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
 .note-read-area mark.user-hl-blue{background:#F3E5F5;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}mark.user-hl-red{background:#F6D9D9;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
+.note-read-area mark.user-hl-custom{color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
 .ne-editable mark.user-hl{background:#fff176;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
 .ne-editable mark.user-hl-pink{background:#fce4ec;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
 .ne-editable mark.user-hl-green{background:#CCFF90;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
 .ne-editable mark.user-hl-blue{background:#F3E5F5;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}mark.user-hl-red{background:#F6D9D9;color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
+.ne-editable mark.user-hl-custom{color:inherit;padding:0 2px;border-radius:3px;font-weight:inherit;font-size:inherit;line-height:inherit;vertical-align:baseline;display:inline;}
 /* Edit mode */
 .note-edit-area{font-size:0.86rem;line-height:1.85;color:var(--text);background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;padding:12px;min-height:300px;resize:vertical;font-family:'Noto Sans Devanagari',sans-serif;outline:none;width:100%;}
 .note-edit-area:focus{border-color:var(--accent);background:var(--surface);}
@@ -8756,7 +8759,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     transition:opacity 0.12s,transform 0.12s;
   ">🎨 Colour</div>
 
-  <!-- TEXT COLOUR PICKER — full spectrum, Adobe-style swatch grid -->
+  <!-- COLOUR PICKER — shared by Text-Colour & Highlight-Colour (mode-aware), full spectrum, Adobe-style swatch grid -->
   <div id="rdTextColorBackdrop" onclick="if(event.target===this) rdCloseTextColorPicker();" style="
     display:none;position:fixed;inset:0;z-index:3050;
     background:rgba(0,0,0,0.45);backdrop-filter:blur(2px);
@@ -8769,10 +8772,13 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       box-shadow:0 -6px 30px rgba(0,0,0,0.3);
     ">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <h3 style="margin:0;font-size:0.95rem;font-weight:800;">🎨 Text Colour</h3>
+        <h3 id="rdColorPickerTitle" style="margin:0;font-size:0.95rem;font-weight:800;">🎨 Text Colour</h3>
         <button onclick="rdCloseTextColorPicker();" style="width:30px;height:30px;border-radius:50%;border:none;background:rgba(128,128,128,0.15);cursor:pointer;font-size:1rem;">✕</button>
       </div>
-      <p style="font-size:0.72rem;opacity:0.65;margin:0 0 12px;">Pehle text select karo, phir neeche se koi bhi colour chuno — highlighted ho ya normal text, dono par lagega.</p>
+      <p id="rdColorPickerHint" style="font-size:0.72rem;opacity:0.65;margin:0 0 12px;">Pehle text select karo, phir neeche se koi bhi colour chuno — highlighted ho ya normal text, dono par lagega.</p>
+
+      <!-- Quick-access strip: main colours, ek tap mein — sirf highlight mode mein dikhta hai -->
+      <div id="rdHlQuickRow" style="display:none;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;"></div>
 
       <!-- Native colour wheel + hex input (full spectrum, jaise Adobe/Paint mein hota hai) -->
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
@@ -8786,7 +8792,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
             font-family:monospace;font-size:0.85rem;background:transparent;color:inherit;
           ">
         </div>
-        <button onclick="rdApplyTextColor();event.stopPropagation();" style="
+        <button id="rdColorPickerApplyBtn" onclick="rdApplyPickedColor();event.stopPropagation();" style="
           padding:12px 16px;border-radius:12px;border:none;background:#1565c0;color:#fff;
           font-weight:800;font-size:0.82rem;cursor:pointer;flex-shrink:0;
         ">Apply</button>
@@ -8796,8 +8802,8 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       <label style="font-size:0.68rem;opacity:0.6;display:block;margin-bottom:6px;">Quick Colours</label>
       <div id="rdTextColorSwatchGrid" style="display:grid;grid-template-columns:repeat(9,1fr);gap:6px;margin-bottom:14px;"></div>
 
-      <!-- Reset to default (remove custom colour) -->
-      <button onclick="rdResetTextColor();event.stopPropagation();" style="
+      <!-- Reset to default -->
+      <button id="rdColorPickerResetBtn" onclick="rdResetPickedColor();event.stopPropagation();" style="
         width:100%;padding:10px;border-radius:10px;border:1.5px dashed rgba(128,128,128,0.4);
         background:transparent;color:inherit;font-size:0.78rem;font-weight:700;cursor:pointer;
       ">↺ Default colour par wapas jaao</button>
@@ -17702,11 +17708,13 @@ function neLoadContent(text, isHtml) {
       const hlsToApply = (_editorState.highlights || []).slice();
       hlsToApply.forEach(hl => {
         if(!hl.text || !hl.color) return;
-        const cls = hl.color === 'pink' ? 'user-hl-pink' : hl.color === 'green' ? 'user-hl-green' : hl.color === 'blue' ? 'user-hl-blue' : hl.color === 'red' ? 'user-hl-red' : 'user-hl';
+        const isHex = typeof hl.color === 'string' && hl.color.charAt(0) === '#';
+        const cls = isHex ? 'user-hl-custom' : hl.color === 'pink' ? 'user-hl-pink' : hl.color === 'green' ? 'user-hl-green' : hl.color === 'blue' ? 'user-hl-blue' : hl.color === 'red' ? 'user-hl-red' : 'user-hl';
+        const styleAttr = isHex ? (' style="background-color:' + hl.color + ';"') : '';
         const esc2 = hl.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         const uid = hl.id || ('hl_' + Date.now() + '_' + Math.random().toString(36).slice(2));
         // Replace first occurrence only to avoid incorrect multi-replace
-        html = html.replace(esc2, '<mark class="' + cls + '" data-hlid="' + uid + '">' + esc2 + '</mark>');
+        html = html.replace(esc2, '<mark class="' + cls + '"' + styleAttr + ' data-hlid="' + uid + '">' + esc2 + '</mark>');
       });
       html = html.replace(/\n/g, '<br>');
       area.innerHTML = html;
@@ -21163,7 +21171,9 @@ function applyHighlightFromRange(range, text) {
   if(!_rdReadingOpen) neSaveSnapshot();
 
   const color = _editorState.hlColor;
-  const cls = color === 'pink' ? 'user-hl-pink'
+  const isCustomHex = typeof color === 'string' && color.charAt(0) === '#';
+  const cls = isCustomHex ? 'user-hl-custom'
+             : color === 'pink' ? 'user-hl-pink'
              : color === 'green' ? 'user-hl-green'
              : color === 'blue'  ? 'user-hl-blue'
              : color === 'red'   ? 'user-hl-red'
@@ -21240,7 +21250,9 @@ function applyHighlightFromRange(range, text) {
       const mark = document.createElement('mark');
       mark.className = cls;
       mark.setAttribute('data-hlid', uid);
-      mark.style.cssText = 'cursor:pointer;display:inline;';
+      mark.style.cssText = isCustomHex
+        ? ('cursor:pointer;display:inline;background-color:' + color + ';')
+        : 'cursor:pointer;display:inline;';
       mark.title = 'Tap = Unhighlight';
       mark.textContent = hlText;
 
@@ -23437,21 +23449,102 @@ function _rdSaveCurrentTextSelection() {
   _rdSavedTextSelRange = null;
 }
 
+// ═══════════════════════════════════════════════════════════
+// MODE-AWARE COLOUR PICKER — same panel serves both
+//   'text'      → colours the selected text itself
+//   'highlight' → colours a <mark> background (sticky until changed / mode off)
+// ═══════════════════════════════════════════════════════════
+var _rdColorPickerMode = 'text'; // 'text' | 'highlight'
+
+// Main quick-access colours shown in a strip above the wheel/grid —
+// same 4 for both modes: yellow, dark pink, dark red, dark sky-blue.
+var _RD_QUICK_COLORS = [
+  { hex: '#FFD400', label: 'Yellow'    },
+  { hex: '#AD1457', label: 'Dark Pink' },
+  { hex: '#B71C1C', label: 'Dark Red'  },
+  { hex: '#01579B', label: 'Sky Blue'  }
+];
+
+function _rdBuildQuickRow() {
+  var row = document.getElementById('rdHlQuickRow');
+  if(!row || row.childElementCount) return; // build once
+  _RD_QUICK_COLORS.forEach(function(c) {
+    var btn = document.createElement('div');
+    btn.setAttribute('data-quickhex', c.hex);
+    btn.title = c.label;
+    btn.style.cssText = 'height:40px;border-radius:10px;cursor:pointer;border:2px solid rgba(128,128,128,0.25);background:' + c.hex + ';display:flex;align-items:flex-end;justify-content:center;transition:transform 0.1s;';
+    btn.onclick = function(e) {
+      e.stopPropagation();
+      document.getElementById('rdTextColorWheel').value = c.hex;
+      document.getElementById('rdTextColorHex').value = c.hex;
+      rdApplyPickedColor();
+    };
+    btn.onmousedown = function(){ btn.style.transform = 'scale(0.9)'; };
+    btn.onmouseup = function(){ btn.style.transform = 'scale(1)'; };
+    row.appendChild(btn);
+  });
+}
+
+// Open picker in TEXT-COLOUR mode (unchanged trigger: 🎨 chip / button)
 window.rdOpenTextColorPicker = function() {
+  _rdColorPickerMode = 'text';
   _rdSaveCurrentTextSelection();
   if(!_rdSavedTextSelRange) {
     showToast && showToast('Pehle text select karo, phir 🎨 dabao', 'warn');
     return;
   }
   _rdBuildTextColorSwatchGrid();
+  _rdApplyPickerModeUI();
   var backdrop = document.getElementById('rdTextColorBackdrop');
   if(backdrop) backdrop.style.display = 'flex';
 };
+
+// Open picker in HIGHLIGHT-COLOUR mode
+window.rdOpenHighlightColorPicker = function() {
+  _rdColorPickerMode = 'highlight';
+  _rdBuildTextColorSwatchGrid();
+  _rdBuildQuickRow();
+  _rdApplyPickerModeUI();
+  // Pre-fill wheel/hex with the currently-sticky highlight colour, if it's a hex
+  var cur = (typeof _editorState !== 'undefined' && _editorState.hlColor) ? _editorState.hlColor : '#FFD400';
+  var curHex = (typeof cur === 'string' && cur.charAt(0) === '#') ? cur : '#FFD400';
+  var wheel = document.getElementById('rdTextColorWheel');
+  var hexBox = document.getElementById('rdTextColorHex');
+  if(wheel) wheel.value = curHex;
+  if(hexBox) hexBox.value = curHex;
+  var backdrop = document.getElementById('rdTextColorBackdrop');
+  if(backdrop) backdrop.style.display = 'flex';
+};
+
+// Swap title/hint/quick-row visibility/reset-label based on current mode
+function _rdApplyPickerModeUI() {
+  var title = document.getElementById('rdColorPickerTitle');
+  var hint  = document.getElementById('rdColorPickerHint');
+  var row   = document.getElementById('rdHlQuickRow');
+  var reset = document.getElementById('rdColorPickerResetBtn');
+  if(_rdColorPickerMode === 'highlight') {
+    if(title) title.textContent = '🖍️ Highlight Colour';
+    if(hint)  hint.textContent  = 'Colour chuno — jab tak dusra colour na chuno ya highlight mode off na karo, yahi colour use hota rahega.';
+    if(row)   row.style.display = 'grid';
+    if(reset) reset.textContent = '↺ Yellow (default) par wapas jaao';
+  } else {
+    if(title) title.textContent = '🎨 Text Colour';
+    if(hint)  hint.textContent  = 'Pehle text select karo, phir neeche se koi bhi colour chuno — highlighted ho ya normal text, dono par lagega.';
+    if(row)   row.style.display = 'none';
+    if(reset) reset.textContent = '↺ Default colour par wapas jaao';
+  }
+}
 
 window.rdCloseTextColorPicker = function() {
   var backdrop = document.getElementById('rdTextColorBackdrop');
   if(backdrop) backdrop.style.display = 'none';
   _rdHideFloatChip();
+  // If closed WITHOUT choosing a highlight colour while highlight mode is ON,
+  // fall back to default yellow (matches existing behaviour) — but only if
+  // no colour has ever been picked sticky-style yet this session.
+  if(_rdColorPickerMode === 'highlight' && typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode === 'highlight') {
+    if(!_editorState.hlColor) _editorState.hlColor = 'yellow';
+  }
 };
 
 // Keep the wheel & hex box in sync with each other
@@ -23468,6 +23561,49 @@ window.rdHexInputChanged = function(val) {
     if(wheel) wheel.value = val;
   }
 };
+
+// Apply the chosen colour — routes to TEXT or HIGHLIGHT logic based on mode
+window.rdApplyPickedColor = function() {
+  if(_rdColorPickerMode === 'highlight') { _rdApplyHighlightPickedColor(); }
+  else { rdApplyTextColor(); }
+};
+
+window.rdResetPickedColor = function() {
+  if(_rdColorPickerMode === 'highlight') { _rdResetHighlightPickedColor(); }
+  else { rdResetTextColor(); }
+};
+
+// ── HIGHLIGHT MODE: just set the sticky colour, don't require a live
+// selection (colour panel opens the moment highlight mode turns ON,
+// before the user has selected anything) ──
+function _rdApplyHighlightPickedColor() {
+  var hexBox = document.getElementById('rdTextColorHex');
+  var hex = hexBox ? hexBox.value.trim() : '#FFD400';
+  if(!/^#[0-9a-fA-F]{6}$/.test(hex)) hex = '#FFD400';
+
+  if(typeof selectHlColor === 'function') selectHlColor(hex);
+  else if(typeof _editorState !== 'undefined') _editorState.hlColor = hex;
+
+  // Make sure highlight mode is actually ON so the picked colour takes effect
+  if(typeof setHlMode === 'function' && (typeof _hlCurrentMode === 'undefined' || _hlCurrentMode !== 'highlight')) {
+    setHlMode('highlight');
+  }
+  _rdRmSyncButtons();
+  _rdRmSyncColorDots();
+  _rdShowControls();
+  _rdHlModeStartTimer(); // colour pick counts as activity — rearm auto-off window
+
+  showToast && showToast('🖍️ Highlight colour set ho gaya', 'success');
+  rdCloseTextColorPicker();
+}
+
+function _rdResetHighlightPickedColor() {
+  if(typeof selectHlColor === 'function') selectHlColor('yellow');
+  else if(typeof _editorState !== 'undefined') _editorState.hlColor = 'yellow';
+  _rdRmSyncColorDots();
+  showToast && showToast('↺ Yellow (default) set ho gaya', 'success');
+  rdCloseTextColorPicker();
+}
 
 // Apply the chosen colour to the previously-saved selection.
 // Wraps each text node in the range with a <span style="color:...">,
@@ -23575,10 +23711,21 @@ window.rdResetTextColor = function() {
 
 window.rdRmToggleHl = function() {
   var hlOn = (typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode === 'highlight');
-  if(typeof setHlMode === 'function') setHlMode(hlOn ? 'off' : 'highlight');
-  _rdRmSyncButtons();
-  _rdShowControls(); // keep controls visible while highlighting
-  if(hlOn) _rdHlModeClearTimer(); else _rdHlModeStartTimer();
+  if(hlOn) {
+    // Turning highlight OFF
+    if(typeof setHlMode === 'function') setHlMode('off');
+    _rdRmSyncButtons();
+    _rdHlModeClearTimer();
+  } else {
+    // Turning highlight ON — open the colour panel immediately so the
+    // user decides a colour up front. If they close without choosing,
+    // rdCloseTextColorPicker() falls back to default yellow.
+    if(typeof setHlMode === 'function') setHlMode('highlight');
+    _rdRmSyncButtons();
+    _rdShowControls();
+    _rdHlModeStartTimer();
+    window.rdOpenHighlightColorPicker();
+  }
 };
 
 window.rdRmToggleEraser = function() {
