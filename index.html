@@ -1097,6 +1097,7 @@ body.night-mode .ai-chat-dismiss-pill{background:var(--border);}
   line-height:1.9;
   word-break:break-word;
   white-space:pre-wrap;
+  -webkit-touch-callout:none; /* stops the native iOS/Android selection callout menu */
 }
 /* Rich HTML content (docx mode) */
 .reading-content.rd-rich{
@@ -8741,6 +8742,19 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <div id="rdRmDotBlue"   class="rd-color-dot"            style="background:#82b1ff;" onclick="rdRmSelectColor('blue');event.stopPropagation();"   title="Blue"></div>
     <div id="rdRmDotRed"    class="rd-color-dot"            style="background:#8B0000;" onclick="rdRmSelectColor('red');event.stopPropagation();"    title="Red"></div>
   </div>
+
+  <!-- FLOATING TEXT-COLOUR CHIP — selection ke turant baad, bina bottombar tap kiye dikhta hai -->
+  <div id="rdFloatColorChip" onmousedown="event.preventDefault();" ontouchstart="event.preventDefault();event.stopPropagation();" ontouchend="event.preventDefault();event.stopPropagation();rdOpenTextColorPicker();" onclick="event.stopPropagation();rdOpenTextColorPicker();" style="
+    display:none;position:fixed;z-index:3040;
+    padding:7px 12px;border-radius:20px;
+    background:rgba(20,20,28,0.94);color:#fff;
+    font-size:0.8rem;font-weight:700;cursor:pointer;
+    box-shadow:0 4px 16px rgba(0,0,0,0.35);
+    backdrop-filter:blur(10px);
+    align-items:center;gap:5px;
+    -webkit-tap-highlight-color:transparent;
+    transition:opacity 0.12s,transform 0.12s;
+  ">🎨 Colour</div>
 
   <!-- TEXT COLOUR PICKER — full spectrum, Adobe-style swatch grid -->
   <div id="rdTextColorBackdrop" onclick="if(event.target===this) rdCloseTextColorPicker();" style="
@@ -23289,6 +23303,82 @@ function _rdHlModeRearm() {
   var mode = (typeof _hlCurrentMode !== 'undefined') ? _hlCurrentMode : 'off';
   if(_rdReadingOpen && (mode === 'highlight' || mode === 'eraser')) _rdHlModeStartTimer();
 }
+// ═══════════════════════════════════════════════════════════
+// READING OVERLAY — Floating colour chip on selection
+// Shows a small "🎨 Colour" chip right above/below whatever text
+// the user selects, so they never need to tap the screen (which
+// would otherwise hide the bottombar / clear the selection) to
+// reach the colour picker.
+// ═══════════════════════════════════════════════════════════
+var _rdFloatChipHideTimer = null;
+
+function _rdPositionFloatChip(rect) {
+  var chip = document.getElementById('rdFloatColorChip');
+  if(!chip) return;
+  var chipW = chip.offsetWidth || 90;
+  var chipH = chip.offsetHeight || 34;
+  var left = rect.left + (rect.width / 2) - (chipW / 2);
+  left = Math.max(8, Math.min(window.innerWidth - chipW - 8, left));
+  // Prefer just above the selection; if too close to top, place below instead
+  var top = rect.top - chipH - 10;
+  if(top < 44) top = rect.bottom + 10;
+  chip.style.left = left + 'px';
+  chip.style.top  = top + 'px';
+}
+
+function _rdShowFloatChipForSelection() {
+  if(!_rdReadingOpen) return;
+  var chip = document.getElementById('rdFloatColorChip');
+  if(!chip) return;
+  try {
+    var sel = window.getSelection();
+    if(!sel || sel.rangeCount === 0 || sel.isCollapsed) { _rdHideFloatChip(); return; }
+    var range = sel.getRangeAt(0);
+    var ct = document.getElementById('rdContent');
+    if(!ct || !ct.contains(range.commonAncestorContainer)) { _rdHideFloatChip(); return; }
+    var text = range.toString();
+    if(!text || !text.trim()) { _rdHideFloatChip(); return; }
+    var rect = range.getBoundingClientRect();
+    if(!rect || (rect.width === 0 && rect.height === 0)) { _rdHideFloatChip(); return; }
+    _rdSaveCurrentTextSelection(); // keep the range fresh & ready for the picker
+    chip.style.display = 'flex';
+    _rdPositionFloatChip(rect);
+  } catch(_) { _rdHideFloatChip(); }
+}
+
+function _rdHideFloatChip() {
+  var chip = document.getElementById('rdFloatColorChip');
+  if(chip) chip.style.display = 'none';
+}
+
+(function _rdAttachSelectionChipListeners() {
+  function _init() {
+    var ct = document.getElementById('rdContent');
+    if(!ct) { setTimeout(_init, 500); return; }
+    // selectionchange fires as soon as the drag/selection settles — no tap needed
+    document.addEventListener('selectionchange', function() {
+      if(!_rdReadingOpen) return;
+      clearTimeout(_rdFloatChipHideTimer);
+      _rdFloatChipHideTimer = setTimeout(_rdShowFloatChipForSelection, 60);
+    });
+    // Hide the chip if the user taps elsewhere (but not on the chip itself)
+    document.addEventListener('touchstart', function(e) {
+      if(!_rdReadingOpen) return;
+      var chip = document.getElementById('rdFloatColorChip');
+      if(chip && chip.style.display !== 'none' && !chip.contains(e.target)) {
+        var sel = window.getSelection();
+        if(!sel || sel.isCollapsed) _rdHideFloatChip();
+      }
+    }, { passive: true });
+    // Suppress native "Copy / Share / Search" selection menu inside the
+    // reading overlay — our floating 🎨 chip is the intended action UI.
+    ct.addEventListener('contextmenu', function(e) {
+      if(_rdReadingOpen) e.preventDefault();
+    });
+  }
+  document.addEventListener('DOMContentLoaded', function() { setTimeout(_init, 800); });
+})();
+
 window._rdHlModeRearm = _rdHlModeRearm;
 
 // ═══════════════════════════════════════════════════════════
@@ -23361,6 +23451,7 @@ window.rdOpenTextColorPicker = function() {
 window.rdCloseTextColorPicker = function() {
   var backdrop = document.getElementById('rdTextColorBackdrop');
   if(backdrop) backdrop.style.display = 'none';
+  _rdHideFloatChip();
 };
 
 // Keep the wheel & hex box in sync with each other
