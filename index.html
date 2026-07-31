@@ -1394,6 +1394,13 @@ body.night-mode .ai-chat-dismiss-pill{background:var(--border);}
 #rdContent mark.user-hl-blue   {background:rgba(100,160,255,0.45);border-radius:2px;cursor:pointer;}
 #rdContent mark.user-hl-red    {background:rgba(139,0,0,0.38);border-radius:2px;cursor:pointer;}
 #rdContent mark.user-hl-custom {border-radius:2px;cursor:pointer;}
+/* Star Marker — tricky/important text badge (reading mode) */
+#rdContent .rd-star-mark{position:relative;}
+#rdContent .rd-star-badge{
+  display:inline-block;font-size:0.72em;line-height:1;letter-spacing:-1px;
+  margin-right:2px;cursor:pointer;user-select:none;vertical-align:baseline;
+  filter:drop-shadow(0 1px 1px rgba(0,0,0,0.25));
+}
 
 /* legacy compat — hide old elements */
 .reading-topbar,.reading-controls-bar,.reading-bottombar,.reading-progress,
@@ -8883,6 +8890,37 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     </div>
   </div>
 
+  <!-- STAR MARKER PICKER — selected text par 1/2/3 star lagane ke liye chhota popup -->
+  <div id="rdStarBackdrop" onclick="if(event.target===this) rdCloseStarPicker();" style="
+    display:none;position:fixed;inset:0;z-index:3050;
+    background:rgba(0,0,0,0.45);backdrop-filter:blur(2px);
+    align-items:flex-end;justify-content:center;
+  ">
+    <div onclick="event.stopPropagation();" style="
+      width:100%;max-width:480px;
+      background:var(--surface,#fff);color:var(--text,#222);
+      border-radius:20px 20px 0 0;padding:16px 18px calc(16px + env(safe-area-inset-bottom));
+      box-shadow:0 -6px 30px rgba(0,0,0,0.3);
+    ">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <h3 style="margin:0;font-size:0.95rem;font-weight:800;">⭐ Star Marker</h3>
+        <button onclick="rdCloseStarPicker();" style="width:30px;height:30px;border-radius:50%;border:none;background:rgba(128,128,128,0.15);cursor:pointer;font-size:1rem;">✕</button>
+      </div>
+      <p style="font-size:0.72rem;opacity:0.65;margin:0 0 14px;">Selected word/line kitni tricky/important hai, wo star se mark karo. Revision mein ye turant dikh jayega.</p>
+
+      <div style="display:flex;gap:10px;margin-bottom:12px;">
+        <button onclick="rdApplyStar(1);event.stopPropagation();" style="flex:1;padding:14px 6px;border-radius:14px;border:1.5px solid rgba(128,128,128,0.25);background:transparent;color:inherit;font-size:1.3rem;font-weight:800;cursor:pointer;">⭐<div style="font-size:0.62rem;font-weight:700;opacity:0.7;margin-top:4px;">Easy</div></button>
+        <button onclick="rdApplyStar(2);event.stopPropagation();" style="flex:1;padding:14px 6px;border-radius:14px;border:1.5px solid rgba(128,128,128,0.25);background:transparent;color:inherit;font-size:1.3rem;font-weight:800;cursor:pointer;">⭐⭐<div style="font-size:0.62rem;font-weight:700;opacity:0.7;margin-top:4px;">Medium</div></button>
+        <button onclick="rdApplyStar(3);event.stopPropagation();" style="flex:1;padding:14px 6px;border-radius:14px;border:1.5px solid rgba(128,128,128,0.25);background:transparent;color:inherit;font-size:1.3rem;font-weight:800;cursor:pointer;">⭐⭐⭐<div style="font-size:0.62rem;font-weight:700;opacity:0.7;margin-top:4px;">Tricky</div></button>
+      </div>
+
+      <button onclick="rdRemoveStar();event.stopPropagation();" style="
+        width:100%;padding:10px;border-radius:10px;border:1.5px dashed rgba(128,128,128,0.4);
+        background:transparent;color:inherit;font-size:0.78rem;font-weight:700;cursor:pointer;
+      ">🗑 Star hatao (selected text se)</button>
+    </div>
+  </div>
+
   <!-- BOTTOM BAR (auto-hide) -->
   <div class="rd-bottombar" id="rdBottombar">
     <!-- Font size -->
@@ -8906,6 +8944,8 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <button id="rdTextColorBtn" class="rd-btn" onclick="rdOpenTextColorPicker();event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;position:relative;" title="Text ka colour badlo">
       🎨<span id="rdTextColorDot" style="position:absolute;bottom:2px;right:4px;width:8px;height:8px;border-radius:50%;background:#000;border:1px solid rgba(255,255,255,0.7);"></span>
     </button>
+    <!-- Star Marker — tricky/important lines par 1-3 star lagao, revision mein priority dikhane ke liye -->
+    <button id="rdStarBtn" class="rd-btn" onclick="rdOpenStarPicker();event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;" title="Star lagao (Tricky/Important marker)">⭐</button>
 
     <div style="width:1px;height:22px;background:rgba(128,128,128,0.25);flex-shrink:0;"></div>
 
@@ -23794,6 +23834,199 @@ window.rdResetTextColor = function() {
   rdCloseTextColorPicker();
   _rdSavedTextSelRange = null;
 };
+
+// ═══════════════════════════════════════════════════════════
+// READING OVERLAY — STAR MARKER (1★/2★/3★)
+// Selected text ke shuru mein ⭐ badge laga deta hai — jitne zyada
+// star, utna tricky/important. Revision ke time turant nazar aa
+// jayega. Same "saved selection range" pattern jo Text Colour
+// tool use karta hai, taaki dono tools ek doosre ko disturb na karein.
+// Star mark par dobara tap karne se cycle hota hai: 1→2→3→hata do.
+// ═══════════════════════════════════════════════════════════
+window.rdOpenStarPicker = function() {
+  _rdSaveCurrentTextSelection();
+  if(!_rdSavedTextSelRange) {
+    showToast && showToast('Pehle text select karo, phir ⭐ dabao', 'warn');
+    return;
+  }
+  var backdrop = document.getElementById('rdStarBackdrop');
+  if(backdrop) backdrop.style.display = 'flex';
+};
+
+window.rdCloseStarPicker = function() {
+  var backdrop = document.getElementById('rdStarBackdrop');
+  if(backdrop) backdrop.style.display = 'none';
+};
+
+// Core: wrap the saved selection in a <span class="rd-star-mark" data-stars="N">
+// with a small ⭐ badge prefix inside it (badge itself is a separate inner span
+// so a tap on the badge can cycle/remove the rating without disturbing the text).
+window.rdApplyStar = function(count) {
+  if(!_rdSavedTextSelRange) {
+    showToast && showToast('Pehle text select karo', 'warn');
+    return;
+  }
+  var range = _rdSavedTextSelRange;
+  var ct = document.getElementById('rdContent');
+  if(!ct || !ct.contains(range.commonAncestorContainer)) {
+    showToast && showToast('Selection ab valid nahi hai', 'error');
+    rdCloseStarPicker();
+    return;
+  }
+
+  _rdHlSaveSnapshot(); // undo/redo ke liye
+
+  try {
+    // Agar selection already kisi star-mark ke andar/overlap kar rahi hai,
+    // pehle use hata do taaki nested marks na banein — phir fresh wrap karo.
+    _rdStripStarsInRange(range);
+
+    var walker = document.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT, {
+      acceptNode: function(node) { return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT; }
+    });
+    var nodes = [];
+    if(range.commonAncestorContainer.nodeType === Node.TEXT_NODE) {
+      nodes.push(range.commonAncestorContainer);
+    } else {
+      var n; while((n = walker.nextNode())) nodes.push(n);
+    }
+    if(!nodes.length) { showToast && showToast('Text nahi mila', 'error'); rdCloseStarPicker(); return; }
+
+    var wrapped = null;
+    nodes.forEach(function(tNode, idx) {
+      var startOffset = 0, endOffset = tNode.textContent.length;
+      if(nodes.length === 1) {
+        startOffset = (tNode === range.startContainer) ? range.startOffset : 0;
+        endOffset   = (tNode === range.endContainer)   ? range.endOffset   : tNode.textContent.length;
+      } else {
+        if(idx === 0 && tNode === range.startContainer) startOffset = range.startOffset;
+        if(idx === nodes.length - 1 && tNode === range.endContainer) endOffset = range.endOffset;
+      }
+      if(startOffset >= endOffset) return;
+
+      var fullText = tNode.textContent;
+      var beforeText = fullText.slice(0, startOffset);
+      var midText    = fullText.slice(startOffset, endOffset);
+      var afterText  = fullText.slice(endOffset);
+
+      var span = document.createElement('span');
+      span.className = 'rd-star-mark';
+      span.setAttribute('data-stars', String(count));
+      span.title = count + '★ marked — tap karke badlo';
+      span.appendChild(document.createTextNode(midText));
+      if(idx === 0) wrapped = span; // pehla span = "primary" for the badge
+
+      var parent = tNode.parentNode;
+      if(!parent) return;
+      var frag = document.createDocumentFragment();
+      if(beforeText) frag.appendChild(document.createTextNode(beforeText));
+      frag.appendChild(span);
+      if(afterText) frag.appendChild(document.createTextNode(afterText));
+      parent.replaceChild(frag, tNode);
+    });
+
+    if(wrapped) _rdInsertStarBadge(wrapped, count);
+
+    markModified && markModified();
+    showToast && showToast('⭐'.repeat(count) + ' star laga diya!', 'success');
+    _rdRmUpdateUndoRedoBtns();
+  } catch(err) {
+    showToast && showToast('Star lagane mein problem aai', 'error');
+  }
+
+  rdCloseStarPicker();
+  _rdSavedTextSelRange = null;
+  try { window.getSelection().removeAllRanges(); } catch(_) {}
+};
+
+// Remove star marks from the saved selection (unwrap spans, keep text as-is)
+window.rdRemoveStar = function() {
+  if(!_rdSavedTextSelRange) {
+    showToast && showToast('Pehle text select karo', 'warn');
+    return;
+  }
+  _rdHlSaveSnapshot();
+  try {
+    _rdStripStarsInRange(_rdSavedTextSelRange);
+    markModified && markModified();
+    showToast && showToast('🗑 Star hata diya', 'success');
+    _rdRmUpdateUndoRedoBtns();
+  } catch(err) {
+    showToast && showToast('Star hatane mein problem aai', 'error');
+  }
+  rdCloseStarPicker();
+  _rdSavedTextSelRange = null;
+  try { window.getSelection().removeAllRanges(); } catch(_) {}
+};
+
+// Unwrap any rd-star-mark spans that intersect the given range (removes badge + span, keeps text)
+function _rdStripStarsInRange(range) {
+  var ct = document.getElementById('rdContent');
+  if(!ct) return;
+  var marks = ct.querySelectorAll('span.rd-star-mark');
+  marks.forEach(function(sp) {
+    if(range.intersectsNode(sp)) {
+      var badge = sp.querySelector('.rd-star-badge');
+      if(badge) badge.remove();
+      var parent = sp.parentNode;
+      if(!parent) return;
+      while(sp.firstChild) parent.insertBefore(sp.firstChild, sp);
+      parent.removeChild(sp);
+    }
+  });
+}
+
+// Inserts the small "⭐×N" floating badge just before the star-marked span's text,
+// as an inline element so it flows naturally with the paragraph text.
+function _rdInsertStarBadge(span, count) {
+  var badge = document.createElement('span');
+  badge.className = 'rd-star-badge';
+  badge.contentEditable = 'false';
+  badge.textContent = '⭐'.repeat(count);
+  badge.title = count + '★ — tap karke badlo ya hatao';
+  span.insertBefore(badge, span.firstChild);
+}
+
+// Tap on a star badge = cycle 1→2→3→remove. Delegated listener on rdContent.
+(function _rdAttachStarBadgeListener() {
+  function _init() {
+    var ct = document.getElementById('rdContent');
+    if(!ct) { setTimeout(_init, 500); return; }
+    if(ct._rdStarBadgeAttached) return;
+    ct._rdStarBadgeAttached = true;
+    ct.addEventListener('click', function(e) {
+      if(!_rdReadingOpen) return;
+      var badge = e.target.closest ? e.target.closest('.rd-star-badge') : null;
+      if(!badge) return;
+      var span = badge.closest('.rd-star-mark');
+      if(!span) return;
+      e.preventDefault();
+      e.stopPropagation();
+      _rdHlSaveSnapshot();
+      var cur = parseInt(span.getAttribute('data-stars'), 10) || 1;
+      if(cur >= 3) {
+        // 3★ ke baad — poora star mark hata do
+        badge.remove();
+        var parent = span.parentNode;
+        if(parent) {
+          while(span.firstChild) parent.insertBefore(span.firstChild, span);
+          parent.removeChild(span);
+        }
+        showToast && showToast('🗑 Star hata diya', 'info');
+      } else {
+        var next = cur + 1;
+        span.setAttribute('data-stars', String(next));
+        span.title = next + '★ marked — tap karke badlo';
+        badge.textContent = '⭐'.repeat(next);
+        badge.title = next + '★ — tap karke badlo ya hatao';
+        showToast && showToast('⭐'.repeat(next) + ' set ho gaya', 'info');
+      }
+      markModified && markModified();
+      _rdRmUpdateUndoRedoBtns();
+    });
+  }
+  document.addEventListener('DOMContentLoaded', function() { setTimeout(_init, 800); });
+})();
 
 window.rdRmToggleHl = function() {
   var hlOn = (typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode === 'highlight');
