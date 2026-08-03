@@ -26054,15 +26054,17 @@ function initFirebase(){
           _attachRealtimeListener(); _initUpdatesListener();
           if(_isAdmin){ _startAdminSessionWatch(); setTimeout(_adminLoadRecentUpdates, 1500); }
           if(!_isAdmin && _currentUser) loadUserPermissions(_currentUser.uid);
-          setTimeout(function(){
-            if(typeof pullFromCloud==='function' && _currentUser && _db){
-              console.info('[🔐 AUTH] Auto pullFromCloud start (1.5s delay ke baad)');
-              pullFromCloud();
-            } else {
-              console.warn('[🔐 AUTH] Auto pullFromCloud SKIP — pullFromCloud:'+typeof pullFromCloud+' user:'+!!_currentUser+' db:'+!!_db);
-              hideDataLoadingOverlay(); // pullFromCloud nahi chala — overlay manually band karo
-            }
-          }, 1500);
+          // ✅ FIX: Auto pullFromCloud (1.5s baad) yahan se hata diya gaya hai.
+          // Pehle yeh loadFromFirebase ke turant baad automatically chal jaata tha,
+          // jabki loadFromFirebase khud hi poora sync kaam sahi se kar chuka hota tha.
+          // Dono functions ek hi kaam alag tarike se karte the aur S.subjects ko
+          // parallel/race mein overwrite karte the — isse UI mein data flicker/gayab
+          // hone jaisa dikhta tha (jabki cloud data safe rehta tha). Agar dono ke
+          // paas ek saath bada data (>10MB) push karna pada, to Firestore ki 10MB
+          // per-write limit se crash bhi ho sakta tha. Ab pullFromCloud sirf tab
+          // chalega jab user khud "Latest Notes Lao" button dabayega — login ke
+          // time sirf loadFromFirebase hi source of truth hai.
+          hideDataLoadingOverlay();
         });
       } else {
         _currentUser = null; _isAdmin = false; _effectiveUID = null; _userPerms = {quiz:false,quizvault:false,history:false,gamevault:false,stats:false,exams:false,testseries:false,aichat:false,smartnotes:false,savedFacts:false,studycoach:false,highlight:false,notesEdit:false,masterNotes:false,aiDraw:false,flashcards:false,pdfNotes:false,ytNotes:false,cloudSave:false,dataBackup:false,apiSettings:false};
@@ -34693,14 +34695,39 @@ async function saveToFirebase(){
       (subj.subSubjects||[]).forEach(function(sss){ _saveSubSubjTopics(sss, subj.id); });
     });
 
-    // Batch commit in chunks of 499
-    console.log('[🔥 saveToFirebase] Total ops to commit: '+allOps.length+' (batches: '+Math.ceil(allOps.length/499)+')');
-    for(var i=0; i<allOps.length; i+=499){
-      var chunk = allOps.slice(i, i+499);
+    // ✅ FIX: SIZE-AWARE batching (not just op-count).
+    // Firestore's real hard limit is ~10MB PAYLOAD per commit, not just 499 ops.
+    // Pehle sirf 499 ops ka fixed chunk banaya jaata tha — agar un 499 (ya even
+    // 100-200) ops mein se kuchh topics/notes bade the (rich HTML, images waghera),
+    // to chunk ka total payload 10MB paar kar jaata tha aur poora batch crash ho
+    // jaata tha ("Request payload size exceeds the limit"), jisse woh saara data
+    // us commit mein save hi nahi hota tha. Ab har op ka approx JSON size measure
+    // karke ek safe 8MB (buffer ke saath) tak hi ek batch mein daalte hain, aur op
+    // count 499 se bhi zyada na ho — dono limits ka safe-side respect hota hai.
+    var _MAX_BATCH_BYTES = 8 * 1024 * 1024; // 8MB safety margin (Firestore hard limit ~10MB)
+    var _batches = [];
+    var _curBatch = [];
+    var _curBytes = 0;
+    allOps.forEach(function(op){
+      var opBytes;
+      try{ opBytes = JSON.stringify(op.data).length; }catch(e){ opBytes = 1024; }
+      if(_curBatch.length >= 499 || (_curBytes + opBytes) > _MAX_BATCH_BYTES){
+        if(_curBatch.length){ _batches.push(_curBatch); }
+        _curBatch = [];
+        _curBytes = 0;
+      }
+      _curBatch.push(op);
+      _curBytes += opBytes;
+    });
+    if(_curBatch.length){ _batches.push(_curBatch); }
+
+    console.log('[🔥 saveToFirebase] Total ops to commit: '+allOps.length+' (size-aware batches: '+_batches.length+')');
+    for(var bi=0; bi<_batches.length; bi++){
+      var chunk = _batches[bi];
       var batch = _db.batch();
       chunk.forEach(function(op){ batch.set(op.ref, op.data, {merge:true}); });
       await batch.commit();
-      console.log('[🔥 saveToFirebase] Batch '+(Math.floor(i/499)+1)+' committed ('+chunk.length+' ops)');
+      console.log('[🔥 saveToFirebase] Batch '+(bi+1)+'/'+_batches.length+' committed ('+chunk.length+' ops)');
     }
 
     // After full save, re-attach topic listeners for any new topics
