@@ -15180,13 +15180,7 @@ async function _loadAllFlashcardsFromFirebase(){
       loadedProgress++;
     });
 
-    // ⚠️ FIX: yahan poora save() call NAHI karna — save() ke naye (granular-sync)
-    // version me S.subjects ko loop karke topics resave hote hain, aur yeh function
-    // loadFromFirebase() ke SHURU mein chalता hai, jab S.subjects abhi tak cloud se
-    // refresh nahi hua hota (sirf purana/stale localStorage data hota hai). Isse
-    // stale/incomplete subjects list localStorage mein overwrite ho jaata tha,
-    // jisse refresh/login ke baad sirf 1 subject dikhta tha. Sirf local persist karo.
-    try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
+    save();
     console.info('[🃏 flashcardSets] restored '+loadedSets+' decks and '+loadedProgress+' progress docs');
     return {sets:loadedSets, progress:loadedProgress};
   }catch(e){
@@ -34471,13 +34465,38 @@ async function saveSubjectShellFast(subjId){
     var opsCount = 0;
 
     // Meta doc — chhota, fast (stats/exams/subjectIds waghera)
+    // SAFETY: subjectIds ko kabhi bhi blindly current in-memory S.subjects se
+    // overwrite nahi karte — agar kisi wajah se (abhi poora load nahi hua, race
+    // condition, waghera) S.subjects temporarily chhota ho, to purana cloud
+    // wala bada list zaroorat se zyada shrink ho sakta hai aur data "gayab"
+    // dikhne lagta hai (jabki subjects collection mein woh safe pada hota hai).
+    // Isliye: cloud ka existing subjectIds fetch karke us list ke saath UNION
+    // karo — kabhi shrink mat karo, sirf grow karo (delete ek alag explicit
+    // flow se hona chahiye, is fast-save se nahi).
+    var localSubjIds = (S.subjects||[]).map(function(s){ return String(s.id); });
+    var mergedSubjIds = localSubjIds;
+    try{
+      var _metaSnap = await _db.collection('users').doc(uid).get();
+      var _existingIds = (_metaSnap.exists && _metaSnap.data().subjectIds) || [];
+      if(_existingIds.length){
+        var _seen = {};
+        mergedSubjIds = [];
+        _existingIds.concat(localSubjIds).forEach(function(id){
+          var k = String(id);
+          if(!_seen[k]){ _seen[k]=true; mergedSubjIds.push(k); }
+        });
+      }
+    }catch(e){
+      console.warn('[⚡ saveSubjectShellFast] subjectIds guard read fail, using local list only:', e && e.message);
+    }
+
     var wid = _genWriteId();
     _myWriteId = wid;
     _lastSaveTime = Date.now();
     batch.set(_db.collection('users').doc(uid), {
       activeExamId:      S.activeExamId||'',
       model:             S.model||'meta-llama/llama-4-scout-17b-16e-instruct',
-      subjectIds:        (S.subjects||[]).map(function(s){ return s.id; }),
+      subjectIds:        mergedSubjIds,
       topicFormat:       'v2',
       lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
       writeId:           wid
