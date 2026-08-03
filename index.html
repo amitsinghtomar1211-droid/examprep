@@ -7671,6 +7671,10 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       <button onclick="neOpenJsonTableImport()" title="JSON se Table import karo — paste karo aur insert!"
         style="width:36px;height:36px;border-radius:10px;border:1.5px solid rgba(230,81,0,0.4);background:rgba(230,81,0,0.1);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;font-size:0.72rem;font-weight:900;color:#e65100;box-shadow:0 2px 8px rgba(0,0,0,0.07);letter-spacing:-1px;">{}</button>
 
+      <!-- JSON → Flashcards button -->
+      <button onclick="fcOpenJsonImport()" title="🃏 JSON se Flashcards banao is topic ke liye — paste karo aur Firebase mein save karo!"
+        style="width:36px;height:36px;border-radius:10px;border:1.5px solid rgba(31,78,61,0.4);background:rgba(31,78,61,0.1);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;font-size:1rem;box-shadow:0 2px 8px rgba(0,0,0,0.07);">🃏</button>
+
       <!-- Image Insert button -->
       <button onclick="neOpenImageInsert()" title="📷 Image / Photo insert karo notes mein (device se)"
         style="width:36px;height:36px;border-radius:10px;border:1.5px solid rgba(0,121,107,0.4);background:rgba(0,121,107,0.1);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;font-size:1rem;box-shadow:0 2px 8px rgba(0,0,0,0.07);">📷</button>
@@ -8663,7 +8667,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
 
 <!-- PLAYER: Attempt flashcards for current topic, spaced-repetition -->
 <div class="modal-overlay" id="fcPlayerModal">
-  <div class="modal" style="max-width:480px;padding:0;overflow:hidden;background:transparent;box-shadow:none;">
+  <div class="modal" style="max-width:400px;padding:0;overflow:hidden;background:transparent;box-shadow:none;">
     <div style="background:linear-gradient(160deg,#1a1230,#1F4E3D 130%);border-radius:20px;padding:0;overflow:hidden;">
 
       <!-- Header -->
@@ -8711,7 +8715,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       <!-- Card stage -->
       <div id="fcCardStage" style="padding:6px 16px 14px;">
         <div style="perspective:1600px;">
-          <div id="fcCard" onclick="fcFlip()" style="position:relative;min-height:230px;border-radius:18px;cursor:pointer;transform-style:preserve-3d;transition:transform .5s cubic-bezier(.4,.2,.2,1);">
+          <div id="fcCard" onclick="fcFlip()" style="position:relative;min-height:200px;border-radius:18px;cursor:pointer;transform-style:preserve-3d;transition:transform .5s cubic-bezier(.4,.2,.2,1);">
 
             <div class="fc-face" id="fcFaceFront" style="position:absolute;inset:0;border-radius:18px;backface-visibility:hidden;
               background:linear-gradient(160deg,#2A6650,#1F4E3D);display:flex;flex-direction:column;
@@ -11228,6 +11232,7 @@ function _renderTopicCard(t,sid,secid,ti,ae){
     </div>
     <div class="topic-card-actions">
       <button class="lib-action-btn primary" onclick="viewTopic(${sid},${secid},${t.id})" title="View Topic">👀</button>
+      ${(S.flashcardSets && S.flashcardSets[String(sid)+'_'+String(secid)+'_'+String(t.id)] && S.flashcardSets[String(sid)+'_'+String(secid)+'_'+String(t.id)].cardCount) ? `<button class="lib-action-btn" onclick="event.stopPropagation();_editorState.sid=${sid};_editorState.secid=${secid};_editorState.tid=${t.id};fcOpenPlayer()" title="🃏 Flashcards Khelo" style="color:#1F4E3D;">🃏</button>` : ''}
       <button class="lib-action-btn" onclick="event.stopPropagation();doRename('topic',${sid},${secid},${t.id},null)" title="Rename">✏️</button>
       <button class="lib-action-btn" onclick="event.stopPropagation();openOrgModal('topic',${sid},${secid},${t.id})" title="Organize / Move">📦</button>
       ${_isAdmin?`<button class="lib-action-btn admin-only" onclick="event.stopPropagation();openSplitModal('topic',${sid},${secid},${t.id})" title="Sub-Topic banao" style="font-size:0.78rem;font-weight:800;color:#e65100;">⊕</button>`:''}
@@ -20439,6 +20444,257 @@ function _neAdvImgEditorBuild(imgEl, srcImg) {
     var insBtn = document.getElementById('neJsonInsertBtn');
     if(insBtn) { insBtn.disabled = true; insBtn.style.opacity = '0.5'; }
     window._neJsonParsedData = null;
+  };
+
+  // ══════════════════════════════════════════════════════════
+  // 🃏 JSON → FLASHCARDS  (Notes Editor side panel)
+  // JSON array {q,a,cat?} paste karo → preview dekho → is topic ke
+  // liye seedha Firebase mein flashcard deck ban jaayega — koi
+  // alag HTML file banane/upload karne ki zaroorat nahi.
+  // Player already Firebase-backed hai (fcOpenPlayer / fcRate /
+  // _saveFlashcardProgressToFirebase) — yeh sirf deck banane ka
+  // naya, tez tareeka hai.
+  // ══════════════════════════════════════════════════════════
+  window._fcJsonParsedCards = null;
+
+  window.fcOpenJsonImport = function() {
+    if(_editorState.tid == null) {
+      showToast('Pehle koi topic kholo!', 'error');
+      return;
+    }
+    if(typeof _isAdmin !== 'undefined' && !_isAdmin) {
+      showToast('🔒 Sirf admin flashcards bana sakta hai', 'error');
+      return;
+    }
+
+    window._fcJsonParsedCards = null;
+
+    var old = document.getElementById('fcJsonModal');
+    if(old) old.remove();
+
+    var modal = document.createElement('div');
+    modal.id = 'fcJsonModal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);padding:12px;';
+
+    modal.innerHTML = [
+      '<div style="background:var(--surface);border-radius:18px;box-shadow:0 12px 48px rgba(0,0,0,0.35);',
+        'width:min(98vw,680px);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">',
+
+        // ── Header ──
+        '<div style="display:flex;align-items:center;justify-content:space-between;',
+          'padding:13px 18px;border-bottom:1.5px solid var(--border);flex-shrink:0;',
+          'background:linear-gradient(90deg,rgba(31,78,61,0.1),rgba(21,101,192,0.05));">',
+          '<div>',
+            '<div style="font-weight:900;font-size:1rem;color:#1F4E3D;">🃏 JSON → Flashcards</div>',
+            '<div style="font-size:0.7rem;color:var(--text2);margin-top:2px;">',
+              'Is topic ke liye JSON se flashcards banao — Firebase mein save honge</div>',
+          '</div>',
+          '<button onclick="document.getElementById(\'fcJsonModal\').remove()" ',
+            'style="background:none;border:none;font-size:1.3rem;cursor:pointer;',
+            'color:var(--text2);padding:4px 8px;border-radius:8px;">✕</button>',
+        '</div>',
+
+        // ── Paste area ──
+        '<div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface2);">',
+          '<div style="font-size:0.72rem;color:var(--text2);margin-bottom:5px;font-weight:700;">',
+            '📋 JSON paste karo — Array of {q, a} ya {cat, q, a}:',
+          '</div>',
+          '<textarea id="fcJsonInputTA" placeholder=\'[\n  { "q": "Sawaal yahan", "a": "Uttar yahan" },\n  { "cat": "History", "q": "...", "a": "..." }\n]\' ',
+            'style="width:100%;height:120px;padding:8px 10px;border:1.5px solid var(--border);',
+            'border-radius:10px;font-size:0.76rem;font-family:monospace;resize:vertical;',
+            'background:var(--surface);color:var(--text);outline:none;line-height:1.5;" ',
+            'oninput="fcJsonPreview()"></textarea>',
+          '<div style="display:flex;gap:8px;margin-top:7px;flex-wrap:wrap;align-items:center;">',
+            '<button onclick="fcJsonPreview()" ',
+              'style="padding:6px 14px;border:none;border-radius:8px;background:linear-gradient(135deg,#1F4E3D,#2A6650);',
+              'color:#fff;font-weight:800;cursor:pointer;font-size:0.78rem;font-family:inherit;">',
+              '👁 Preview</button>',
+            '<button onclick="fcJsonClear()" ',
+              'style="padding:6px 12px;border:1.5px solid var(--border);border-radius:8px;',
+              'background:var(--surface);color:var(--text2);font-weight:700;cursor:pointer;',
+              'font-size:0.78rem;font-family:inherit;">🗑 Clear</button>',
+            '<label style="display:flex;align-items:center;gap:5px;font-size:0.72rem;color:var(--text2);cursor:pointer;margin-left:auto;">',
+              '<input type="checkbox" id="fcJsonReplace" checked style="width:13px;height:13px;cursor:pointer;">',
+              'Purana deck replace karo',
+            '</label>',
+          '</div>',
+          '<div id="fcJsonParseStatus" style="font-size:0.7rem;color:var(--text2);margin-top:5px;"></div>',
+        '</div>',
+
+        // ── Preview ──
+        '<div style="flex:1;overflow:auto;padding:14px 16px;min-height:140px;">',
+          '<div id="fcJsonPreviewBox" style="font-size:0.82rem;color:var(--text2);',
+            'text-align:center;padding:30px 0;">',
+            'JSON paste karke Preview click karo ☝️',
+          '</div>',
+        '</div>',
+
+        // ── Footer ──
+        '<div style="display:flex;align-items:center;justify-content:space-between;',
+          'gap:8px;padding:11px 16px;border-top:1.5px solid var(--border);flex-shrink:0;">',
+          '<div id="fcJsonRowCount" style="font-size:0.7rem;color:var(--text2);"></div>',
+          '<div style="display:flex;gap:8px;">',
+            '<button onclick="document.getElementById(\'fcJsonModal\').remove()" ',
+              'style="padding:8px 16px;border:1.5px solid var(--border);border-radius:9px;',
+              'background:var(--surface2);color:var(--text2);font-weight:700;cursor:pointer;',
+              'font-family:inherit;font-size:0.82rem;">Cancel</button>',
+            '<button onclick="fcJsonSaveToFirebase()" id="fcJsonSaveBtn" disabled ',
+              'style="padding:8px 20px;border:none;border-radius:9px;',
+              'background:linear-gradient(135deg,#1F4E3D,var(--accent));',
+              'color:#fff;font-weight:900;cursor:pointer;font-family:inherit;',
+              'font-size:0.84rem;opacity:0.5;">',
+              '☁️ Firebase mein Save karo</button>',
+          '</div>',
+        '</div>',
+
+      '</div>'
+    ].join('');
+
+    document.body.appendChild(modal);
+    modal.addEventListener('click', function(e){ if(e.target === modal) modal.remove(); });
+    setTimeout(function(){ var ta = document.getElementById('fcJsonInputTA'); if(ta) ta.focus(); }, 100);
+  };
+
+  // ── Parse + Preview ──
+  window.fcJsonPreview = function() {
+    var ta     = document.getElementById('fcJsonInputTA');
+    var box    = document.getElementById('fcJsonPreviewBox');
+    var status = document.getElementById('fcJsonParseStatus');
+    var rowCnt = document.getElementById('fcJsonRowCount');
+    var saveBtn= document.getElementById('fcJsonSaveBtn');
+    if(!ta || !box) return;
+
+    var raw = ta.value.trim();
+    if(!raw) {
+      box.innerHTML = '<span style="color:var(--text2);">JSON paste karke Preview click karo ☝️</span>';
+      if(status) status.textContent = '';
+      if(saveBtn) { saveBtn.disabled = true; saveBtn.style.opacity = '0.5'; }
+      window._fcJsonParsedCards = null;
+      return;
+    }
+
+    var data;
+    try {
+      data = JSON.parse(raw);
+    } catch(err) {
+      box.innerHTML = '<div style="color:var(--red);font-size:0.8rem;padding:16px;">❌ JSON parse error: ' + _escHtml(err.message) + '<br><span style="color:var(--text2);font-size:0.72rem;">Hint: Double quotes use karo, trailing comma nahi honi chahiye</span></div>';
+      if(status) status.innerHTML = '<span style="color:var(--red);">❌ Invalid JSON</span>';
+      if(saveBtn) { saveBtn.disabled = true; saveBtn.style.opacity = '0.5'; }
+      window._fcJsonParsedCards = null;
+      return;
+    }
+
+    if(!Array.isArray(data) || data.length === 0) {
+      box.innerHTML = '<div style="color:var(--red);font-size:0.8rem;padding:16px;">❌ JSON ek Array of Objects hona chahiye: [{"q":"...","a":"..."}, ...]</div>';
+      if(status) status.innerHTML = '<span style="color:var(--red);">❌ Array expected</span>';
+      if(saveBtn) { saveBtn.disabled = true; saveBtn.style.opacity = '0.5'; }
+      window._fcJsonParsedCards = null;
+      return;
+    }
+
+    var cards = [];
+    var skipped = 0;
+    data.forEach(function(item, i) {
+      if(!item || typeof item !== 'object' || !item.q || !item.a) { skipped++; return; }
+      cards.push({
+        id: 'c' + i + '_' + _tgpGameHash(String(item.q)),
+        cat: item.cat ? String(item.cat) : '',
+        q: String(item.q),
+        a: String(item.a)
+      });
+    });
+
+    if(!cards.length) {
+      box.innerHTML = '<div style="color:var(--red);font-size:0.8rem;padding:16px;">❌ Koi valid card nahi mila — har item mein "q" aur "a" field zaroori hai.</div>';
+      if(status) status.innerHTML = '<span style="color:var(--red);">❌ No valid cards</span>';
+      if(saveBtn) { saveBtn.disabled = true; saveBtn.style.opacity = '0.5'; }
+      window._fcJsonParsedCards = null;
+      return;
+    }
+
+    window._fcJsonParsedCards = cards;
+    box.innerHTML = cards.slice(0, 40).map(function(c, i) {
+      return '<div style="padding:7px 0;border-bottom:1px solid var(--border);text-align:left;">' +
+        '<div style="font-weight:800;font-size:0.82rem;color:var(--text);">' + (i+1) + '. ' + _escHtml(c.q) + '</div>' +
+        '<div style="font-size:0.76rem;color:#2A6650;font-weight:700;margin-top:2px;">✓ ' + _escHtml(c.a) + '</div>' +
+      '</div>';
+    }).join('') + (cards.length > 40 ? '<div style="padding:8px 0;text-align:center;opacity:0.6;font-size:0.76rem;">...aur ' + (cards.length - 40) + ' cards</div>' : '');
+
+    if(status) status.innerHTML = '<span style="color:var(--green);">✅ ' + cards.length + ' cards mile' + (skipped ? ' (' + skipped + ' skip hue — q/a missing)' : '') + '</span>';
+    if(rowCnt) rowCnt.textContent = cards.length + ' flashcards ready';
+    if(saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+  };
+
+  window.fcJsonClear = function() {
+    var ta = document.getElementById('fcJsonInputTA');
+    if(ta) ta.value = '';
+    var box = document.getElementById('fcJsonPreviewBox');
+    if(box) box.innerHTML = '<span style="color:var(--text2);">JSON paste karke Preview click karo ☝️</span>';
+    var status = document.getElementById('fcJsonParseStatus');
+    if(status) status.textContent = '';
+    var rowCnt = document.getElementById('fcJsonRowCount');
+    if(rowCnt) rowCnt.textContent = '';
+    var saveBtn = document.getElementById('fcJsonSaveBtn');
+    if(saveBtn) { saveBtn.disabled = true; saveBtn.style.opacity = '0.5'; }
+    window._fcJsonParsedCards = null;
+  };
+
+  // ── Save parsed cards to Firebase for the CURRENTLY OPEN topic ──
+  window.fcJsonSaveToFirebase = async function() {
+    var cards = window._fcJsonParsedCards;
+    if(!cards || !cards.length) {
+      showToast('Pehle JSON parse + Preview karo!', 'error');
+      return;
+    }
+    var sid = _editorState.sid, secid = _editorState.secid, tid = _editorState.tid;
+    if(tid == null) { showToast('Koi topic open nahi hai', 'error'); return; }
+    var t = getTop(sid, secid, tid);
+    var key = _fcTopicKey(sid, secid, tid);
+    var replaceOld = !document.getElementById('fcJsonReplace') || document.getElementById('fcJsonReplace').checked;
+
+    var deckId = 'fc_' + key + '_' + Date.now().toString(36);
+    var entry = {
+      tid: String(tid), sid: String(sid), secid: String(secid),
+      topicName: t ? t.name : '',
+      deckId: deckId,
+      cards: cards,
+      cardCount: cards.length,
+      uploadedAt: new Date().toLocaleDateString('hi-IN'),
+      uploadedAtRaw: Date.now()
+    };
+
+    var saveBtn = document.getElementById('fcJsonSaveBtn');
+    if(saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Saving...'; }
+
+    S.flashcardSets[key] = entry;
+    save();
+
+    try {
+      if(_db && _currentUser) {
+        var uid = _effectiveUID;
+        var clean = _fsClean(entry);
+        if(firebase && firebase.firestore && firebase.firestore.FieldValue) {
+          clean.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+        }
+        await _db.collection('users').doc(uid).collection('flashcardSets').doc(key).set(clean);
+      }
+      if(replaceOld) {
+        delete S.flashcardProgress[key];
+        save();
+        if(_db && _currentUser) {
+          try { await _db.collection('users').doc(_effectiveUID).collection('flashcardProgress').doc(key).delete(); } catch(e) {}
+        }
+      }
+      showToast('🃏 ' + cards.length + ' Flashcards Firebase mein save ho gaye!', 'success');
+      var modal = document.getElementById('fcJsonModal');
+      if(modal) modal.remove();
+      window._fcJsonParsedCards = null;
+    } catch(e) {
+      console.warn('fcJsonSaveToFirebase error:', e && e.message);
+      showToast('Firebase save mein error aaya', 'error');
+    } finally {
+      if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '☁️ Firebase mein Save karo'; }
+    }
   };
 
   // ==================== NOTES EDITOR TABLE MODAL ====================
