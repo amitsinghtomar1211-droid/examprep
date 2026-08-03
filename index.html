@@ -10489,6 +10489,7 @@ async function addNote(){
   }
 
   const t=getTop(S.ui.sid,S.ui.secid,S.ui.tid);
+  if(!t){ showToast('Topic nahi mila — dobara select karo','error'); return; }
   const hadFinalNotes=!!t.finalNotes;
   t.notes.push({
     id: Date.now(),
@@ -11365,23 +11366,32 @@ function viewTopic(sid,secid,tid){
   con.style.cssText='flex:1;overflow:hidden;display:flex;flex-direction:column;';
 
   // ── Screen A: Category cards ──
+  const _fcKeyForCats = _fcTopicKey(sid,secid,tid);
+  const _fcSetForCats = S.flashcardSets[_fcKeyForCats];
   const cats = [
     { id:'overview', cls:'cat-overview', icon:'📋', name:'Overview',   sub:'Stats & Quick actions' },
     { id:'smart',    cls:'cat-smart',    icon:'🧠', name:'Smart Notes', sub: t.smartNotesAI ? 'AI notes ready':'Not generated' },
     { id:'final',    cls:'cat-final',    icon:'⭐', name:'Final Notes', sub: t.finalNotes   ? 'Ready to read' :'Not generated' },
     { id:'master',   cls:'cat-master',   icon:'⚡', name:'Master Notes',sub: t.masterNotes  ? 'AI deep notes' :'Not generated' },
     { id:'raw',      cls:'cat-raw',      icon:'📄', name:'Raw Notes',   sub: `${(t.notes||[]).length} notes`, badge:(t.notes||[]).length||null },
+    ...(_fcSetForCats && _fcSetForCats.cards && _fcSetForCats.cards.length ? [
+    { id:'flashcards2', cls:'cat-fc',    icon:'🃏', name:'Flashcards',  sub: `${_fcSetForCats.cards.length} cards`, badge:_fcSetForCats.cards.length||null }
+    ] : []),
     { id:'facts',    cls:'cat-facts',    icon:'📌', name:'Facts',       sub: `${(t.savedFacts||[]).length} saved`, badge:(t.savedFacts||[]).length||null },
     { id:'nodemap',  cls:'cat-master',   icon:'🗺️', name:'Node Maps',   sub: t.aiNodeMaps&&t.aiNodeMaps.length ? `${t.aiNodeMaps.length} maps saved` : 'AI se banao', badge: (t.aiNodeMaps&&t.aiNodeMaps.length)||null },
     { id:'perfect',  cls:'cat-perfect',  icon:'🎯', name:'Exam Notes',  sub: t.perfectNotes ? '✅ Perfect notes ready' : 'Generate karo', badge: t.perfectNotes ? '✓' : null },
   ];
+
+  // 'flashcards2' card opens the Notes Editor directly (bypasses tvShowSub) —
+  // same "Read & Edit" style entry as Raw Notes, just for the flashcard deck.
+  const _tvFlashcards2Onclick = "closeModal('topicViewModal');setTimeout(()=>openFlashcardsInEditor("+sid+","+secid+","+tid+"),200)";
 
   // Permission map for category cards
   const _tvCatPermMap = {smart:'smartnotes',final:'notesEdit',master:'masterNotes',facts:'savedFacts',nodemap:'aiDraw',perfect:'smartnotes'};
   const gridHtml = cats.map(c=>{
     const _pk = _tvCatPermMap[c.id];
     const _locked = !_isAdmin && _pk && !_userPerms[_pk];
-    const _oc = _locked ? '_showLockedToast()' : ("tvShowSub('"+c.id+"',"+sid+","+secid+","+tid+")");
+    const _oc = _locked ? '_showLockedToast()' : (c.id === 'flashcards2' ? _tvFlashcards2Onclick : ("tvShowSub('"+c.id+"',"+sid+","+secid+","+tid+")"));
     return `<div class="tv-cat-card ${c.cls}${_locked?' tv-locked':''}" onclick="${_oc}">
       ${c.badge?`<div class="tv-cat-badge">${c.badge}</div>`:''}
       <div class="tv-cat-icon">${c.icon}</div>
@@ -67529,34 +67539,65 @@ function _fcInlineRate(sid, secid, tid, cardId, rating, btnEl){
   showToast('Progress save ho gaya','success');
 }
 
-// Patch openNotesEditor: if a flashcard deck exists for this topic, render it
-// straight into noteEditableArea instead of the normal note content.
-(function(){
-  var _origOpenNE = window.openNotesEditor;
-  if(_origOpenNE){
-    window.openNotesEditor = function(sid, secid, tid, noteIdx){
-      _origOpenNE.apply(this, arguments);
-      setTimeout(function(){
-        var inlineHtml = _fcBuildInlineHtml(sid, secid, tid);
-        if(inlineHtml){
-          _editorState.specialType = 'flashcards_inline';
-          var area = document.getElementById('noteEditableArea');
-          if(area){
-            area.innerHTML = inlineHtml;
-            area.contentEditable = 'false';
-          }
-          var titleEl = document.getElementById('notesEditorTitle');
-          var t = getTop(sid, secid, tid);
-          if(titleEl && t) titleEl.textContent = '🃏 ' + t.name;
-          // Editing tools make no sense for the flashcard view — hide save control
-          var saveBtn = document.getElementById('saveNoteBtn');
-          if(saveBtn) saveBtn.style.display = 'none';
-          neUpdateStatusBar('🃏 Flashcard Mode — Answer dikhane ke liye checkbox dabao');
-        }
-      }, 60);
-    };
+// ── Direct entry point: opens the SAME Notes Editor overlay used for normal
+//    notes, but for the flashcard deck — independent of t.notes[] existing.
+//    This is what the "🃏 Flashcards" card in the topic-view grid calls.
+function openFlashcardsInEditor(sid, secid, tid){
+  const t = getTop(sid, secid, tid);
+  if(!t) return;
+  const key = _fcTopicKey(sid, secid, tid);
+  const set = S.flashcardSets[key];
+  if(!set || !set.cards || !set.cards.length){
+    showToast('Is topic ke liye koi flashcards nahi mile','error');
+    return;
   }
-})();
+
+  // Show floating back button (same as openNotesEditor)
+  var _nb = document.getElementById('neBackFloatBtn');
+  if(_nb) _nb.style.display = 'flex';
+
+  _editorState.sid = sid;
+  _editorState.secid = secid;
+  _editorState.tid = tid;
+  _editorState.noteIdx = null;
+  _editorState.specialType = 'flashcards_inline';
+  _editorState.modified = false;
+  _editorState.hlMode = false;
+  _editorState.highlights = [];
+  _editorState.richHTML = null;
+  typeof _setActiveEditTid === 'function' && _setActiveEditTid(tid);
+  _undoStack = [];
+  _redoStack = [];
+
+  document.getElementById('notesEditorTitle').textContent = '🃏 ' + t.name;
+  document.getElementById('notesEditorMeta').textContent = set.cards.length + ' cards';
+
+  var area = document.getElementById('noteEditableArea');
+  if(area){
+    area.innerHTML = _fcBuildInlineHtml(sid, secid, tid);
+    area.contentEditable = 'false';
+  }
+  neSetEditMode(false);
+  setHlMode('off');
+  _eraserModeOn = false;
+  trackActivity('note_open', { name: t.name + ' (flashcards)', tid: tid });
+  neResetToolbar();
+  neSetTheme(_neState.theme, true);
+  if(area) area.style.fontSize = _neState.fontSize + 'px';
+  document.getElementById('neFontLabel').textContent = _neState.fontSize;
+  var _ud=document.getElementById('unsavedDot'); if(_ud) _ud.style.display='none';
+  var _dot2ne = document.getElementById('unsavedDot2');
+  if(_dot2ne) _dot2ne.style.display = 'none';
+  var _snb=document.getElementById('saveNoteBtn'); if(_snb) _snb.style.display='none';
+  neUpdateStatusBar('🃏 Flashcard Mode — Answer dikhane ke liye checkbox dabao');
+  var _neOv = document.getElementById('notesEditorOverlay');
+  _neOv.removeAttribute('data-viewer');
+  _neOv.style.display = '';
+  _neOv.classList.add('show');
+  document.body.style.overflow = 'hidden';
+  history.pushState({type:'notesEditor'}, '');
+  showFloatBack('‹');
+}
 </script>
 
 </body>
