@@ -9301,8 +9301,6 @@ function load(){
     S.wrongedQuestions=d.wrongedQuestions||[];
     S.quizFactProgress=d.quizFactProgress||{};
     S.hlQuizProgress=d.hlQuizProgress||{};
-    S.flashcardSets=d.flashcardSets||{};
-    S.flashcardProgress=d.flashcardProgress||{};
     S.flashcardAnswerVisibility=d.flashcardAnswerVisibility||{};
     S.testSeries=d.testSeries||[];
     S.tsAttempts=d.tsAttempts||[];
@@ -15061,7 +15059,6 @@ function fcHandleAdminFile(input){
 // ── ADMIN: save parsed deck to Firebase under the CURRENT topic (new/replacing ID) ──
 async function fcSaveAdminDeck(){
   if(!_isAdmin){ showToast('🔒 Sirf admin save kar sakta hai','error'); return; }
-  if(!_db || !_currentUser){ showToast('⚠️ Firebase save ke liye pehle login karo','error'); return; }
   var cards = _fcPlayState.parsedAdminDeck;
   if(!cards || !cards.length){ showToast('Pehle ek valid file chuno','error'); return; }
   var sid = _editorState.sid, secid = _editorState.secid, tid = _editorState.tid;
@@ -15085,17 +15082,21 @@ async function fcSaveAdminDeck(){
   var btn = document.getElementById('fcAdminSaveBtn');
   btn.disabled = true; btn.textContent = '⏳ Saving...';
   try{
-    var uid = _effectiveUID;
-    var clean = _fsClean(entry);
-    if(firebase && firebase.firestore && firebase.firestore.FieldValue){
-      clean.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+    if(_db && _currentUser){
+      var uid = _effectiveUID;
+      var clean = _fsClean(entry);
+      if(firebase && firebase.firestore && firebase.firestore.FieldValue){
+        clean.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+      }
+      await _db.collection('users').doc(uid).collection('flashcardSets').doc(key).set(clean);
     }
-    await _db.collection('users').doc(uid).collection('flashcardSets').doc(key).set(clean);
     // Naye deck par purani progress reset ho (nayi ID = fresh start), taaki
     // purane cards ke stale hard/easy tags naye deck par na chipke rahein.
     delete S.flashcardProgress[key];
     save();
-    try{ await _db.collection('users').doc(_effectiveUID).collection('flashcardProgress').doc(key).delete(); }catch(e){}
+    if(_db && _currentUser){
+      try{ await _db.collection('users').doc(_effectiveUID).collection('flashcardProgress').doc(key).delete(); }catch(e){}
+    }
     showToast('🃏 Flashcards Firebase mein save ho gaye!','success');
     closeModal('fcAdminModal');
   }catch(e){
@@ -15137,55 +15138,6 @@ async function _loadFlashcardProgressFromFirebase(sid,secid,tid){
   }catch(e){
     console.warn('flashcardProgress load error:', e && e.message);
     return null;
-  }
-}
-
-// ── Load every saved deck after login/refresh ──
-// Flashcard decks live in their own collection, so the normal notes loader
-// does not restore them automatically.
-async function _loadAllFlashcardsFromFirebase(){
-  if(!_db || !_currentUser) return {sets:0, progress:0};
-  var uid = _effectiveUID;
-  var loadedSets = 0;
-  var loadedProgress = 0;
-  try{
-    var results = await Promise.all([
-      _db.collection('users').doc(uid).collection('flashcardSets').get(),
-      _db.collection('users').doc(uid).collection('flashcardProgress').get()
-    ]);
-    var setSnapshot = results[0];
-    var progressSnapshot = results[1];
-
-    setSnapshot.forEach(function(doc){
-      var data = doc.data() || {};
-      var key = doc.id || _fcTopicKey(data.sid, data.secid, data.tid);
-      if(!key || !data.cards) return;
-      if(typeof data.cards === 'string'){
-        try{ data.cards = JSON.parse(data.cards); }catch(e){ return; }
-      }
-      if(!Array.isArray(data.cards) || !data.cards.length) return;
-      data.tid = data.tid != null ? String(data.tid) : '';
-      data.sid = data.sid != null ? String(data.sid) : '';
-      data.secid = data.secid != null ? String(data.secid) : '';
-      data.cardCount = data.cards.length;
-      S.flashcardSets[key] = data;
-      loadedSets++;
-    });
-
-    progressSnapshot.forEach(function(doc){
-      var data = doc.data() || {};
-      var key = doc.id || _fcTopicKey(data.sid, data.secid, data.tid);
-      if(!key) return;
-      S.flashcardProgress[key] = data;
-      loadedProgress++;
-    });
-
-    save();
-    console.info('[🃏 flashcardSets] restored '+loadedSets+' decks and '+loadedProgress+' progress docs');
-    return {sets:loadedSets, progress:loadedProgress};
-  }catch(e){
-    console.warn('[🃏 flashcardSets] bulk load error:', e && e.message);
-    return {sets:loadedSets, progress:loadedProgress, error:e};
   }
 }
 
@@ -34705,10 +34657,6 @@ async function loadFromFirebase(){
     const localTopicCount = (S.subjects||[]).reduce((a,s)=>a+_countSubjTopicsDeep(s), 0);
     console.info('[📥 loadFromFirebase] START — uid:'+uid+' | isAdmin:'+_isAdmin+' | localTopics:'+localTopicCount);
 
-    // Flashcards are stored outside the notes/topic collections. Restore them
-    // independently so a refresh does not leave the in-memory deck empty.
-    await _loadAllFlashcardsFromFirebase();
-
     const metaDoc = await _db.collection('users').doc(uid).get();
     if(!metaDoc.exists){
       console.warn('[📥 loadFromFirebase] Cloud mein koi doc nahi (pehli baar) — localTopics:'+localTopicCount);
@@ -34927,8 +34875,6 @@ async function loadFromFirebase(){
     _loadQuizVaultFromFirebase();
     _loadGameVaultFromFirebase();
     _attachGameVaultRealtimeListener();
-    // Keep the library buttons and topic flashcard cards in sync after restore.
-    if(typeof renderLibraryTree === 'function') renderLibraryTree();
     // Test series quizzes + attempts load karo
     if(typeof tsLoadFromCloud === 'function') tsLoadFromCloud();
 
@@ -35067,10 +35013,6 @@ async function pullFromCloud(){
       return;
     }
 
-    // Flashcard decks/progress are stored outside the notes collections.
-    // Restore them during an explicit cloud pull as well as initial login.
-    await _loadAllFlashcardsFromFirebase();
-
     // Directly update S — koi comparison nahi, cloud ka data final hai
     S.subjects          = newSubjects;
     S.exams             = meta.exams || S.exams || [];
@@ -35091,7 +35033,6 @@ async function pullFromCloud(){
     _loadQuizVaultFromFirebase();
     _loadGameVaultFromFirebase();
     _attachGameVaultRealtimeListener();
-    if(typeof renderLibraryTree === 'function') renderLibraryTree();
     if(typeof tsLoadFromCloud === 'function') tsLoadFromCloud();
     console.info('[⬇️ pullFromCloud] ✅ SUCCESS — '+_pullTopicCount+' topics in '+(Date.now()-_pullStart)+'ms');
     hideDataLoadingOverlay(); // ← Progress bar band karo
@@ -35647,8 +35588,6 @@ async function _silentReloadFromFirebase(){
     updateHistBadge && updateHistBadge();
     updateSavedBadge && updateSavedBadge();
     updateVaultBadge && updateVaultBadge();
-    await _loadAllFlashcardsFromFirebase();
-    renderLibraryTree && renderLibraryTree();
 
     // Re-attach topic listeners for any new topics
     _attachTopicListeners();
@@ -67555,7 +67494,6 @@ function acFlashJsonClear(){
 // ── Save parsed cards straight to the currently-selected subject/section/topic ──
 async function acFlashSaveToFirebase(){
   if(!_acFlashParsed || !_acFlashParsed.length){ showToast('Pehle valid JSON daalo','error'); return; }
-  if(!_db || !_currentUser){ showToast('⚠️ Firebase save ke liye pehle login karo','error'); return; }
   var sid = S.ui.sid, secid = S.ui.secid, tid = S.ui.tid;
   if(tid==null){ showToast('Pehle Subject/Section/Topic select karo','error'); return; }
   var t = getTop(sid,secid,tid);
@@ -67576,15 +67514,19 @@ async function acFlashSaveToFirebase(){
   var btn = document.getElementById('acFlashSaveBtn');
   btn.disabled = true; btn.textContent = '⏳ Saving...';
   try{
-    var uid = _effectiveUID;
-    var clean = _fsClean(entry);
-    if(firebase && firebase.firestore && firebase.firestore.FieldValue){
-      clean.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+    if(_db && _currentUser){
+      var uid = _effectiveUID;
+      var clean = _fsClean(entry);
+      if(firebase && firebase.firestore && firebase.firestore.FieldValue){
+        clean.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+      }
+      await _db.collection('users').doc(uid).collection('flashcardSets').doc(key).set(clean);
     }
-    await _db.collection('users').doc(uid).collection('flashcardSets').doc(key).set(clean);
     delete S.flashcardProgress[key];
     save();
-    try{ await _db.collection('users').doc(_effectiveUID).collection('flashcardProgress').doc(key).delete(); }catch(e){}
+    if(_db && _currentUser){
+      try{ await _db.collection('users').doc(_effectiveUID).collection('flashcardProgress').doc(key).delete(); }catch(e){}
+    }
     showToast('🃏 Flashcards Firebase mein save ho gaye!','success');
     // Reset the flow, switch back to normal mode, refresh library tree so the card shows
     document.getElementById('acFlashJsonInput').value = '';
