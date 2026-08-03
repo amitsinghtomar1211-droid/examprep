@@ -34394,6 +34394,34 @@ async function saveMetaToFirebase(){
     _myWriteId = wid;
     _lastSaveTime = Date.now();
 
+    // ✅ FIX: SAFETY GUARD — this function fires automatically 500ms after
+    // ANY topic edit (see the debounced meta-sync step below), completely
+    // independent of login/page-load timing. If it happened to fire before
+    // S.subjects was fully populated (e.g. right after login/refresh while
+    // background load was still in progress), it would blindly overwrite
+    // the cloud's subjectIds with whatever small in-memory list existed at
+    // that instant — repeatedly shrinking a 17-subject list back down to 6,
+    // even after manual recovery. This was the actual repeat offender: the
+    // other two save functions already had a union-guard, this one did not.
+    // Same fix here: never shrink subjectIds — only ever grow it via union
+    // with whatever is already saved in the cloud.
+    var localSubjIdsM = (S.subjects||[]).map(function(s){ return String(s.id); });
+    var mergedSubjIdsM = localSubjIdsM;
+    try{
+      var _metaSnapM = await _db.collection('users').doc(uid).get();
+      var _existingIdsM = (_metaSnapM.exists && _metaSnapM.data().subjectIds) || [];
+      if(_existingIdsM.length){
+        var _seenM = {};
+        mergedSubjIdsM = [];
+        _existingIdsM.concat(localSubjIdsM).forEach(function(id){
+          var k = String(id);
+          if(!_seenM[k]){ _seenM[k]=true; mergedSubjIdsM.push(k); }
+        });
+      }
+    }catch(e){
+      console.warn('[saveMetaToFirebase] subjectIds guard read fail, using local list only:', e && e.message);
+    }
+
     await _db.collection('users').doc(uid).set({
       activeExamId:      S.activeExamId||'',
       model:             S.model||'meta-llama/llama-4-scout-17b-16e-instruct',
@@ -34406,7 +34434,7 @@ async function saveMetaToFirebase(){
       exams:             _fsClean(S.exams||[]),
       quizFactProgress:  _fsClean(S.quizFactProgress||{}),
       hlQuizProgress:    _fsClean(S.hlQuizProgress||{}),
-      subjectIds:        (S.subjects||[]).map(function(s){ return s.id; }),
+      subjectIds:        mergedSubjIdsM,
       topicFormat:       'v2',
       lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
       writeId:           wid
