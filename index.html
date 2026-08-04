@@ -641,6 +641,16 @@ body.reading-focus:not(.night-mode) {
   text-transform:uppercase;letter-spacing:0.05em;
 }
 .fc2-card-back .fc2-tap-hint{color:#a3906f;}
+.fc2-face-extra{
+  margin-top:14px;padding-top:14px;border-top:1.5px dashed rgba(163,118,63,0.35);
+  font-family:'Noto Sans Devanagari',sans-serif;
+  font-size:0.86rem;font-weight:500;line-height:1.65;color:#5c4a30;
+  word-break:break-word;text-align:left;width:100%;
+}
+.fc2-face-extra::before{
+  content:"ℹ️ Extra Jankari";display:block;font-size:0.62rem;font-weight:900;
+  letter-spacing:1px;text-transform:uppercase;color:#a3763f;margin-bottom:6px;
+}
 
 .fc2-rating-row{
   display:flex;align-items:center;justify-content:center;gap:18px;
@@ -6128,8 +6138,9 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
             <div id="acFlashFields" style="display:none;">
               <div class="field-group">
                 <label class="field-label">🃏 Flashcard JSON Paste Karo:</label>
+                <div style="font-size:0.68rem;color:var(--text2);margin-bottom:4px;">"extra" field optional hai — answer ke peeche extra facts/jankari ke liye.</div>
                 <textarea class="inp" id="acFlashJsonInput" rows="8"
-                  placeholder='[{"cat":"Grammar","q":"Sandhi kise kehte hain?","a":"Do varno ke mel se hone wala vikar"}, ...]'
+                  placeholder='[{"q":"Sandhi kise kehte hain?","a":"Do varno ke mel se hone wala vikar","extra":"Ye extra jankari answer ke niche dikhegi (optional)"}, ...]'
                   style="width:100%;font-family:monospace;font-size:0.78rem;resize:vertical;"
                   oninput="acFlashJsonPreview()"></textarea>
                 <div style="display:flex;gap:6px;margin-top:4px;">
@@ -9116,6 +9127,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
               <div class="fc2-card-face fc2-card-back">
                 <div class="fc2-face-label">Answer</div>
                 <div class="fc2-face-text" id="fcAText"></div>
+                <div class="fc2-face-extra" id="fcExtraText" style="display:none;"></div>
               </div>
 
             </div>
@@ -15287,7 +15299,8 @@ function fcParseDeckFromHTML(htmlText){
       id: 'c'+i+'_'+_tgpGameHash(String(item.q)),
       cat: item.cat || '',
       q: String(item.q),
-      a: String(item.a)
+      a: String(item.a),
+      extra: item.extra ? String(item.extra) : ''
     });
   });
   return cards.length ? cards : null;
@@ -15708,6 +15721,16 @@ function fcRenderCard(){
 
   document.getElementById('fcQText').textContent = card.q;
   document.getElementById('fcAText').innerHTML = card.a;
+  var extraEl = document.getElementById('fcExtraText');
+  if(extraEl){
+    if(card.extra && String(card.extra).trim()){
+      extraEl.innerHTML = card.extra;
+      extraEl.style.display = 'block';
+    } else {
+      extraEl.innerHTML = '';
+      extraEl.style.display = 'none';
+    }
+  }
 
   var badgeEl = document.getElementById('fcCardBadge');
   if(badgeEl) badgeEl.textContent = '🃏 CARD ' + (st.pos+1) + ' / ' + st.queue.length;
@@ -15877,7 +15900,9 @@ function fcOpenCardEditor(mode){
       '<div style="font-size:0.72rem;font-weight:700;color:var(--text2);margin-bottom:4px;">Sawaal</div>'+
       '<textarea id="fcCardEditorQ" rows="2" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid var(--border);font-family:inherit;font-size:0.85rem;margin-bottom:10px;resize:vertical;">'+(isEdit?_tgpEscHtml(card.q):'')+'</textarea>'+
       '<div style="font-size:0.72rem;font-weight:700;color:var(--text2);margin-bottom:4px;">Jawab</div>'+
-      '<textarea id="fcCardEditorA" rows="3" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid var(--border);font-family:inherit;font-size:0.85rem;margin-bottom:14px;resize:vertical;">'+(isEdit?card.a:'')+'</textarea>'+
+      '<textarea id="fcCardEditorA" rows="3" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid var(--border);font-family:inherit;font-size:0.85rem;margin-bottom:10px;resize:vertical;">'+(isEdit?card.a:'')+'</textarea>'+
+      '<div style="font-size:0.72rem;font-weight:700;color:var(--text2);margin-bottom:4px;">ℹ️ Extra Jankari <span style="font-weight:400;opacity:0.7;">(optional — answer ke peeche dikhegi)</span></div>'+
+      '<textarea id="fcCardEditorExtra" rows="3" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid var(--border);font-family:inherit;font-size:0.85rem;margin-bottom:14px;resize:vertical;">'+(isEdit&&card.extra?card.extra:'')+'</textarea>'+
       '<div style="display:flex;gap:8px;">'+
         '<button onclick="document.getElementById(\'fcCardEditorOverlay\').remove()" style="flex:1;padding:10px;border-radius:10px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font-weight:700;cursor:pointer;font-size:0.78rem;">Cancel</button>'+
         '<button onclick="fcSaveCardEditor(\''+mode+'\')" style="flex:1;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#1F4E3D);color:#fff;font-weight:800;cursor:pointer;font-size:0.78rem;">Save</button>'+
@@ -15893,16 +15918,18 @@ function fcSaveCardEditor(mode){
   if(!set || !st) return;
   var qVal = (document.getElementById('fcCardEditorQ').value||'').trim();
   var aVal = (document.getElementById('fcCardEditorA').value||'').trim();
+  var extraEl = document.getElementById('fcCardEditorExtra');
+  var extraVal = extraEl ? (extraEl.value||'').trim() : '';
   if(!qVal || !aVal){ showToast('Sawaal aur Jawab dono bharo','error'); return; }
 
   if(mode === 'edit'){
     if(!st.queue || st.pos>=st.queue.length) return;
     var card = set.cards[st.queue[st.pos]];
     if(!card) return;
-    card.q = qVal; card.a = aVal;
+    card.q = qVal; card.a = aVal; card.extra = extraVal;
     showToast('✅ Card update ho gaya','success');
   } else {
-    var newCard = { id: 'fc_'+Date.now()+'_'+Math.floor(Math.random()*10000), q: qVal, a: aVal };
+    var newCard = { id: 'fc_'+Date.now()+'_'+Math.floor(Math.random()*10000), q: qVal, a: aVal, extra: extraVal };
     set.cards.push(newCard);
     set.cardCount = set.cards.length;
     st.queue.push(set.cards.length-1);
@@ -68258,7 +68285,8 @@ function _fcParseCardsFromText(text){
       id: 'c'+i+'_'+_tgpGameHash(String(item.q)),
       cat: item.cat || '',
       q: String(item.q),
-      a: String(item.a)
+      a: String(item.a),
+      extra: item.extra ? String(item.extra) : ''
     });
   });
   return cards.length ? cards : null;
@@ -68491,6 +68519,11 @@ function _fcBuildInlineHtml(sid, secid, tid){
           '<button type="button" onclick="_fcInlineToggleSave(\''+_esc(c.id)+'\',\''+sid+'\',\''+secid+'\',\''+tid+'\')" style="'+(saved?'background:rgba(255,193,7,0.25);border-color:#e6a100;color:#8a6d00;':'')+'">'+(saved?'✅ Saved':'🔖 Save')+'</button>' +
         '</div>' +
         '<div class="fc-inline-answer" style="'+(answerVisible?'':'display:none;')+'">'+c.a+'</div>' +
+        (c.extra && String(c.extra).trim() ?
+          '<div class="fc-inline-extra" style="'+(answerVisible?'display:block;':'display:none;')+';margin-top:8px;padding-top:8px;border-top:1.5px dashed rgba(163,118,63,0.35);font-size:0.78rem;line-height:1.6;color:#5c4a30;">' +
+            '<div style="font-size:0.62rem;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#a3763f;margin-bottom:4px;">ℹ️ Extra Jankari</div>' +
+            c.extra +
+          '</div>' : '') +
         '<div style="'+(answerVisible?'display:flex;':'display:none;')+';gap:8px;padding-top:8px;align-items:center;" class="fc-inline-mark">' +
           '<span style="font-size:0.72rem;color:var(--text2);flex-shrink:0;">Kaisa laga?</span>' +
           '<button type="button" class="fc-rate-btn" title="Hard" onclick="_fcInlineRate(\''+sid+'\',\''+secid+'\',\''+tid+'\',\''+c.id+'\',\'hard\',this)" style="background:#fde8e2;"></button>' +
