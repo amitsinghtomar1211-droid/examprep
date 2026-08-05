@@ -722,19 +722,66 @@ body.night-mode #fcFactsPage .fcfp-title{color:#c9a060;}
   color:var(--text,#2c2416);word-break:break-word;
   -webkit-user-select:text;user-select:text;
 }
-/* Floating "search on web" chip — appears near selected text */
-#fcfpSearchChip{
-  display:none;position:fixed;z-index:999998;
-  background:#1a1a1a;color:#fff;border-radius:20px;
-  padding:9px 16px;font-size:0.78rem;font-weight:800;
-  align-items:center;gap:7px;cursor:pointer;
-  box-shadow:0 6px 20px rgba(0,0,0,0.35);
-  -webkit-tap-highlight-color:transparent;
-  white-space:nowrap;
+/* Bottom action bar — appears above keyboard-safe area when text is selected,
+   deliberately placed at the BOTTOM so it never overlaps the native Android
+   selection popup (which appears near/above the selected text). */
+#fcfpActionBar{
+  display:none;position:fixed;left:0;right:0;bottom:0;z-index:999998;
+  justify-content:center;gap:10px;
+  padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));
+  background:linear-gradient(to top, rgba(0,0,0,0.88) 60%, rgba(0,0,0,0));
 }
-#fcfpSearchChip.show{display:flex;animation:fcfpChipIn 0.15s ease;}
-@keyframes fcfpChipIn{from{opacity:0;transform:translateY(4px) scale(0.96);}to{opacity:1;transform:translateY(0) scale(1);}}
-#fcfpSearchChip .fcfp-chip-icon{font-size:0.9rem;}
+#fcfpActionBar.show{display:flex;animation:fcfpBarIn 0.16s ease;}
+@keyframes fcfpBarIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+#fcfpActionBar .fcfp-abtn{
+  background:#fff;color:#1a1a1a;border-radius:22px;border:none;
+  padding:11px 18px;font-size:0.8rem;font-weight:800;
+  display:flex;align-items:center;gap:6px;cursor:pointer;
+  box-shadow:0 4px 16px rgba(0,0,0,0.3);
+  -webkit-tap-highlight-color:transparent;white-space:nowrap;
+  font-family:'Noto Sans Devanagari',sans-serif;
+}
+#fcfpActionBar .fcfp-abtn:active{opacity:0.75;}
+#fcfpActionBar .fcfp-abtn.fcfp-edit-btn{background:#2e7d32;color:#fff;}
+
+/* Edit-fact modal — small popup to replace selected text */
+#fcfpEditModal{
+  display:none;position:fixed;inset:0;z-index:999999;
+  background:rgba(0,0,0,0.6);align-items:flex-end;justify-content:center;
+}
+#fcfpEditModal.show{display:flex;}
+#fcfpEditModal .fcfp-edit-box{
+  width:100%;max-width:520px;background:var(--surface,#fff);
+  border-radius:18px 18px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom,0px));
+  box-shadow:0 -8px 30px rgba(0,0,0,0.3);
+}
+#fcfpEditModal .fcfp-edit-title{
+  font-size:0.85rem;font-weight:900;color:var(--text,#2c2416);margin-bottom:4px;
+}
+#fcfpEditModal .fcfp-edit-hint{
+  font-size:0.72rem;color:var(--text2,#6b5a3f);margin-bottom:10px;line-height:1.5;
+}
+#fcfpEditModal .fcfp-edit-old{
+  font-size:0.76rem;color:var(--text2,#6b5a3f);background:var(--surface2,#f4efe4);
+  border-radius:10px;padding:8px 10px;margin-bottom:10px;line-height:1.5;
+  max-height:80px;overflow-y:auto;word-break:break-word;
+}
+#fcfpEditModal textarea{
+  width:100%;min-height:90px;border-radius:10px;border:1.5px solid var(--border,#e0d8c8);
+  background:var(--bg,#faf8f0);color:var(--text,#2c2416);
+  padding:10px;font-size:0.88rem;font-family:'Noto Sans Devanagari',sans-serif;
+  line-height:1.6;resize:vertical;box-sizing:border-box;
+}
+#fcfpEditModal .fcfp-edit-actions{
+  display:flex;gap:10px;margin-top:12px;
+}
+#fcfpEditModal .fcfp-edit-actions button{
+  flex:1;padding:11px;border-radius:12px;border:none;font-weight:800;font-size:0.85rem;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+#fcfpEditModal .fcfp-edit-cancel{background:var(--surface2,#f4efe4);color:var(--text,#2c2416);}
+#fcfpEditModal .fcfp-edit-save{background:#2e7d32;color:#fff;}
+#fcfpEditModal .fcfp-edit-save:active,#fcfpEditModal .fcfp-edit-cancel:active{opacity:0.75;}
 
 .fc2-rating-row{
   display:flex;align-items:center;justify-content:center;gap:18px;
@@ -9540,9 +9587,24 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
   </div>
 </div>
 
-<!-- Floating "search on web" chip — text select karne par fact-check ke liye -->
-<div id="fcfpSearchChip" onclick="fcfpSearchSelection(event)">
-  <span class="fcfp-chip-icon">🔎</span><span>Web par check karo</span>
+<!-- Bottom action bar — text select karne par yahan "Web Search" + "Edit" dikhte hain -->
+<div id="fcfpActionBar">
+  <button class="fcfp-abtn fcfp-search-btn" onclick="fcfpSearchSelection(event)">🔎 Web par check karo</button>
+  <button class="fcfp-abtn fcfp-edit-btn" onclick="fcfpOpenEditModal(event)">✏️ Edit karo</button>
+</div>
+
+<!-- Edit modal — selected text ko naye/updated data se replace karne ke liye -->
+<div id="fcfpEditModal" onclick="if(event.target===this) fcfpCloseEditModal();">
+  <div class="fcfp-edit-box" onclick="event.stopPropagation();">
+    <div class="fcfp-edit-title">✏️ Fact Update Karo</div>
+    <div class="fcfp-edit-hint">Jo text galat/purana hai use neeche naye updated data se replace karo.</div>
+    <div class="fcfp-edit-old" id="fcfpEditOldText"></div>
+    <textarea id="fcfpEditInput" placeholder="Naya updated text yahan likho ya paste karo..."></textarea>
+    <div class="fcfp-edit-actions">
+      <button class="fcfp-edit-cancel" onclick="fcfpCloseEditModal()">Cancel</button>
+      <button class="fcfp-edit-save" onclick="fcfpSaveEdit()">✅ OK, Update Karo</button>
+    </div>
+  </div>
 </div>
 
 <!-- AUTO-SCROLL SETTINGS PANEL -->
@@ -15976,6 +16038,7 @@ function fcCloseExtraOverlay(e){
   var page = document.getElementById('fcFactsPage');
   if(page) page.classList.remove('active');
   fcfpHideSearchChip();
+  fcfpCloseEditModal();
   if(_fcFactsPageOpen){
     document.body.style.overflow = '';
     _fcFactsPageOpen = false;
@@ -15987,16 +16050,20 @@ function fcCloseExtraOverlay(e){
   }
 }
 
-// ===== Facts page: select text -> "search on web to fact-check" =====
+// ===== Facts page: select text -> bottom action bar (Search / Edit) =====
+// Kept at the BOTTOM of the screen deliberately so it never overlaps the
+// native Android text-selection popup, which appears near/above the selection.
+var _fcfpLastRange = null; // last selection Range, kept for the Edit flow
+
 function fcfpHideSearchChip(){
-  var chip = document.getElementById('fcfpSearchChip');
-  if(chip) chip.classList.remove('show');
+  var bar = document.getElementById('fcfpActionBar');
+  if(bar) bar.classList.remove('show');
 }
 
 document.addEventListener('selectionchange', function(){
   var contentEl = document.getElementById('fcFactsPageContent');
-  var chip = document.getElementById('fcfpSearchChip');
-  if(!contentEl || !chip || !_fcFactsPageOpen) return;
+  var bar = document.getElementById('fcfpActionBar');
+  if(!contentEl || !bar || !_fcFactsPageOpen) return;
   var sel = window.getSelection();
   if(!sel || sel.rangeCount === 0 || sel.isCollapsed){ fcfpHideSearchChip(); return; }
   var text = sel.toString().trim();
@@ -16004,31 +16071,101 @@ document.addEventListener('selectionchange', function(){
   // Only react to selections that are inside our facts content
   var anchorNode = sel.anchorNode;
   if(!anchorNode || !contentEl.contains(anchorNode)){ fcfpHideSearchChip(); return; }
-  try{
-    var rect = sel.getRangeAt(0).getBoundingClientRect();
-    if(!rect || (rect.width===0 && rect.height===0)){ fcfpHideSearchChip(); return; }
-    var chipW = 180; // approx chip width for centering/clamping
-    var left = rect.left + (rect.width/2) - (chipW/2);
-    left = Math.max(8, Math.min(left, window.innerWidth - chipW - 8));
-    var top = rect.top - 46;
-    if(top < 8) top = rect.bottom + 10; // flip below if too close to top
-    chip.style.left = left + 'px';
-    chip.style.top = top + 'px';
-    chip.classList.add('show');
-  } catch(err){ fcfpHideSearchChip(); }
+  _fcfpLastRange = sel.getRangeAt(0).cloneRange();
+  bar.classList.add('show');
 });
 
 // Selected fact ko fact-check question ke roop me web search me kholo —
 // naya browser tab me khulta hai, apna app ka page kabhi navigate/back nahi hota.
 function fcfpSearchSelection(e){
   if(e){ e.stopPropagation(); }
-  var sel = window.getSelection();
-  var text = sel ? sel.toString().trim() : '';
+  var text = _fcfpSelectedText();
   if(!text) return;
   var query = '"' + text + '" yah data sahi hai kya? current update kya hai';
   var url = 'https://www.google.com/search?q=' + encodeURIComponent(query);
   window.open(url, '_blank', 'noopener');
-  fcfpHideSearchChip();
+}
+
+function _fcfpSelectedText(){
+  if(_fcfpLastRange) return _fcfpLastRange.toString().trim();
+  var sel = window.getSelection();
+  return sel ? sel.toString().trim() : '';
+}
+
+// ===== Edit flow: replace the selected portion with corrected/updated text =====
+function fcfpOpenEditModal(e){
+  if(e){ e.stopPropagation(); }
+  var text = _fcfpSelectedText();
+  if(!text){ if(typeof showToast==='function') showToast('Pehle kuch text select karo','error'); return; }
+  var modal = document.getElementById('fcfpEditModal');
+  var oldEl = document.getElementById('fcfpEditOldText');
+  var input = document.getElementById('fcfpEditInput');
+  if(!modal || !oldEl || !input) return;
+  oldEl.textContent = text;
+  input.value = '';
+  modal.classList.add('show');
+  setTimeout(function(){ input.focus(); }, 150);
+}
+
+function fcfpCloseEditModal(){
+  var modal = document.getElementById('fcfpEditModal');
+  if(modal) modal.classList.remove('show');
+}
+
+// Selected text ko naye text se replace karke card.extra field update karo
+// aur permanently save karo (local + Firebase, jaisa baaki flashcard data hota hai).
+function fcfpSaveEdit(){
+  var input = document.getElementById('fcfpEditInput');
+  var newText = input ? input.value.trim() : '';
+  if(!newText){ if(typeof showToast==='function') showToast('Naya text likho ya paste karo','error'); return; }
+  if(!_fcfpLastRange){ fcfpCloseEditModal(); return; }
+
+  // 1) Replace the selected text inside the visible facts page (DOM Range replace)
+  try{
+    _fcfpLastRange.deleteContents();
+    _fcfpLastRange.insertNode(document.createTextNode(newText));
+  }catch(err){
+    console.warn('fcfpSaveEdit range replace error:', err);
+  }
+  window.getSelection().removeAllRanges();
+
+  // 2) Persist the change back into the card's `extra` field (source of truth)
+  var pageContent = document.getElementById('fcFactsPageContent');
+  var extraBody = document.getElementById('fcExtraBody');
+  var updatedHtml = pageContent ? pageContent.innerHTML : '';
+  if(extraBody) extraBody.innerHTML = updatedHtml;
+
+  var key = _fcTopicKey(_fcPlayState.sid, _fcPlayState.secid, _fcPlayState.tid);
+  var set = S.flashcardSets[key];
+  var st = _fcPlayState.session;
+  if(set && st && st.queue && st.pos < st.queue.length){
+    var cardIdx = st.queue[st.pos];
+    var card = set.cards[cardIdx];
+    if(card){
+      card.extra = updatedHtml;
+      save();
+      _fcSyncFlashcardSetToFirebase(key, set);
+    }
+  }
+
+  fcfpCloseEditModal();
+  if(typeof showToast==='function') showToast('✅ Fact update ho gaya!','success');
+  _fcfpLastRange = null;
+}
+
+// Silent background sync of an updated flashcard set to Firebase (no toast/loading UI)
+async function _fcSyncFlashcardSetToFirebase(key, set){
+  try{
+    if(!_db || !_currentUser) return;
+    var uid = _effectiveUID;
+    var clean = _fsClean(set);
+    if(firebase && firebase.firestore && firebase.firestore.FieldValue){
+      clean.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+    }
+    await _db.collection('users').doc(uid).collection('flashcardSets').doc(key).set(clean);
+  }catch(e){
+    console.warn('fact edit sync error:', e && e.message);
+  }
 }
 
 function fcRate(rating){
