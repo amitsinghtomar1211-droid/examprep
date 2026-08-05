@@ -778,6 +778,7 @@ body.night-mode #fcFactsPage .fcfp-extra-divider{color:#c9a060;}
 }
 #fcfpActionBar .fcfp-abtn:active{opacity:0.75;}
 #fcfpActionBar .fcfp-abtn.fcfp-edit-btn{background:#2e7d32;}
+#fcfpActionBar .fcfp-abtn.fcfp-close-btn{background:rgba(60,60,60,0.85);padding:9px 12px;font-size:0.8rem;}
 
 
 /* Edit-fact modal — small popup to replace selected text */
@@ -796,6 +797,17 @@ body.night-mode #fcFactsPage .fcfp-extra-divider{color:#c9a060;}
 }
 #fcfpEditModal .fcfp-edit-hint{
   font-size:0.72rem;color:var(--text2,#6b5a3f);margin-bottom:10px;line-height:1.5;
+}
+#fcfpEditModal .fcfp-edit-mode-row{
+  display:flex;gap:8px;margin-bottom:10px;
+}
+#fcfpEditModal .fcfp-edit-mode-btn{
+  flex:1;padding:8px 10px;border-radius:10px;border:1.5px solid rgba(128,128,128,0.3);
+  background:transparent;color:var(--text,#2c2416);font-size:0.74rem;font-weight:700;
+  font-family:'Noto Sans Devanagari',sans-serif;cursor:pointer;
+}
+#fcfpEditModal .fcfp-edit-mode-btn.active{
+  background:#2e7d32;border-color:#2e7d32;color:#fff;
 }
 #fcfpEditModal .fcfp-edit-old{
   font-size:0.76rem;color:var(--text2,#6b5a3f);background:var(--surface2,#f4efe4);
@@ -9635,13 +9647,18 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
 <div id="fcfpActionBar">
   <button class="fcfp-abtn fcfp-search-btn" onclick="fcfpSearchSelection(event)">🔎 Web par check karo</button>
   <button class="fcfp-abtn fcfp-edit-btn" onclick="fcfpOpenEditModal(event)">✏️ Edit karo</button>
+  <button class="fcfp-abtn fcfp-close-btn" onclick="fcfpHideSearchChip();event.stopPropagation();" title="Band karo">✕</button>
 </div>
 
-<!-- Edit modal — selected text ko naye/updated data se replace karne ke liye -->
+<!-- Edit modal — selected text ko replace karo YA usi ke saath naya data jodo -->
 <div id="fcfpEditModal" onclick="if(event.target===this) fcfpCloseEditModal();">
   <div class="fcfp-edit-box" onclick="event.stopPropagation();">
     <div class="fcfp-edit-title">✏️ Fact Update Karo</div>
-    <div class="fcfp-edit-hint">Jo text galat/purana hai use neeche naye updated data se replace karo.</div>
+    <div class="fcfp-edit-mode-row" id="fcfpEditModeRow">
+      <button type="button" class="fcfp-edit-mode-btn active" id="fcfpModeReplaceBtn" onclick="fcfpSetEditMode('replace')">🔁 Replace karo</button>
+      <button type="button" class="fcfp-edit-mode-btn" id="fcfpModeAppendBtn" onclick="fcfpSetEditMode('append')">➕ Purane me jodo</button>
+    </div>
+    <div class="fcfp-edit-hint" id="fcfpEditHint">Jo text galat/purana hai use neeche naye updated data se replace karo.</div>
     <div class="fcfp-edit-old" id="fcfpEditOldText"></div>
     <textarea id="fcfpEditInput" placeholder="Naya updated text yahan likho ya paste karo..."></textarea>
     <div class="fcfp-edit-actions">
@@ -16144,8 +16161,23 @@ document.addEventListener('selectionchange', function(){
   bar.classList.add('show');
   // Auto-hide after 4 seconds no matter what — guarantees it never stays
   // stuck on screen, even if a focus/visibility event is missed somewhere.
-  if(_fcfpAutoHideTimer) clearTimeout(_fcfpAutoHideTimer);
-  _fcfpAutoHideTimer = setTimeout(function(){ fcfpHideSearchChip(); }, 4000);
+  // NOTE: timer intentionally does NOT reset on every selectionchange tick —
+  // it's anchored to when the bar first appears, so it always disappears
+  // within 4s of showing instead of being pushed back indefinitely.
+  if(!_fcfpAutoHideTimer){
+    _fcfpAutoHideTimer = setTimeout(function(){ fcfpHideSearchChip(); }, 4000);
+  }
+});
+
+// Tap anywhere outside the facts content / bar also closes the chip immediately —
+// extra safety net alongside the close (✕) button and the 4s auto-hide timer.
+document.addEventListener('pointerdown', function(e){
+  var bar = document.getElementById('fcfpActionBar');
+  if(!bar || !bar.classList.contains('show')) return;
+  if(bar.contains(e.target)) return; // tapping the bar itself (its buttons) — let onclick handle it
+  var contentEl = document.getElementById('fcFactsPageContent');
+  if(contentEl && contentEl.contains(e.target)) return; // still selecting/tapping inside text
+  fcfpHideSearchChip();
 });
 
 // Selected fact ko fact-check question ke roop me web search me kholo —
@@ -16209,7 +16241,24 @@ function _fcfpSelectedText(){
   return sel ? sel.toString().trim() : '';
 }
 
-// ===== Edit flow: replace the selected portion with corrected/updated text =====
+// ===== Edit flow: either REPLACE the selected portion, or APPEND new info
+// right after it (keeping the old text intact) =====
+var _fcfpEditMode = 'replace'; // 'replace' | 'append'
+
+function fcfpSetEditMode(mode){
+  _fcfpEditMode = mode;
+  var replaceBtn = document.getElementById('fcfpModeReplaceBtn');
+  var appendBtn = document.getElementById('fcfpModeAppendBtn');
+  var hint = document.getElementById('fcfpEditHint');
+  if(replaceBtn) replaceBtn.classList.toggle('active', mode === 'replace');
+  if(appendBtn) appendBtn.classList.toggle('active', mode === 'append');
+  if(hint){
+    hint.textContent = (mode === 'append')
+      ? 'Naya text neeche likho — yeh purane text ke saath jud jayega, purana data delete nahi hoga.'
+      : 'Jo text galat/purana hai use neeche naye updated data se replace karo.';
+  }
+}
+
 function fcfpOpenEditModal(e){
   if(e){ e.stopPropagation(); }
   var text = _fcfpSelectedText();
@@ -16220,6 +16269,7 @@ function fcfpOpenEditModal(e){
   if(!modal || !oldEl || !input) return;
   oldEl.textContent = text;
   input.value = '';
+  fcfpSetEditMode('replace'); // default mode har baar modal khulne par reset
   modal.classList.add('show');
   setTimeout(function(){ input.focus(); }, 150);
 }
@@ -16229,18 +16279,26 @@ function fcfpCloseEditModal(){
   if(modal) modal.classList.remove('show');
 }
 
-// Selected text ko naye text se replace karke card.extra field update karo
-// aur permanently save karo (local + Firebase, jaisa baaki flashcard data hota hai).
+// Selected text ko naye text se replace karo, YA naye text ko purane ke
+// saath jodo (append) — mode ke hisaab se — phir card.extra field update
+// karke permanently save karo (local + Firebase, jaisa baaki flashcard data hota hai).
 function fcfpSaveEdit(){
   var input = document.getElementById('fcfpEditInput');
   var newText = input ? input.value.trim() : '';
   if(!newText){ if(typeof showToast==='function') showToast('Naya text likho ya paste karo','error'); return; }
   if(!_fcfpLastRange){ fcfpCloseEditModal(); return; }
 
-  // 1) Replace the selected text inside the visible facts page (DOM Range replace)
+  // 1) Update the selected text inside the visible facts page (DOM Range)
   try{
-    _fcfpLastRange.deleteContents();
-    _fcfpLastRange.insertNode(document.createTextNode(newText));
+    if(_fcfpEditMode === 'append'){
+      // Keep old text as-is, insert new text right after it (space-separated)
+      // by collapsing the range to its end point before inserting.
+      _fcfpLastRange.collapse(false);
+      _fcfpLastRange.insertNode(document.createTextNode(' ' + newText));
+    } else {
+      _fcfpLastRange.deleteContents();
+      _fcfpLastRange.insertNode(document.createTextNode(newText));
+    }
   }catch(err){
     console.warn('fcfpSaveEdit range replace error:', err);
   }
