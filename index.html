@@ -760,25 +760,40 @@ body.night-mode #fcFactsPage .fcfp-extra-divider{color:#c9a060;}
 /* Floating action bar — appears just BELOW the selected text (not fixed to
    bottom of screen) so it doesn't overlap the native Android/Google
    selection popup, which shows above/near the selection itself. */
-#fcfpActionBar{
-  display:none;position:fixed;z-index:999998;
-  justify-content:center;gap:8px;
-  pointer-events:none; /* wrapper itself is not interactive; buttons re-enable it */
+/* Floating action bar — permanently disabled, buttons moved to topbar */
+#fcfpActionBar{ display:none !important; }
+
+/* ── Topbar action buttons (Search + Edit) ── */
+#fcFactsPage .fcfp-tb-actions{
+  display:flex;gap:6px;margin-left:auto;flex-shrink:0;
 }
-#fcfpActionBar.show{display:flex;animation:fcfpBarIn 0.14s ease;}
-@keyframes fcfpBarIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:translateY(0);}}
-#fcfpActionBar .fcfp-abtn{
-  background:#1a1a1a;color:#fff;border-radius:20px;border:none;
-  padding:9px 14px;font-size:0.76rem;font-weight:800;
-  display:flex;align-items:center;gap:5px;cursor:pointer;
-  box-shadow:0 4px 16px rgba(0,0,0,0.32);
+#fcFactsPage .fcfp-tb-btn{
+  display:flex;align-items:center;gap:4px;
+  padding:6px 11px;border-radius:20px;
+  border:1.5px solid rgba(163,118,63,0.28);
+  background:rgba(163,118,63,0.09);
+  color:#9a6b30;
+  font-size:0.68rem;font-weight:800;cursor:pointer;
   -webkit-tap-highlight-color:transparent;white-space:nowrap;
   font-family:'Noto Sans Devanagari',sans-serif;
-  pointer-events:auto;
+  transition:background 0.15s;
 }
-#fcfpActionBar .fcfp-abtn:active{opacity:0.75;}
-#fcfpActionBar .fcfp-abtn.fcfp-edit-btn{background:#2e7d32;}
-#fcfpActionBar .fcfp-abtn.fcfp-close-btn{background:rgba(60,60,60,0.85);padding:9px 12px;font-size:0.8rem;}
+#fcFactsPage .fcfp-tb-btn:active{opacity:0.65;}
+#fcFactsPage .fcfp-tb-btn.fcfp-tb-edit{
+  border-color:rgba(46,125,50,0.28);
+  background:rgba(46,125,50,0.08);
+  color:#2e7d32;
+}
+body.night-mode #fcFactsPage .fcfp-tb-btn{
+  border-color:rgba(201,160,96,0.22);
+  background:rgba(201,160,96,0.07);
+  color:#c9a060;
+}
+body.night-mode #fcFactsPage .fcfp-tb-btn.fcfp-tb-edit{
+  border-color:rgba(102,187,106,0.22);
+  background:rgba(102,187,106,0.06);
+  color:#81c784;
+}
 
 
 /* Edit-fact modal — small popup to replace selected text */
@@ -9629,6 +9644,10 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
   <div class="fcfp-topbar">
     <button class="fcfp-close" onclick="fcCloseExtraOverlay(event)" title="Band karo">✕</button>
     <div class="fcfp-title">ℹ️ Extra Jankari</div>
+    <div class="fcfp-tb-actions">
+      <button class="fcfp-tb-btn" onclick="fcfpSearchSelection(event)" title="Selected text web search karo">🔎 Search</button>
+      <button class="fcfp-tb-btn fcfp-tb-edit" onclick="fcfpOpenEditModal(event)" title="Selected text edit karo">✏️ Edit</button>
+    </div>
   </div>
   <div class="fcfp-body" id="fcFactsPageBody">
     <!-- Question + Answer recap — taaki extra facts padhte waqt original Q&A yaad rahe -->
@@ -9643,12 +9662,8 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
   </div>
 </div>
 
-<!-- Bottom action bar — text select karne par yahan "Web Search" + "Edit" dikhte hain -->
-<div id="fcfpActionBar">
-  <button class="fcfp-abtn fcfp-search-btn" onclick="fcfpSearchSelection(event)">🔎 Web par check karo</button>
-  <button class="fcfp-abtn fcfp-edit-btn" onclick="fcfpOpenEditModal(event)">✏️ Edit karo</button>
-  <button class="fcfp-abtn fcfp-close-btn" onclick="fcfpHideSearchChip(true,'closeBtn');event.stopPropagation();" title="Band karo">✕</button>
-</div>
+<!-- Floating action bar removed — Search/Edit buttons moved to topbar -->
+<div id="fcfpActionBar" style="display:none!important;"></div>
 
 <!-- Edit modal — selected text ko replace karo YA usi ke saath naya data jodo -->
 <div id="fcfpEditModal" onclick="if(event.target===this) fcfpCloseEditModal();">
@@ -16106,7 +16121,7 @@ function fcCloseExtraOverlay(e){
   if(e){ e.stopPropagation(); }
   var page = document.getElementById('fcFactsPage');
   if(page) page.classList.remove('active');
-  fcfpHideSearchChip(false,'closeOverlay');
+  fcfpHideSearchChip();
   fcfpCloseEditModal();
   if(_fcFactsPageOpen){
     document.body.style.overflow = '';
@@ -16119,114 +16134,30 @@ function fcCloseExtraOverlay(e){
   }
 }
 
-// ===== Facts page: select text -> floating action bar just below selection (Search / Edit) =====
-var _fcfpLastRange      = null;  // last selection Range, kept for the Edit flow
-var _fcfpAutoHideTimer  = null;  // 4s auto-hide (resets on every selectionchange tick)
-// ── REQUIRE-COLLAPSE GATE (primary fix) ──────────────────────────────────────
-// After the bar is explicitly closed (button tap / timer / search action),
-// Android/iOS native selection handles keep firing selectionchange with the
-// same old selection — bar would immediately reappear. Fix: after ANY explicit
-// hide, set _fcfpRequireCollapse = true. The bar cannot re-show until the
-// selection is first COLLAPSED (user taps away to deselect), then re-expanded.
-// This is the correct UX: to re-use the bar, deselect → select again.
-var _fcfpRequireCollapse = false;
+// ===== Facts page: selection tracker (no floating bar — buttons are in topbar) =====
+// Silently tracks what the user has selected so topbar Search/Edit buttons
+// can use it. No UI is shown on selection — zero Android-handle issues.
+var _fcfpLastRange = null; // last selection Range, used by topbar Search + Edit
 
-// ── CHIP DEBUG (visible in 10-tap dev console) ────────────────────────────────
-function _chipDbg(msg){ try{ console.info('[CHIP] '+msg); }catch(e){} }
-// ─────────────────────────────────────────────────────────────────────────────
-
+// Stub — still called by other parts of the app (close overlay, focus events).
+// Floating bar is permanently hidden via CSS, so this is a safe no-op.
 function fcfpHideSearchChip(clearSel, _reason){
-  var bar = document.getElementById('fcfpActionBar');
-  var wasShowing = bar && bar.classList.contains('show');
-  if(bar) bar.classList.remove('show');
-  if(_fcfpAutoHideTimer){ clearTimeout(_fcfpAutoHideTimer); _fcfpAutoHideTimer = null; }
-  // Require a collapse+reselect cycle before bar can appear again.
-  // Only set for EXPLICIT hides (button, timer, search, focus events) —
-  // not for passive collapsed/outside checks that fire continuously.
-  _fcfpRequireCollapse = true;
   if(clearSel){
     try{ window.getSelection().removeAllRanges(); }catch(err){}
     _fcfpLastRange = null;
   }
-  _chipDbg('HIDE reason:"'+(_reason||'?')+'" wasShowing:'+wasShowing+' clearSel:'+!!clearSel+' requireCollapse→true');
 }
 
+// Silently track the selection range for topbar button use
 document.addEventListener('selectionchange', function(){
+  if(!_fcFactsPageOpen) return;
   var contentEl = document.getElementById('fcFactsPageContent');
-  var bar = document.getElementById('fcfpActionBar');
-  if(!contentEl || !bar || !_fcFactsPageOpen) return;
-
+  if(!contentEl) return;
   var sel = window.getSelection();
-  var collapsed = !sel || sel.rangeCount === 0 || sel.isCollapsed;
-  var text = collapsed ? '' : sel.toString().trim();
-
-  // ── COLLAPSED → reset the require-collapse gate ──────────────────────────
-  if(collapsed){
-    if(_fcfpRequireCollapse){
-      _fcfpRequireCollapse = false;
-      _chipDbg('selectionchange — collapsed: requireCollapse gate CLEARED ✓');
-    }
-    if(bar.classList.contains('show')) fcfpHideSearchChip(false,'selChange-collapsed');
-    return;
-  }
-
-  // ── SHORT TEXT ────────────────────────────────────────────────────────────
-  if(!text || text.length < 2){
-    if(bar.classList.contains('show')) fcfpHideSearchChip(false,'selChange-tooShort');
-    return;
-  }
-
-  // ── OUTSIDE FACTS CONTENT ─────────────────────────────────────────────────
+  if(!sel || sel.rangeCount === 0 || sel.isCollapsed){ _fcfpLastRange = null; return; }
   var anchorNode = sel.anchorNode;
-  if(!anchorNode || !contentEl.contains(anchorNode)) return;
-
-  // ── REQUIRE-COLLAPSE GATE ─────────────────────────────────────────────────
-  // Bar was explicitly closed. User must deselect first (collapse the
-  // selection) before the bar is allowed to show again. Blocks Android/iOS
-  // native handles from immediately re-showing the bar.
-  if(_fcfpRequireCollapse){
-    _chipDbg('selectionchange BLOCKED — requireCollapse=true (must deselect first) text:"'+text.slice(0,25)+'"');
-    return;
-  }
-
-  // ── SHOW BAR ──────────────────────────────────────────────────────────────
-  var range = sel.getRangeAt(0);
-  _fcfpLastRange = range.cloneRange();
-  try{
-    var rect = range.getBoundingClientRect();
-    if(rect && (rect.width || rect.height)){
-      bar.style.display = 'flex';
-      var barW = bar.offsetWidth || 220;
-      var left = rect.left + (rect.width/2) - (barW/2);
-      left = Math.max(8, Math.min(left, window.innerWidth - barW - 8));
-      var top = rect.bottom + 10;
-      var maxTop = window.innerHeight - 54;
-      if(top > maxTop) top = maxTop;
-      bar.style.left = left+'px';
-      bar.style.top  = top +'px';
-    }
-  }catch(err){ _chipDbg('position err:'+err); }
-  bar.classList.add('show');
-  _chipDbg('SHOW text:"'+text.slice(0,40)+(text.length>40?'…':'')+'"');
-  // Reset auto-hide timer on every tick — 4s from LAST selection activity
-  if(_fcfpAutoHideTimer){ clearTimeout(_fcfpAutoHideTimer); }
-  _fcfpAutoHideTimer = setTimeout(function(){
-    _chipDbg('AUTO-HIDE 4s fired');
-    fcfpHideSearchChip(true,'autoHide4s');
-  }, 4000);
-});
-
-// Tap outside facts content / bar → close immediately
-document.addEventListener('pointerdown', function(e){
-  var bar = document.getElementById('fcfpActionBar');
-  if(!bar || !bar.classList.contains('show')) return;
-  var inBar     = bar.contains(e.target);
-  var contentEl = document.getElementById('fcFactsPageContent');
-  var inContent = contentEl && contentEl.contains(e.target);
-  _chipDbg('pointerdown inBar:'+inBar+' inContent:'+inContent+' target:'+(e.target&&e.target.tagName));
-  if(inBar) return;
-  if(inContent) return;
-  fcfpHideSearchChip(true,'pointerdown-outside');
+  if(!anchorNode || !contentEl.contains(anchorNode)){ _fcfpLastRange = null; return; }
+  try{ _fcfpLastRange = sel.getRangeAt(0).cloneRange(); }catch(e){ _fcfpLastRange = null; }
 });
 
 // Selected fact ko fact-check question ke roop me web search me kholo —
@@ -16237,7 +16168,17 @@ document.addEventListener('pointerdown', function(e){
 function fcfpSearchSelection(e){
   if(e){ e.stopPropagation(); }
   var text = _fcfpSelectedText();
-  if(!text) return;
+  if(!text){
+    // Nothing selected — do a general search using the question+answer as context
+    var qEl = document.getElementById('fcFactsPageQ');
+    var aEl = document.getElementById('fcFactsPageA');
+    var question2 = qEl ? qEl.textContent.trim() : '';
+    var answer2   = aEl ? (aEl.textContent||aEl.innerText||'').trim() : '';
+    if(!question2 && !answer2){ if(typeof showToast==='function') showToast('Pehle kuch text select karo ya card ka content load hone do','info'); return; }
+    var q2 = 'Mera exam flashcard: "'+question2+(answer2?' — '+answer2:'')+'" — is topic ke baare mein aaj tak ki latest jaankari aur exam-relevant important facts batao.';
+    window.open('https://www.google.com/search?q='+encodeURIComponent(q2.slice(0,400))+'&udm=50','_blank','noopener');
+    return;
+  }
 
   var qEl = document.getElementById('fcQText');
   var aEl = document.getElementById('fcAText');
@@ -16276,15 +16217,19 @@ function fcfpSearchSelection(e){
   var url = 'https://www.google.com/search?q=' + encodeURIComponent(query) + '&udm=50';
   window.open(url, '_blank', 'noopener');
 
-  // Hide bar + clear selection immediately; set requireCollapse so native
-  // handles can't re-show it when focus returns from the new tab.
-  fcfpHideSearchChip(true,'searchAction');
+  // Clear tracked range after search opens
+  _fcfpLastRange = null;
 }
 
 function _fcfpSelectedText(){
-  if(_fcfpLastRange) return _fcfpLastRange.toString().trim();
+  // Try tracked range first, then live selection
+  if(_fcfpLastRange){
+    var t = _fcfpLastRange.toString().trim();
+    if(t) return t;
+  }
   var sel = window.getSelection();
-  return sel ? sel.toString().trim() : '';
+  var t2 = sel ? sel.toString().trim() : '';
+  return t2;
 }
 
 // ===== Edit flow: either REPLACE the selected portion, or APPEND new info
@@ -16308,7 +16253,7 @@ function fcfpSetEditMode(mode){
 function fcfpOpenEditModal(e){
   if(e){ e.stopPropagation(); }
   var text = _fcfpSelectedText();
-  if(!text){ if(typeof showToast==='function') showToast('Pehle kuch text select karo','error'); return; }
+  if(!text){ if(typeof showToast==='function') showToast('Edit karne ke liye pehle kuch text select (highlight) karo','info'); return; }
   var modal = document.getElementById('fcfpEditModal');
   var oldEl = document.getElementById('fcfpEditOldText');
   var input = document.getElementById('fcfpEditInput');
@@ -16743,7 +16688,8 @@ document.addEventListener('visibilitychange', function(){
   else {
     // App wapas focus me aaya (e.g. user ne web search karke back kiya) —
     // agar facts page ka floating action bar stuck reh gaya ho to use hata do.
-    if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip(true,'visibilityChange');
+    if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip();
+    try{ window.getSelection().removeAllRanges(); }catch(err){}
     if(typeof _fcfpLastRange!=='undefined') _fcfpLastRange = null;
   }
 });
@@ -16751,14 +16697,16 @@ window.addEventListener('beforeunload', function(){ _fcSilentPauseIfOpen(); });
 // Extra safety net: window focus (some Android WebViews fire this instead of
 // visibilitychange when returning from an external browser tab).
 window.addEventListener('focus', function(){
-  if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip(true,'windowFocus');
+  if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip();
+  try{ window.getSelection().removeAllRanges(); }catch(err){}
   if(typeof _fcfpLastRange!=='undefined') _fcfpLastRange = null;
 });
 // Extra safety net: pageshow fires when returning to a page restored from
 // back/forward cache — another path some Android browsers take instead of
 // visibilitychange/focus.
 window.addEventListener('pageshow', function(){
-  if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip(true,'pageshow');
+  if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip();
+  try{ window.getSelection().removeAllRanges(); }catch(err){}
   if(typeof _fcfpLastRange!=='undefined') _fcfpLastRange = null;
 });
 
@@ -27152,7 +27100,7 @@ window.addEventListener('popstate',function(e){
   const fcfp=document.getElementById('fcFactsPage');
   if(fcfp&&fcfp.classList.contains('active')){
     fcfp.classList.remove('active');
-    if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip(false,'backButton');
+    if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip();
     document.body.style.overflow='';
     _fcFactsPageOpen=false;
     return;
