@@ -9647,7 +9647,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
 <div id="fcfpActionBar">
   <button class="fcfp-abtn fcfp-search-btn" onclick="fcfpSearchSelection(event)">🔎 Web par check karo</button>
   <button class="fcfp-abtn fcfp-edit-btn" onclick="fcfpOpenEditModal(event)">✏️ Edit karo</button>
-  <button class="fcfp-abtn fcfp-close-btn" onclick="fcfpHideSearchChip(true);event.stopPropagation();" title="Band karo">✕</button>
+  <button class="fcfp-abtn fcfp-close-btn" onclick="fcfpHideSearchChip(true,'closeBtn');event.stopPropagation();" title="Band karo">✕</button>
 </div>
 
 <!-- Edit modal — selected text ko replace karo YA usi ke saath naya data jodo -->
@@ -16120,63 +16120,87 @@ function fcCloseExtraOverlay(e){
 }
 
 // ===== Facts page: select text -> floating action bar just below selection (Search / Edit) =====
-var _fcfpLastRange    = null;  // last selection Range, kept for the Edit flow
-var _fcfpAutoHideTimer = null; // 4s auto-hide — always measured from LAST selection activity
-var _fcfpCooldownTimer = null; // blocks re-show after explicit hide (Android handles workaround)
+var _fcfpLastRange     = null;  // last selection Range, kept for the Edit flow
+var _fcfpAutoHideTimer = null;  // 4s auto-hide timer (resets on every selectionchange)
+var _fcfpCooldownTimer = null;  // blocks re-show immediately after explicit hide
+// ROOT-CAUSE FIX: Android/iOS native handles keep selection alive after
+// removeAllRanges(). After cooldown, selectionchange fires with the SAME
+// old text — we mistake it for a new selection and re-show the bar.
+// Solution: record the text fingerprint when hiding; after cooldown, if
+// selectionchange fires with that SAME text, treat it as a stale handle
+// and ignore it. Only a genuinely NEW (different) selection gets through.
+var _fcfpStalePrint    = null;  // text that was selected when bar was last hidden
 
-// ── CHIP DEBUG helper ────────────────────────────────────────────────────────
-// Logs to the in-app dev console (10-tap icon) with a [CHIP] prefix so all
-// chip-related events are easy to filter.  Captures: caller, selectionchange
-// state, cooldown state, bar visibility, and what triggered each hide/show.
-function _chipDbg(msg){
-  try{ console.info('[CHIP] ' + msg); }catch(e){}
-}
-// ────────────────────────────────────────────────────────────────────────────
+// ── CHIP DEBUG ───────────────────────────────────────────────────────────────
+function _chipDbg(msg){ try{ console.info('[CHIP] '+msg); }catch(e){} }
+// ─────────────────────────────────────────────────────────────────────────────
 
-// clearSel=true also wipes the native selection so stale handles can't re-show bar
 function fcfpHideSearchChip(clearSel, _reason){
   var bar = document.getElementById('fcfpActionBar');
   var wasShowing = bar && bar.classList.contains('show');
   if(bar) bar.classList.remove('show');
   if(_fcfpAutoHideTimer){ clearTimeout(_fcfpAutoHideTimer); _fcfpAutoHideTimer = null; }
-  // 1.8s cooldown so bar doesn't reappear from Android/iOS native selection handles
+  // Save current selection as "stale fingerprint" BEFORE clearing it
+  try{
+    var _s = window.getSelection();
+    _fcfpStalePrint = (_s && !_s.isCollapsed) ? _s.toString().trim() : null;
+  }catch(e){ _fcfpStalePrint = null; }
+  // 2.5s cooldown — extra buffer for slow Android handle animations
   if(_fcfpCooldownTimer){ clearTimeout(_fcfpCooldownTimer); }
-  _fcfpCooldownTimer = setTimeout(function(){ _fcfpCooldownTimer = null; _chipDbg('cooldown lifted'); }, 1800);
+  _fcfpCooldownTimer = setTimeout(function(){
+    _fcfpCooldownTimer = null;
+    _chipDbg('cooldown lifted — stalePrint:"' + (_fcfpStalePrint ? _fcfpStalePrint.slice(0,20)+'…' : 'null') + '"');
+  }, 2500);
   if(clearSel){
     try{ window.getSelection().removeAllRanges(); }catch(err){}
     _fcfpLastRange = null;
   }
-  _chipDbg('HIDE — reason:"' + (_reason||'?') + '" wasShowing:' + wasShowing + ' clearSel:' + !!clearSel + ' cooldownStarted:true');
+  _chipDbg('HIDE — reason:"'+(_reason||'?')+'" wasShowing:'+wasShowing+' clearSel:'+!!clearSel+' stalePrint saved:'+(!!_fcfpStalePrint));
 }
 
 document.addEventListener('selectionchange', function(){
   var contentEl = document.getElementById('fcFactsPageContent');
   var bar = document.getElementById('fcfpActionBar');
   if(!contentEl || !bar || !_fcFactsPageOpen){
-    _chipDbg('selectionchange SKIP — factsPageOpen:' + !!_fcFactsPageOpen);
-    return;
+    return; // not on facts page — skip silently
   }
-  // Cooldown active — bar was just explicitly closed, ignore stale handles
+  // ── Cooldown gate ────────────────────────────────────────────────────────
   if(_fcfpCooldownTimer){
-    _chipDbg('selectionchange SKIP — COOLDOWN active (bar was just hidden)');
+    _chipDbg('selectionchange SKIP — COOLDOWN active');
     return;
   }
   var sel = window.getSelection();
   var collapsed = !sel || sel.rangeCount === 0 || sel.isCollapsed;
   var text = sel ? sel.toString().trim() : '';
-  _chipDbg('selectionchange — collapsed:' + collapsed + ' textLen:' + text.length + ' barShowing:' + bar.classList.contains('show'));
-  if(collapsed){ fcfpHideSearchChip(false,'selectionchange-collapsed'); return; }
-  if(!text || text.length < 2){ fcfpHideSearchChip(false,'selectionchange-textTooShort'); return; }
+  // ── Collapsed → clear fingerprint + hide ─────────────────────────────────
+  if(collapsed){
+    _fcfpStalePrint = null; // user genuinely collapsed — reset fingerprint
+    if(bar.classList.contains('show')){
+      _chipDbg('selectionchange — collapsed, hiding bar');
+      fcfpHideSearchChip(false,'collapsed');
+    }
+    return;
+  }
+  if(!text || text.length < 2){ fcfpHideSearchChip(false,'textTooShort'); return; }
   // Only react to selections inside our facts content
   var anchorNode = sel.anchorNode;
-  if(!anchorNode || !contentEl.contains(anchorNode)){
-    _chipDbg('selectionchange SKIP — anchorNode outside factsContent');
-    fcfpHideSearchChip(false,'selectionchange-outsideContent');
+  if(!anchorNode || !contentEl.contains(anchorNode)){ return; }
+  // ── STALE FINGERPRINT gate ────────────────────────────────────────────────
+  // Same text as when we last hid = native handle keeping old selection alive.
+  // Ignore it. Only cleared when selection collapses (user taps away) or
+  // when user makes a genuinely different selection.
+  if(_fcfpStalePrint !== null && text === _fcfpStalePrint){
+    _chipDbg('selectionchange SKIP — STALE HANDLE (same text as hidden selection): "'+text.slice(0,30)+'"');
     return;
+  }
+  // New/different text → clear stale fingerprint, allow show
+  if(_fcfpStalePrint !== null){
+    _chipDbg('selectionchange — NEW text detected, clearing stalePrint');
+    _fcfpStalePrint = null;
   }
   var range = sel.getRangeAt(0);
   _fcfpLastRange = range.cloneRange();
-  // Position the bar just BELOW the selected text
+  // Position bar just below the selected text
   try{
     var rect = range.getBoundingClientRect();
     if(rect && (rect.width || rect.height)){
@@ -16187,16 +16211,16 @@ document.addEventListener('selectionchange', function(){
       var top = rect.bottom + 10;
       var maxTop = window.innerHeight - 54;
       if(top > maxTop) top = maxTop;
-      bar.style.left = left + 'px';
-      bar.style.top  = top  + 'px';
+      bar.style.left = left+'px';
+      bar.style.top  = top +'px';
     }
-  }catch(err){ _chipDbg('position error: ' + err); }
+  }catch(err){ _chipDbg('position error:'+err); }
   bar.classList.add('show');
-  _chipDbg('SHOW — text:"' + text.slice(0,40) + (text.length>40?'…':'') + '"');
-  // Reset timer on EVERY tick — 4s measured from LAST selection activity
+  _chipDbg('SHOW — text:"'+text.slice(0,40)+(text.length>40?'…':'')+'"');
+  // Reset auto-hide on every tick — 4s from LAST selection activity
   if(_fcfpAutoHideTimer){ clearTimeout(_fcfpAutoHideTimer); }
   _fcfpAutoHideTimer = setTimeout(function(){
-    _chipDbg('AUTO-HIDE timer fired (4s elapsed since last selectionchange)');
+    _chipDbg('AUTO-HIDE timer fired (4s since last selectionchange)');
     fcfpHideSearchChip(true,'autoHideTimer');
   }, 4000);
 });
@@ -16208,9 +16232,9 @@ document.addEventListener('pointerdown', function(e){
   var inBar     = bar.contains(e.target);
   var contentEl = document.getElementById('fcFactsPageContent');
   var inContent = contentEl && contentEl.contains(e.target);
-  _chipDbg('pointerdown — inBar:' + inBar + ' inContent:' + inContent + ' target:' + (e.target && e.target.tagName));
-  if(inBar) return;     // button clicks — let onclick handle
-  if(inContent) return; // still selecting inside text
+  _chipDbg('pointerdown — inBar:'+inBar+' inContent:'+inContent+' target:'+(e.target&&e.target.tagName));
+  if(inBar) return;
+  if(inContent) return;
   fcfpHideSearchChip(true,'pointerdown-outside');
 });
 
