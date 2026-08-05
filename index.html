@@ -16157,11 +16157,12 @@ function fcfpSearchSelection(e){
   var question = qEl ? qEl.textContent.trim() : '';
   var answer = aEl ? (aEl.textContent || aEl.innerText || '').trim() : '';
 
-  // Keep each piece reasonably short so the final URL doesn't get too long
-  var trim = function(s, n){ return s && s.length > n ? s.slice(0, n).trim() + '…' : s; };
-  question = trim(question, 150);
-  answer = trim(answer, 150);
-  text = trim(text, 300);
+  // Keep everything short — Google's normal search box (not AI Mode) chokes
+  // on long sentence-style queries and returns "did not match any documents".
+  var trim = function(s, n){ return s && s.length > n ? s.slice(0, n).trim() : s; };
+  question = trim(question, 60);
+  answer = trim(answer, 40);
+  text = trim(text, 120);
 
   // Topic/section/file name — jaise "August 2025" jis naam se content bana hai
   var topicName = '';
@@ -16171,23 +16172,24 @@ function fcfpSearchSelection(e){
     topicName = set && set.topicName ? set.topicName : '';
   }catch(err){}
 
+  // Compact keyword-style query — main focus: verify/update the selected FACT.
+  // Q&A goes in only as light background context, not as the thing to verify.
   var parts = [];
-  parts.push('Mera exam ka current GK/current-affairs flashcard hai.');
-  if(topicName) parts.push('Yeh content "' + topicName + '" ke naam se bana hai (isi date/month ka current affairs data hai).');
-  if(question || answer) {
-    var ctx = 'Sirf context ke liye bata raha hoon ki yeh fact iss flashcard se juda hai';
-    if(question) ctx += ' — Question: "' + question + '"';
-    if(answer) ctx += ', Answer: "' + answer + '"';
-    ctx += '.';
-    parts.push(ctx);
-  }
-  parts.push('Mujhe SIRF is neeche wali extra jankari (fact) ko verify karana hai, jo static GK aur current affairs dono strong karne aur exam me top karne ke liye extra fact ke roop me suggest ki gayi hai: "' + text + '"');
-  parts.push('Aaj tak ki latest jaankari ke hisaab se search karke sabse pehle yeh batao ki is extra fact mein koi update to nahi hua — agar update hua ho to updated data kya hai, wo saaf-saaf batao. (Question ka answer verify karna zaroori nahi hai, agar kar sako to theek hai lekin priority is extra fact ko verify karne ki hai.)');
-  parts.push('Iske baad yeh bhi batao ki is topic se juda aur koi important, exam-relevant fact ya jaankari hai jo isi Question-Answer se related ho aur exam me baar-baar poochi jaati ho ya poochi ja sakti ho, taaki wo bhi updated data ke saath neeche add kar sakein.');
+  parts.push(text);
+  parts.push('fact check current update');
+  if(topicName) parts.push(topicName);
+  if(question) parts.push('(context: ' + question + (answer ? ' - ' + answer : '') + ')');
 
-  var query = parts.join(' ');
+  var query = parts.join(' ').trim();
   var url = 'https://www.google.com/search?q=' + encodeURIComponent(query);
   window.open(url, '_blank', 'noopener');
+
+  // Hide the bar and clear the selection right away — don't wait for
+  // visibilitychange/focus, since some Android WebViews are unreliable
+  // about firing those when a new tab opens on top.
+  fcfpHideSearchChip();
+  try{ window.getSelection().removeAllRanges(); }catch(err){}
+  _fcfpLastRange = null;
 }
 
 function _fcfpSelectedText(){
@@ -16636,6 +16638,16 @@ window.addEventListener('beforeunload', function(){ _fcSilentPauseIfOpen(); });
 // visibilitychange when returning from an external browser tab).
 window.addEventListener('focus', function(){
   if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip();
+  try{ window.getSelection().removeAllRanges(); }catch(err){}
+  if(typeof _fcfpLastRange!=='undefined') _fcfpLastRange = null;
+});
+// Extra safety net: pageshow fires when returning to a page restored from
+// back/forward cache — another path some Android browsers take instead of
+// visibilitychange/focus.
+window.addEventListener('pageshow', function(){
+  if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip();
+  try{ window.getSelection().removeAllRanges(); }catch(err){}
+  if(typeof _fcfpLastRange!=='undefined') _fcfpLastRange = null;
 });
 
 // Keyboard support while player modal is open
