@@ -16106,7 +16106,7 @@ function fcCloseExtraOverlay(e){
   if(e){ e.stopPropagation(); }
   var page = document.getElementById('fcFactsPage');
   if(page) page.classList.remove('active');
-  fcfpHideSearchChip();
+  fcfpHideSearchChip(false,'closeOverlay');
   fcfpCloseEditModal();
   if(_fcFactsPageOpen){
     document.body.style.overflow = '';
@@ -16120,18 +16120,18 @@ function fcCloseExtraOverlay(e){
 }
 
 // ===== Facts page: select text -> floating action bar just below selection (Search / Edit) =====
-var _fcfpLastRange     = null;  // last selection Range, kept for the Edit flow
-var _fcfpAutoHideTimer = null;  // 4s auto-hide timer (resets on every selectionchange)
-var _fcfpCooldownTimer = null;  // blocks re-show immediately after explicit hide
-// ROOT-CAUSE FIX: Android/iOS native handles keep selection alive after
-// removeAllRanges(). After cooldown, selectionchange fires with the SAME
-// old text — we mistake it for a new selection and re-show the bar.
-// Solution: record the text fingerprint when hiding; after cooldown, if
-// selectionchange fires with that SAME text, treat it as a stale handle
-// and ignore it. Only a genuinely NEW (different) selection gets through.
-var _fcfpStalePrint    = null;  // text that was selected when bar was last hidden
+var _fcfpLastRange      = null;  // last selection Range, kept for the Edit flow
+var _fcfpAutoHideTimer  = null;  // 4s auto-hide (resets on every selectionchange tick)
+// ── REQUIRE-COLLAPSE GATE (primary fix) ──────────────────────────────────────
+// After the bar is explicitly closed (button tap / timer / search action),
+// Android/iOS native selection handles keep firing selectionchange with the
+// same old selection — bar would immediately reappear. Fix: after ANY explicit
+// hide, set _fcfpRequireCollapse = true. The bar cannot re-show until the
+// selection is first COLLAPSED (user taps away to deselect), then re-expanded.
+// This is the correct UX: to re-use the bar, deselect → select again.
+var _fcfpRequireCollapse = false;
 
-// ── CHIP DEBUG ───────────────────────────────────────────────────────────────
+// ── CHIP DEBUG (visible in 10-tap dev console) ────────────────────────────────
 function _chipDbg(msg){ try{ console.info('[CHIP] '+msg); }catch(e){} }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -16140,67 +16140,58 @@ function fcfpHideSearchChip(clearSel, _reason){
   var wasShowing = bar && bar.classList.contains('show');
   if(bar) bar.classList.remove('show');
   if(_fcfpAutoHideTimer){ clearTimeout(_fcfpAutoHideTimer); _fcfpAutoHideTimer = null; }
-  // Save current selection as "stale fingerprint" BEFORE clearing it
-  try{
-    var _s = window.getSelection();
-    _fcfpStalePrint = (_s && !_s.isCollapsed) ? _s.toString().trim() : null;
-  }catch(e){ _fcfpStalePrint = null; }
-  // 2.5s cooldown — extra buffer for slow Android handle animations
-  if(_fcfpCooldownTimer){ clearTimeout(_fcfpCooldownTimer); }
-  _fcfpCooldownTimer = setTimeout(function(){
-    _fcfpCooldownTimer = null;
-    _chipDbg('cooldown lifted — stalePrint:"' + (_fcfpStalePrint ? _fcfpStalePrint.slice(0,20)+'…' : 'null') + '"');
-  }, 2500);
+  // Require a collapse+reselect cycle before bar can appear again.
+  // Only set for EXPLICIT hides (button, timer, search, focus events) —
+  // not for passive collapsed/outside checks that fire continuously.
+  _fcfpRequireCollapse = true;
   if(clearSel){
     try{ window.getSelection().removeAllRanges(); }catch(err){}
     _fcfpLastRange = null;
   }
-  _chipDbg('HIDE — reason:"'+(_reason||'?')+'" wasShowing:'+wasShowing+' clearSel:'+!!clearSel+' stalePrint saved:'+(!!_fcfpStalePrint));
+  _chipDbg('HIDE reason:"'+(_reason||'?')+'" wasShowing:'+wasShowing+' clearSel:'+!!clearSel+' requireCollapse→true');
 }
 
 document.addEventListener('selectionchange', function(){
   var contentEl = document.getElementById('fcFactsPageContent');
   var bar = document.getElementById('fcfpActionBar');
-  if(!contentEl || !bar || !_fcFactsPageOpen){
-    return; // not on facts page — skip silently
-  }
-  // ── Cooldown gate ────────────────────────────────────────────────────────
-  if(_fcfpCooldownTimer){
-    _chipDbg('selectionchange SKIP — COOLDOWN active');
-    return;
-  }
+  if(!contentEl || !bar || !_fcFactsPageOpen) return;
+
   var sel = window.getSelection();
   var collapsed = !sel || sel.rangeCount === 0 || sel.isCollapsed;
-  var text = sel ? sel.toString().trim() : '';
-  // ── Collapsed → clear fingerprint + hide ─────────────────────────────────
+  var text = collapsed ? '' : sel.toString().trim();
+
+  // ── COLLAPSED → reset the require-collapse gate ──────────────────────────
   if(collapsed){
-    _fcfpStalePrint = null; // user genuinely collapsed — reset fingerprint
-    if(bar.classList.contains('show')){
-      _chipDbg('selectionchange — collapsed, hiding bar');
-      fcfpHideSearchChip(false,'collapsed');
+    if(_fcfpRequireCollapse){
+      _fcfpRequireCollapse = false;
+      _chipDbg('selectionchange — collapsed: requireCollapse gate CLEARED ✓');
     }
+    if(bar.classList.contains('show')) fcfpHideSearchChip(false,'selChange-collapsed');
     return;
   }
-  if(!text || text.length < 2){ fcfpHideSearchChip(false,'textTooShort'); return; }
-  // Only react to selections inside our facts content
+
+  // ── SHORT TEXT ────────────────────────────────────────────────────────────
+  if(!text || text.length < 2){
+    if(bar.classList.contains('show')) fcfpHideSearchChip(false,'selChange-tooShort');
+    return;
+  }
+
+  // ── OUTSIDE FACTS CONTENT ─────────────────────────────────────────────────
   var anchorNode = sel.anchorNode;
-  if(!anchorNode || !contentEl.contains(anchorNode)){ return; }
-  // ── STALE FINGERPRINT gate ────────────────────────────────────────────────
-  // Same text as when we last hid = native handle keeping old selection alive.
-  // Ignore it. Only cleared when selection collapses (user taps away) or
-  // when user makes a genuinely different selection.
-  if(_fcfpStalePrint !== null && text === _fcfpStalePrint){
-    _chipDbg('selectionchange SKIP — STALE HANDLE (same text as hidden selection): "'+text.slice(0,30)+'"');
+  if(!anchorNode || !contentEl.contains(anchorNode)) return;
+
+  // ── REQUIRE-COLLAPSE GATE ─────────────────────────────────────────────────
+  // Bar was explicitly closed. User must deselect first (collapse the
+  // selection) before the bar is allowed to show again. Blocks Android/iOS
+  // native handles from immediately re-showing the bar.
+  if(_fcfpRequireCollapse){
+    _chipDbg('selectionchange BLOCKED — requireCollapse=true (must deselect first) text:"'+text.slice(0,25)+'"');
     return;
   }
-  // New/different text → clear stale fingerprint, allow show
-  if(_fcfpStalePrint !== null){
-    _chipDbg('selectionchange — NEW text detected, clearing stalePrint');
-    _fcfpStalePrint = null;
-  }
+
+  // ── SHOW BAR ──────────────────────────────────────────────────────────────
   var range = sel.getRangeAt(0);
   _fcfpLastRange = range.cloneRange();
-  // Position bar just below the selected text
   try{
     var rect = range.getBoundingClientRect();
     if(rect && (rect.width || rect.height)){
@@ -16214,14 +16205,14 @@ document.addEventListener('selectionchange', function(){
       bar.style.left = left+'px';
       bar.style.top  = top +'px';
     }
-  }catch(err){ _chipDbg('position error:'+err); }
+  }catch(err){ _chipDbg('position err:'+err); }
   bar.classList.add('show');
-  _chipDbg('SHOW — text:"'+text.slice(0,40)+(text.length>40?'…':'')+'"');
-  // Reset auto-hide on every tick — 4s from LAST selection activity
+  _chipDbg('SHOW text:"'+text.slice(0,40)+(text.length>40?'…':'')+'"');
+  // Reset auto-hide timer on every tick — 4s from LAST selection activity
   if(_fcfpAutoHideTimer){ clearTimeout(_fcfpAutoHideTimer); }
   _fcfpAutoHideTimer = setTimeout(function(){
-    _chipDbg('AUTO-HIDE timer fired (4s since last selectionchange)');
-    fcfpHideSearchChip(true,'autoHideTimer');
+    _chipDbg('AUTO-HIDE 4s fired');
+    fcfpHideSearchChip(true,'autoHide4s');
   }, 4000);
 });
 
@@ -16232,7 +16223,7 @@ document.addEventListener('pointerdown', function(e){
   var inBar     = bar.contains(e.target);
   var contentEl = document.getElementById('fcFactsPageContent');
   var inContent = contentEl && contentEl.contains(e.target);
-  _chipDbg('pointerdown — inBar:'+inBar+' inContent:'+inContent+' target:'+(e.target&&e.target.tagName));
+  _chipDbg('pointerdown inBar:'+inBar+' inContent:'+inContent+' target:'+(e.target&&e.target.tagName));
   if(inBar) return;
   if(inContent) return;
   fcfpHideSearchChip(true,'pointerdown-outside');
@@ -16285,12 +16276,9 @@ function fcfpSearchSelection(e){
   var url = 'https://www.google.com/search?q=' + encodeURIComponent(query) + '&udm=50';
   window.open(url, '_blank', 'noopener');
 
-  // Hide the bar and clear the selection right away — don't wait for
-  // visibilitychange/focus, since some Android WebViews are unreliable
-  // about firing those when a new tab opens on top.
-  fcfpHideSearchChip();
-  try{ window.getSelection().removeAllRanges(); }catch(err){}
-  _fcfpLastRange = null;
+  // Hide bar + clear selection immediately; set requireCollapse so native
+  // handles can't re-show it when focus returns from the new tab.
+  fcfpHideSearchChip(true,'searchAction');
 }
 
 function _fcfpSelectedText(){
@@ -16755,8 +16743,7 @@ document.addEventListener('visibilitychange', function(){
   else {
     // App wapas focus me aaya (e.g. user ne web search karke back kiya) —
     // agar facts page ka floating action bar stuck reh gaya ho to use hata do.
-    if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip();
-    try{ window.getSelection().removeAllRanges(); }catch(err){}
+    if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip(true,'visibilityChange');
     if(typeof _fcfpLastRange!=='undefined') _fcfpLastRange = null;
   }
 });
@@ -16764,16 +16751,14 @@ window.addEventListener('beforeunload', function(){ _fcSilentPauseIfOpen(); });
 // Extra safety net: window focus (some Android WebViews fire this instead of
 // visibilitychange when returning from an external browser tab).
 window.addEventListener('focus', function(){
-  if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip();
-  try{ window.getSelection().removeAllRanges(); }catch(err){}
+  if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip(true,'windowFocus');
   if(typeof _fcfpLastRange!=='undefined') _fcfpLastRange = null;
 });
 // Extra safety net: pageshow fires when returning to a page restored from
 // back/forward cache — another path some Android browsers take instead of
 // visibilitychange/focus.
 window.addEventListener('pageshow', function(){
-  if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip();
-  try{ window.getSelection().removeAllRanges(); }catch(err){}
+  if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip(true,'pageshow');
   if(typeof _fcfpLastRange!=='undefined') _fcfpLastRange = null;
 });
 
@@ -27167,7 +27152,7 @@ window.addEventListener('popstate',function(e){
   const fcfp=document.getElementById('fcFactsPage');
   if(fcfp&&fcfp.classList.contains('active')){
     fcfp.classList.remove('active');
-    if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip();
+    if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip(false,'backButton');
     document.body.style.overflow='';
     _fcFactsPageOpen=false;
     return;
