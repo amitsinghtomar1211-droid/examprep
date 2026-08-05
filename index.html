@@ -666,6 +666,55 @@ body.reading-focus:not(.night-mode) {
   content:"ℹ️ Extra Jankari";display:block;font-size:0.62rem;font-weight:900;
   letter-spacing:1px;text-transform:uppercase;color:#a3763f;margin-bottom:6px;
 }
+/* Extra facts truncation */
+.fc2-extra-body{
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+  overflow:hidden;line-height:1.65;
+}
+.fc2-extra-body.expanded{
+  display:block;-webkit-line-clamp:unset;overflow:visible;
+}
+.fc2-viewmore-btn{
+  display:inline-block;margin-top:6px;font-size:0.76rem;font-weight:800;
+  color:#a3763f;background:rgba(163,118,63,0.10);border:1.5px solid rgba(163,118,63,0.30);
+  border-radius:20px;padding:3px 12px;cursor:pointer;
+  font-family:'Noto Sans Devanagari',sans-serif;
+  -webkit-tap-highlight-color:transparent;
+}
+.fc2-viewmore-btn:active{opacity:0.7;}
+/* Extra facts overlay (shown above card) */
+#fcExtraOverlay{
+  display:none;position:absolute;inset:0;z-index:20;
+  background:linear-gradient(165deg,#fdfaf5 0%,#f7f0e4 100%);
+  border-radius:20px;padding:22px 20px 18px;
+  overflow-y:auto;text-align:left;
+  box-shadow:0 10px 30px rgba(20,30,45,0.18);
+  animation:fcOverlayIn 0.22s ease;
+}
+#fcExtraOverlay.active{display:block;}
+@keyframes fcOverlayIn{from{opacity:0;transform:scale(0.97);}to{opacity:1;transform:scale(1);}}
+#fcExtraOverlay .fc2-eo-header{
+  display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;
+}
+#fcExtraOverlay .fc2-eo-title{
+  font-size:0.65rem;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;color:#a3763f;
+}
+#fcExtraOverlay .fc2-eo-close{
+  background:rgba(163,118,63,0.12);border:1.5px solid rgba(163,118,63,0.30);
+  border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+  font-size:0.85rem;font-weight:900;color:#7a5520;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;flex-shrink:0;
+}
+#fcExtraOverlay .fc2-eo-close:active{opacity:0.65;}
+#fcExtraOverlay .fc2-eo-body{
+  font-family:'Noto Sans Devanagari',sans-serif;
+  font-size:0.9rem;font-weight:500;line-height:1.75;color:#3a2a10;word-break:break-word;
+}
+body.night-mode #fcExtraOverlay{
+  background:linear-gradient(165deg,#1e1a10 0%,#241f0d 100%);
+}
+body.night-mode #fcExtraOverlay .fc2-eo-body{color:#e0d0b0;}
+body.night-mode .fc2-viewmore-btn{color:#c9a060;border-color:rgba(201,160,96,0.35);background:rgba(201,160,96,0.10);}
 
 .fc2-rating-row{
   display:flex;align-items:center;justify-content:center;gap:18px;
@@ -9140,9 +9189,20 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
               </div>
 
               <div class="fc2-card-face fc2-card-back">
+                <!-- Extra facts full overlay (sits above back face content) -->
+                <div id="fcExtraOverlay">
+                  <div class="fc2-eo-header">
+                    <span class="fc2-eo-title">ℹ️ Extra Jankari</span>
+                    <button class="fc2-eo-close" onclick="fcCloseExtraOverlay(event)" title="Band karo">✕</button>
+                  </div>
+                  <div class="fc2-eo-body" id="fcExtraOverlayBody"></div>
+                </div>
                 <div class="fc2-face-label">Answer</div>
                 <div class="fc2-face-text" id="fcAText"></div>
-                <div class="fc2-face-text fc2-face-extra" id="fcExtraText" style="display:none;"></div>
+                <div class="fc2-face-text fc2-face-extra" id="fcExtraText" style="display:none;">
+                  <div class="fc2-extra-body" id="fcExtraBody"></div>
+                  <button class="fc2-viewmore-btn" id="fcViewMoreBtn" onclick="fcShowExtraOverlay(event)" style="display:none;">▼ View More</button>
+                </div>
               </div>
 
             </div>
@@ -15740,14 +15800,44 @@ function fcRenderCard(){
 
   document.getElementById('fcQText').textContent = card.q;
   document.getElementById('fcAText').innerHTML = card.a;
-  var extraEl = document.getElementById('fcExtraText');
-  if(extraEl){
-    if(card.extra && String(card.extra).trim()){
-      extraEl.innerHTML = card.extra;
+  // Close any open extra overlay when navigating to a new card
+  fcCloseExtraOverlay(null);
+  var extraEl     = document.getElementById('fcExtraText');
+  var extraBody   = document.getElementById('fcExtraBody');
+  var viewMoreBtn = document.getElementById('fcViewMoreBtn');
+  var overlayBody = document.getElementById('fcExtraOverlayBody');
+  if(extraEl && extraBody && viewMoreBtn){
+    var extraContent = card.extra ? String(card.extra).trim() : '';
+    if(extraContent){
+      extraBody.innerHTML = extraContent;
+      if(overlayBody) overlayBody.innerHTML = extraContent;
       extraEl.style.display = 'block';
+      // After paint, check if content is taller than 3-line clamp (~4.95em at 1.65 lh)
+      requestAnimationFrame(function(){
+        // Temporarily un-clamp to get real height
+        extraBody.style.webkitLineClamp = 'unset';
+        extraBody.style.display = 'block';
+        var fullH = extraBody.scrollHeight;
+        extraBody.style.webkitLineClamp = '';
+        extraBody.style.display = '';
+        // 3 lines ≈ fontSize(0.86rem≈13.76px) * lineHeight(1.65) * 3 ≈ 68px
+        var lineClampH = parseFloat(getComputedStyle(extraBody).fontSize || '14') * 1.65 * 3;
+        if(fullH > lineClampH + 4){
+          extraBody.classList.add('fc2-extra-body');
+          extraBody.classList.remove('expanded');
+          viewMoreBtn.style.display = 'inline-block';
+        } else {
+          extraBody.classList.remove('fc2-extra-body');
+          extraBody.classList.add('expanded');
+          viewMoreBtn.style.display = 'none';
+        }
+        fcResizeCardStage();
+      });
     } else {
-      extraEl.innerHTML = '';
+      extraBody.innerHTML = '';
+      if(overlayBody) overlayBody.innerHTML = '';
       extraEl.style.display = 'none';
+      viewMoreBtn.style.display = 'none';
     }
   }
 
@@ -15785,17 +15875,17 @@ function fcRenderCard(){
   fcResizeCardStage();
 }
 
-// Auto-expand the flip card to fit whichever face currently has more content,
-// so long questions/answers/extra-facts never get clipped. Front card keeps its
-// natural min-height when the text is short.
+// Card height is driven by the FRONT face only — so extra facts on the back
+// never push response buttons off screen. Extra facts use a clamped preview
+// with "View More" overlay instead of expanding the card.
 function fcResizeCardStage(){
   var outerEl = document.getElementById('fcCardOuter');
   if(!outerEl) return;
   requestAnimationFrame(function(){
     var frontFace = outerEl.querySelector('.fc2-card-front');
-    var backFace = outerEl.querySelector('.fc2-card-back');
+    var backFace  = outerEl.querySelector('.fc2-card-back');
     if(!frontFace || !backFace) return;
-    // Temporarily measure natural content height of each face
+    // Measure only the front face for the card height
     var measure = function(face){
       var prevPos = face.style.position, prevInset = face.style.inset,
           prevH = face.style.height, prevVis = face.style.visibility;
@@ -15810,9 +15900,13 @@ function fcResizeCardStage(){
       face.style.visibility = prevVis;
       return h;
     };
+    // Back face: measure WITHOUT the overlay (overlay is 0 height when hidden)
+    // Use front height; give back face a comfortable fixed extra: answer + clamped extra
     var frontH = measure(frontFace);
+    // Back face scroll height with extra clamped to 3 lines — measure it too
+    // but cap it so it never pushes buttons off screen (max 320px)
     var backH = measure(backFace);
-    var target = Math.max(220, frontH, backH);
+    var target = Math.max(220, frontH, Math.min(backH, 320));
     outerEl.style.height = target + 'px';
   });
 }
@@ -15823,10 +15917,26 @@ window.addEventListener('resize', function(){
 
 function fcFlip(){
   var st = _fcPlayState.session; if(!st) return;
+  // Close overlay before flipping back to front
+  fcCloseExtraOverlay(null);
   st.flipped = !st.flipped;
   var outerEl = document.getElementById('fcCardOuter');
   if(outerEl) outerEl.classList.toggle('flipped', st.flipped);
   document.getElementById('fcRateRow').style.display = st.flipped ? 'flex' : 'none';
+}
+
+// Show extra facts in a floating overlay above the card back
+function fcShowExtraOverlay(e){
+  if(e){ e.stopPropagation(); }
+  var ov = document.getElementById('fcExtraOverlay');
+  if(ov){ ov.classList.add('active'); }
+}
+
+// Close the extra facts overlay and return to normal card back
+function fcCloseExtraOverlay(e){
+  if(e){ e.stopPropagation(); }
+  var ov = document.getElementById('fcExtraOverlay');
+  if(ov){ ov.classList.remove('active'); }
 }
 
 function fcRate(rating){
