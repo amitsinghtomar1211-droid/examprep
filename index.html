@@ -9647,7 +9647,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
 <div id="fcfpActionBar">
   <button class="fcfp-abtn fcfp-search-btn" onclick="fcfpSearchSelection(event)">🔎 Web par check karo</button>
   <button class="fcfp-abtn fcfp-edit-btn" onclick="fcfpOpenEditModal(event)">✏️ Edit karo</button>
-  <button class="fcfp-abtn fcfp-close-btn" onclick="fcfpHideSearchChip();event.stopPropagation();" title="Band karo">✕</button>
+  <button class="fcfp-abtn fcfp-close-btn" onclick="fcfpHideSearchChip('close-button-click');event.stopPropagation();" title="Band karo">✕</button>
 </div>
 
 <!-- Edit modal — selected text ko replace karo YA usi ke saath naya data jodo -->
@@ -16122,11 +16122,18 @@ function fcCloseExtraOverlay(e){
 // ===== Facts page: select text -> floating action bar just below selection (Search / Edit) =====
 var _fcfpLastRange = null; // last selection Range, kept for the Edit flow
 var _fcfpAutoHideTimer = null; // 4-second auto-hide so the bar never stays stuck
+var _fcfpManuallyClosed = false; // true right after ✕/outside-tap close, until a fresh selection starts
 
-function fcfpHideSearchChip(){
+function fcfpHideSearchChip(reason){
+  console.log('[fcfp] hideSearchChip called. reason=', reason || '(none)');
   var bar = document.getElementById('fcfpActionBar');
   if(bar) bar.classList.remove('show');
   if(_fcfpAutoHideTimer){ clearTimeout(_fcfpAutoHideTimer); _fcfpAutoHideTimer = null; }
+  // Mark as "manually closed" so a stale selectionchange event that fires
+  // right after (common on mobile — the OS selection doesn't collapse
+  // instantly when a button is tapped) doesn't immediately re-show the bar.
+  _fcfpManuallyClosed = true;
+  try{ window.getSelection().removeAllRanges(); }catch(err){ console.log('[fcfp] removeAllRanges failed:', err); }
 }
 
 document.addEventListener('selectionchange', function(){
@@ -16134,12 +16141,21 @@ document.addEventListener('selectionchange', function(){
   var bar = document.getElementById('fcfpActionBar');
   if(!contentEl || !bar || !_fcFactsPageOpen) return;
   var sel = window.getSelection();
-  if(!sel || sel.rangeCount === 0 || sel.isCollapsed){ fcfpHideSearchChip(); return; }
+  if(!sel || sel.rangeCount === 0 || sel.isCollapsed){
+    console.log('[fcfp] selectionchange: empty/collapsed selection -> hide');
+    _fcfpManuallyClosed = false; // selection genuinely gone, reset the guard
+    fcfpHideSearchChip('selection-collapsed');
+    return;
+  }
   var text = sel.toString().trim();
-  if(!text || text.length < 2){ fcfpHideSearchChip(); return; }
+  if(!text || text.length < 2){ fcfpHideSearchChip('selection-too-short'); return; }
   // Only react to selections that are inside our facts content
   var anchorNode = sel.anchorNode;
-  if(!anchorNode || !contentEl.contains(anchorNode)){ fcfpHideSearchChip(); return; }
+  if(!anchorNode || !contentEl.contains(anchorNode)){ fcfpHideSearchChip('selection-outside-content'); return; }
+  if(_fcfpManuallyClosed){
+    console.log('[fcfp] selectionchange: ignoring stale selection right after manual close (same text still selected by OS)');
+    return; // user just closed it — don't let a trailing event reopen it
+  }
   var range = sel.getRangeAt(0);
   _fcfpLastRange = range.cloneRange();
   // Position the bar just BELOW the selected text (not screen-bottom),
@@ -16157,7 +16173,8 @@ document.addEventListener('selectionchange', function(){
       bar.style.left = left + 'px';
       bar.style.top = top + 'px';
     }
-  }catch(err){}
+  }catch(err){ console.log('[fcfp] position calc error:', err); }
+  console.log('[fcfp] selectionchange: showing bar for text:', text.slice(0,40));
   bar.classList.add('show');
   // Auto-hide after 4 seconds no matter what — guarantees it never stays
   // stuck on screen, even if a focus/visibility event is missed somewhere.
@@ -16165,9 +16182,20 @@ document.addEventListener('selectionchange', function(){
   // it's anchored to when the bar first appears, so it always disappears
   // within 4s of showing instead of being pushed back indefinitely.
   if(!_fcfpAutoHideTimer){
-    _fcfpAutoHideTimer = setTimeout(function(){ fcfpHideSearchChip(); }, 4000);
+    _fcfpAutoHideTimer = setTimeout(function(){ fcfpHideSearchChip('4s-timeout'); }, 4000);
   }
 });
+
+// Tap/touch starting fresh inside the facts content clears the "manually
+// closed" guard, so the user can select new text and get the bar again
+// right after closing it once.
+document.addEventListener('pointerdown', function(e){
+  var contentEl = document.getElementById('fcFactsPageContent');
+  if(contentEl && contentEl.contains(e.target) && _fcfpManuallyClosed){
+    console.log('[fcfp] pointerdown inside content -> resetting manuallyClosed guard');
+    _fcfpManuallyClosed = false;
+  }
+}, true); // capture phase so this runs before the selection actually changes
 
 // Tap anywhere outside the facts content / bar also closes the chip immediately —
 // extra safety net alongside the close (✕) button and the 4s auto-hide timer.
@@ -16177,7 +16205,8 @@ document.addEventListener('pointerdown', function(e){
   if(bar.contains(e.target)) return; // tapping the bar itself (its buttons) — let onclick handle it
   var contentEl = document.getElementById('fcFactsPageContent');
   if(contentEl && contentEl.contains(e.target)) return; // still selecting/tapping inside text
-  fcfpHideSearchChip();
+  console.log('[fcfp] pointerdown outside bar/content -> hide');
+  fcfpHideSearchChip('tap-outside');
 });
 
 // Selected fact ko fact-check question ke roop me web search me kholo —
