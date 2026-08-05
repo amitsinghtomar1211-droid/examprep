@@ -722,27 +722,63 @@ body.night-mode #fcFactsPage .fcfp-title{color:#c9a060;}
   color:var(--text,#2c2416);word-break:break-word;
   -webkit-user-select:text;user-select:text;
 }
-/* Bottom action bar — appears above keyboard-safe area when text is selected,
-   deliberately placed at the BOTTOM so it never overlaps the native Android
-   selection popup (which appears near/above the selected text). */
-#fcfpActionBar{
-  display:none;position:fixed;left:0;right:0;bottom:0;z-index:999998;
-  justify-content:center;gap:10px;
-  padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));
-  background:linear-gradient(to top, rgba(0,0,0,0.88) 60%, rgba(0,0,0,0));
+/* Question + Answer recap — sits above the extra facts so the person never
+   loses track of the original Q&A while reading the extra details. */
+#fcFactsPage .fcfp-qa-recap{
+  max-width:640px;margin:0 auto 18px;
+  background:var(--surface2,#f4efe4);border:1.5px solid var(--border,#e0d8c8);
+  border-radius:14px;padding:14px 16px;
 }
-#fcfpActionBar.show{display:flex;animation:fcfpBarIn 0.16s ease;}
-@keyframes fcfpBarIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+#fcFactsPage .fcfp-qa-label{
+  font-size:0.62rem;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;
+  color:#7891ab;margin-bottom:4px;
+}
+#fcFactsPage .fcfp-qa-label-ans{margin-top:12px;color:#a3763f;}
+#fcFactsPage .fcfp-qa-q{
+  font-family:'Georgia','Tiro Devanagari Hindi','Noto Sans Devanagari',serif;
+  font-size:0.95rem;font-weight:600;line-height:1.6;color:var(--text,#2c2416);
+  word-break:break-word;
+}
+#fcFactsPage .fcfp-qa-a{
+  font-family:'Georgia','Tiro Devanagari Hindi','Noto Sans Devanagari',serif;
+  font-size:1.18rem;font-weight:800;line-height:1.6;color:var(--text,#2c2416);
+  word-break:break-word;
+}
+body.night-mode #fcFactsPage .fcfp-qa-recap{background:rgba(255,255,255,0.05);}
+#fcFactsPage .fcfp-extra-divider{
+  max-width:640px;margin:0 auto 14px;
+  display:flex;align-items:center;gap:10px;
+  font-size:0.66rem;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;
+  color:#a3763f;
+}
+#fcFactsPage .fcfp-extra-divider::before,
+#fcFactsPage .fcfp-extra-divider::after{
+  content:"";flex:1;height:1.5px;background:rgba(163,118,63,0.25);
+}
+body.night-mode #fcFactsPage .fcfp-extra-divider{color:#c9a060;}
+/* Bottom action bar — appears above keyboard-safe area when text is selected,
+/* Floating action bar — appears just BELOW the selected text (not fixed to
+   bottom of screen) so it doesn't overlap the native Android/Google
+   selection popup, which shows above/near the selection itself. */
+#fcfpActionBar{
+  display:none;position:fixed;z-index:999998;
+  justify-content:center;gap:8px;
+  pointer-events:none; /* wrapper itself is not interactive; buttons re-enable it */
+}
+#fcfpActionBar.show{display:flex;animation:fcfpBarIn 0.14s ease;}
+@keyframes fcfpBarIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:translateY(0);}}
 #fcfpActionBar .fcfp-abtn{
-  background:#fff;color:#1a1a1a;border-radius:22px;border:none;
-  padding:11px 18px;font-size:0.8rem;font-weight:800;
-  display:flex;align-items:center;gap:6px;cursor:pointer;
-  box-shadow:0 4px 16px rgba(0,0,0,0.3);
+  background:#1a1a1a;color:#fff;border-radius:20px;border:none;
+  padding:9px 14px;font-size:0.76rem;font-weight:800;
+  display:flex;align-items:center;gap:5px;cursor:pointer;
+  box-shadow:0 4px 16px rgba(0,0,0,0.32);
   -webkit-tap-highlight-color:transparent;white-space:nowrap;
   font-family:'Noto Sans Devanagari',sans-serif;
+  pointer-events:auto;
 }
 #fcfpActionBar .fcfp-abtn:active{opacity:0.75;}
-#fcfpActionBar .fcfp-abtn.fcfp-edit-btn{background:#2e7d32;color:#fff;}
+#fcfpActionBar .fcfp-abtn.fcfp-edit-btn{background:#2e7d32;}
+
 
 /* Edit-fact modal — small popup to replace selected text */
 #fcfpEditModal{
@@ -9583,6 +9619,14 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <div class="fcfp-title">ℹ️ Extra Jankari</div>
   </div>
   <div class="fcfp-body" id="fcFactsPageBody">
+    <!-- Question + Answer recap — taaki extra facts padhte waqt original Q&A yaad rahe -->
+    <div class="fcfp-qa-recap" id="fcFactsPageQA">
+      <div class="fcfp-qa-label">Question</div>
+      <div class="fcfp-qa-q" id="fcFactsPageQ"></div>
+      <div class="fcfp-qa-label fcfp-qa-label-ans">Answer</div>
+      <div class="fcfp-qa-a" id="fcFactsPageA"></div>
+    </div>
+    <div class="fcfp-extra-divider"><span>ℹ️ Extra Jankari</span></div>
     <div class="fcfp-content" id="fcFactsPageContent"></div>
   </div>
 </div>
@@ -16022,6 +16066,14 @@ function fcShowExtraOverlay(e){
   var pageContent = document.getElementById('fcFactsPageContent');
   if(!page || !pageContent) return;
   pageContent.innerHTML = extraBody ? extraBody.innerHTML : '';
+  // Recap current card's Question + Answer so it's not forgotten while
+  // reading the extra facts below.
+  var qEl = document.getElementById('fcQText');
+  var aEl = document.getElementById('fcAText');
+  var pageQEl = document.getElementById('fcFactsPageQ');
+  var pageAEl = document.getElementById('fcFactsPageA');
+  if(pageQEl) pageQEl.textContent = qEl ? qEl.textContent : '';
+  if(pageAEl) pageAEl.innerHTML = aEl ? aEl.innerHTML : '';
   page.classList.add('active');
   document.body.style.overflow = 'hidden';
   var bodyEl = document.getElementById('fcFactsPageBody');
@@ -16050,9 +16102,7 @@ function fcCloseExtraOverlay(e){
   }
 }
 
-// ===== Facts page: select text -> bottom action bar (Search / Edit) =====
-// Kept at the BOTTOM of the screen deliberately so it never overlaps the
-// native Android text-selection popup, which appears near/above the selection.
+// ===== Facts page: select text -> floating action bar just below selection (Search / Edit) =====
 var _fcfpLastRange = null; // last selection Range, kept for the Edit flow
 
 function fcfpHideSearchChip(){
@@ -16071,17 +16121,66 @@ document.addEventListener('selectionchange', function(){
   // Only react to selections that are inside our facts content
   var anchorNode = sel.anchorNode;
   if(!anchorNode || !contentEl.contains(anchorNode)){ fcfpHideSearchChip(); return; }
-  _fcfpLastRange = sel.getRangeAt(0).cloneRange();
+  var range = sel.getRangeAt(0);
+  _fcfpLastRange = range.cloneRange();
+  // Position the bar just BELOW the selected text (not screen-bottom),
+  // so it stays clear of the native Android/Google selection popup above it.
+  try{
+    var rect = range.getBoundingClientRect();
+    if(rect && (rect.width || rect.height)){
+      bar.style.display = 'flex'; // measure width first
+      var barW = bar.offsetWidth || 220;
+      var left = rect.left + (rect.width/2) - (barW/2);
+      left = Math.max(8, Math.min(left, window.innerWidth - barW - 8));
+      var top = rect.bottom + 10;
+      var maxTop = window.innerHeight - 54;
+      if(top > maxTop) top = maxTop; // keep on-screen if selection is near bottom
+      bar.style.left = left + 'px';
+      bar.style.top = top + 'px';
+    }
+  }catch(err){}
   bar.classList.add('show');
 });
 
 // Selected fact ko fact-check question ke roop me web search me kholo —
 // naya browser tab me khulta hai, apna app ka page kabhi navigate/back nahi hota.
+// Query me current card ka Question + Answer + topic/file ka naam bhi jaata hai,
+// taaki search engine ko poora context mile aur woh update + related important
+// questions bhi bata sake.
 function fcfpSearchSelection(e){
   if(e){ e.stopPropagation(); }
   var text = _fcfpSelectedText();
   if(!text) return;
-  var query = '"' + text + '" yah data sahi hai kya? current update kya hai';
+
+  var qEl = document.getElementById('fcQText');
+  var aEl = document.getElementById('fcAText');
+  var question = qEl ? qEl.textContent.trim() : '';
+  var answer = aEl ? (aEl.textContent || aEl.innerText || '').trim() : '';
+
+  // Keep each piece reasonably short so the final URL doesn't get too long
+  var trim = function(s, n){ return s && s.length > n ? s.slice(0, n).trim() + '…' : s; };
+  question = trim(question, 150);
+  answer = trim(answer, 150);
+  text = trim(text, 300);
+
+  // Topic/section/file name — jaise "August 2025" jis naam se content bana hai
+  var topicName = '';
+  try{
+    var key = _fcTopicKey(_fcPlayState.sid, _fcPlayState.secid, _fcPlayState.tid);
+    var set = S.flashcardSets[key];
+    topicName = set && set.topicName ? set.topicName : '';
+  }catch(err){}
+
+  var parts = [];
+  parts.push('Mera exam ka current GK/current-affairs flashcard hai.');
+  if(topicName) parts.push('Yeh content "' + topicName + '" ke naam se bana hai (isi date/month ka current affairs data hai).');
+  if(question) parts.push('Question: "' + question + '"');
+  if(answer) parts.push('Uska answer diya gaya hai: "' + answer + '"');
+  parts.push('Neeche extra jankari (facts) ke roop me yeh diya gaya hai jo static GK aur current affairs dono strong karne aur exam me top karne ke liye suggest kiya gaya hai: "' + text + '"');
+  parts.push('Aaj tak ki latest jaankari ke hisaab se search karke batao ki ismein koi update to nahi hua — agar update hua ho to updated data kya hai, wo saaf-saaf batao.');
+  parts.push('Yeh bhi batao ki is question-answer se juda aur koi important, exam-relevant fact ya jaankari hai jo isi topic par baar-baar poochi jaati ho ya poochi ja sakti ho, taaki wo bhi updated data ke saath neeche add kar sakein.');
+
+  var query = parts.join(' ');
   var url = 'https://www.google.com/search?q=' + encodeURIComponent(query);
   window.open(url, '_blank', 'noopener');
 }
