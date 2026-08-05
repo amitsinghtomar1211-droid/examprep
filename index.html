@@ -16120,75 +16120,98 @@ function fcCloseExtraOverlay(e){
 }
 
 // ===== Facts page: select text -> floating action bar just below selection (Search / Edit) =====
-var _fcfpLastRange = null;      // last selection Range, kept for the Edit flow
-var _fcfpAutoHideTimer = null;  // 4-second auto-hide so the bar never stays stuck
-var _fcfpCooldownTimer = null;  // cooldown after explicit hide — prevents immediate re-show
+var _fcfpLastRange    = null;  // last selection Range, kept for the Edit flow
+var _fcfpAutoHideTimer = null; // 4s auto-hide — always measured from LAST selection activity
+var _fcfpCooldownTimer = null; // blocks re-show after explicit hide (Android handles workaround)
 
-// clearSel=true: also wipe the native selection so bar can't reappear from stale handles
-function fcfpHideSearchChip(clearSel){
+// ── CHIP DEBUG helper ────────────────────────────────────────────────────────
+// Logs to the in-app dev console (10-tap icon) with a [CHIP] prefix so all
+// chip-related events are easy to filter.  Captures: caller, selectionchange
+// state, cooldown state, bar visibility, and what triggered each hide/show.
+function _chipDbg(msg){
+  try{ console.info('[CHIP] ' + msg); }catch(e){}
+}
+// ────────────────────────────────────────────────────────────────────────────
+
+// clearSel=true also wipes the native selection so stale handles can't re-show bar
+function fcfpHideSearchChip(clearSel, _reason){
   var bar = document.getElementById('fcfpActionBar');
+  var wasShowing = bar && bar.classList.contains('show');
   if(bar) bar.classList.remove('show');
   if(_fcfpAutoHideTimer){ clearTimeout(_fcfpAutoHideTimer); _fcfpAutoHideTimer = null; }
-  // 1.8s cooldown: native selection handles on Android/iOS keep firing
-  // selectionchange even after the user has finished, causing the bar to
-  // reappear immediately. The cooldown blocks re-entry during that window.
+  // 1.8s cooldown so bar doesn't reappear from Android/iOS native selection handles
   if(_fcfpCooldownTimer){ clearTimeout(_fcfpCooldownTimer); }
-  _fcfpCooldownTimer = setTimeout(function(){ _fcfpCooldownTimer = null; }, 1800);
+  _fcfpCooldownTimer = setTimeout(function(){ _fcfpCooldownTimer = null; _chipDbg('cooldown lifted'); }, 1800);
   if(clearSel){
     try{ window.getSelection().removeAllRanges(); }catch(err){}
     _fcfpLastRange = null;
   }
+  _chipDbg('HIDE — reason:"' + (_reason||'?') + '" wasShowing:' + wasShowing + ' clearSel:' + !!clearSel + ' cooldownStarted:true');
 }
 
 document.addEventListener('selectionchange', function(){
   var contentEl = document.getElementById('fcFactsPageContent');
   var bar = document.getElementById('fcfpActionBar');
-  if(!contentEl || !bar || !_fcFactsPageOpen) return;
-  // If we are in cooldown (bar was just explicitly closed), do nothing
-  if(_fcfpCooldownTimer) return;
+  if(!contentEl || !bar || !_fcFactsPageOpen){
+    _chipDbg('selectionchange SKIP — factsPageOpen:' + !!_fcFactsPageOpen);
+    return;
+  }
+  // Cooldown active — bar was just explicitly closed, ignore stale handles
+  if(_fcfpCooldownTimer){
+    _chipDbg('selectionchange SKIP — COOLDOWN active (bar was just hidden)');
+    return;
+  }
   var sel = window.getSelection();
-  if(!sel || sel.rangeCount === 0 || sel.isCollapsed){ fcfpHideSearchChip(); return; }
-  var text = sel.toString().trim();
-  if(!text || text.length < 2){ fcfpHideSearchChip(); return; }
-  // Only react to selections that are inside our facts content
+  var collapsed = !sel || sel.rangeCount === 0 || sel.isCollapsed;
+  var text = sel ? sel.toString().trim() : '';
+  _chipDbg('selectionchange — collapsed:' + collapsed + ' textLen:' + text.length + ' barShowing:' + bar.classList.contains('show'));
+  if(collapsed){ fcfpHideSearchChip(false,'selectionchange-collapsed'); return; }
+  if(!text || text.length < 2){ fcfpHideSearchChip(false,'selectionchange-textTooShort'); return; }
+  // Only react to selections inside our facts content
   var anchorNode = sel.anchorNode;
-  if(!anchorNode || !contentEl.contains(anchorNode)){ fcfpHideSearchChip(); return; }
+  if(!anchorNode || !contentEl.contains(anchorNode)){
+    _chipDbg('selectionchange SKIP — anchorNode outside factsContent');
+    fcfpHideSearchChip(false,'selectionchange-outsideContent');
+    return;
+  }
   var range = sel.getRangeAt(0);
   _fcfpLastRange = range.cloneRange();
-  // Position the bar just BELOW the selected text (not screen-bottom),
-  // so it stays clear of the native Android/Google selection popup above it.
+  // Position the bar just BELOW the selected text
   try{
     var rect = range.getBoundingClientRect();
     if(rect && (rect.width || rect.height)){
-      bar.style.display = 'flex'; // measure width first
+      bar.style.display = 'flex';
       var barW = bar.offsetWidth || 220;
       var left = rect.left + (rect.width/2) - (barW/2);
       left = Math.max(8, Math.min(left, window.innerWidth - barW - 8));
       var top = rect.bottom + 10;
       var maxTop = window.innerHeight - 54;
-      if(top > maxTop) top = maxTop; // keep on-screen if selection is near bottom
+      if(top > maxTop) top = maxTop;
       bar.style.left = left + 'px';
-      bar.style.top = top + 'px';
+      bar.style.top  = top  + 'px';
     }
-  }catch(err){}
+  }catch(err){ _chipDbg('position error: ' + err); }
   bar.classList.add('show');
-  // Reset the auto-hide timer on EVERY selectionchange tick so the 4s
-  // countdown is always measured from the LAST selection activity, not the
-  // first. This guarantees the bar disappears 4s after the user stops
-  // selecting instead of 4s after they started.
+  _chipDbg('SHOW — text:"' + text.slice(0,40) + (text.length>40?'…':'') + '"');
+  // Reset timer on EVERY tick — 4s measured from LAST selection activity
   if(_fcfpAutoHideTimer){ clearTimeout(_fcfpAutoHideTimer); }
-  _fcfpAutoHideTimer = setTimeout(function(){ fcfpHideSearchChip(true); }, 4000);
+  _fcfpAutoHideTimer = setTimeout(function(){
+    _chipDbg('AUTO-HIDE timer fired (4s elapsed since last selectionchange)');
+    fcfpHideSearchChip(true,'autoHideTimer');
+  }, 4000);
 });
 
-// Tap anywhere outside the facts content / bar also closes the chip immediately —
-// extra safety net alongside the close (✕) button and the 4s auto-hide timer.
+// Tap outside facts content / bar → close immediately
 document.addEventListener('pointerdown', function(e){
   var bar = document.getElementById('fcfpActionBar');
   if(!bar || !bar.classList.contains('show')) return;
-  if(bar.contains(e.target)) return; // tapping the bar itself (its buttons) — let onclick handle it
+  var inBar     = bar.contains(e.target);
   var contentEl = document.getElementById('fcFactsPageContent');
-  if(contentEl && contentEl.contains(e.target)) return; // still selecting/tapping inside text
-  fcfpHideSearchChip(true); // clear selection too so it can't reappear via handles
+  var inContent = contentEl && contentEl.contains(e.target);
+  _chipDbg('pointerdown — inBar:' + inBar + ' inContent:' + inContent + ' target:' + (e.target && e.target.tagName));
+  if(inBar) return;     // button clicks — let onclick handle
+  if(inContent) return; // still selecting inside text
+  fcfpHideSearchChip(true,'pointerdown-outside');
 });
 
 // Selected fact ko fact-check question ke roop me web search me kholo —
