@@ -16104,10 +16104,12 @@ function fcCloseExtraOverlay(e){
 
 // ===== Facts page: select text -> floating action bar just below selection (Search / Edit) =====
 var _fcfpLastRange = null; // last selection Range, kept for the Edit flow
+var _fcfpAutoHideTimer = null; // 4-second auto-hide so the bar never stays stuck
 
 function fcfpHideSearchChip(){
   var bar = document.getElementById('fcfpActionBar');
   if(bar) bar.classList.remove('show');
+  if(_fcfpAutoHideTimer){ clearTimeout(_fcfpAutoHideTimer); _fcfpAutoHideTimer = null; }
 }
 
 document.addEventListener('selectionchange', function(){
@@ -16140,6 +16142,10 @@ document.addEventListener('selectionchange', function(){
     }
   }catch(err){}
   bar.classList.add('show');
+  // Auto-hide after 4 seconds no matter what — guarantees it never stays
+  // stuck on screen, even if a focus/visibility event is missed somewhere.
+  if(_fcfpAutoHideTimer) clearTimeout(_fcfpAutoHideTimer);
+  _fcfpAutoHideTimer = setTimeout(function(){ fcfpHideSearchChip(); }, 4000);
 });
 
 // Selected fact ko fact-check question ke roop me web search me kholo —
@@ -16157,12 +16163,13 @@ function fcfpSearchSelection(e){
   var question = qEl ? qEl.textContent.trim() : '';
   var answer = aEl ? (aEl.textContent || aEl.innerText || '').trim() : '';
 
-  // Keep everything short — Google's normal search box (not AI Mode) chokes
-  // on long sentence-style queries and returns "did not match any documents".
+  // AI Mode (udm=50) handles natural-language questions well and gives a
+  // direct synthesized answer instead of a list of websites — no tight
+  // word-limit like the classic search box, so we can keep more context.
   var trim = function(s, n){ return s && s.length > n ? s.slice(0, n).trim() : s; };
-  question = trim(question, 60);
-  answer = trim(answer, 40);
-  text = trim(text, 120);
+  question = trim(question, 150);
+  answer = trim(answer, 150);
+  text = trim(text, 300);
 
   // Topic/section/file name — jaise "August 2025" jis naam se content bana hai
   var topicName = '';
@@ -16172,16 +16179,20 @@ function fcfpSearchSelection(e){
     topicName = set && set.topicName ? set.topicName : '';
   }catch(err){}
 
-  // Compact keyword-style query — main focus: verify/update the selected FACT.
-  // Q&A goes in only as light background context, not as the thing to verify.
   var parts = [];
-  parts.push(text);
-  parts.push('fact check current update');
-  if(topicName) parts.push(topicName);
-  if(question) parts.push('(context: ' + question + (answer ? ' - ' + answer : '') + ')');
+  parts.push('Mera exam ka current GK/current-affairs flashcard hai.');
+  if(topicName) parts.push('Yeh content "' + topicName + '" ke naam se bana hai (isi date/month ka current affairs data hai).');
+  if(question || answer) {
+    var ctx = 'Sirf context ke liye — is flashcard ka Question: "' + question + '"';
+    if(answer) ctx += ', Answer: "' + answer + '"';
+    ctx += '.';
+    parts.push(ctx);
+  }
+  parts.push('Mujhe SIRF is extra jankari (fact) ko verify karana hai jo neeche di gayi hai: "' + text + '"');
+  parts.push('Aaj tak ki latest jaankari ke hisaab se batao ki is fact mein koi update to nahi hua — agar update hua ho to updated data kya hai. Iske baad yeh bhi batao ki is topic se juda aur koi important, exam-relevant fact hai jo isi Question-Answer se related ho aur exam me baar-baar poochi jaati ho.');
 
   var query = parts.join(' ').trim();
-  var url = 'https://www.google.com/search?q=' + encodeURIComponent(query);
+  var url = 'https://www.google.com/search?q=' + encodeURIComponent(query) + '&udm=50';
   window.open(url, '_blank', 'noopener');
 
   // Hide the bar and clear the selection right away — don't wait for
