@@ -9670,8 +9670,9 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
   <div class="fcfp-edit-box" onclick="event.stopPropagation();">
     <div class="fcfp-edit-title">✏️ Fact Update Karo</div>
     <div class="fcfp-edit-mode-row" id="fcfpEditModeRow">
-      <button type="button" class="fcfp-edit-mode-btn active" id="fcfpModeReplaceBtn" onclick="fcfpSetEditMode('replace')">🔁 Replace karo</button>
-      <button type="button" class="fcfp-edit-mode-btn" id="fcfpModeAppendBtn" onclick="fcfpSetEditMode('append')">➕ Purane me jodo</button>
+      <button type="button" class="fcfp-edit-mode-btn active" id="fcfpModeReplaceBtn" onclick="fcfpSetEditMode('replace')">🔁 Replace</button>
+      <button type="button" class="fcfp-edit-mode-btn" id="fcfpModeAppendBtn" onclick="fcfpSetEditMode('append')">➕ Add karo</button>
+      <button type="button" class="fcfp-edit-mode-btn" id="fcfpModeFullBtn" onclick="fcfpSetEditMode('full')">📝 Pura Edit</button>
     </div>
     <div class="fcfp-edit-hint" id="fcfpEditHint">Jo text galat/purana hai use neeche naye updated data se replace karo.</div>
     <div class="fcfp-edit-old" id="fcfpEditOldText"></div>
@@ -16242,19 +16243,45 @@ function _fcfpSelectedText(){
 
 // ===== Edit flow: either REPLACE the selected portion, or APPEND new info
 // right after it (keeping the old text intact) =====
-var _fcfpEditMode = 'replace'; // 'replace' | 'append'
+var _fcfpEditMode = 'replace'; // 'replace' | 'append' | 'full'
 
 function fcfpSetEditMode(mode){
   _fcfpEditMode = mode;
   var replaceBtn = document.getElementById('fcfpModeReplaceBtn');
-  var appendBtn = document.getElementById('fcfpModeAppendBtn');
-  var hint = document.getElementById('fcfpEditHint');
+  var appendBtn  = document.getElementById('fcfpModeAppendBtn');
+  var fullBtn    = document.getElementById('fcfpModeFullBtn');
+  var hint       = document.getElementById('fcfpEditHint');
+  var oldEl      = document.getElementById('fcfpEditOldText');
+  var input      = document.getElementById('fcfpEditInput');
   if(replaceBtn) replaceBtn.classList.toggle('active', mode === 'replace');
-  if(appendBtn) appendBtn.classList.toggle('active', mode === 'append');
-  if(hint){
-    hint.textContent = (mode === 'append')
-      ? 'Naya text neeche likho — yeh purane text ke saath jud jayega, purana data delete nahi hoga.'
-      : 'Jo text galat/purana hai use neeche naye updated data se replace karo.';
+  if(appendBtn)  appendBtn.classList.toggle('active',  mode === 'append');
+  if(fullBtn)    fullBtn.classList.toggle('active',    mode === 'full');
+
+  if(mode === 'full'){
+    // Pura existing content textarea mein load karo — plain text form mein
+    var pageContent = document.getElementById('fcFactsPageContent');
+    var rawText = '';
+    if(pageContent){
+      // HTML ko plain text mein convert karo (line breaks preserve karo)
+      var tmp = document.createElement('div');
+      tmp.innerHTML = pageContent.innerHTML;
+      // <br>, <p>, <li>, <div> ke baad newline add karo
+      tmp.querySelectorAll('p,div,li,br,h1,h2,h3,h4').forEach(function(el){
+        el.insertAdjacentText('afterend', '\n');
+      });
+      rawText = (tmp.textContent || tmp.innerText || '').replace(/\n{3,}/g,'\n\n').trim();
+    }
+    if(input){ input.value = rawText; input.style.minHeight = '160px'; }
+    if(oldEl){ oldEl.style.display = 'none'; }
+    if(hint)  hint.textContent = 'Poori extra jankari yahan dikhti hai — jo hatana ya badalna ho woh seedha yahan edit karo, phir Save karo.';
+  } else if(mode === 'append'){
+    if(oldEl){ oldEl.style.display = 'none'; }
+    if(input){ input.value = ''; input.style.minHeight = '90px'; }
+    if(hint)  hint.textContent = 'Naya text neeche likho — yeh purane text ke saath jud jayega, purana data delete nahi hoga.';
+  } else {
+    // replace
+    if(input){ input.value = ''; input.style.minHeight = '90px'; }
+    if(hint)  hint.textContent = 'Jo text galat/purana hai use select karke replace mode mein naye text se replace karo.';
   }
 }
 
@@ -16265,18 +16292,18 @@ function fcfpOpenEditModal(e){
   var oldEl = document.getElementById('fcfpEditOldText');
   var input = document.getElementById('fcfpEditInput');
   if(!modal || !oldEl || !input) return;
-  input.value = '';
 
   if(text){
-    // Kuch select hua hai → Replace mode (default), purana text dikhao
+    // Kuch select hua hai → Replace mode, purana text dikhao
     oldEl.textContent = text;
     oldEl.style.display = '';
+    input.value = '';
     fcfpSetEditMode('replace');
   } else {
-    // Kuch select nahi hua → Append mode (purane text ke saath jod do)
+    // Kuch select nahi → Pura Edit mode seedha open karo
     oldEl.textContent = '';
     oldEl.style.display = 'none';
-    fcfpSetEditMode('append');
+    fcfpSetEditMode('full'); // yeh textarea mein content bhi load kar dega
   }
 
   modal.classList.add('show');
@@ -16299,7 +16326,19 @@ function fcfpSaveEdit(){
   var pageContent = document.getElementById('fcFactsPageContent');
 
   // 1) Update the visible facts page (DOM)
-  if(_fcfpEditMode === 'append'){
+  if(_fcfpEditMode === 'full'){
+    // Poora content replace karo — textarea ki edited plain text se
+    if(pageContent){
+      // Plain text ko paragraphs mein convert karo
+      var lines = newText.split('\n');
+      var html = '';
+      lines.forEach(function(line){
+        var l = line.trim();
+        if(l) html += '<p>' + l.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</p>';
+      });
+      pageContent.innerHTML = html || '<p>' + newText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</p>';
+    }
+  } else if(_fcfpEditMode === 'append'){
     // Selection ki zaroorat nahi — seedha content ke end mein naya paragraph jodo
     if(pageContent){
       var newPara = document.createElement('p');
