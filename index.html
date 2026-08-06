@@ -16230,11 +16230,13 @@ function fcShowExtraOverlay(e){
   _fcFactsPageOpen = true;
   // Show highlight/eraser/undo/redo side buttons
   fcfpShowSideButtons();
-  // Reset highlight state + undo stacks for fresh session
-  _fcfpHlMode = 'off';
+  // Reset undo stacks for fresh session, but default highlight MODE to ON
+  // so text selection immediately highlights without an extra tap to find
+  // the small side button first.
   _fcfpUndoStack = [];
   _fcfpRedoStack = [];
-  fcfpSyncSideBtns();
+  _fcfpLastAppliedSig = null;
+  fcfpSetMode('highlight');
   fcfpUpdateUndoRedoBtns();
   // Attach highlight listeners to new content
   setTimeout(fcfpAttachListeners, 80);
@@ -16283,6 +16285,7 @@ var _fcfpUndoStack = [];      // array of innerHTML snapshots
 var _fcfpRedoStack = [];
 var _FCFP_MAX_STACK = 25;
 var _fcfpListenersAttached = false;
+var _fcfpLastAppliedSig = null;
 
 // ── Show / hide side buttons ─────────────────────────────────────
 function fcfpShowSideButtons() {
@@ -16403,6 +16406,14 @@ function fcfpApplyHighlightFromSelection() {
   var range = sel.getRangeAt(0);
   if(!ct.contains(range.commonAncestorContainer)) return;
 
+  // Guard against the touchend-fallback and the debounced selectionchange
+  // fallback both firing for the exact same selection (harmless either way
+  // since already-marked nodes are skipped below, but this avoids a
+  // pointless duplicate pass + snapshot push).
+  var sigNow = text + '|' + range.startOffset + '|' + range.endOffset;
+  if(_fcfpLastAppliedSig === sigNow) return;
+  _fcfpLastAppliedSig = sigNow;
+
   var colorClass = {
     yellow:'user-hl', pink:'user-hl-pink', green:'user-hl-green',
     blue:'user-hl-blue', red:'user-hl-red'
@@ -16506,13 +16517,26 @@ function fcfpReattachEraserListeners() {
 }
 
 // ── Attach touch + mouse listeners to fcFactsPageContent ──────────
+// MOBILE FIX: on touch devices, the browser's native text-selection
+// (long-press → drag handles) keeps changing the Selection *after*
+// touchend already fired -- so trying to read window.getSelection()
+// on touchend often catches it too early (still collapsed / not yet
+// extended), and the highlight silently does nothing. We now ALSO
+// watch `selectionchange` and apply the highlight once the selection
+// has stopped changing for a short debounce window (i.e. the user
+// has finished dragging the handles / lifted their finger for good).
+// touchend/mouseup are kept as an immediate fallback for desktop and
+// for the common tap-drag-release-without-handles case.
+var _fcfpSelDebounceTimer = null;
+
 function fcfpAttachListeners() {
   var ct = document.getElementById('fcFactsPageContent');
   if(!ct) return;
 
-  // Remove old listener if re-attaching after content replaced
+  // Remove old listeners if re-attaching after content replaced
   if(ct._fcfpMouseFn) ct.removeEventListener('mouseup', ct._fcfpMouseFn);
   if(ct._fcfpTouchFn) ct.removeEventListener('touchend', ct._fcfpTouchFn);
+  if(_fcfpSelChangeFn) document.removeEventListener('selectionchange', _fcfpSelChangeFn);
 
   ct._fcfpMouseFn = function(e) {
     if(!_fcFactsPageOpen) return;
@@ -16523,16 +16547,33 @@ function fcfpAttachListeners() {
   ct._fcfpTouchFn = function(e) {
     if(!_fcFactsPageOpen) return;
     if(_fcfpHlMode !== 'highlight') return;
-    setTimeout(function() { fcfpApplyHighlightFromSelection(); }, 60);
+    // Immediate-ish attempt (covers quick tap-drag-release selections)
+    setTimeout(function() { fcfpApplyHighlightFromSelection(); }, 120);
   };
 
   ct.addEventListener('mouseup',  ct._fcfpMouseFn);
   ct.addEventListener('touchend', ct._fcfpTouchFn);
 
+  // Debounced selectionchange fallback -- catches native drag-handle
+  // adjustments that finish well after touchend already fired.
+  _fcfpSelChangeFn = function() {
+    if(!_fcFactsPageOpen) return;
+    if(_fcfpHlMode !== 'highlight') return;
+    var sel = window.getSelection();
+    if(!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+    if(!ct.contains(sel.anchorNode)) return;
+    clearTimeout(_fcfpSelDebounceTimer);
+    _fcfpSelDebounceTimer = setTimeout(function() {
+      fcfpApplyHighlightFromSelection();
+    }, 350);
+  };
+  document.addEventListener('selectionchange', _fcfpSelChangeFn);
+
   // Re-attach eraser listeners to any existing marks
   fcfpReattachEraserListeners();
   _fcfpListenersAttached = true;
 }
+var _fcfpSelChangeFn = null;
 // ═══════════════════════════════════════════════════════════════════
 // END FCFACTS PAGE HIGHLIGHT SYSTEM
 // ═══════════════════════════════════════════════════════════════════
