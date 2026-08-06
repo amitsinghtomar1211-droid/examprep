@@ -6111,6 +6111,10 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       <span class="sb-label">Smart Notes</span>
       <span class="nav-badge red" id="smartBadge" style="display:none;">0</span>
     </div>
+    <div class="nav-item" onclick="showPage('mastersearch',this)" data-page="mastersearch">
+      <span class="sb-icon">🔍</span>
+      <span class="sb-label">Master Search AI</span>
+    </div>
     <div class="nav-item" onclick="showPage('aichathistory',this)" data-page="aichathistory">
       <span class="sb-icon">💬</span>
       <span class="sb-label">AI Chat</span>
@@ -6460,6 +6464,26 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
         <div><div class="page-title">📌 Saved Facts</div><div class="page-subtitle">Aapke save kiye gaye important points</div></div>
       </div>
       <div id="savedFactsList"></div>
+    </div>
+
+    <!-- ===== MASTER SEARCH AI ===== -->
+    <div id="page-mastersearch" class="page">
+      <div class="page-header">
+        <div>
+          <div class="page-title">🔍 Master Search AI</div>
+          <div class="page-subtitle">Poore data (Notes + Flashcards + Extra Facts) me se AI se jankari dhoondo</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:12px;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <input type="text" id="msQueryInput" class="inp" placeholder="Jaise: Panipat ki ladai, Photosynthesis, GST..." style="flex:1;min-width:200px;" onkeydown="if(event.key==='Enter'){msRunSearch();}" />
+          <button class="btn btn-primary" id="msSearchBtn" onclick="msRunSearch()">🔍 Search</button>
+        </div>
+        <div id="msIndexInfo" style="font-size:0.7rem;color:var(--text2);margin-top:8px;"></div>
+      </div>
+
+      <div id="msResultArea"></div>
     </div>
 
     <!-- ===== EXAMS ===== -->
@@ -10104,10 +10128,10 @@ function saveSerperKey(){
 function showApiStatus(m,t){document.getElementById('apiStatus').innerHTML=`<span style="font-size:0.76rem;padding:3px 9px;border-radius:20px;display:inline-block;background:${t==='saved'?'rgba(46,125,50,0.1)':'rgba(198,40,40,0.1)'};color:${t==='saved'?'var(--green)':'var(--red)'};">${m}</span>`;}
 
 // ==================== TABS ====================
-const PAGE_TITLES={'library':'📚 Library','savedFacts':'📌 Saved Facts','exams':'🎯 Exam Profiles','quiz':'❓ Quiz','quizvault':'🗄️ Quiz Vault','gamevault':'🎮 Game Vault','history':'📜 History','smartnotes':'🧠 Smart Notes','stats':'📊 Stats','settings':'⚙️ Settings','aichathistory':'💬 AI Chat History','testseries':'📝 Test Series','admin':'👑 Admin Panel'};
+const PAGE_TITLES={'library':'📚 Library','savedFacts':'📌 Saved Facts','exams':'🎯 Exam Profiles','quiz':'❓ Quiz','quizvault':'🗄️ Quiz Vault','gamevault':'🎮 Game Vault','history':'📜 History','smartnotes':'🧠 Smart Notes','stats':'📊 Stats','settings':'⚙️ Settings','aichathistory':'💬 AI Chat History','testseries':'📝 Test Series','admin':'👑 Admin Panel','mastersearch':'🔍 Master Search AI'};
 function showPage(p,el,_skipHistory){
   // Feature lock check for non-admin users
-  if(!_isAdmin && p!=='library' && p!=='settings' && p!=='admin'){
+  if(!_isAdmin && p!=='library' && p!=='settings' && p!=='admin' && p!=='mastersearch'){
     var _ppm={savedFacts:'savedFacts',smartnotes:'smartnotes',aichathistory:'aichat',quiz:'quiz',quizvault:'quizvault',history:'history',gamevault:'gamevault',stats:'stats',exams:'exams',testseries:'testseries'};
     var _pk=_ppm[p];
     if(_pk && !_userPerms[_pk]){ _showLockedToast(); return; }
@@ -10134,6 +10158,7 @@ function showPage(p,el,_skipHistory){
     if(area)area.innerHTML=showInstallOption();
   }
   if(p==='testseries')tsRenderHome();
+  if(p==='mastersearch')msInit();
   if(p==='admin'){ if(_isAdmin){ loadAdminUsers(); updateAdminPageInfo(); _adminLoadRecentUpdates(); } else { showToast('❌ Admin access nahi hai!','error'); showPage('library',document.querySelector('[data-page=library]')); } }
   if(p==='settings'){
     // Admin session card visibility update
@@ -27150,6 +27175,222 @@ function neResetToolbar() {
   if(sp) sp.style.display = 'none';
 }
 
+
+// ==================== MASTER SEARCH AI ====================
+// Poore app ke data (Subjects -> Sections -> Topics: notes, master notes,
+// extra facts, saved facts) + saare Flashcard Sets (cards ke q/a/extra)
+// ko ek "corpus" ke roop me collect karta hai, keyword se relevant chunks
+// nikaalta hai, aur Groq AI se consolidated, source-tagged jawaab banata hai.
+// Data source: in-memory S.subjects (tree) + S.flashcardSets — yeh already
+// admin ke Firestore data se load hote hain app start par, isliye "sabhi
+// users" wahi ek shared library dekhte hain jo admin ne banayi hai.
+
+function _msStripHtml(html){
+  if(!html) return '';
+  try{
+    var d = document.createElement('div');
+    d.innerHTML = String(html);
+    return (d.textContent || d.innerText || '').replace(/\s+/g,' ').trim();
+  }catch(e){
+    return String(html).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+  }
+}
+
+// Corpus ek baar build hota hai aur cache hota hai; library data badalne par
+// (naya topic/flashcard add hone par) invalidate ho jaata hai.
+var _msCorpus = null;
+var _msCorpusBuiltAt = 0;
+
+function msInvalidateCorpus(){ _msCorpus = null; }
+
+function msBuildCorpus(){
+  var chunks = [];
+
+  // ---- Subjects -> Sections (recursive, sub-sections supported) -> Topics ----
+  function walkSection(sec, subjName, path){
+    if(!sec) return;
+    var secPath = path ? (path+' → '+sec.name) : sec.name;
+    if(sec.facts && sec.facts.length){
+      sec.facts.forEach(function(f){
+        var txt = typeof f==='string' ? f : (f.text||f.content||'');
+        if(txt && txt.trim()){
+          chunks.push({
+            type:'Section Fact',
+            source: subjName+' → '+secPath,
+            text: _msStripHtml(txt)
+          });
+        }
+      });
+    }
+    (sec.topics||[]).forEach(function(t){
+      var topicSource = subjName+' → '+secPath+' → '+t.name;
+      // Notes (plain text notes user ne likhe)
+      (t.notes||[]).forEach(function(n){
+        var txt = _msStripHtml(n.content||'');
+        if(txt) chunks.push({ type:'Note ('+(n.name||'Note')+')', source: topicSource, text: txt });
+      });
+      // Master Notes (AI-generated master notes)
+      var mn = _msStripHtml(t.masterNotesHTML || t.masterNotes || '');
+      if(mn) chunks.push({ type:'Master Notes', source: topicSource, text: mn });
+      // Final Notes
+      var fn = _msStripHtml(t.finalNotesHTML || t.finalNotes || '');
+      if(fn) chunks.push({ type:'Final Notes', source: topicSource, text: fn });
+      // Extra Facts (masterExtraFacts array)
+      (t.masterExtraFacts||[]).forEach(function(f){
+        var txt = _msStripHtml(f.text || f.content || f);
+        if(txt) chunks.push({ type:'Extra Fact', source: topicSource, text: txt });
+      });
+      // Saved Facts (highlighted/saved by admin while reading)
+      (t.savedFacts||[]).forEach(function(f){
+        var txt = _msStripHtml(f.text || f.content || f);
+        if(txt) chunks.push({ type:'Saved Fact', source: topicSource, text: txt });
+      });
+      // Sub-sections (recursive)
+      (sec.sections||[]).forEach(function(ss){ walkSection(ss, subjName, secPath); });
+    });
+    // Some trees nest sub-sections directly (not inside topics loop) -- cover both shapes
+    if(sec.sections && sec.sections.length){
+      sec.sections.forEach(function(ss){
+        // avoid double-walk if already walked above via topics loop context
+      });
+    }
+  }
+
+  (S.subjects||[]).forEach(function(s){
+    if(s.facts && s.facts.length){
+      s.facts.forEach(function(f){
+        var txt = typeof f==='string' ? f : (f.text||f.content||'');
+        if(txt && txt.trim()) chunks.push({ type:'Subject Fact', source:s.name, text:_msStripHtml(txt) });
+      });
+    }
+    (s.sections||[]).forEach(function(sec){ walkSection(sec, s.name, ''); });
+  });
+
+  // ---- Flashcard Sets (all decks, all cards, with extra facts) ----
+  Object.keys(S.flashcardSets||{}).forEach(function(key){
+    var set = S.flashcardSets[key];
+    if(!set || !set.cards) return;
+    var topicLabel = set.topicName || key;
+    set.cards.forEach(function(c){
+      if(!c || !c.q) return;
+      var text = 'Q: ' + c.q + '\nA: ' + (c.a||'');
+      if(c.extra && String(c.extra).trim()){
+        text += '\nExtra Facts: ' + _msStripHtml(c.extra);
+      }
+      chunks.push({ type:'Flashcard', source: topicLabel + (c.cat?(' — '+c.cat):''), text: text });
+    });
+  });
+
+  _msCorpus = chunks;
+  _msCorpusBuiltAt = Date.now();
+  return chunks;
+}
+
+function msGetCorpus(){
+  if(!_msCorpus) msBuildCorpus();
+  return _msCorpus;
+}
+
+// Simple relevance scoring: keyword-overlap based local filter, taaki Groq ko
+// sirf topical-relevant chunks bheje jaayein (poora data bhejna token-limit
+// todega). Hindi + English dono ke liye works kyunki simple substring match hai.
+function _msScoreChunk(chunk, terms){
+  var hay = (chunk.text + ' ' + chunk.source + ' ' + chunk.type).toLowerCase();
+  var score = 0;
+  terms.forEach(function(term){
+    if(!term) return;
+    var idx = hay.indexOf(term);
+    if(idx !== -1){
+      score += 1;
+      // exact word boundary bonus
+      var re;
+      try{ re = new RegExp('\\b'+term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','i'); }catch(e){ re = null; }
+      if(re && re.test(hay)) score += 1;
+    }
+  });
+  return score;
+}
+
+function msSearchLocal(query, limit){
+  limit = limit || 25;
+  var corpus = msGetCorpus();
+  var terms = query.toLowerCase().split(/\s+/).filter(function(t){ return t.length>1; });
+  if(!terms.length) return [];
+  var scored = corpus.map(function(c){ return { chunk:c, score:_msScoreChunk(c, terms) }; })
+                      .filter(function(x){ return x.score>0; })
+                      .sort(function(a,b){ return b.score-a.score; });
+  return scored.slice(0, limit).map(function(x){ return x.chunk; });
+}
+
+function msInit(){
+  var corpus = msGetCorpus();
+  var infoEl = document.getElementById('msIndexInfo');
+  if(infoEl){
+    var subjCount = (S.subjects||[]).length;
+    var deckCount = Object.keys(S.flashcardSets||{}).length;
+    infoEl.textContent = '📊 Index: ' + corpus.length + ' data-chunks (' + subjCount + ' subjects, ' + deckCount + ' flashcard decks) — sabhi users ka shared library data.';
+  }
+}
+
+async function msRunSearch(){
+  var input = document.getElementById('msQueryInput');
+  var query = input ? input.value.trim() : '';
+  var resultArea = document.getElementById('msResultArea');
+  if(!query){ showToast('Pehle kuch search karo!','error'); return; }
+  if(!S.apiKey){ showToast('Pehle Groq API Key daalo (Settings mein)!','error'); return; }
+
+  // Corpus taaza rakho (agar library mein naya data aaya ho)
+  msBuildCorpus();
+  var relevant = msSearchLocal(query, 30);
+
+  var btn = document.getElementById('msSearchBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Dhoond raha hu...'; }
+  resultArea.innerHTML = '<div class="card"><div style="text-align:center;padding:20px;color:var(--text2);">🔍 AI aapke poore data mein "'+query.replace(/</g,'&lt;')+'" dhoond raha hai...</div></div>';
+
+  if(!relevant.length){
+    resultArea.innerHTML = '<div class="card"><div style="text-align:center;padding:20px;color:var(--text2);">😕 "'+query.replace(/</g,'&lt;')+'" se related koi data library ya flashcards mein nahi mila.</div></div>';
+    if(btn){ btn.disabled = false; btn.textContent = '🔍 Search'; }
+    return;
+  }
+
+  var contextBlock = relevant.map(function(c, i){
+    return '[' + (i+1) + '] (Source: ' + c.source + ' | Type: ' + c.type + ')\n' + c.text;
+  }).join('\n\n');
+
+  var prompt = 'Tum ek exam-prep assistant ho. Neeche student ki apni library/flashcards se nikaale gaye data-chunks diye gaye hain, jo keyword "' + query + '" se match hue hain.\n\n' +
+    'DATA CHUNKS:\n' + contextBlock + '\n\n' +
+    'TASK: In chunks ka use karke "' + query + '" ke baare mein ek accurate, well-organized, consolidated jawaab HINDI (Hinglish thoda chalega) mein do. Instructions:\n' +
+    '- Sirf upar diye gaye chunks ke data par based raho, bahar se apni taraf se facts mat jodo.\n' +
+    '- Jawaab ko clear headings/bullet points mein organize karo.\n' +
+    '- Jahan bhi ek point kisi specific chunk se aaya ho, us point ke aage [chunk number] jaise "[2]" likho, taaki source track ho sake.\n' +
+    '- Agar chunks mein contradiction ho to dono mention karo.\n' +
+    '- End mein ek chhota "📌 Key Facts" summary do 3-5 bullets mein.\n' +
+    'Sirf jawaab do, koi preamble nahi.';
+
+  try{
+    var answer = await callGroq(prompt, 2500);
+    var sourcesHtml = relevant.map(function(c, i){
+      return '<div style="padding:8px 10px;border-left:3px solid var(--accent);background:var(--surface2);border-radius:6px;margin-bottom:6px;">' +
+        '<div style="font-size:0.68rem;font-weight:800;color:var(--accent);">[' + (i+1) + '] ' + c.type + ' — ' + c.source.replace(/</g,'&lt;') + '</div>' +
+        '<div style="font-size:0.75rem;color:var(--text2);margin-top:3px;white-space:pre-wrap;">' + c.text.slice(0,220).replace(/</g,'&lt;') + (c.text.length>220?'...':'') + '</div>' +
+      '</div>';
+    }).join('');
+
+    resultArea.innerHTML =
+      '<div class="card" style="margin-bottom:12px;">' +
+        '<div class="card-title">🤖 AI Answer</div>' +
+        '<div style="font-size:0.88rem;line-height:1.7;white-space:pre-wrap;">' + answer.replace(/</g,'&lt;') + '</div>' +
+      '</div>' +
+      '<div class="card">' +
+        '<div class="card-title">📎 Sources (' + relevant.length + ')</div>' +
+        sourcesHtml +
+      '</div>';
+  }catch(e){
+    resultArea.innerHTML = '<div class="card"><div style="color:var(--red);padding:12px;">❌ Error: ' + (e.message||'AI se jawaab nahi mil paya') + '</div></div>';
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '🔍 Search'; }
+  }
+}
 
 // ==================== GROQ ====================
 // ==================== GROQ ====================
