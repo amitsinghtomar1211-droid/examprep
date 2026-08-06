@@ -16169,64 +16169,100 @@ document.addEventListener('selectionchange', function(){
   try{ _fcfpLastRange = sel.getRangeAt(0).cloneRange(); }catch(e){ _fcfpLastRange = null; }
 });
 
-// Selected fact ko fact-check question ke roop me web search me kholo —
-// naya browser tab me khulta hai, apna app ka page kabhi navigate/back nahi hota.
-// Query me current card ka Question + Answer + topic/file ka naam bhi jaata hai,
-// taaki search engine ko poora context mile aur woh update + related important
-// questions bhi bata sake.
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+// fcFactsPageContent ke HTML se plain-text facts ki numbered list banao
+// (har line/sentence ek alag item ban jata hai, blank lines ignore)
+function _fcfpExtractFactLines(maxItems){
+  var pageContent = document.getElementById('fcFactsPageContent');
+  if(!pageContent) return [];
+  // DOM ko plain text mein convert karo, block elements ke baad newline
+  var tmp = document.createElement('div');
+  tmp.innerHTML = pageContent.innerHTML;
+  tmp.querySelectorAll('p,div,li,br,h1,h2,h3,h4,h5').forEach(function(el){
+    el.insertAdjacentText('afterend', '\n');
+  });
+  var raw = (tmp.textContent || tmp.innerText || '');
+  var lines = raw.split('\n')
+    .map(function(l){ return l.trim(); })
+    .filter(function(l){ return l.length > 6; }); // too-short fragments ignore
+  // Deduplicate
+  var seen = {};
+  lines = lines.filter(function(l){ if(seen[l]) return false; seen[l]=1; return true; });
+  return maxItems ? lines.slice(0, maxItems) : lines;
+}
+
+// ── main search function ──────────────────────────────────────────────────────
+// Google AI mode (udm=50) mein structured jawab mangta hai:
+//   • Fact Verification Checklist (✅/❌ + ek line explanation if wrong)
+//   • Quick Revision section (exam-important bullet points)
 function fcfpSearchSelection(e){
   if(e){ e.stopPropagation(); }
-  var text = _fcfpSelectedText();
-  if(!text){
-    // Nothing selected — do a general search using the question+answer as context
-    var qEl = document.getElementById('fcFactsPageQ');
-    var aEl = document.getElementById('fcFactsPageA');
-    var question2 = qEl ? qEl.textContent.trim() : '';
-    var answer2   = aEl ? (aEl.textContent||aEl.innerText||'').trim() : '';
-    if(!question2 && !answer2){ if(typeof showToast==='function') showToast('Pehle kuch text select karo ya card ka content load hone do','info'); return; }
-    var q2 = 'Mera exam flashcard: "'+question2+(answer2?' — '+answer2:'')+'" — is topic ke baare mein aaj tak ki latest jaankari aur exam-relevant important facts batao.';
-    window.open('https://www.google.com/search?q='+encodeURIComponent(q2.slice(0,400))+'&udm=50','_blank','noopener');
-    return;
-  }
 
-  var qEl = document.getElementById('fcQText');
-  var aEl = document.getElementById('fcAText');
-  var question = qEl ? qEl.textContent.trim() : '';
-  var answer = aEl ? (aEl.textContent || aEl.innerText || '').trim() : '';
+  var tr = function(s, n){ return s && s.length > n ? s.slice(0, n).trim() : (s||''); };
 
-  // AI Mode (udm=50) handles natural-language questions well and gives a
-  // direct synthesized answer instead of a list of websites — no tight
-  // word-limit like the classic search box, so we can keep more context.
-  var trim = function(s, n){ return s && s.length > n ? s.slice(0, n).trim() : s; };
-  question = trim(question, 150);
-  answer = trim(answer, 150);
-  text = trim(text, 300);
+  // Card Q&A context
+  var qEl = document.getElementById('fcQText') || document.getElementById('fcFactsPageQ');
+  var aEl = document.getElementById('fcAText') || document.getElementById('fcFactsPageA');
+  var question = tr(qEl ? qEl.textContent.trim() : '', 120);
+  var answer   = tr(aEl ? (aEl.textContent||aEl.innerText||'').trim() : '', 120);
 
-  // Topic/section/file name — jaise "August 2025" jis naam se content bana hai
+  // Topic name
   var topicName = '';
   try{
-    var key = _fcTopicKey(_fcPlayState.sid, _fcPlayState.secid, _fcPlayState.tid);
-    var set = S.flashcardSets[key];
-    topicName = set && set.topicName ? set.topicName : '';
+    var _k = _fcTopicKey(_fcPlayState.sid, _fcPlayState.secid, _fcPlayState.tid);
+    var _s = S.flashcardSets[_k];
+    topicName = _s && _s.topicName ? _s.topicName : '';
   }catch(err){}
 
-  var parts = [];
-  parts.push('Mera exam ka current GK/current-affairs flashcard hai.');
-  if(topicName) parts.push('Yeh content "' + topicName + '" ke naam se bana hai (isi date/month ka current affairs data hai).');
-  if(question || answer) {
-    var ctx = 'Sirf context ke liye — is flashcard ka Question: "' + question + '"';
-    if(answer) ctx += ', Answer: "' + answer + '"';
-    ctx += '.';
-    parts.push(ctx);
-  }
-  parts.push('Mujhe SIRF is extra jankari (fact) ko verify karana hai jo neeche di gayi hai: "' + text + '"');
-  parts.push('Aaj tak ki latest jaankari ke hisaab se batao ki is fact mein koi update to nahi hua — agar update hua ho to updated data kya hai. Iske baad yeh bhi batao ki is topic se juda aur koi important, exam-relevant fact hai jo isi Question-Answer se related ho aur exam me baar-baar poochi jaati ho.');
+  var selectedText = _fcfpSelectedText();
+  var factsToCheck = []; // numbered fact strings
 
-  var query = parts.join(' ').trim();
+  if(selectedText){
+    // User ne specific text select kiya → sirf woh ek fact verify karo
+    factsToCheck = [ tr(selectedText, 250) ];
+  } else {
+    // Kuch select nahi → extra facts page se saare facts extract karo
+    factsToCheck = _fcfpExtractFactLines(8).map(function(l){ return tr(l, 150); });
+    if(!factsToCheck.length){
+      // Fallback: card Q&A use karo
+      if(!question && !answer){
+        if(typeof showToast==='function') showToast('Pehle kuch text select karo ya card load hone do','info');
+        return;
+      }
+      factsToCheck = [ question + (answer ? ' — ' + answer : '') ];
+    }
+  }
+
+  // ── Query build ──
+  // Format instruction pehle aata hai taaki AI isko follow kare
+  var lines = [];
+
+  lines.push('Tum ek expert exam-fact-checker ho. Neeche kuch facts diye gaye hain jinhe verify karna hai.');
+  if(question) lines.push('Sandarbh (Context): Q: "' + question + '"' + (answer ? ' | A: "' + answer + '"' : '') + (topicName ? ' | Topic: ' + topicName : '') + '.');
+
+  lines.push('');
+  lines.push('VERIFY KARNE WALE FACTS:');
+  factsToCheck.forEach(function(f, i){
+    lines.push((i+1) + '. ' + f);
+  });
+
+  lines.push('');
+  lines.push('JAWAB BILKUL IS STRUCTURE MEIN DO — koi extra introduction mat likho, seedha format follow karo:');
+  lines.push('');
+  lines.push('FACT VERIFICATION CHECKLIST:');
+  lines.push('(Har fact ke liye ek line — sirf ✅ SAHI ya ❌ GALAT likho. Agar galat hai to ek line mein sahi jaankari do, zyada mat likho.)');
+  lines.push('');
+  lines.push('QUICK REVISION — ' + (topicName || (question ? question.slice(0,40) : 'Is Topic')) + ':');
+  lines.push('(Is topic ke 5 se 7 sabse important exam-relevant facts — short bullet points mein, notes-style. Sirf woh jo exam mein aate hain.)');
+
+  var query = lines.join('\n').trim();
+
+  // URL length guard — Google AI mode thoda lamba query handle kar leta hai
+  if(query.length > 1800) query = query.slice(0, 1800);
+
   var url = 'https://www.google.com/search?q=' + encodeURIComponent(query) + '&udm=50';
   window.open(url, '_blank', 'noopener');
-
-  // Clear tracked range after search opens
   _fcfpLastRange = null;
 }
 
