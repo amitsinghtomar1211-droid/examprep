@@ -16155,6 +16155,10 @@ function fcfpHideSearchChip(clearSel, _reason){
 // Silently track the selection range for topbar button use
 document.addEventListener('selectionchange', function(){
   if(!_fcFactsPageOpen) return;
+  // Edit modal khula ho to range mat badlo — textarea mein type karne par
+  // page ka selection collapse hota hai aur lastRange null ho jaata hai (bug!)
+  var editModal = document.getElementById('fcfpEditModal');
+  if(editModal && editModal.classList.contains('show')) return;
   var contentEl = document.getElementById('fcFactsPageContent');
   if(!contentEl) return;
   var sel = window.getSelection();
@@ -16257,14 +16261,24 @@ function fcfpSetEditMode(mode){
 function fcfpOpenEditModal(e){
   if(e){ e.stopPropagation(); }
   var text = _fcfpSelectedText();
-  if(!text){ if(typeof showToast==='function') showToast('Edit karne ke liye pehle kuch text select (highlight) karo','info'); return; }
   var modal = document.getElementById('fcfpEditModal');
   var oldEl = document.getElementById('fcfpEditOldText');
   var input = document.getElementById('fcfpEditInput');
   if(!modal || !oldEl || !input) return;
-  oldEl.textContent = text;
   input.value = '';
-  fcfpSetEditMode('replace'); // default mode har baar modal khulne par reset
+
+  if(text){
+    // Kuch select hua hai → Replace mode (default), purana text dikhao
+    oldEl.textContent = text;
+    oldEl.style.display = '';
+    fcfpSetEditMode('replace');
+  } else {
+    // Kuch select nahi hua → Append mode (purane text ke saath jod do)
+    oldEl.textContent = '';
+    oldEl.style.display = 'none';
+    fcfpSetEditMode('append');
+  }
+
   modal.classList.add('show');
   setTimeout(function(){ input.focus(); }, 150);
 }
@@ -16281,23 +16295,29 @@ function fcfpSaveEdit(){
   var input = document.getElementById('fcfpEditInput');
   var newText = input ? input.value.trim() : '';
   if(!newText){ if(typeof showToast==='function') showToast('Naya text likho ya paste karo','error'); return; }
-  if(!_fcfpLastRange){ fcfpCloseEditModal(); return; }
 
-  // 1) Update the selected text inside the visible facts page (DOM Range)
-  try{
-    if(_fcfpEditMode === 'append'){
-      // Keep old text as-is, insert new text right after it (space-separated)
-      // by collapsing the range to its end point before inserting.
-      _fcfpLastRange.collapse(false);
-      _fcfpLastRange.insertNode(document.createTextNode(' ' + newText));
-    } else {
+  var pageContent = document.getElementById('fcFactsPageContent');
+
+  // 1) Update the visible facts page (DOM)
+  if(_fcfpEditMode === 'append'){
+    // Selection ki zaroorat nahi — seedha content ke end mein naya paragraph jodo
+    if(pageContent){
+      var newPara = document.createElement('p');
+      newPara.textContent = newText;
+      newPara.style.cssText = 'margin-top:10px;padding:8px 10px;background:rgba(46,125,50,0.07);border-left:3px solid #2e7d32;border-radius:4px;';
+      pageContent.appendChild(newPara);
+    }
+  } else {
+    // Replace mode — range chahiye
+    if(!_fcfpLastRange){ if(typeof showToast==='function') showToast('Pehle kuch text select karo phir Replace karo','error'); return; }
+    try{
       _fcfpLastRange.deleteContents();
       _fcfpLastRange.insertNode(document.createTextNode(newText));
+    }catch(err){
+      console.warn('fcfpSaveEdit range replace error:', err);
     }
-  }catch(err){
-    console.warn('fcfpSaveEdit range replace error:', err);
+    window.getSelection().removeAllRanges();
   }
-  window.getSelection().removeAllRanges();
 
   // 2) Persist the change back into the card's `extra` field (source of truth)
   var pageContent = document.getElementById('fcFactsPageContent');
