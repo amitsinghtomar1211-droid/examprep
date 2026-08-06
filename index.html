@@ -16384,6 +16384,14 @@ function fcfpRedo() {
 }
 
 // ── Apply highlight from current window selection ─────────────────
+// Extra Facts full-screen page ka HTML kabhi-kabhi multiple block elements
+// (<p>, <div>, <br> se separated lines) ke roop mein aata hai. Purana code
+// sirf range.surroundContents() (aur uska ek hi fallback) try karta tha, jo
+// multi-paragraph selection par silently fail ho jaata tha ya DOM ko todh
+// deta tha (isi wajah se "highlight nahi lagta" aur page tootaa hua dikhta
+// tha). Ab hum range ke andar aane wale har text-node ko alag se, individually
+// <mark> mein wrap karte hain — yeh technique block-boundaries cross karne par
+// bhi hamesha reliably kaam karta hai, DOM structure ko kabhi corrupt nahi karta.
 function fcfpApplyHighlightFromSelection() {
   var sel = window.getSelection();
   if(!sel || sel.isCollapsed || sel.rangeCount === 0) return;
@@ -16403,34 +16411,67 @@ function fcfpApplyHighlightFromSelection() {
   // Save snapshot before highlight
   fcfpSaveSnapshot();
 
+  var madeAnyMark = false;
   try {
-    var mark = document.createElement('mark');
-    mark.className = colorClass;
-    mark.style.cursor = (_fcfpHlMode === 'eraser') ? 'cell' : 'default';
-    range.surroundContents(mark);
-    fcfpAttachEraserToMark(mark);
+    // Collect every text node that actually intersects the selection range.
+    // Using a TreeWalker + range.intersectsNode is robust across paragraph
+    // and <br> boundaries (unlike surroundContents which requires the range
+    // to sit fully inside one parent element).
+    var walker = document.createTreeWalker(ct, NodeFilter.SHOW_TEXT, {
+      acceptNode: function(node){
+        if(!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        // Skip text nodes already inside an existing <mark> to avoid nesting marks
+        if(node.parentElement && node.parentElement.closest('mark')) return NodeFilter.FILTER_REJECT;
+        try{
+          if(typeof range.intersectsNode === 'function'){
+            return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+          }
+        }catch(e){}
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+
+    var nodes = [];
+    var n;
+    while((n = walker.nextNode())) nodes.push(n);
+
+    nodes.forEach(function(node){
+      var nodeRange = document.createRange();
+      nodeRange.selectNodeContents(node);
+      // Clip the node's own range to the intersection with the selection range
+      var start = 0, end = node.nodeValue.length;
+      if(node === range.startContainer) start = range.startOffset;
+      if(node === range.endContainer) end = range.endOffset;
+      if(start >= end) return;
+      nodeRange.setStart(node, start);
+      nodeRange.setEnd(node, end);
+
+      var mark = document.createElement('mark');
+      mark.className = colorClass;
+      mark.style.cursor = (_fcfpHlMode === 'eraser') ? 'cell' : 'default';
+      try {
+        nodeRange.surroundContents(mark);
+        fcfpAttachEraserToMark(mark);
+        madeAnyMark = true;
+      } catch(e) {
+        // Ek node ke liye bhi fail ho (rare) to us node ko skip karke aage badho
+      }
+    });
+
     sel.removeAllRanges();
-    if(typeof showToast === 'function') showToast('Highlight ho gaya! ✅', 'success');
-  } catch(e) {
-    // surroundContents fails if range crosses element boundaries
-    // Fallback: extractContents + wrap
-    try {
-      fcfpSaveSnapshot(); // snapshot already saved above, pop and redo
-      _fcfpUndoStack.pop();
-      fcfpSaveSnapshot();
-      var frag = range.extractContents();
-      var mark2 = document.createElement('mark');
-      mark2.className = colorClass;
-      mark2.appendChild(frag);
-      range.insertNode(mark2);
-      fcfpAttachEraserToMark(mark2);
-      sel.removeAllRanges();
+
+    if(madeAnyMark){
       if(typeof showToast === 'function') showToast('Highlight ho gaya! ✅', 'success');
-    } catch(e2) {
-      // Revert snapshot on total failure
+    } else {
+      // Kuch bhi highlight nahi hua — snapshot revert karo aur user ko batao
       _fcfpUndoStack.pop();
       fcfpUpdateUndoRedoBtns();
+      if(typeof showToast === 'function') showToast('Highlight nahi ho paaya, dobara try karo', 'error');
     }
+  } catch(e) {
+    _fcfpUndoStack.pop();
+    fcfpUpdateUndoRedoBtns();
+    if(typeof showToast === 'function') showToast('Highlight nahi ho paaya, dobara try karo', 'error');
   }
 }
 
@@ -27332,6 +27373,37 @@ function msInit(){
   }
 }
 
+// Ek single chunk ka text lambaai limit karo taaki 1-2 bahut lambe Master/Final
+// Notes hi poora token-budget na kha jaayein. Har chunk max ~900 chars tak.
+function _msClampChunkText(text, maxChars){
+  maxChars = maxChars || 900;
+  if(!text || text.length <= maxChars) return text;
+  return text.slice(0, maxChars).trim() + ' …(trimmed)';
+}
+
+// Poore context-block ko ek total character-budget ke andar rakho — jitne
+// chunks budget mein fit ho jaayein utne hi lo (relevance order already sorted
+// hai, sabse relevant chunks pehle aate hain).
+function _msBuildContextBlock(relevant, perChunkChars, totalCharBudget){
+  var used = 0;
+  var used_chunks = [];
+  for(var i=0; i<relevant.length; i++){
+    var c = relevant[i];
+    var txt = _msClampChunkText(c.text, perChunkChars);
+    var piece = '[' + (used_chunks.length+1) + '] (Source: ' + c.source + ' | Type: ' + c.type + ')\n' + txt;
+    if(used + piece.length > totalCharBudget){
+      if(used_chunks.length === 0){
+        // Pehla chunk hi budget se bada hai (edge case) — usko bhi clamp karke le lo
+        used_chunks.push({ chunk:c, text:txt, piece:piece });
+      }
+      break;
+    }
+    used += piece.length + 2;
+    used_chunks.push({ chunk:c, text:txt, piece:piece });
+  }
+  return used_chunks;
+}
+
 async function msRunSearch(){
   var input = document.getElementById('msQueryInput');
   var query = input ? input.value.trim() : '';
@@ -27341,6 +27413,9 @@ async function msRunSearch(){
 
   // Corpus taaza rakho (agar library mein naya data aaya ho)
   msBuildCorpus();
+  // Zyada broad keywords (jaise "Ncert") sainkdo chunks match kar sakte hain —
+  // isliye local-relevance se top 30 tak hi le lo, aage context-budget aur
+  // clamp karega taaki Groq ka token-limit kabhi na toote.
   var relevant = msSearchLocal(query, 30);
 
   var btn = document.getElementById('msSearchBtn');
@@ -27353,43 +27428,70 @@ async function msRunSearch(){
     return;
   }
 
-  var contextBlock = relevant.map(function(c, i){
-    return '[' + (i+1) + '] (Source: ' + c.source + ' | Type: ' + c.type + ')\n' + c.text;
-  }).join('\n\n');
+  // Character budgets — Groq free-tier context ko dhyan mein rakhkar conservative
+  // rakha hai. Agar phir bhi "reduce length" wali error aaye to neeche retry
+  // aur bhi chhote budget ke saath karta hai (progressive shrink).
+  var attempts = [
+    { perChunk: 900,  totalBudget: 9000,  n: 30 },
+    { perChunk: 500,  totalBudget: 5000,  n: 18 },
+    { perChunk: 300,  totalBudget: 2800,  n: 10 }
+  ];
 
-  var prompt = 'Tum ek exam-prep assistant ho. Neeche student ki apni library/flashcards se nikaale gaye data-chunks diye gaye hain, jo keyword "' + query + '" se match hue hain.\n\n' +
-    'DATA CHUNKS:\n' + contextBlock + '\n\n' +
-    'TASK: In chunks ka use karke "' + query + '" ke baare mein ek accurate, well-organized, consolidated jawaab HINDI (Hinglish thoda chalega) mein do. Instructions:\n' +
-    '- Sirf upar diye gaye chunks ke data par based raho, bahar se apni taraf se facts mat jodo.\n' +
-    '- Jawaab ko clear headings/bullet points mein organize karo.\n' +
-    '- Jahan bhi ek point kisi specific chunk se aaya ho, us point ke aage [chunk number] jaise "[2]" likho, taaki source track ho sake.\n' +
-    '- Agar chunks mein contradiction ho to dono mention karo.\n' +
-    '- End mein ek chhota "📌 Key Facts" summary do 3-5 bullets mein.\n' +
-    'Sirf jawaab do, koi preamble nahi.';
+  var lastErr = null;
+  for(var a=0; a<attempts.length; a++){
+    var cfg = attempts[a];
+    var pool = relevant.slice(0, cfg.n);
+    var used = _msBuildContextBlock(pool, cfg.perChunk, cfg.totalBudget);
+    if(!used.length) continue;
 
-  try{
-    var answer = await callGroq(prompt, 2500);
-    var sourcesHtml = relevant.map(function(c, i){
-      return '<div style="padding:8px 10px;border-left:3px solid var(--accent);background:var(--surface2);border-radius:6px;margin-bottom:6px;">' +
-        '<div style="font-size:0.68rem;font-weight:800;color:var(--accent);">[' + (i+1) + '] ' + c.type + ' — ' + c.source.replace(/</g,'&lt;') + '</div>' +
-        '<div style="font-size:0.75rem;color:var(--text2);margin-top:3px;white-space:pre-wrap;">' + c.text.slice(0,220).replace(/</g,'&lt;') + (c.text.length>220?'...':'') + '</div>' +
-      '</div>';
-    }).join('');
+    var contextBlock = used.map(function(u){ return u.piece; }).join('\n\n');
 
-    resultArea.innerHTML =
-      '<div class="card" style="margin-bottom:12px;">' +
-        '<div class="card-title">🤖 AI Answer</div>' +
-        '<div style="font-size:0.88rem;line-height:1.7;white-space:pre-wrap;">' + answer.replace(/</g,'&lt;') + '</div>' +
-      '</div>' +
-      '<div class="card">' +
-        '<div class="card-title">📎 Sources (' + relevant.length + ')</div>' +
-        sourcesHtml +
-      '</div>';
-  }catch(e){
-    resultArea.innerHTML = '<div class="card"><div style="color:var(--red);padding:12px;">❌ Error: ' + (e.message||'AI se jawaab nahi mil paya') + '</div></div>';
-  }finally{
-    if(btn){ btn.disabled = false; btn.textContent = '🔍 Search'; }
+    var prompt = 'Tum ek exam-prep assistant ho. Neeche student ki apni library/flashcards se nikaale gaye data-chunks diye gaye hain, jo keyword "' + query + '" se match hue hain.\n\n' +
+      'DATA CHUNKS:\n' + contextBlock + '\n\n' +
+      'TASK: In chunks ka use karke "' + query + '" ke baare mein ek accurate, well-organized, consolidated jawaab HINDI (Hinglish thoda chalega) mein do. Instructions:\n' +
+      '- Sirf upar diye gaye chunks ke data par based raho, bahar se apni taraf se facts mat jodo.\n' +
+      '- Jawaab ko clear headings/bullet points mein organize karo.\n' +
+      '- Jahan bhi ek point kisi specific chunk se aaya ho, us point ke aage [chunk number] jaise "[2]" likho, taaki source track ho sake.\n' +
+      '- Agar chunks mein contradiction ho to dono mention karo.\n' +
+      '- End mein ek chhota "📌 Key Facts" summary do 3-5 bullets mein.\n' +
+      'Sirf jawaab do, koi preamble nahi.';
+
+    try{
+      if(a>0) resultArea.innerHTML = '<div class="card"><div style="text-align:center;padding:20px;color:var(--text2);">🔍 Result thoda bada tha, chhote data ke saath dobara koshish kar raha hu...</div></div>';
+      var answer = await callGroq(prompt, 2000);
+      var relForSources = used.map(function(u){ return u.chunk; });
+      var sourcesHtml = relForSources.map(function(c, i){
+        return '<div style="padding:8px 10px;border-left:3px solid var(--accent);background:var(--surface2);border-radius:6px;margin-bottom:6px;">' +
+          '<div style="font-size:0.68rem;font-weight:800;color:var(--accent);">[' + (i+1) + '] ' + c.type + ' — ' + c.source.replace(/</g,'&lt;') + '</div>' +
+          '<div style="font-size:0.75rem;color:var(--text2);margin-top:3px;white-space:pre-wrap;">' + c.text.slice(0,220).replace(/</g,'&lt;') + (c.text.length>220?'...':'') + '</div>' +
+        '</div>';
+      }).join('');
+
+      resultArea.innerHTML =
+        '<div class="card" style="margin-bottom:12px;">' +
+          '<div class="card-title">🤖 AI Answer</div>' +
+          '<div style="font-size:0.88rem;line-height:1.7;white-space:pre-wrap;">' + answer.replace(/</g,'&lt;') + '</div>' +
+        '</div>' +
+        '<div class="card">' +
+          '<div class="card-title">📎 Sources (' + relForSources.length + (relForSources.length < relevant.length ? ' of '+relevant.length+' matched' : '') + ')</div>' +
+          sourcesHtml +
+        '</div>';
+      if(btn){ btn.disabled = false; btn.textContent = '🔍 Search'; }
+      return;
+    }catch(e){
+      lastErr = e;
+      var msg = (e && e.message) ? e.message.toLowerCase() : '';
+      var isLengthErr = msg.indexOf('reduce the length')!==-1 || msg.indexOf('too large')!==-1 ||
+                         msg.indexOf('too long')!==-1 || msg.indexOf('context')!==-1 || msg.indexOf('token')!==-1;
+      if(isLengthErr && a < attempts.length-1){
+        continue; // chhote budget ke saath dobara try karo
+      }
+      break;
+    }
   }
+
+  resultArea.innerHTML = '<div class="card"><div style="color:var(--red);padding:12px;">❌ Error: ' + ((lastErr&&lastErr.message)||'AI se jawaab nahi mil paya') + '</div></div>';
+  if(btn){ btn.disabled = false; btn.textContent = '🔍 Search'; }
 }
 
 // ==================== GROQ ====================
