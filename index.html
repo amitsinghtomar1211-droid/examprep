@@ -10121,7 +10121,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
 </div>
 
 <!-- FLASHCARD EXTRA FACTS — FULL SCREEN PAGE (View More se khulta hai) -->
-<div id="fcFactsPage" onclick="fcfpHandleTap(event)">
+<div id="fcFactsPage" onclick="fcfpHandleTap(event)" ontouchstart="fcfpHandleTouchStart(event)" ontouchmove="fcfpHandleTouchMove(event)" ontouchend="fcfpHandleTouchEnd(event)">
   <button id="fcfpRestoreBtn" onclick="fcfpShowBars();event.stopPropagation();" title="Tools wapas laao">⛶</button>
   <div class="fcfp-topbar" id="fcfpTopbar">
     <button class="fcfp-close" onclick="fcCloseExtraOverlay(event)" title="Band karo">✕</button>
@@ -16985,10 +16985,56 @@ function fcfpResetAutoHide() {
   _fcfpAutoHideTimer = setTimeout(function(){ fcfpHideBars(); }, 3200);
 }
 
-function fcfpHandleTap(e) {
+// ── Tap vs scroll/drag detection ───────────────────────────────────
+// Plain `onclick` on mobile fires even after a scroll/swipe gesture
+// (touch → synthetic click on touchend), which was toggling the tools
+// bar every time the user scrolled the page. We now track the touch
+// start position + movement + time, and only treat it as a "tap" (and
+// therefore toggle the bars) if the finger barely moved and it was a
+// quick touch — a real scroll gesture will move well past the threshold
+// and gets ignored.
+var _fcfpTouchStartX = 0;
+var _fcfpTouchStartY = 0;
+var _fcfpTouchStartT = 0;
+var _fcfpTouchMoved  = false;
+var _FCFP_TAP_MOVE_THRESHOLD = 10; // px
+var _FCFP_TAP_TIME_THRESHOLD = 500; // ms
+
+function fcfpHandleTouchStart(e) {
+  if(!e.touches || e.touches.length !== 1) return;
+  _fcfpTouchStartX = e.touches[0].clientX;
+  _fcfpTouchStartY = e.touches[0].clientY;
+  _fcfpTouchStartT = Date.now();
+  _fcfpTouchMoved  = false;
+}
+
+function fcfpHandleTouchMove(e) {
+  if(!e.touches || e.touches.length !== 1) return;
+  var dx = Math.abs(e.touches[0].clientX - _fcfpTouchStartX);
+  var dy = Math.abs(e.touches[0].clientY - _fcfpTouchStartY);
+  if(dx > _FCFP_TAP_MOVE_THRESHOLD || dy > _FCFP_TAP_MOVE_THRESHOLD) {
+    _fcfpTouchMoved = true;
+  }
+}
+
+function fcfpHandleTouchEnd(e) {
+  // If the finger moved beyond the threshold, this was a scroll/swipe,
+  // not a tap — let the browser's synthetic click fire (harmlessly) but
+  // fcfpHandleTap will bail out because _fcfpTouchMoved is true.
+  if(_fcfpTouchMoved) return;
+  var dt = Date.now() - _fcfpTouchStartT;
+  if(dt > _FCFP_TAP_TIME_THRESHOLD) return; // long-press, not a tap
+  fcfpHandleTap(e, true);
+}
+
+function fcfpHandleTap(e, fromTouch) {
   // Ignore taps on interactive elements or while text is being selected/highlighted
   if(e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'A' || e.target.tagName === 'INPUT' || e.target.closest('button'))) return;
   if(_fcfpHlMode && _fcfpHlMode !== 'off') return; // don't hide tools mid-highlight-selection
+  // On touch devices, the real decision already happened in
+  // fcfpHandleTouchEnd; this plain click handler only needs to act for
+  // mouse/desktop use. If the touch handlers detected a scroll, bail out.
+  if(!fromTouch && _fcfpTouchMoved) { _fcfpTouchMoved = false; return; }
   if(_fcfpBarsVisible) {
     fcfpHideBars();
   } else {
