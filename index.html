@@ -1014,6 +1014,40 @@ body.night-mode #fcFactsPage .fcfp-tb-btn.fcfp-tb-edit{
   transform:scaleY(1);
 }
 
+/* ══ Right side: Format (Bold/Italic/Underline) drag-select tool ══ */
+.fcfp-side-btn.fcfp-fmt-on {
+  opacity:1;
+  background:rgba(33,150,243,0.22);
+  border-color:rgba(33,150,243,0.85);
+}
+#fcfpSideRight .fcfp-fmt-sub-btn {
+  display:none;
+  opacity:0;
+  transform:scaleY(0.7);
+  transition:opacity 0.18s, transform 0.18s;
+  width:22px; height:22px;
+  border-radius:7px;
+  border:1px solid rgba(128,128,128,0.35);
+  background:rgba(128,128,128,0.14);
+  align-items:center; justify-content:center;
+  font-size:0.72rem; line-height:1;
+  cursor:pointer; -webkit-tap-highlight-color:transparent;
+  color:inherit; padding:0;
+  flex-shrink:0;
+}
+#fcfpSideRight.fmt-active .fcfp-fmt-sub-btn {
+  display:flex;
+  opacity:1;
+  transform:scaleY(1);
+}
+#fcfpSideRight .fcfp-fmt-sub-btn.fcfp-fmt-sel {
+  box-shadow:0 0 0 2px rgba(33,150,243,0.55);
+  background:rgba(33,150,243,0.28);
+  border-color:rgba(33,150,243,0.9);
+}
+#fcfpSideRight .fcfp-fmt-sub-btn:active { transform:scale(0.85); }
+#fcFactsPageContent.fcfp-fmt-active { cursor:text; }
+
 /* ── Rich text edit modal ── */
 #fcfpEditModal .fcfp-edit-box {
   max-height:92vh;overflow-y:auto;
@@ -9950,10 +9984,14 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <div id="fcfpDotB"  class="fcfp-color-dot"              onclick="fcfpSelectColor('blue');event.stopPropagation();"   style="background:#64b5f6;" title="Blue"></div>
   </div>
 
-  <!-- ══ FCFP RIGHT SIDE: Undo + Redo (direct child of fcFactsPage) ══ -->
+  <!-- ══ FCFP RIGHT SIDE: Undo + Redo + Format (Bold/Italic/Underline) (direct child of fcFactsPage) ══ -->
   <div id="fcfpSideRight">
     <button id="fcfpUndoBtn" class="fcfp-side-btn" onclick="fcfpUndo();event.stopPropagation();" title="Undo" disabled>↩</button>
     <button id="fcfpRedoBtn" class="fcfp-side-btn" onclick="fcfpRedo();event.stopPropagation();" title="Redo" disabled>↪</button>
+    <button id="fcfpFmtBtn" class="fcfp-side-btn" onclick="fcfpToggleFmt();event.stopPropagation();" title="Bold/Italic/Underline ON/OFF toggle">✏️</button>
+    <button id="fcfpFmtBoldBtn"      class="fcfp-fmt-sub-btn fcfp-fmt-sel" onclick="fcfpSelectFmtStyle('bold');event.stopPropagation();"      title="Bold — drag karke select karo"><b>B</b></button>
+    <button id="fcfpFmtItalicBtn"    class="fcfp-fmt-sub-btn"              onclick="fcfpSelectFmtStyle('italic');event.stopPropagation();"    title="Italic — drag karke select karo"><i>I</i></button>
+    <button id="fcfpFmtUnderlineBtn" class="fcfp-fmt-sub-btn"              onclick="fcfpSelectFmtStyle('underline');event.stopPropagation();" title="Underline — drag karke select karo"><u>U</u></button>
   </div>
 </div>
 
@@ -16692,13 +16730,15 @@ function fcfpHandleTap(e) {
 // Self-contained, works on #fcFactsPageContent
 // ═══════════════════════════════════════════════════════════════════
 
-var _fcfpHlMode   = 'off';    // 'highlight' | 'eraser' | 'off'
+var _fcfpHlMode   = 'off';    // 'highlight' | 'eraser' | 'format' | 'off'
 var _fcfpHlColor  = 'yellow'; // current color
+var _fcfpFmtStyle = 'bold';   // 'bold' | 'italic' | 'underline' — current format tool style
 var _fcfpUndoStack = [];      // array of innerHTML snapshots
 var _fcfpRedoStack = [];
 var _FCFP_MAX_STACK = 25;
 var _fcfpListenersAttached = false;
 var _fcfpLastAppliedSig = null;
+var _fcfpLastFmtSig = null;
 
 // ── Show / hide side buttons ─────────────────────────────────────
 function fcfpShowSideButtons() {
@@ -16721,6 +16761,21 @@ function fcfpToggleHl() {
 function fcfpToggleEraser() {
   fcfpSetMode(_fcfpHlMode === 'eraser' ? 'off' : 'eraser');
 }
+function fcfpToggleFmt() {
+  fcfpSetMode(_fcfpHlMode === 'format' ? 'off' : 'format');
+}
+
+// ── Format style selection (Bold/Italic/Underline) ─────────────────
+function fcfpSelectFmtStyle(style) {
+  _fcfpFmtStyle = style;
+  var btnMap = { bold:'fcfpFmtBoldBtn', italic:'fcfpFmtItalicBtn', underline:'fcfpFmtUnderlineBtn' };
+  Object.keys(btnMap).forEach(function(s) {
+    var el = document.getElementById(btnMap[s]);
+    if(el) el.classList.toggle('fcfp-fmt-sel', s === style);
+  });
+  // Auto-switch to format mode when a style is picked
+  if(_fcfpHlMode !== 'format') fcfpSetMode('format');
+}
 
 function fcfpSetMode(mode) {
   _fcfpHlMode = mode;
@@ -16736,9 +16791,10 @@ function fcfpSetMode(mode) {
   var ct = document.getElementById('fcFactsPageContent');
   if(ct) {
     ct.classList.toggle('fcfp-hl-active', mode === 'eraser');
-    // Make content user-selectable when highlight is active
-    ct.style.userSelect = (mode === 'highlight') ? 'text' : '';
-    ct.style.webkitUserSelect = (mode === 'highlight') ? 'text' : '';
+    ct.classList.toggle('fcfp-fmt-active', mode === 'format');
+    // Make content user-selectable when highlight or format tool is active
+    ct.style.userSelect = (mode === 'highlight' || mode === 'format') ? 'text' : '';
+    ct.style.webkitUserSelect = (mode === 'highlight' || mode === 'format') ? 'text' : '';
     // cursor style on marks
     var marks = ct.querySelectorAll('mark');
     marks.forEach(function(m) {
@@ -16748,6 +16804,9 @@ function fcfpSetMode(mode) {
   // Show/hide color dots + eraser on left panel based on mode
   var sideL = document.getElementById('fcfpSideLeft');
   if(sideL) sideL.classList.toggle('hl-active', mode === 'highlight');
+  // Show/hide B/I/U sub-buttons on right panel based on mode
+  var sideR = document.getElementById('fcfpSideRight');
+  if(sideR) sideR.classList.toggle('fmt-active', mode === 'format');
   fcfpSyncSideBtns();
 }
 
@@ -16755,6 +16814,7 @@ function fcfpSyncSideBtns() {
   var hlBtn = document.getElementById('fcfpHlBtn');
   var esBtn = document.getElementById('fcfpEsBtn');
   var sideL = document.getElementById('fcfpSideLeft');
+  var fmtBtn = document.getElementById('fcfpFmtBtn');
   if(hlBtn) {
     hlBtn.classList.toggle('fcfp-hl-on', _fcfpHlMode === 'highlight');
     // Visual label: show ON state clearly
@@ -16765,6 +16825,10 @@ function fcfpSyncSideBtns() {
   }
   if(sideL) {
     sideL.classList.toggle('hl-active', _fcfpHlMode === 'highlight' || _fcfpHlMode === 'eraser');
+  }
+  if(fmtBtn) {
+    fmtBtn.classList.toggle('fcfp-fmt-on', _fcfpHlMode === 'format');
+    fmtBtn.title = _fcfpHlMode === 'format' ? '✏️ Bold/Italic/Underline ON — tap to turn OFF' : '✏️ Bold/Italic/Underline OFF — tap to turn ON';
   }
 }
 
@@ -16964,6 +17028,164 @@ function fcfpApplyHighlightFromRange(range, text) {
   }
 }
 
+// ── Apply Bold/Italic/Underline from current window selection ─────
+// Same drag-to-select-and-apply feel as highlight, but wraps the
+// selected text-nodes in <b>/<i>/<u> instead of <mark>. Mirrors
+// fcfpApplyHighlightFromSelection exactly.
+function fcfpApplyFmtFromSelection() {
+  var sel = window.getSelection();
+  if(!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+  var text = sel.toString().trim();
+  if(text.length < 1) return;
+
+  var ct = document.getElementById('fcFactsPageContent');
+  if(!ct) return;
+  var range = sel.getRangeAt(0);
+  if(!ct.contains(range.commonAncestorContainer)) return;
+
+  var sigNow = 'fmt|' + _fcfpFmtStyle + '|' + text + '|' + range.startOffset + '|' + range.endOffset;
+  if(_fcfpLastFmtSig === sigNow) return;
+  _fcfpLastFmtSig = sigNow;
+
+  sel.removeAllRanges();
+  fcfpApplyFmtFromRange(range, text);
+}
+
+// ── CORE: wrap a Range's text-nodes in a <b>/<i>/<u> tag, DOM-stable,
+// multi-node safe — same TreeWalker technique as fcfpApplyHighlightFromRange
+// so it works reliably across paragraph/<br> boundaries. Toggling: if the
+// selected text is already fully wrapped in the chosen tag, it un-wraps
+// instead (so tapping the same style again on already-bold text removes it).
+function fcfpApplyFmtFromRange(range, text) {
+  var ct = document.getElementById('fcFactsPageContent');
+  if(!ct || !range || range.collapsed) return;
+  if(!ct.contains(range.commonAncestorContainer)) return;
+
+  var tagName = { bold:'b', italic:'i', underline:'u' }[_fcfpFmtStyle] || 'b';
+
+  // Save snapshot before formatting
+  fcfpSaveSnapshot();
+
+  var madeAnyChange = false;
+  try {
+    var walker = document.createTreeWalker(ct, NodeFilter.SHOW_TEXT, {
+      acceptNode: function(node){
+        if(!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        try{
+          if(typeof range.intersectsNode === 'function'){
+            return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+          }
+        }catch(e){}
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+
+    var nodes = [];
+    var n;
+    while((n = walker.nextNode())) nodes.push(n);
+
+    // If every intersecting node is already directly wrapped in the target
+    // tag, this is a "toggle off" — unwrap instead of re-wrapping.
+    var allAlreadyWrapped = nodes.length > 0 && nodes.every(function(node){
+      return node.parentElement && node.parentElement.tagName === tagName.toUpperCase();
+    });
+
+    nodes.forEach(function(node){
+      var nodeRange = document.createRange();
+      var start = 0, end = node.nodeValue.length;
+      if(node === range.startContainer) start = range.startOffset;
+      if(node === range.endContainer) end = range.endOffset;
+      if(start >= end) return;
+      nodeRange.setStart(node, start);
+      nodeRange.setEnd(node, end);
+
+      if(allAlreadyWrapped) {
+        // Unwrap: replace the parent tag with its own text content
+        var parent = node.parentElement;
+        if(parent && parent.tagName === tagName.toUpperCase()) {
+          var gp = parent.parentNode;
+          if(gp) {
+            while(parent.firstChild) gp.insertBefore(parent.firstChild, parent);
+            gp.removeChild(parent);
+            madeAnyChange = true;
+          }
+        }
+        return;
+      }
+
+      var wrap = document.createElement(tagName);
+      try {
+        nodeRange.surroundContents(wrap);
+        madeAnyChange = true;
+      } catch(e) {
+        // Ek node ke liye bhi fail ho (rare) to us node ko skip karke aage badho
+      }
+    });
+
+    if(madeAnyChange){
+      fcfpPersistExtra();
+      var lbl = { bold:'Bold', italic:'Italic', underline:'Underline' }[_fcfpFmtStyle] || 'Format';
+      if(typeof showToast === 'function') showToast(lbl + ' ho gaya! ✅', 'success');
+    } else {
+      _fcfpUndoStack.pop();
+      fcfpUpdateUndoRedoBtns();
+      if(typeof showToast === 'function') showToast('Format nahi ho paaya, dobara try karo', 'error');
+    }
+  } catch(e) {
+    _fcfpUndoStack.pop();
+    fcfpUpdateUndoRedoBtns();
+    if(typeof showToast === 'function') showToast('Format nahi ho paaya, dobara try karo', 'error');
+  }
+}
+
+// ── Mobile drag-to-format touchend — mirrors fcfpOnTouchEnd exactly,
+// just routed to fcfpApplyFmtFromRange instead of the highlight path. ──
+function fcfpFmtOnTouchEnd(e) {
+  clearTimeout(_touchLongPressTimer);
+  _touchLongPressTimer = null;
+  hideMagnifier();
+  clearSelectionOverlay();
+
+  if(_fcfpHlMode !== 'format') { _cancelTouchSelection(); return; }
+
+  const wasSelecting = _touchSelecting && _touchPhase === 'selecting';
+  _touchPhase = 'idle';
+  _touchSelecting = false;
+
+  if(!wasSelecting) return;
+
+  let range = _tsCurRange;
+  _touchSelectedText = '';
+  _tsCurRange = null;
+
+  if(!range || range.collapsed) return;
+
+  // ── AUTO WORD-SNAP (touch path) — same as the highlight version ──
+  try {
+    let sNode = range.startContainer, sOff = range.startOffset;
+    let eNode = range.endContainer,   eOff = range.endOffset;
+
+    if(sNode && sNode.nodeType === Node.TEXT_NODE) {
+      const txt = sNode.textContent;
+      while(sOff > 0 && !/[\s\n\u00A0]/.test(txt[sOff - 1])) sOff--;
+    }
+    if(eNode && eNode.nodeType === Node.TEXT_NODE) {
+      const txt = eNode.textContent;
+      while(eOff < txt.length && !/[\s\n\u00A0]/.test(txt[eOff])) eOff++;
+    }
+
+    const snappedRange = document.createRange();
+    snappedRange.setStart(sNode, sOff);
+    snappedRange.setEnd(eNode, eOff);
+    if(!snappedRange.collapsed) range = snappedRange;
+  } catch(_) { /* fallback: original range use hogi */ }
+
+  const text = range.toString().trim();
+  if(!text || text.length < 1) return;
+
+  fcfpApplyFmtFromRange(range, text);
+}
+
 // ── Attach eraser listener to a single mark element ───────────────
 function fcfpAttachEraserToMark(mark) {
   if(mark._fcfpEraserFn) {
@@ -17075,27 +17297,31 @@ function fcfpAttachListeners() {
   // Desktop: native mouse-drag selection still works, same as before.
   ct._fcfpMouseFn = function(e) {
     if(!_fcFactsPageOpen) return;
-    if(_fcfpHlMode !== 'highlight') return;
-    // Small delay so selection is finalised
-    setTimeout(function() { fcfpApplyHighlightFromSelection(); }, 30);
+    if(_fcfpHlMode === 'highlight') {
+      // Small delay so selection is finalised
+      setTimeout(function() { fcfpApplyHighlightFromSelection(); }, 30);
+    } else if(_fcfpHlMode === 'format') {
+      setTimeout(function() { fcfpApplyFmtFromSelection(); }, 30);
+    }
   };
   ct.addEventListener('mouseup', ct._fcfpMouseFn);
 
   // Mobile: same "pyaara" long-press → word-snap → live-drag highlight
   // system used by the Notes Editor / Reading Mode (onNETouchStart/Move/End
   // + magnifier), reused here so it feels identical — no more needing the
-  // clunky native text-selection handles.
+  // clunky native text-selection handles. Also reused for the Bold/Italic/
+  // Underline format tool so drag-to-select feels exactly the same.
   ct._fcfpTouchStartFn = function(e) {
-    if(!_fcFactsPageOpen || _fcfpHlMode !== 'highlight') return;
+    if(!_fcFactsPageOpen || (_fcfpHlMode !== 'highlight' && _fcfpHlMode !== 'format')) return;
     onNETouchStart(e);
   };
   ct._fcfpTouchMoveFn = function(e) {
-    if(!_fcFactsPageOpen || _fcfpHlMode !== 'highlight') return;
+    if(!_fcFactsPageOpen || (_fcfpHlMode !== 'highlight' && _fcfpHlMode !== 'format')) return;
     onNETouchMove(e);
   };
   ct._fcfpTouchEndFn = function(e) {
-    if(!_fcFactsPageOpen || _fcfpHlMode !== 'highlight') { if(typeof _cancelTouchSelection === 'function') _cancelTouchSelection(); return; }
-    fcfpOnTouchEnd(e);
+    if(!_fcFactsPageOpen || (_fcfpHlMode !== 'highlight' && _fcfpHlMode !== 'format')) { if(typeof _cancelTouchSelection === 'function') _cancelTouchSelection(); return; }
+    if(_fcfpHlMode === 'format') { fcfpFmtOnTouchEnd(e); } else { fcfpOnTouchEnd(e); }
   };
   ct.addEventListener('touchstart', ct._fcfpTouchStartFn, { passive: true });
   ct.addEventListener('touchmove',  ct._fcfpTouchMoveFn,  { passive: false });
@@ -17106,13 +17332,13 @@ function fcfpAttachListeners() {
   // that finish well after touchend already fired.
   _fcfpSelChangeFn = function() {
     if(!_fcFactsPageOpen) return;
-    if(_fcfpHlMode !== 'highlight') return;
+    if(_fcfpHlMode !== 'highlight' && _fcfpHlMode !== 'format') return;
     var sel = window.getSelection();
     if(!sel || sel.isCollapsed || sel.rangeCount === 0) return;
     if(!ct.contains(sel.anchorNode)) return;
     clearTimeout(_fcfpSelDebounceTimer);
     _fcfpSelDebounceTimer = setTimeout(function() {
-      fcfpApplyHighlightFromSelection();
+      if(_fcfpHlMode === 'format') { fcfpApplyFmtFromSelection(); } else { fcfpApplyHighlightFromSelection(); }
     }, 350);
   };
   document.addEventListener('selectionchange', _fcfpSelChangeFn);
