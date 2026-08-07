@@ -3536,7 +3536,7 @@ body.night-mode .sc-color-dot:hover { border-color: rgba(255,255,255,0.7); }
   border-radius:12px;
   box-shadow:0 4px 20px rgba(21,101,192,0.25);
   pointer-events:none;
-  z-index:9999;
+  z-index:999998;
   padding:6px 10px;
   overflow:hidden;
   /* No transition on display, only position */
@@ -16471,6 +16471,7 @@ function fcCloseExtraOverlay(e){
   // Hide side highlight buttons and reset mode
   fcfpHideSideButtons();
   _fcfpHlMode = 'off';
+  if(typeof _hlCurrentMode !== 'undefined') _hlCurrentMode = 'off';
   if(typeof setHlMode === 'function') setHlMode('off');
   var ct = document.getElementById('fcFactsPageContent');
   if(ct) ct.classList.remove('fcfp-hl-active');
@@ -16723,6 +16724,15 @@ function fcfpToggleEraser() {
 
 function fcfpSetMode(mode) {
   _fcfpHlMode = mode;
+  // Drive the shared touch-drag engine (onNETouchStart/Move, used by the
+  // Notes Editor + Reading Mode) so the same long-press → word-snap →
+  // live-drag-with-magnifier highlighting works here too. We only flip
+  // this raw flag (not setHlMode(), which also repaints Notes-Editor-only
+  // toolbar buttons) and always restore it to 'off' when the Facts page
+  // closes — see fcCloseExtraOverlay.
+  if(typeof _hlCurrentMode !== 'undefined') {
+    _hlCurrentMode = (mode === 'highlight') ? 'highlight' : (mode === 'eraser' ? 'eraser' : 'off');
+  }
   var ct = document.getElementById('fcFactsPageContent');
   if(ct) {
     ct.classList.toggle('fcfp-hl-active', mode === 'eraser');
@@ -16838,6 +16848,21 @@ function fcfpApplyHighlightFromSelection() {
   if(_fcfpLastAppliedSig === sigNow) return;
   _fcfpLastAppliedSig = sigNow;
 
+  sel.removeAllRanges();
+  fcfpApplyHighlightFromRange(range, text);
+}
+
+// ── CORE: apply a highlight <mark> across a Range, DOM-stable, multi-node
+// safe. Shared by both the native-selection path (fcfpApplyHighlightFromSelection,
+// desktop mouse drag / Android selection-handles) and the custom
+// long-press+drag touch path (fcfpOnTouchEnd) — same "pyaara" instant
+// drag-to-highlight feel as the Notes Editor Reading Mode, just scoped to
+// #fcFactsPageContent and the fcfp mark/undo/color system. ──
+function fcfpApplyHighlightFromRange(range, text) {
+  var ct = document.getElementById('fcFactsPageContent');
+  if(!ct || !range || range.collapsed) return;
+  if(!ct.contains(range.commonAncestorContainer)) return;
+
   var colorClass = {
     yellow:'user-hl', pink:'user-hl-pink', green:'user-hl-green',
     blue:'user-hl-blue', red:'user-hl-red'
@@ -16893,8 +16918,6 @@ function fcfpApplyHighlightFromSelection() {
       }
     });
 
-    sel.removeAllRanges();
-
     if(madeAnyMark){
       if(typeof showToast === 'function') showToast('Highlight ho gaya! ✅', 'success');
     } else {
@@ -16940,6 +16963,59 @@ function fcfpReattachEraserListeners() {
   });
 }
 
+// ── Mobile drag-to-highlight touchend — mirrors onNETouchEnd (Notes
+// Editor / Reading Mode) exactly: long-press word-snap, live drag with
+// magnifier feedback (all handled by the shared onNETouchStart/Move via
+// the global _touchPhase/_tsCurRange state), then on release we word-snap
+// the final range and hand it to fcfpApplyHighlightFromRange instead of
+// the notes-editor's applyHighlightFromRange — so it lands as an fcfp
+// mark with fcfp's own undo/eraser/color system. ──
+function fcfpOnTouchEnd(e) {
+  clearTimeout(_touchLongPressTimer);
+  _touchLongPressTimer = null;
+  hideMagnifier();
+  clearSelectionOverlay();
+
+  if(_fcfpHlMode !== 'highlight') { _cancelTouchSelection(); return; }
+
+  const wasSelecting = _touchSelecting && _touchPhase === 'selecting';
+  _touchPhase = 'idle';
+  _touchSelecting = false;
+
+  if(!wasSelecting) return;
+
+  let range = _tsCurRange;
+  _touchSelectedText = '';
+  _tsCurRange = null;
+
+  if(!range || range.collapsed) return;
+
+  // ── AUTO WORD-SNAP (touch path) — same as the Notes Editor's version ──
+  try {
+    let sNode = range.startContainer, sOff = range.startOffset;
+    let eNode = range.endContainer,   eOff = range.endOffset;
+
+    if(sNode && sNode.nodeType === Node.TEXT_NODE) {
+      const txt = sNode.textContent;
+      while(sOff > 0 && !/[\s\n\u00A0]/.test(txt[sOff - 1])) sOff--;
+    }
+    if(eNode && eNode.nodeType === Node.TEXT_NODE) {
+      const txt = eNode.textContent;
+      while(eOff < txt.length && !/[\s\n\u00A0]/.test(txt[eOff])) eOff++;
+    }
+
+    const snappedRange = document.createRange();
+    snappedRange.setStart(sNode, sOff);
+    snappedRange.setEnd(eNode, eOff);
+    if(!snappedRange.collapsed) range = snappedRange;
+  } catch(_) { /* fallback: original range use hogi */ }
+
+  const text = range.toString().trim();
+  if(!text || text.length < 1) return;
+
+  fcfpApplyHighlightFromRange(range, text);
+}
+
 // ── Attach touch + mouse listeners to fcFactsPageContent ──────────
 // MOBILE FIX: on touch devices, the browser's native text-selection
 // (long-press → drag handles) keeps changing the Selection *after*
@@ -16959,27 +17035,43 @@ function fcfpAttachListeners() {
 
   // Remove old listeners if re-attaching after content replaced
   if(ct._fcfpMouseFn) ct.removeEventListener('mouseup', ct._fcfpMouseFn);
-  if(ct._fcfpTouchFn) ct.removeEventListener('touchend', ct._fcfpTouchFn);
+  if(ct._fcfpTouchStartFn) ct.removeEventListener('touchstart', ct._fcfpTouchStartFn);
+  if(ct._fcfpTouchMoveFn)  ct.removeEventListener('touchmove',  ct._fcfpTouchMoveFn);
+  if(ct._fcfpTouchEndFn)   ct.removeEventListener('touchend',   ct._fcfpTouchEndFn);
   if(_fcfpSelChangeFn) document.removeEventListener('selectionchange', _fcfpSelChangeFn);
 
+  // Desktop: native mouse-drag selection still works, same as before.
   ct._fcfpMouseFn = function(e) {
     if(!_fcFactsPageOpen) return;
     if(_fcfpHlMode !== 'highlight') return;
     // Small delay so selection is finalised
     setTimeout(function() { fcfpApplyHighlightFromSelection(); }, 30);
   };
-  ct._fcfpTouchFn = function(e) {
-    if(!_fcFactsPageOpen) return;
-    if(_fcfpHlMode !== 'highlight') return;
-    // Immediate-ish attempt (covers quick tap-drag-release selections)
-    setTimeout(function() { fcfpApplyHighlightFromSelection(); }, 120);
-  };
+  ct.addEventListener('mouseup', ct._fcfpMouseFn);
 
-  ct.addEventListener('mouseup',  ct._fcfpMouseFn);
-  ct.addEventListener('touchend', ct._fcfpTouchFn);
+  // Mobile: same "pyaara" long-press → word-snap → live-drag highlight
+  // system used by the Notes Editor / Reading Mode (onNETouchStart/Move/End
+  // + magnifier), reused here so it feels identical — no more needing the
+  // clunky native text-selection handles.
+  ct._fcfpTouchStartFn = function(e) {
+    if(!_fcFactsPageOpen || _fcfpHlMode !== 'highlight') return;
+    onNETouchStart(e);
+  };
+  ct._fcfpTouchMoveFn = function(e) {
+    if(!_fcFactsPageOpen || _fcfpHlMode !== 'highlight') return;
+    onNETouchMove(e);
+  };
+  ct._fcfpTouchEndFn = function(e) {
+    if(!_fcFactsPageOpen || _fcfpHlMode !== 'highlight') { if(typeof _cancelTouchSelection === 'function') _cancelTouchSelection(); return; }
+    fcfpOnTouchEnd(e);
+  };
+  ct.addEventListener('touchstart', ct._fcfpTouchStartFn, { passive: true });
+  ct.addEventListener('touchmove',  ct._fcfpTouchMoveFn,  { passive: false });
+  ct.addEventListener('touchend',   ct._fcfpTouchEndFn,   { passive: true });
 
   // Debounced selectionchange fallback -- catches native drag-handle
-  // adjustments that finish well after touchend already fired.
+  // adjustments (desktop, or if the OS still shows selection handles)
+  // that finish well after touchend already fired.
   _fcfpSelChangeFn = function() {
     if(!_fcFactsPageOpen) return;
     if(_fcfpHlMode !== 'highlight') return;
@@ -23781,7 +23873,7 @@ function showSelectionOverlay(range) {
         div.style.cssText = [
           'position:fixed',
           'pointer-events:none',
-          'z-index:9990',
+          'z-index:999998',
           'background:rgba(255,193,7,0.38)',
           'border:1px solid rgba(249,168,37,0.6)',
           'border-radius:2px',
