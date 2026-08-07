@@ -1088,11 +1088,13 @@ body.night-mode #fcFactsPage .fcfp-tb-btn.fcfp-tb-topicsave{
 #fcFactsPageContent mark.user-hl-green { background:rgba(100,220,130,0.45); border-radius:2px; cursor:default; }
 #fcFactsPageContent mark.user-hl-blue  { background:rgba(100,160,255,0.45); border-radius:2px; cursor:default; }
 #fcFactsPageContent mark.user-hl-red   { background:rgba(200,50,50,0.35); border-radius:2px; cursor:default; }
+#fcFactsPageContent mark.user-hl-darkred { background:#8B0000; color:#fff; border-radius:2px; cursor:default; }
 #fcFactsPageContent.fcfp-hl-active mark.user-hl,
 #fcFactsPageContent.fcfp-hl-active mark.user-hl-pink,
 #fcFactsPageContent.fcfp-hl-active mark.user-hl-green,
 #fcFactsPageContent.fcfp-hl-active mark.user-hl-blue,
-#fcFactsPageContent.fcfp-hl-active mark.user-hl-red { cursor:cell; }
+#fcFactsPageContent.fcfp-hl-active mark.user-hl-red,
+#fcFactsPageContent.fcfp-hl-active mark.user-hl-darkred { cursor:cell; }
 
 /* Rich text display in fcFactsPageContent */
 #fcFactsPageContent strong, #fcFactsPageContent b { font-weight:800; }
@@ -10119,6 +10121,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <div id="fcfpDotP"  class="fcfp-color-dot"              onclick="fcfpSelectColor('pink');event.stopPropagation();"   style="background:#ff80ab;" title="Pink"></div>
     <div id="fcfpDotG"  class="fcfp-color-dot"              onclick="fcfpSelectColor('green');event.stopPropagation();"  style="background:#00e676;" title="Green"></div>
     <div id="fcfpDotB"  class="fcfp-color-dot"              onclick="fcfpSelectColor('blue');event.stopPropagation();"   style="background:#64b5f6;" title="Blue"></div>
+    <div id="fcfpDotR"  class="fcfp-color-dot"              onclick="fcfpSelectColor('darkred');event.stopPropagation();" style="background:#8B0000;" title="Dark Red"></div>
   </div>
 
   <!-- ══ FCFP RIGHT SIDE: Undo + Redo + Format (Bold/Italic/Underline) (direct child of fcFactsPage) ══ -->
@@ -16709,6 +16712,7 @@ function fcCloseExtraOverlay(e){
   // Hide side highlight buttons and reset mode
   fcfpHideSideButtons();
   _fcfpHlMode = 'off';
+  _fcfpClearHlAutoOffTimer();
   if(typeof _hlCurrentMode !== 'undefined') _hlCurrentMode = 'off';
   if(typeof setHlMode === 'function') setHlMode('off');
   var ct = document.getElementById('fcFactsPageContent');
@@ -16977,8 +16981,24 @@ function fcfpSelectFmtStyle(style) {
   if(_fcfpHlMode !== 'format') fcfpSetMode('format');
 }
 
+// Auto-off timer: jab bhi highlight mode ON hota hai, 7 second baad khud-b-khud
+// OFF ho jata hai (user ko baar-baar manually band nahi karna padta).
+var _fcfpHlAutoOffTimer = null;
+function _fcfpClearHlAutoOffTimer() {
+  if(_fcfpHlAutoOffTimer) { clearTimeout(_fcfpHlAutoOffTimer); _fcfpHlAutoOffTimer = null; }
+}
+
 function fcfpSetMode(mode) {
   _fcfpHlMode = mode;
+  // Reset any pending auto-off timer every time the mode changes; only
+  // (re)start it when the new mode is 'highlight'.
+  _fcfpClearHlAutoOffTimer();
+  if(mode === 'highlight') {
+    _fcfpHlAutoOffTimer = setTimeout(function(){
+      _fcfpHlAutoOffTimer = null;
+      if(_fcfpHlMode === 'highlight') fcfpSetMode('off');
+    }, 7000);
+  }
   // Drive the shared touch-drag engine (onNETouchStart/Move, used by the
   // Notes Editor + Reading Mode) so the same long-press → word-snap →
   // live-drag-with-magnifier highlighting works here too. We only flip
@@ -17045,7 +17065,7 @@ function fcfpSyncSideBtns() {
 function fcfpSelectColor(color) {
   _fcfpHlColor = color;
   // Update dot selection ring
-  var dotMap = { yellow:'fcfpDotY', pink:'fcfpDotP', green:'fcfpDotG', blue:'fcfpDotB', red:'fcfpDotR' };
+  var dotMap = { yellow:'fcfpDotY', pink:'fcfpDotP', green:'fcfpDotG', blue:'fcfpDotB', darkred:'fcfpDotR' };
   Object.keys(dotMap).forEach(function(c) {
     var el = document.getElementById(dotMap[c]);
     if(el) el.classList.toggle('fcfp-dot-sel', c === color);
@@ -17168,7 +17188,7 @@ function fcfpApplyHighlightFromRange(range, text) {
 
   var colorClass = {
     yellow:'user-hl', pink:'user-hl-pink', green:'user-hl-green',
-    blue:'user-hl-blue', red:'user-hl-red'
+    blue:'user-hl-blue', darkred:'user-hl-darkred'
   }[_fcfpHlColor] || 'user-hl';
 
   // Save snapshot before highlight
@@ -17419,7 +17439,7 @@ function fcfpAttachEraserToMark(mark) {
 function fcfpReattachEraserListeners() {
   var ct = document.getElementById('fcFactsPageContent');
   if(!ct) return;
-  var marks = ct.querySelectorAll('mark.user-hl,mark.user-hl-pink,mark.user-hl-green,mark.user-hl-blue,mark.user-hl-red');
+  var marks = ct.querySelectorAll('mark.user-hl,mark.user-hl-pink,mark.user-hl-green,mark.user-hl-blue,mark.user-hl-red,mark.user-hl-darkred');
   marks.forEach(function(m) {
     m.style.cursor = (_fcfpHlMode === 'eraser') ? 'cell' : 'default';
     fcfpAttachEraserToMark(m);
