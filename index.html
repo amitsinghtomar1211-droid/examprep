@@ -397,6 +397,9 @@ body.reading-focus:not(.night-mode) {
   content:"";position:absolute;left:5px;top:1px;width:6px;height:11px;
   border:solid #fff;border-width:0 2.5px 2.5px 0;transform:rotate(45deg);
 }
+.fc-inline-topic-btn{transition:background 0.15s ease;}
+.fc-inline-topic-btn:hover{background:rgba(46,125,50,0.12)!important;}
+.fc-inline-topic-linked{box-shadow:inset 0 0 0 1.3px rgba(46,125,50,0.45);}
 .fc-inline-bulk-controls {
   display:flex;
   gap:5px;
@@ -10228,14 +10231,14 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
 <div id="fcfpActionBar" style="display:none!important;"></div>
 
 <!-- ══ FCFP TOPIC LIBRARY: small dropdown panel, opened from the 📂 left-side icon ══ -->
-<div id="fcfpTopicDropdown" onclick="if(event.target===this) fcfpCloseTopicDropdown();">
+<div id="fcfpTopicDropdown" onclick="if(event.target===this) fcfpCloseTopicDropdown(true);">
   <div class="fcfp-topic-dd-box" onclick="event.stopPropagation();">
     <div class="fcfp-topic-dd-title">📂 Extra Facts Topic Library</div>
     <div class="fcfp-topic-dd-hint">Pehle se saved topic chuno — uski jankari is card mein shift ho jayegi.</div>
     <input type="text" id="fcfpTopicDdSearch" placeholder="🔎 Topic dhoondo..." oninput="fcfpRenderTopicDdList()">
     <div class="fcfp-topic-dd-list" id="fcfpTopicDdList"></div>
     <div class="fcfp-topic-dd-actions">
-      <button class="fcfp-topic-dd-cancel" onclick="fcfpCloseTopicDropdown()">Band Karo</button>
+      <button class="fcfp-topic-dd-cancel" onclick="fcfpCloseTopicDropdown(true)">Band Karo</button>
     </div>
   </div>
 </div>
@@ -10440,6 +10443,7 @@ let S={
   hlQuizProgress:{},     // Quiz highlight coverage progress (persisted across sessions)
   flashcardAnswerVisibility:{}, // Inline flashcard answer visibility by topic/card
   flashcardQuestionVisibility:{}, // Inline flashcard question visibility by topic/card
+  flashcardExtraVisibility:{}, // Inline flashcard "extra facts" visibility by topic/card
   extraFactsTopics:{}   // Global Extra-Facts Topic Library: { topicId: {name, html, updatedAt} } — reusable "extra facts" content shared across cards
 };
 
@@ -10467,6 +10471,7 @@ function load(){
     S.flashcardProgress=d.flashcardProgress||{};
     S.flashcardAnswerVisibility=d.flashcardAnswerVisibility||{};
     S.flashcardQuestionVisibility=d.flashcardQuestionVisibility||{};
+    S.flashcardExtraVisibility=d.flashcardExtraVisibility||{};
     S.flashcardSavedCards=d.flashcardSavedCards||{};
     S.testSeries=d.testSeries||[];
     S.tsAttempts=d.tsAttempts||[];
@@ -18252,8 +18257,19 @@ async function _fcSyncTopicToFirebase(id, topic){
 }
 
 // ── Get the currently-open card (in the flashcard player) ─────────
+// If an inline-list-mode context is active (_fcInlineTopicCtx, set when the
+// 📂 button on a list-mode card is tapped), that takes priority — this lets
+// the SAME topic dropdown/preview/import flow used by Play Mode also work
+// directly from the non-play-mode card list, without opening Play Mode. ──
 function _fcfpCurrentCard(){
   try{
+    if(_fcInlineTopicCtx && _fcInlineTopicCtx.key){
+      var iset = S.flashcardSets[_fcInlineTopicCtx.key];
+      if(iset && iset.cards){
+        var icard = iset.cards.find(function(c){ return String(c.id) === String(_fcInlineTopicCtx.cardId); });
+        if(icard) return { card: icard, set: iset, key: _fcInlineTopicCtx.key, inline: true };
+      }
+    }
     var key = _fcTopicKey(_fcPlayState.sid, _fcPlayState.secid, _fcPlayState.tid);
     var set = S.flashcardSets[key];
     var st = _fcPlayState.session;
@@ -18263,6 +18279,16 @@ function _fcfpCurrentCard(){
     }
   }catch(e){}
   return null;
+}
+
+// ── Inline (list-mode / non-play-mode) topic-link context — set right
+// before opening the shared 📂 dropdown from a card in the Notes Editor
+// list view, cleared once the dropdown/preview flow closes. ──
+var _fcInlineTopicCtx = null;
+function _fcInlineOpenTopicDropdown(cardId, sid, secid, tid){
+  var key = _fcTopicKey(sid, secid, tid);
+  _fcInlineTopicCtx = { cardId: cardId, key: key, sid: sid, secid: secid, tid: tid };
+  fcfpOpenTopicDropdown();
 }
 
 // ── 📂 icon: open the topic-picker dropdown ────────────────────────
@@ -18275,9 +18301,13 @@ function fcfpOpenTopicDropdown(e){
   fcfpRenderTopicDdList();
   dd.classList.add('show');
 }
-function fcfpCloseTopicDropdown(){
+function fcfpCloseTopicDropdown(userCancelled){
   var dd = document.getElementById('fcfpTopicDropdown');
   if(dd) dd.classList.remove('show');
+  // Only drop the inline context on an explicit user cancel — this function
+  // is also called internally when a topic is tapped (to close the dropdown
+  // before opening the preview modal), where the context must survive.
+  if(userCancelled) _fcInlineTopicCtx = null;
 }
 
 function fcfpRenderTopicDdList(){
@@ -18336,6 +18366,10 @@ function fcfpCloseTopicPreview(){
   var modal = document.getElementById('fcfpTopicPreviewModal');
   if(modal) modal.classList.remove('show');
   _fcfpPreviewTopicId = null;
+  // Cancelled without importing (OK button clears this itself on success) —
+  // drop any pending inline-list-mode context so it can't leak into a
+  // later Play Mode session.
+  _fcInlineTopicCtx = null;
 }
 
 // ── OK: shift the (possibly lightly-edited) preview content into the
@@ -18358,7 +18392,8 @@ function fcfpImportTopicIntoCard(){
   }
 
   var pageContent = document.getElementById('fcFactsPageContent');
-  if(pageContent){
+  var isInlineImport = !!(_fcInlineTopicCtx && document.getElementById('fcFactsPage') && !document.getElementById('fcFactsPage').classList.contains('active'));
+  if(pageContent && !isInlineImport){
     fcfpSaveSnapshot(); // so Undo can revert the import
     var existing = pageContent.innerHTML.trim();
     var wrapper = document.createElement('div');
@@ -18373,10 +18408,18 @@ function fcfpImportTopicIntoCard(){
   // Persist onto the card (source of truth) + link the card to this topic.
   var ctx = _fcfpCurrentCard();
   if(ctx && ctx.card){
-    var extraBody = document.getElementById('fcExtraBody');
-    var updatedHtml = pageContent ? pageContent.innerHTML : '';
-    if(extraBody) extraBody.innerHTML = updatedHtml;
-    ctx.card.extra = updatedHtml;
+    if(isInlineImport){
+      // Inline (list-mode) import: no facts overlay open, so append the
+      // topic content below whatever extra facts this card already has.
+      var existingExtra = String(ctx.card.extra || '').trim();
+      var sep = existingExtra ? '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed rgba(128,128,128,0.35);"></div>' : '';
+      ctx.card.extra = existingExtra + sep + newHtml;
+    } else {
+      var extraBody = document.getElementById('fcExtraBody');
+      var updatedHtml = pageContent ? pageContent.innerHTML : '';
+      if(extraBody) extraBody.innerHTML = updatedHtml;
+      ctx.card.extra = updatedHtml;
+    }
     ctx.card.extraTopicId = topicId;
     ctx.card.extraTopicName = t.name;
     save();
@@ -18385,6 +18428,19 @@ function fcfpImportTopicIntoCard(){
 
   fcfpUpdateTopicLinkBadge();
   fcfpCloseTopicPreview();
+  if(isInlineImport){
+    // Auto-reveal the newly-linked extra facts + refresh the list, then
+    // clear the inline context so Play Mode's own flow isn't affected.
+    if(ctx && ctx.card){
+      var ikey = _fcInlineTopicCtx.key;
+      S.flashcardExtraVisibility = S.flashcardExtraVisibility || {};
+      S.flashcardExtraVisibility[ikey] = S.flashcardExtraVisibility[ikey] || {};
+      S.flashcardExtraVisibility[ikey][ctx.card.id] = true;
+      save();
+    }
+    _fcInlineTopicCtx = null;
+    _fcInlineRenderCurrent();
+  }
   if(typeof showToast === 'function') showToast('📂 "' + t.name + '" is card mein daal diya! ✅', 'success');
 }
 
@@ -71687,12 +71743,17 @@ function _fcBuildInlineHtml(sid, secid, tid){
   var progress = (S.flashcardProgress[key] && S.flashcardProgress[key].cardStatus) || {};
   S.flashcardAnswerVisibility = S.flashcardAnswerVisibility || {};
   S.flashcardQuestionVisibility = S.flashcardQuestionVisibility || {};
+  S.flashcardExtraVisibility = S.flashcardExtraVisibility || {};
   var topicVisibility = S.flashcardAnswerVisibility[key] || {};
   var topicQVisibility = S.flashcardQuestionVisibility[key] || {};
+  var topicExVisibility = S.flashcardExtraVisibility[key] || {};
   var hasVisibleAnswers = set.cards.some(function(c){ return topicVisibility[c.id] === true; });
   var allAnswersVisible = set.cards.every(function(c){ return topicVisibility[c.id] === true; });
   var hasVisibleQuestions = set.cards.some(function(c){ return topicQVisibility[c.id] === true; });
   var allQuestionsVisible = set.cards.every(function(c){ return topicQVisibility[c.id] === true; });
+  var cardsWithExtra = set.cards.filter(function(c){ return c.extra && String(c.extra).trim(); });
+  var hasVisibleExtras = cardsWithExtra.some(function(c){ return topicExVisibility[c.id] === true; });
+  var allExtrasVisible = cardsWithExtra.length > 0 && cardsWithExtra.every(function(c){ return topicExVisibility[c.id] === true; });
 
   var filt = _fcGetInlineFilter(key);
 
@@ -71719,11 +71780,18 @@ function _fcBuildInlineHtml(sid, secid, tid){
     var answerButtonLabel = answerVisible ? '🙈 Answer Hide' : '👁 Answer Show';
     var questionVisible = topicQVisibility[c.id] !== false; // default visible
     var questionButtonLabel = questionVisible ? '🙈 Question Hide' : '👁 Question Show';
+    var hasExtra = c.extra && String(c.extra).trim();
+    var extraVisible = topicExVisibility[c.id] === true;
+    var extraButtonLabel = extraVisible ? '🙈 Extra Hide' : '👁 Extra Show';
+    var linkedTopic = !!(c.extraTopicId && S.extraFactsTopics && S.extraFactsTopics[c.extraTopicId]);
     return '' +
     '<div class="fc-inline-card" style="border:1.5px solid var(--border);border-radius:10px;margin-bottom:8px;overflow:hidden;background:var(--surface);">' +
       '<div class="fc-inline-card-head" style="display:flex;align-items:center;justify-content:space-between;padding:5px 12px;background:var(--surface2);border-bottom:1px solid var(--border);">' +
         '<span style="font-weight:700;font-size:0.8rem;">🃏 Card '+(i+1)+' / '+set.cards.length+(c.cat?(' — '+_tgpEscHtml(c.cat)):'')+(saved?' 🔖':'')+'</span>' +
-        '<span class="fc-status-dot" title="'+bm.label+'" style="background:'+bm.bg+';"></span>' +
+        '<span style="display:flex;align-items:center;gap:6px;">' +
+          '<button type="button" class="fc-inline-topic-btn'+(linkedTopic?' fc-inline-topic-linked':'')+'" title="'+(linkedTopic?('Linked topic: '+_fcEsc(c.extraTopicName||'')):'Extra Facts Topic Library se link karo')+'" onclick="_fcInlineOpenTopicDropdown(\''+_esc(c.id)+'\',\''+sid+'\',\''+secid+'\',\''+tid+'\')" style="border:none;background:'+(linkedTopic?'rgba(46,125,50,0.18)':'transparent')+';cursor:pointer;font-size:0.9rem;padding:2px 4px;border-radius:6px;line-height:1;">📂</button>' +
+          '<span class="fc-status-dot" title="'+bm.label+'" style="background:'+bm.bg+';"></span>' +
+        '</span>' +
       '</div>' +
       '<div style="padding:8px 12px;">' +
         '<div class="fc-inline-question" style="'+(questionVisible?'':'display:none;')+'">'+_tgpEscHtml(c.q)+'</div>' +
@@ -71742,9 +71810,17 @@ function _fcBuildInlineHtml(sid, secid, tid){
           '<button type="button" onclick="_fcInlineToggleCard(\''+_esc(c.id)+'\',\''+sid+'\',\''+secid+'\',\''+tid+'\')">'+answerButtonLabel+'</button>' +
           '<button type="button" onclick="_fcInlineToggleSave(\''+_esc(c.id)+'\',\''+sid+'\',\''+secid+'\',\''+tid+'\')" style="'+(saved?'background:rgba(255,193,7,0.25);border-color:#e6a100;color:#8a6d00;':'')+'">'+(saved?'✅ Saved':'🔖 Save')+'</button>' +
         '</div>' +
+        (hasExtra ?
+          '<div class="fc-inline-card-actions" style="margin-top:4px;">' +
+            '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.72rem;color:var(--text2);user-select:none;">' +
+              '<input type="checkbox" class="fc-inline-toggle" '+(extraVisible?'checked':'')+' onchange="_fcInlineToggleExtra(\''+_esc(c.id)+'\',\''+sid+'\',\''+secid+'\',\''+tid+'\',this.checked)">' +
+              'Extra Facts '+(extraVisible?'shown':'hidden') +
+            '</label>' +
+            '<button type="button" onclick="_fcInlineToggleExtra(\''+_esc(c.id)+'\',\''+sid+'\',\''+secid+'\',\''+tid+'\')">'+extraButtonLabel+'</button>' +
+          '</div>' : '') +
         '<div class="fc-inline-answer" style="'+(answerVisible?'':'display:none;')+'">'+c.a+'</div>' +
-        (c.extra && String(c.extra).trim() ?
-          '<div class="fc-inline-extra" style="'+(answerVisible?'display:block;':'display:none;')+';margin-top:8px;padding-top:8px;border-top:1.5px dashed rgba(163,118,63,0.35);font-size:0.78rem;line-height:1.6;color:#5c4a30;">' +
+        (hasExtra ?
+          '<div class="fc-inline-extra" style="'+(extraVisible?'display:block;':'display:none;')+';margin-top:8px;padding-top:8px;border-top:1.5px dashed rgba(163,118,63,0.35);font-size:0.78rem;line-height:1.6;color:#5c4a30;">' +
             '<div style="font-size:0.62rem;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#a3763f;margin-bottom:4px;">ℹ️ Extra Jankari</div>' +
             c.extra +
           '</div>' : '') +
@@ -71791,7 +71867,14 @@ function _fcBuildInlineHtml(sid, secid, tid){
         '<button type="button" class="fc-inline-bulk-btn" onclick="_fcInlineSetAll(\''+sid+'\',\''+secid+'\',\''+tid+'\',true)">👁 Sabhi Show</button>' +
         '<button type="button" class="fc-inline-bulk-btn" onclick="_fcInlineSetAll(\''+sid+'\',\''+secid+'\',\''+tid+'\',false)">🙈 Sabhi Hide</button>' +
         '<span style="font-size:0.62rem;color:#37627d;margin-left:auto;">'+(allAnswersVisible?'Sabhi visible':(hasVisibleAnswers?'Kuch visible':'Sabhi hidden'))+'</span>' +
-      '</div>';
+      '</div>' +
+      (cardsWithExtra.length ?
+      '<div class="fc-inline-bulk-controls">' +
+        '<span class="fc-inline-bulk-label">Extra Facts:</span>' +
+        '<button type="button" class="fc-inline-bulk-btn" onclick="_fcInlineSetAllEx(\''+sid+'\',\''+secid+'\',\''+tid+'\',true)">👁 Sabhi Show</button>' +
+        '<button type="button" class="fc-inline-bulk-btn" onclick="_fcInlineSetAllEx(\''+sid+'\',\''+secid+'\',\''+tid+'\',false)">🙈 Sabhi Hide</button>' +
+        '<span style="font-size:0.62rem;color:#37627d;margin-left:auto;">'+(allExtrasVisible?'Sabhi visible':(hasVisibleExtras?'Kuch visible':'Sabhi hidden'))+'</span>' +
+      '</div>' : '');
 
   var menuOpen = !!(window._fcInlineMenuOpen && window._fcInlineMenuOpen[key]);
 
@@ -71870,6 +71953,32 @@ function _fcInlineSetAllQ(sid, secid, tid, visible){
   S.flashcardQuestionVisibility = S.flashcardQuestionVisibility || {};
   S.flashcardQuestionVisibility[key] = {};
   set.cards.forEach(function(c){ S.flashcardQuestionVisibility[key][c.id] = !!visible; });
+  save();
+  _fcInlineRenderCurrent();
+}
+
+// ── Extra Facts hide/unhide — same pattern as Question/Answer toggles,
+//    so a long list of cards with extra facts doesn't force everyone's
+//    extra jankari open by default. ──
+function _fcInlineToggleExtra(cardId, sid, secid, tid, checked){
+  var key = _fcTopicKey(sid,secid,tid);
+  S.flashcardExtraVisibility = S.flashcardExtraVisibility || {};
+  S.flashcardExtraVisibility[key] = S.flashcardExtraVisibility[key] || {};
+  var current = S.flashcardExtraVisibility[key][cardId] === true;
+  S.flashcardExtraVisibility[key][cardId] = typeof checked === 'boolean' ? checked : !current;
+  save();
+  _fcInlineRenderCurrent();
+}
+
+function _fcInlineSetAllEx(sid, secid, tid, visible){
+  var key = _fcTopicKey(sid,secid,tid);
+  var set = S.flashcardSets[key];
+  if(!set || !set.cards) return;
+  S.flashcardExtraVisibility = S.flashcardExtraVisibility || {};
+  S.flashcardExtraVisibility[key] = {};
+  set.cards.forEach(function(c){
+    if(c.extra && String(c.extra).trim()) S.flashcardExtraVisibility[key][c.id] = !!visible;
+  });
   save();
   _fcInlineRenderCurrent();
 }
