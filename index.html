@@ -870,6 +870,37 @@ body.night-mode #fcFactsPage .fcfp-tb-btn.fcfp-tb-edit{
   color:#81c784;
 }
 
+/* ── Direct in-page edit toggle (pencil icon in the tools row) ──
+   When ON, .fcfp-content becomes contenteditable directly — the person
+   sees and edits the FULL extra-facts text right in the reading view
+   (no small box, nothing hidden). Turning it OFF auto-saves. */
+#fcFactsPage .fcfp-tool-btn.fcfp-edit-toggle.active{
+  background:#2e7d32;border-color:#2e7d32;color:#fff;
+}
+#fcFactsPage.fcfp-edit-live .fcfp-content{
+  outline:2px dashed rgba(46,125,50,0.55);
+  outline-offset:8px;
+  border-radius:10px;
+  cursor:text;
+  min-height:60px;
+  -webkit-user-select:text;user-select:text;
+}
+#fcFactsPage.fcfp-edit-live .fcfp-qa-recap,
+#fcFactsPage.fcfp-edit-live .fcfp-extra-divider{
+  opacity:0.55;
+}
+#fcFactsPage.fcfp-dark.fcfp-edit-live .fcfp-content{ outline-color:rgba(102,187,106,0.6); }
+/* Small pinned banner while live-edit is ON, so it's always obvious */
+#fcfpEditLiveBanner{
+  display:none;flex-shrink:0;align-items:center;justify-content:center;gap:6px;
+  padding:7px 10px;font-size:0.7rem;font-weight:800;
+  background:rgba(46,125,50,0.12);color:#2e7d32;
+  border-bottom:1.5px solid rgba(46,125,50,0.25);
+  font-family:'Noto Sans Devanagari',sans-serif;
+}
+#fcFactsPage.fcfp-edit-live #fcfpEditLiveBanner{display:flex;}
+body.night-mode #fcfpEditLiveBanner{background:rgba(102,187,106,0.1);color:#81c784;border-color:rgba(102,187,106,0.22);}
+
 
 /* Edit-fact modal — small popup to replace selected text */
 #fcfpEditModal{
@@ -10139,6 +10170,8 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <button id="fcfpThemeSepia" class="fcfp-tool-btn" onclick="fcfpSetTheme('sepia')" title="Sepia">📜</button>
     <button id="fcfpThemeDark" class="fcfp-tool-btn" onclick="fcfpSetTheme('dark')" title="Dark">🌙</button>
     <div class="fcfp-tools-sep"></div>
+    <button id="fcfpEditToggleBtn" class="fcfp-tool-btn fcfp-edit-toggle" onclick="fcfpToggleLiveEdit(event)" title="Poora content edit karo — pura page hi editable ho jayega">✎</button>
+    <div class="fcfp-tools-sep"></div>
     <button class="fcfp-tool-btn" onclick="fcfpChangeFontSize(-1)" title="Font chhota karo">A-</button>
     <div class="fcfp-font-label" id="fcfpFontLabel">17</div>
     <button class="fcfp-tool-btn" onclick="fcfpChangeFontSize(1)" title="Font bada karo">A+</button>
@@ -10153,6 +10186,8 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
     </button>
   </div>
+
+  <div id="fcfpEditLiveBanner">✎ Edit Mode ON — seedha type karo, off karte hi save ho jayega</div>
 
   <div class="fcfp-body" id="fcFactsPageBody">
     <!-- Question + Answer recap — taaki extra facts padhte waqt original Q&A yaad rahe -->
@@ -16737,6 +16772,12 @@ function fcShowExtraOverlay(e){
   _fcfpLastAppliedSig = null;
   fcfpSetMode('off');
   fcfpUpdateUndoRedoBtns();
+  // Fresh card load → live-edit toggle always starts OFF
+  _fcfpLiveEditOn = false;
+  page.classList.remove('fcfp-edit-live');
+  var editToggleBtn = document.getElementById('fcfpEditToggleBtn');
+  if(editToggleBtn) editToggleBtn.classList.remove('active');
+  if(pageContent) pageContent.removeAttribute('contenteditable');
   // Reflect whether this card is already linked to a saved topic (📂 icon glow)
   if(typeof fcfpUpdateTopicLinkBadge === 'function') fcfpUpdateTopicLinkBadge();
   // Attach highlight listeners to new content
@@ -16760,6 +16801,10 @@ function fcShowExtraOverlay(e){
 var _fcfpClosingByButton = false;
 function fcCloseExtraOverlay(e){
   if(e){ e.stopPropagation(); }
+  // Agar live-edit khula reh gaya hai to band karne se pehle save kar do
+  if(typeof _fcfpLiveEditOn !== 'undefined' && _fcfpLiveEditOn && typeof fcfpEndLiveEdit === 'function'){
+    fcfpEndLiveEdit();
+  }
   // UI SEEDHA band karo — synchronous, koi async race nahi
   var page = document.getElementById('fcFactsPage');
   if(page) page.classList.remove('active');
@@ -16989,6 +17034,7 @@ function fcfpHandleTap(e) {
   // Ignore taps on interactive elements or while text is being selected/highlighted
   if(e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'A' || e.target.tagName === 'INPUT' || e.target.closest('button'))) return;
   if(_fcfpHlMode && _fcfpHlMode !== 'off') return; // don't hide tools mid-highlight-selection
+  if(typeof _fcfpLiveEditOn !== 'undefined' && _fcfpLiveEditOn) return; // don't hide tools while typing
   if(_fcfpBarsVisible) {
     fcfpHideBars();
   } else {
@@ -17960,6 +18006,76 @@ function fcfpSetEditMode(mode){
     if(editor){ editor.innerHTML = ''; editor.style.minHeight = '120px'; }
     if(hint)  hint.textContent = 'Jo text replace karna hai woh view page par select karo, phir yahan naya text likho. Ya seedha kuch add karne ke liye "Add" mode use karo.';
   }
+}
+
+// ── Direct in-page edit toggle ──────────────────────────────────────
+// Turns .fcfp-content directly into a contenteditable region so the person
+// can see and edit the ENTIRE extra-facts text right in the reading view
+// (cursor placement, typing, deleting words — normal editing), instead of
+// going through the small Edit-modal box where the full content isn't
+// visible at once. Toggling OFF auto-saves via the same fcfpPersistExtra
+// path already used by highlights/undo/redo.
+var _fcfpLiveEditOn = false;
+function fcfpToggleLiveEdit(e){
+  if(e) e.stopPropagation();
+  if(_fcfpLiveEditOn) fcfpEndLiveEdit(); else fcfpStartLiveEdit();
+}
+
+function fcfpStartLiveEdit(){
+  var page = document.getElementById('fcFactsPage');
+  var content = document.getElementById('fcFactsPageContent');
+  var btn = document.getElementById('fcfpEditToggleBtn');
+  if(!page || !content) return;
+
+  // Snapshot for undo, same as other content-mutating actions here
+  if(typeof fcfpSaveSnapshot === 'function') fcfpSaveSnapshot();
+
+  // Turn off highlight/eraser/format modes so they don't fight with typing
+  if(typeof fcfpSetMode === 'function') fcfpSetMode('off');
+
+  _fcfpLiveEditOn = true;
+  content.setAttribute('contenteditable', 'true');
+  content.setAttribute('spellcheck', 'false');
+  page.classList.add('fcfp-edit-live');
+  if(btn) btn.classList.add('active');
+
+  // Make sure bars stay visible while editing (don't auto-hide mid-type)
+  if(typeof fcfpShowBars === 'function') fcfpShowBars();
+  if(_fcfpAutoHideTimer){ clearTimeout(_fcfpAutoHideTimer); _fcfpAutoHideTimer = null; }
+
+  content.focus();
+  try{
+    var sel = window.getSelection();
+    var range = document.createRange();
+    range.selectNodeContents(content);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }catch(err){}
+
+  if(typeof showToast === 'function') showToast('✎ Edit Mode ON — poora page editable hai', 'info');
+}
+
+function fcfpEndLiveEdit(){
+  var page = document.getElementById('fcFactsPage');
+  var content = document.getElementById('fcFactsPageContent');
+  var btn = document.getElementById('fcfpEditToggleBtn');
+  if(!page || !content) return;
+
+  _fcfpLiveEditOn = false;
+  content.removeAttribute('contenteditable');
+  page.classList.remove('fcfp-edit-live');
+  if(btn) btn.classList.remove('active');
+  try{ window.getSelection().removeAllRanges(); }catch(err){}
+
+  // Auto-save — same storage path as highlights/undo/redo (card.extra +
+  // local save() + Firebase sync), so this behaves exactly like the rest
+  // of the app's autosave.
+  if(typeof fcfpPersistExtra === 'function') fcfpPersistExtra();
+  if(typeof fcfpUpdateUndoRedoBtns === 'function') fcfpUpdateUndoRedoBtns();
+  fcfpResetAutoHide();
+
+  if(typeof showToast === 'function') showToast('✅ Save ho gaya!', 'success');
 }
 
 function fcfpOpenEditModal(e){
