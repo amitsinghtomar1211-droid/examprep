@@ -683,7 +683,14 @@ body.night-mode .fc2-viewmore-btn{color:#c9a060;border-color:rgba(201,160,96,0.3
   padding:14px 14px calc(14px + env(safe-area-inset-top,0px));
   padding-top:calc(14px + env(safe-area-inset-top,0px));
   background:var(--surface,#fff);border-bottom:1.5px solid var(--border,#e0d8c8);
-  transition:background 0.25s ease, border-color 0.25s ease;
+  transition:background 0.25s ease, border-color 0.25s ease,
+             max-height 0.3s cubic-bezier(0.4,0,0.2,1), opacity 0.25s ease, padding 0.3s ease;
+  overflow:hidden;max-height:120px;
+}
+#fcFactsPage .fcfp-topbar.fcfp-bar-hidden{
+  max-height:0 !important;opacity:0 !important;
+  padding-top:0 !important;padding-bottom:0 !important;
+  border-bottom-width:0 !important;pointer-events:none;
 }
 
 /* ── Reading Mode toolbar row: theme + font size + download/print ── */
@@ -692,7 +699,14 @@ body.night-mode .fc2-viewmore-btn{color:#c9a060;border-color:rgba(201,160,96,0.3
   padding:8px 12px;overflow-x:auto;-webkit-overflow-scrolling:touch;
   scrollbar-width:none;-ms-overflow-style:none;
   background:var(--surface2,#f4efe4);border-bottom:1.5px solid var(--border,#e0d8c8);
-  transition:background 0.25s ease, border-color 0.25s ease;
+  transition:background 0.25s ease, border-color 0.25s ease,
+             max-height 0.3s cubic-bezier(0.4,0,0.2,1), opacity 0.25s ease, padding 0.3s ease;
+  max-height:60px;
+}
+#fcFactsPage .fcfp-toolsbar.fcfp-bar-hidden{
+  max-height:0 !important;opacity:0 !important;
+  padding-top:0 !important;padding-bottom:0 !important;
+  border-bottom-width:0 !important;pointer-events:none;
 }
 #fcFactsPage .fcfp-toolsbar::-webkit-scrollbar{display:none;}
 #fcFactsPage .fcfp-tool-btn{
@@ -743,6 +757,21 @@ body.night-mode .fc2-viewmore-btn{color:#c9a060;border-color:rgba(201,160,96,0.3
 #fcFactsPage.fcfp-dark .fcfp-extra-divider{color:#7fa8d9;}
 #fcFactsPage.fcfp-dark .fcfp-extra-divider::before,
 #fcFactsPage.fcfp-dark .fcfp-extra-divider::after{background:rgba(127,168,217,0.25);}
+
+/* ── Floating restore button — shown only while the top bars are hidden,
+   so the user can always bring tools back without guessing where to tap ── */
+#fcfpRestoreBtn{
+  display:none;position:fixed;top:10px;right:10px;z-index:999998;
+  width:34px;height:34px;border-radius:50%;
+  background:rgba(20,20,30,0.6);border:1.5px solid rgba(255,255,255,0.28);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  color:#fff;font-size:0.85rem;cursor:pointer;
+  align-items:center;justify-content:center;
+  box-shadow:0 2px 10px rgba(0,0,0,0.25);
+  -webkit-tap-highlight-color:transparent;
+  top:calc(10px + env(safe-area-inset-top,0px));
+}
+#fcfpRestoreBtn.show{display:flex;}
 #fcFactsPage .fcfp-close{
   width:36px;height:36px;border-radius:50%;border:none;flex-shrink:0;
   background:rgba(163,118,63,0.14);color:#7a5520;
@@ -9867,8 +9896,9 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
 </div>
 
 <!-- FLASHCARD EXTRA FACTS — FULL SCREEN PAGE (View More se khulta hai) -->
-<div id="fcFactsPage">
-  <div class="fcfp-topbar">
+<div id="fcFactsPage" onclick="fcfpHandleTap(event)">
+  <button id="fcfpRestoreBtn" onclick="fcfpShowBars();event.stopPropagation();" title="Tools wapas laao">⛶</button>
+  <div class="fcfp-topbar" id="fcfpTopbar">
     <button class="fcfp-close" onclick="fcCloseExtraOverlay(event)" title="Band karo">✕</button>
     <div class="fcfp-title">ℹ️ Extra Jankari</div>
     <div class="fcfp-tb-actions">
@@ -9878,7 +9908,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
   </div>
 
   <!-- ══ READING TOOLS ROW: theme (Light/Sepia/Dark) + font size + download/print ══ -->
-  <div class="fcfp-toolsbar">
+  <div class="fcfp-toolsbar" id="fcfpToolsbar">
     <button id="fcfpThemeLight" class="fcfp-tool-btn active" onclick="fcfpSetTheme('light')" title="Light">☀️</button>
     <button id="fcfpThemeSepia" class="fcfp-tool-btn" onclick="fcfpSetTheme('sepia')" title="Sepia">📜</button>
     <button id="fcfpThemeDark" class="fcfp-tool-btn" onclick="fcfpSetTheme('dark')" title="Dark">🌙</button>
@@ -16399,6 +16429,9 @@ function fcShowExtraOverlay(e){
   // Restore saved reading theme + font size (same as Notes Editor reading mode)
   fcfpSetTheme(_fcfpReadState.theme, true);
   fcfpApplyFontSize();
+  // Tools start visible, then auto-hide after a few seconds — same as
+  // the Notes Editor's Reading Mode.
+  if(typeof fcfpShowBars === 'function') fcfpShowBars();
   // Show highlight/eraser/undo/redo side buttons
   fcfpShowSideButtons();
   // Reset undo stacks for fresh session. Highlight starts OFF by default;
@@ -16410,6 +16443,15 @@ function fcShowExtraOverlay(e){
   fcfpUpdateUndoRedoBtns();
   // Attach highlight listeners to new content
   setTimeout(fcfpAttachListeners, 80);
+  // One-time tap hint (first visit only) — same as Notes Editor Reading Mode
+  if(!localStorage.getItem('fcfpHintSeen')) {
+    localStorage.setItem('fcfpHintSeen', '1');
+    var fcfpHint = document.createElement('div');
+    fcfpHint.textContent = '✋ Screen tap karein — tools show/hide honge';
+    fcfpHint.style.cssText = 'position:fixed;left:50%;bottom:70px;transform:translateX(-50%);z-index:999999;background:rgba(20,20,30,0.85);color:#fff;padding:8px 16px;border-radius:20px;font-size:0.76rem;font-weight:700;white-space:nowrap;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,0.3);';
+    page.appendChild(fcfpHint);
+    setTimeout(function(){ if(fcfpHint.parentNode) fcfpHint.parentNode.removeChild(fcfpHint); }, 3000);
+  }
   // Push history state so phone's back button closes this page instead of
   // navigating away from the app.
   history.pushState({type:'fcFactsPage'}, '');
@@ -16432,6 +16474,11 @@ function fcCloseExtraOverlay(e){
   if(typeof setHlMode === 'function') setHlMode('off');
   var ct = document.getElementById('fcFactsPageContent');
   if(ct) ct.classList.remove('fcfp-hl-active');
+  // Stop the tools auto-hide timer and reset bars to visible for next open
+  if(_fcfpAutoHideTimer) { clearTimeout(_fcfpAutoHideTimer); _fcfpAutoHideTimer = null; }
+  _fcfpBarsVisible = true;
+  var restoreBtn = document.getElementById('fcfpRestoreBtn');
+  if(restoreBtn) restoreBtn.classList.remove('show');
   if(_fcFactsPageOpen){
     _fcFactsPageOpen = false;
     // Sirf history stack saaf karne ke liye history.back() — flag set karo
@@ -16592,6 +16639,51 @@ function fcfpPrint() {
     '<style>body{font-family:"Noto Sans Devanagari",Arial,sans-serif;padding:30px;max-width:800px;margin:auto;line-height:1.7;color:#111;}@media print{body{padding:15px;}}</style>' +
     '</head><body>' + bodyHTML + '<script>window.onload=function(){window.print();window.close();}<\/script></body></html>');
   printWin.document.close();
+}
+
+// ── Tap-to-hide/show tools (same pattern as Notes Editor's Reading Mode:
+// tap the screen to collapse the top bars so content uses the full
+// screen; tap again, or the floating restore button, to bring them back;
+// auto-hides itself after a few seconds of inactivity). ──
+var _fcfpBarsVisible = true;
+var _fcfpAutoHideTimer = null;
+
+function fcfpHideBars() {
+  _fcfpBarsVisible = false;
+  var top = document.getElementById('fcfpTopbar');
+  var tools = document.getElementById('fcfpToolsbar');
+  var restore = document.getElementById('fcfpRestoreBtn');
+  if(top) top.classList.add('fcfp-bar-hidden');
+  if(tools) tools.classList.add('fcfp-bar-hidden');
+  if(restore) restore.classList.add('show');
+  if(_fcfpAutoHideTimer) { clearTimeout(_fcfpAutoHideTimer); _fcfpAutoHideTimer = null; }
+}
+
+function fcfpShowBars() {
+  _fcfpBarsVisible = true;
+  var top = document.getElementById('fcfpTopbar');
+  var tools = document.getElementById('fcfpToolsbar');
+  var restore = document.getElementById('fcfpRestoreBtn');
+  if(top) top.classList.remove('fcfp-bar-hidden');
+  if(tools) tools.classList.remove('fcfp-bar-hidden');
+  if(restore) restore.classList.remove('show');
+  fcfpResetAutoHide();
+}
+
+function fcfpResetAutoHide() {
+  if(_fcfpAutoHideTimer) clearTimeout(_fcfpAutoHideTimer);
+  _fcfpAutoHideTimer = setTimeout(function(){ fcfpHideBars(); }, 3200);
+}
+
+function fcfpHandleTap(e) {
+  // Ignore taps on interactive elements or while text is being selected/highlighted
+  if(e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'A' || e.target.tagName === 'INPUT' || e.target.closest('button'))) return;
+  if(_fcfpHlMode && _fcfpHlMode !== 'off') return; // don't hide tools mid-highlight-selection
+  if(_fcfpBarsVisible) {
+    fcfpHideBars();
+  } else {
+    fcfpShowBars();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
