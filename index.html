@@ -673,6 +673,39 @@ body.reading-focus:not(.night-mode) {
 .fc2-viewmore-btn:active{opacity:0.7;}
 body.night-mode .fc2-viewmore-btn{color:#c9a060;border-color:rgba(201,160,96,0.35);background:rgba(201,160,96,0.10);}
 
+/* ===== Extra Facts Topics page — linked cards as flip cards ===== */
+.eft-linked-cards{display:flex;flex-direction:column;gap:12px;}
+.eft-mini-card{
+  perspective:1200px;width:100%;min-height:96px;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+.eft-mini-inner{
+  position:relative;width:100%;min-height:96px;height:100%;
+  transition:transform 0.5s cubic-bezier(0.34,1.05,0.64,1);
+  transform-style:preserve-3d;
+}
+.eft-mini-card.flipped .eft-mini-inner{transform:rotateY(180deg);}
+.eft-mini-face{
+  position:absolute;inset:0;border-radius:14px;padding:16px 18px;
+  display:flex;flex-direction:column;justify-content:center;
+  backface-visibility:hidden;-webkit-backface-visibility:hidden;
+  border:1.5px solid var(--border);box-shadow:0 2px 8px rgba(20,30,45,0.06);
+  overflow-y:auto;max-height:220px;
+}
+.eft-mini-front{background:var(--surface2,#f4f9fe);position:relative;}
+.eft-mini-back{background:#fdfaf5;transform:rotateY(180deg);}
+body.night-mode .eft-mini-back{background:#2a2016;}
+.eft-mini-label{
+  font-size:0.62rem;font-weight:900;letter-spacing:2px;text-transform:uppercase;
+  color:#5b7fa6;margin-bottom:8px;
+}
+.eft-mini-back .eft-mini-label{color:#a3763f;}
+.eft-mini-text{font-size:0.88rem;font-weight:600;line-height:1.6;color:var(--text);word-break:break-word;}
+.eft-mini-hint{
+  margin-top:10px;font-size:0.62rem;color:#7891ab;font-weight:700;
+  text-transform:uppercase;letter-spacing:0.05em;
+}
+
 /* ===== FACTS FULL-SCREEN PAGE (View More -> dedicated page) ===== */
 #fcFactsPage{
   display:none;position:fixed;inset:0;z-index:999997;
@@ -16627,27 +16660,12 @@ function fcRenderCard(){
       // an inline background colour — strip it so they render clean too.
       if(typeof _fcfpStripBg === 'function') _fcfpStripBg(extraBody);
       extraEl.style.display = 'block';
-      // After paint, check if content is taller than 3-line clamp (~4.95em at 1.65 lh)
-      requestAnimationFrame(function(){
-        // Temporarily un-clamp to get real height
-        extraBody.style.webkitLineClamp = 'unset';
-        extraBody.style.display = 'block';
-        var fullH = extraBody.scrollHeight;
-        extraBody.style.webkitLineClamp = '';
-        extraBody.style.display = '';
-        // 3 lines ≈ fontSize(0.86rem≈13.76px) * lineHeight(1.65) * 3 ≈ 68px
-        var lineClampH = parseFloat(getComputedStyle(extraBody).fontSize || '14') * 1.65 * 3;
-        if(fullH > lineClampH + 4){
-          extraBody.classList.add('fc2-extra-body');
-          extraBody.classList.remove('expanded');
-          viewMoreBtn.style.display = 'inline-block';
-        } else {
-          extraBody.classList.remove('fc2-extra-body');
-          extraBody.classList.add('expanded');
-          viewMoreBtn.style.display = 'none';
-        }
-        fcResizeCardStage();
-      });
+      // Always show a clamped 3-line preview with a "View More" button —
+      // regardless of whether the content actually exceeds 3 lines.
+      extraBody.classList.add('fc2-extra-body');
+      extraBody.classList.remove('expanded');
+      viewMoreBtn.style.display = 'inline-block';
+      requestAnimationFrame(function(){ fcResizeCardStage(); });
     } else {
       extraBody.innerHTML = '';
       extraEl.style.display = 'none';
@@ -18567,12 +18585,16 @@ function eftRenderSelected(){
   }
 
   // Which cards currently link to this topic — useful context for the user.
+  // Keep the full q/a pair (not just the question) so we can render each
+  // one as a small flip card: question on front, answer on back.
   var linkedCards = [];
   try{
     Object.keys(S.flashcardSets || {}).forEach(function(key){
       var set = S.flashcardSets[key];
       (set.cards || []).forEach(function(c){
-        if(c && c.extraTopicId === id) linkedCards.push(c.q || '(bina prashna)');
+        if(c && c.extraTopicId === id){
+          linkedCards.push({ q: c.q || '(bina prashna)', a: c.a || '' });
+        }
       });
     });
   }catch(e){}
@@ -18596,8 +18618,22 @@ function eftRenderSelected(){
         '<button class="btn btn-primary" style="flex:1;" onclick="eftSaveEdited(\''+id+'\')">✅ Changes Save Karo</button>' +
       '</div>' +
     '</div>' +
-    (linkedCards.length ? '<div class="card" style="margin-top:12px;"><div class="card-title" style="font-size:0.8rem;">🔗 Is topic se linked cards</div>' +
-      '<div style="font-size:0.78rem;color:var(--text2);line-height:1.8;">' + linkedCards.map(_fcEsc).join('<br>') + '</div></div>' : '');
+    (linkedCards.length ? '<div class="card" style="margin-top:12px;"><div class="card-title" style="font-size:0.8rem;margin-bottom:10px;">🔗 Is topic se linked cards — tap karke answer dekho</div>' +
+      '<div class="eft-linked-cards">' + linkedCards.map(function(c, i){
+        return '<div class="eft-mini-card" onclick="this.classList.toggle(\'flipped\')">' +
+          '<div class="eft-mini-inner">' +
+            '<div class="eft-mini-face eft-mini-front">' +
+              '<div class="eft-mini-label">Question</div>' +
+              '<div class="eft-mini-text">' + _fcEsc(c.q) + '</div>' +
+              '<div class="eft-mini-hint">Tap karke answer dekho ↺</div>' +
+            '</div>' +
+            '<div class="eft-mini-face eft-mini-back">' +
+              '<div class="eft-mini-label">Answer</div>' +
+              '<div class="eft-mini-text">' + (c.a || '<span style="opacity:0.6;">(koi answer nahi)</span>') + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }).join('') + '</div></div>' : '');
 }
 
 // Strip any stray border/background baked into OLD saved topic HTML (from
