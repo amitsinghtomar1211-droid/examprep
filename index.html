@@ -10231,7 +10231,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <!-- Rich contenteditable editor -->
     <div id="fcfpRichEditor" contenteditable="true" spellcheck="false"
          data-placeholder="Yahan type karo — Bold/Italic/Underline/Highlight kar sakte ho..."
-         onkeydown="fcfpEditorKeydown(event)"></div>
+         onkeydown="fcfpEditorKeydown(event)" onpaste="fcfpEditorPaste(event)"></div>
     <!-- Hidden input for backwards compatibility -->
     <input type="hidden" id="fcfpEditInput">
     <div class="fcfp-edit-actions">
@@ -16552,6 +16552,9 @@ function fcRenderCard(){
     var extraContent = card.extra ? String(card.extra).trim() : '';
     if(extraContent){
       extraBody.innerHTML = extraContent;
+      // Old saved facts (from before the paste-cleanup fix) may still carry
+      // an inline background colour — strip it so they render clean too.
+      if(typeof _fcfpStripBg === 'function') _fcfpStripBg(extraBody);
       extraEl.style.display = 'block';
       // After paint, check if content is taller than 3-line clamp (~4.95em at 1.65 lh)
       requestAnimationFrame(function(){
@@ -17810,10 +17813,50 @@ function fcfpEditorKeydown(e){
   // We allow default browser behavior for Enter (creates new block)
 }
 
+// Paste ke sath jo bhi background-color/background aata hai (Word, WhatsApp,
+// website, kisi aur app se copy kiya hua) — usse hata dete hain, taaki
+// pasted text hamesha page ke normal background par hi dikhe, koi green/
+// yellow/coloured box na bane. Bold/Italic/Underline/links safe rehte hain.
+function fcfpEditorPaste(e){
+  e.preventDefault();
+  var clip = (e.clipboardData || window.clipboardData);
+  if(!clip) return;
+  var html = clip.getData('text/html');
+  var text = clip.getData('text/plain');
+  var toInsert;
+  if(html){
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    _fcfpStripBg(tmp);
+    toInsert = tmp.innerHTML;
+  } else {
+    toInsert = (text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+  }
+  document.execCommand('insertHTML', false, toInsert);
+}
+
+// Recursively strip background/background-color (inline style + bgcolor
+// attribute) from a pasted DOM fragment, keeping all other formatting.
+function _fcfpStripBg(root){
+  if(!root || !root.querySelectorAll) return;
+  var els = root.querySelectorAll('*');
+  for(var i=0;i<els.length;i++){
+    var el = els[i];
+    if(el.style){
+      el.style.removeProperty('background');
+      el.style.removeProperty('background-color');
+    }
+    if(el.hasAttribute('bgcolor')) el.removeAttribute('bgcolor');
+  }
+}
+
 // Get rich HTML from the editor, normalised for storage
 function _fcfpGetEditorHtml(){
   var editor = document.getElementById('fcfpRichEditor');
   if(!editor) return '';
+  // Safety net: strip any background colour that slipped in (drag-drop,
+  // programmatic insert, etc.) so saved facts never carry a coloured box.
+  _fcfpStripBg(editor);
   // Clean up empty trailing paragraphs
   var html = editor.innerHTML.trim();
   // Replace browser's <div> wrapping with <p>
