@@ -16782,6 +16782,34 @@ function fcfpSelectColor(color) {
 }
 
 // ── Undo / Redo ──────────────────────────────────────────────────
+// ── Persist #fcFactsPageContent's current HTML back into the flashcard's
+// card.extra field — same storage path fcfpSaveEdit already uses (local
+// `save()` + granular Firebase sync). Without this, highlights/erases only
+// lived in the DOM and vanished on refresh/back — now every highlight,
+// erase, undo and redo calls this so changes survive exactly like the
+// rest of the app. ──
+function fcfpPersistExtra() {
+  try {
+    var pageContent = document.getElementById('fcFactsPageContent');
+    var extraBody = document.getElementById('fcExtraBody');
+    var updatedHtml = pageContent ? pageContent.innerHTML : '';
+    if(extraBody) extraBody.innerHTML = updatedHtml;
+
+    var key = _fcTopicKey(_fcPlayState.sid, _fcPlayState.secid, _fcPlayState.tid);
+    var set = S.flashcardSets[key];
+    var st = _fcPlayState.session;
+    if(set && st && st.queue && st.pos < st.queue.length){
+      var cardIdx = st.queue[st.pos];
+      var card = set.cards[cardIdx];
+      if(card){
+        card.extra = updatedHtml;
+        save();
+        _fcSyncFlashcardSetToFirebase(key, set);
+      }
+    }
+  } catch(err) { /* best-effort — never block the highlight/undo/redo UI on this */ }
+}
+
 function fcfpSaveSnapshot() {
   var ct = document.getElementById('fcFactsPageContent');
   if(!ct) return;
@@ -16806,6 +16834,7 @@ function fcfpUndo() {
   ct.innerHTML = _fcfpUndoStack.pop();
   fcfpUpdateUndoRedoBtns();
   fcfpReattachEraserListeners();
+  fcfpPersistExtra();
   if(typeof showToast === 'function') showToast('↩ Undo', 'info');
 }
 
@@ -16817,6 +16846,7 @@ function fcfpRedo() {
   ct.innerHTML = _fcfpRedoStack.pop();
   fcfpUpdateUndoRedoBtns();
   fcfpReattachEraserListeners();
+  fcfpPersistExtra();
   if(typeof showToast === 'function') showToast('↪ Redo', 'info');
 }
 
@@ -16919,6 +16949,7 @@ function fcfpApplyHighlightFromRange(range, text) {
     });
 
     if(madeAnyMark){
+      fcfpPersistExtra();
       if(typeof showToast === 'function') showToast('Highlight ho gaya! ✅', 'success');
     } else {
       // Kuch bhi highlight nahi hua — snapshot revert karo aur user ko batao
@@ -16947,6 +16978,7 @@ function fcfpAttachEraserToMark(mark) {
     if(!parent) return;
     while(this.firstChild) parent.insertBefore(this.firstChild, this);
     parent.removeChild(this);
+    fcfpPersistExtra();
     if(typeof showToast === 'function') showToast('Highlight hata diya 🧹', 'success');
   };
   mark.addEventListener('pointerdown', mark._fcfpEraserFn);
