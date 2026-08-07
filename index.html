@@ -1018,10 +1018,23 @@ body.night-mode #fcfpTopicDropdown #fcfpTopicDdSearch{background:rgba(255,255,25
   padding:10px;font-size:0.88rem;font-family:'Noto Sans Devanagari',sans-serif;line-height:1.6;
   box-sizing:border-box;
 }
+/* Same safety net for the sidebar "Extra Facts Topics" page inline editor —
+   old saved topics may carry stray borders from before the paste-cleanup
+   fix; never let them show here either. */
+#eftPvEditor p, #eftPvEditor div, #eftPvEditor blockquote,
+#eftPvEditor li, #eftPvEditor span {
+  border: none !important; box-shadow: none !important; background: transparent !important;
+}
 #fcfpTopicPvEditor strong,#fcfpTopicPvEditor b{font-weight:800;}
 #fcfpTopicPvEditor em,#fcfpTopicPvEditor i{font-style:italic;}
 #fcfpTopicPvEditor u{text-decoration:underline;}
 #fcfpTopicPvEditor mark{border-radius:3px;padding:0 2px;}
+/* Safety net: old saved topics may carry stray borders from before the
+   paste-cleanup fix — never let them show inside the preview. */
+#fcfpTopicPvEditor p, #fcfpTopicPvEditor div, #fcfpTopicPvEditor blockquote,
+#fcfpTopicPvEditor li, #fcfpTopicPvEditor span {
+  border: none !important; box-shadow: none !important; background: transparent !important;
+}
 #fcfpTopicPreviewModal .fcfp-topic-pv-actions, #fcfpTopicSaveModal .fcfp-topic-pv-actions{
   display:flex;gap:10px;margin-top:12px;
 }
@@ -18200,7 +18213,7 @@ function fcfpOpenTopicPreview(topicId){
   var editor = document.getElementById('fcfpTopicPvEditor');
   if(!modal || !editor) return;
   if(nameEl) nameEl.textContent = t.name;
-  editor.innerHTML = t.html || '';
+  editor.innerHTML = _fcfpCleanStoredHtml(t.html || '');
   modal.classList.add('show');
 }
 function fcfpCloseTopicPreview(){
@@ -18398,20 +18411,78 @@ function eftRenderSelected(){
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">' +
         '<div><div class="card-title" style="margin-bottom:2px;">📄 ' + _fcEsc(t.name) + '</div>' +
         '<div style="font-size:0.7rem;color:var(--text2);">Last update: ' + dateStr + (linkedCards.length ? ' • ' + linkedCards.length + ' card(s) se linked' : '') + '</div></div>' +
-        '<div style="display:flex;gap:6px;">' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+          '<button class="btn btn-sm" style="background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;" onclick="eftOpenFullReading(\''+id+'\')">📖 Full Reading Mode</button>' +
           '<button class="btn btn-sm" onclick="eftRenameTopic(\''+id+'\')">✏️ Rename</button>' +
           '<button class="btn btn-sm" style="color:#c62828;" onclick="eftDeleteTopic(\''+id+'\')">🗑 Delete</button>' +
         '</div>' +
       '</div>' +
     '</div>' +
     '<div class="card">' +
-      '<div id="eftPvEditor" contenteditable="true" spellcheck="false" style="min-height:120px;line-height:1.7;font-size:0.9rem;outline:none;">' + (t.html || '') + '</div>' +
+      '<div id="eftPvEditor" contenteditable="true" spellcheck="false" style="min-height:120px;line-height:1.7;font-size:0.9rem;outline:none;">' + _fcfpCleanStoredHtml(t.html || '') + '</div>' +
       '<div style="display:flex;gap:10px;margin-top:12px;">' +
         '<button class="btn btn-primary" style="flex:1;" onclick="eftSaveEdited(\''+id+'\')">✅ Changes Save Karo</button>' +
       '</div>' +
     '</div>' +
     (linkedCards.length ? '<div class="card" style="margin-top:12px;"><div class="card-title" style="font-size:0.8rem;">🔗 Is topic se linked cards</div>' +
       '<div style="font-size:0.78rem;color:var(--text2);line-height:1.8;">' + linkedCards.map(_fcEsc).join('<br>') + '</div></div>' : '');
+}
+
+// Strip any stray border/background baked into OLD saved topic HTML (from
+// before the paste-cleanup fix), so previously-saved topics also stop
+// showing the coloured line/box when re-opened. Purely visual cleanup —
+// does not touch text/formatting.
+function _fcfpCleanStoredHtml(html){
+  if(!html) return html;
+  try{
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    if(typeof _fcfpStripBg === 'function') _fcfpStripBg(tmp);
+    return tmp.innerHTML;
+  }catch(e){ return html; }
+}
+
+// ── "Full Reading Mode" — opens a saved Extra Facts Topic in the same
+// rich Notes Editor used everywhere else in the app (tools left/right/
+// bottom, themes, highlighter, etc.) instead of the small inline preview
+// box. Edits made here save straight back into the topic. ──
+var _eftEditorState = { topicId: null };
+function eftOpenFullReading(id){
+  var t = (S.extraFactsTopics || {})[id];
+  if(!t){ if(typeof showToast==='function') showToast('Topic nahi mila','error'); return; }
+
+  _eftEditorState.topicId = id;
+  _editorState.sid = null;
+  _editorState.secid = null;
+  _editorState.tid = null;
+  _editorState.noteIdx = null;
+  _editorState.specialType = 'extrafactstopic';
+  _editorState.modified = false;
+  _editorState.highlights = [];
+  _editorState.richHTML = _fcfpCleanStoredHtml(t.html || '');
+
+  document.getElementById('notesEditorTitle').textContent = '📂 ' + t.name;
+  document.getElementById('notesEditorMeta').textContent = '📄 Extra Facts Topic';
+
+  neLoadContent('', false); // uses _editorState.richHTML set above
+  neSetEditMode(false);
+  setHlMode('off');
+  neResetToolbar();
+  neSetTheme(_neState.theme, true);
+  document.getElementById('noteEditableArea').style.fontSize = _neState.fontSize + 'px';
+  document.getElementById('neFontLabel').textContent = _neState.fontSize;
+  var _ud = document.getElementById('unsavedDot'); if(_ud) _ud.style.display = 'none';
+  var dot2 = document.getElementById('unsavedDot2'); if(dot2) dot2.style.display = 'none';
+  var _snb = document.getElementById('saveNoteBtn'); if(_snb) _snb.style.display = '';
+  neUpdateStatusBar('📂 Extra Facts Topic — Edit ya Highlight karo');
+
+  var ov = document.getElementById('notesEditorOverlay');
+  ov.removeAttribute('data-viewer');
+  ov.style.display = '';
+  ov.classList.add('show');
+  document.body.style.overflow = 'hidden';
+  history.pushState({type:'notesEditor'}, '');
+  setTimeout(function(){ neUpdateHlCanvasBtn && neUpdateHlCanvasBtn(); }, 200);
 }
 
 function eftSaveEdited(id){
@@ -21221,6 +21292,21 @@ function showUnsavedPopup() {
 }
 
 function _doSaveNoteData() {
+  // Extra Facts Topic (global library) — standalone content, not tied to any
+  // subject/section/topic, so it must be handled before the getTop() guard
+  // below (which would otherwise fail and silently block saving).
+  if(_editorState.specialType === 'extrafactstopic') {
+    var _eftId = _eftEditorState && _eftEditorState.topicId;
+    var _t = _eftId ? (S.extraFactsTopics || {})[_eftId] : null;
+    if(!_t) return false;
+    var _area = document.getElementById('noteEditableArea');
+    _t.html = _area ? _area.innerHTML : _t.html;
+    _t.updatedAt = Date.now();
+    save();
+    _fcSyncTopicToFirebase(_eftId, _t);
+    return true;
+  }
+
   var t = getTop(_editorState.sid, _editorState.secid, _editorState.tid);
   if(!t) return false;
   
