@@ -1123,6 +1123,16 @@ body.night-mode #fcFactsPage .fcfp-tb-btn.fcfp-tb-topicsave{
 #fcFactsPageContent strong, #fcFactsPageContent b { font-weight:800; }
 #fcFactsPageContent em, #fcFactsPageContent i { font-style:italic; }
 #fcFactsPageContent u { text-decoration:underline; }
+/* Safety net: user-added/pasted "extra facts" content should never show a
+   stray coloured border (e.g. a left green line carried over from Word/
+   Google Docs paste formatting or blockquote defaults). Force it off so the
+   added text always blends into the page's normal background. */
+#fcFactsPageContent p, #fcFactsPageContent div, #fcFactsPageContent blockquote,
+#fcFactsPageContent li, #fcFactsPageContent span {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
 #fcFactsPageContent p { margin:0 0 6px 0; }
 #fcFactsPageContent p:last-child { margin-bottom:0; }
 #fcFactsPageContent mark { border-radius:3px; padding:0 2px; }
@@ -1222,6 +1232,14 @@ body.night-mode #fcFactsPage .fcfp-tb-btn.fcfp-tb-topicsave{
 #fcfpRichEditor:empty:before {
   content:attr(data-placeholder);
   color:rgba(128,128,128,0.55);pointer-events:none;
+}
+/* Same safety net inside the edit modal, so pasted content never shows a
+   stray coloured border/left-line while the user is still editing it. */
+#fcfpRichEditor p, #fcfpRichEditor div, #fcfpRichEditor blockquote,
+#fcfpRichEditor li, #fcfpRichEditor span {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
 }
 #fcfpRichEditor p { margin:0 0 5px 0; }
 #fcfpRichEditor p:last-child { margin-bottom:0; }
@@ -17835,8 +17853,12 @@ function fcfpEditorPaste(e){
   document.execCommand('insertHTML', false, toInsert);
 }
 
-// Recursively strip background/background-color (inline style + bgcolor
-// attribute) from a pasted DOM fragment, keeping all other formatting.
+// Recursively strip background/background-color AND any border (inline
+// style + bgcolor attribute) from a pasted DOM fragment, keeping all other
+// formatting. Word/Google Docs pastes often carry a coloured left-border
+// (used for their own blockquote/indent styling) — if left in, it shows up
+// as a stray green/coloured line down the side of the added text on the
+// facts page. Stripping all border* properties prevents that.
 function _fcfpStripBg(root){
   if(!root || !root.querySelectorAll) return;
   var els = root.querySelectorAll('*');
@@ -17845,8 +17867,25 @@ function _fcfpStripBg(root){
     if(el.style){
       el.style.removeProperty('background');
       el.style.removeProperty('background-color');
+      el.style.removeProperty('border');
+      el.style.removeProperty('border-left');
+      el.style.removeProperty('border-right');
+      el.style.removeProperty('border-top');
+      el.style.removeProperty('border-bottom');
+      el.style.removeProperty('border-color');
+      el.style.removeProperty('border-image');
+      el.style.removeProperty('box-shadow');
+      el.style.removeProperty('outline');
     }
     if(el.hasAttribute('bgcolor')) el.removeAttribute('bgcolor');
+    if(el.hasAttribute('border')) el.removeAttribute('border');
+    // Word/Docs sometimes uses blockquote for indentation → strip so it
+    // doesn't render with the browser's default left-border styling either.
+    if(el.tagName === 'BLOCKQUOTE'){
+      el.style.setProperty('border', 'none', 'important');
+      el.style.setProperty('margin', '0', 'important');
+      el.style.setProperty('padding', '0', 'important');
+    }
   }
 }
 
