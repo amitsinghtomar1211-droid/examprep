@@ -10316,6 +10316,13 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
   <div class="fcfp-topic-pv-box" onclick="event.stopPropagation();">
     <div class="fcfp-topic-pv-title">➕ Naya Extra Facts Topic Banao</div>
     <div class="fcfp-topic-pv-hint">Yahan extra facts likho ya paste karo, phir niche naam dekar save karo. Yeh topic filhaal kisi flashcard se link nahi hoga — baad mein kisi card se link kar sakte ho.</div>
+    <!-- Direct file insert — HTML ya Word (.docx) file seedha upload karke
+         editor mein daal do, copy-paste ki zaroorat nahi. -->
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+      <button type="button" class="btn" style="flex:1;font-size:0.78rem;padding:8px;" onclick="document.getElementById('eftFileInput').click()">📄 HTML/Word File Se Insert Karo</button>
+      <input type="file" id="eftFileInput" accept=".html,.htm,.docx" style="display:none;" onchange="eftHandleFileUpload(this)">
+    </div>
+    <div id="eftFileStatus" style="display:none;font-size:0.72rem;padding:6px 8px;border-radius:8px;margin-bottom:8px;"></div>
     <!-- Rich text formatting toolbar — same as flashcard edit editor -->
     <div class="fcfp-rich-toolbar" id="eftNewTopicToolbar">
       <button class="fcfp-rtb-btn" onmousedown="fcfpExecFmtOn(event,'bold','eftNewTopicEditor')" title="Bold"><b>B</b></button>
@@ -10331,7 +10338,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       <button class="fcfp-rtb-btn" onmousedown="fcfpExecFmtOn(event,'removeFormat','eftNewTopicEditor')" title="Formatting hatao" style="font-size:0.7rem;color:#c62828;">✕ Format</button>
     </div>
     <div id="eftNewTopicEditor" contenteditable="true" spellcheck="false"
-         data-placeholder="Yahan type karo ya Word/kahin se copy karke paste karo — formatting (Bold/Italic/tables/headings/colors) preserve hogi..."
+         data-placeholder="Yahan type karo, paste karo, ya upar se HTML/Word file upload karo..."
          onpaste="fcfpEditorPaste(event)"></div>
     <input type="text" id="eftNewTopicNameInput" list="fcfpTopicSaveNameList" placeholder="Topic naam likho (e.g. Indian Constitution — Preamble)" style="width:100%;padding:9px 10px;border-radius:9px;border:1.5px solid var(--border,#ddd);font-size:0.88rem;margin-top:10px;margin-bottom:10px;box-sizing:border-box;">
     <div class="fcfp-topic-pv-actions">
@@ -18830,13 +18837,129 @@ function eftDeleteTopic(id){
 // More" page. Not linked to any card at save time (koi dikkat nahi —
 // baad mein kisi flashcard ke 📂 icon se is topic ko import/link kiya ja
 // sakta hai jaise kisi bhi doosre saved topic ko kiya jata hai). ──
+// ── Direct file insert for the "Naya Extra Facts Topic" modal — reads a
+// .docx (via mammoth.js, same conversion rules as the Notes-app importer)
+// or a .html/.htm file directly from disk and drops the converted content
+// straight into eftNewTopicEditor. No copy-paste needed. ──
+function eftHandleFileUpload(input){
+  var file = input.files && input.files[0];
+  if(!file) return;
+  var editor = document.getElementById('eftNewTopicEditor');
+  var statusEl = document.getElementById('eftFileStatus');
+  if(!editor || !statusEl) return;
+  statusEl.style.display = 'block';
+  statusEl.style.background = 'rgba(21,101,192,0.08)';
+  statusEl.style.color = 'var(--accent, #1565c0)';
+  statusEl.textContent = '⏳ File pad raha hoon...';
+  var ext = file.name.split('.').pop().toLowerCase();
+
+  if(ext === 'docx'){
+    if(typeof mammoth === 'undefined'){
+      statusEl.style.background = 'rgba(198,40,40,0.08)';
+      statusEl.style.color = 'var(--red,#c62828)';
+      statusEl.textContent = '❌ DOCX library load nahi hui. Page reload karo.';
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = async function(e){
+      try{
+        var result = await mammoth.convertToHtml({arrayBuffer: e.target.result}, {
+          styleMap: [
+            "p[style-name='Heading 1'] => h1:fresh",
+            "p[style-name='Heading 2'] => h2:fresh",
+            "p[style-name='Heading 3'] => h3:fresh",
+            "p[style-name='Heading 4'] => h4:fresh",
+            "p[style-name='Heading 5'] => h5:fresh",
+            "p[style-name='Heading 6'] => h6:fresh",
+            "p[style-name='Title'] => h1.doc-title:fresh",
+            "p[style-name='Subtitle'] => p.doc-subtitle:fresh",
+            "p[style-name='Quote'] => blockquote:fresh",
+            "p[style-name='Intense Quote'] => blockquote.intense:fresh",
+            "r[style-name='Strong'] => strong",
+            "r[style-name='Emphasis'] => em",
+            "b => strong",
+            "i => em",
+            "u => u",
+            "strike => s",
+            "p[style-name='List Paragraph'] => p.list-paragraph:fresh"
+          ],
+          convertImage: mammoth.images.imgElement(function(image){
+            return image.read('base64').then(function(imageBuffer){
+              return { src: 'data:' + image.contentType + ';base64,' + imageBuffer };
+            });
+          })
+        });
+        var cleanHtml = result.value
+          .replace(/<!--[\s\S]*?-->/g, '')
+          .replace(/<p><\/p>/gi, '')
+          .replace(/<p>\s*<\/p>/gi, '')
+          .replace(/\s*mso-[^;":]+:[^;"]+(;|(?="))/g, '')
+          .replace(/  +/g, ' ');
+
+        // Strip stray borders/backgrounds the same way pasted content is
+        // cleaned, then drop straight into the editor (no page-ruler
+        // wrapper here — this is a facts topic, not a document viewer).
+        var tmp = document.createElement('div');
+        tmp.innerHTML = cleanHtml;
+        if(typeof _fcfpStripBg === 'function') _fcfpStripBg(tmp);
+        editor.innerHTML = tmp.innerHTML;
+
+        var warnCount = result.messages ? result.messages.filter(function(m){ return m.type === 'warning'; }).length : 0;
+        statusEl.style.background = 'rgba(46,125,50,0.1)';
+        statusEl.style.color = 'var(--green,#2e7d32)';
+        statusEl.textContent = '✅ Word file load ho gayi! (' + file.name + ')' + (warnCount ? ' ⚠️ ' + warnCount + ' warnings' : '');
+      }catch(err){
+        statusEl.style.background = 'rgba(198,40,40,0.08)';
+        statusEl.style.color = 'var(--red,#c62828)';
+        statusEl.textContent = '❌ DOCX read nahi ho saka: ' + err.message;
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  } else if(ext === 'html' || ext === 'htm'){
+    var reader2 = new FileReader();
+    reader2.onload = function(e){
+      try{
+        var htmlContent = e.target.result;
+        var bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+        if(bodyMatch && bodyMatch[1]) htmlContent = bodyMatch[1];
+        htmlContent = htmlContent.replace(/<script[\s\S]*?<\/script>/gi, '');
+        htmlContent = htmlContent.replace(/<style[\s\S]*?<\/style>/gi, '');
+        htmlContent = htmlContent.replace(/<!--[\s\S]*?-->/g, '');
+        htmlContent = htmlContent.trim();
+
+        var tmp2 = document.createElement('div');
+        tmp2.innerHTML = htmlContent;
+        if(typeof _fcfpStripBg === 'function') _fcfpStripBg(tmp2);
+        editor.innerHTML = tmp2.innerHTML;
+
+        statusEl.style.background = 'rgba(46,125,50,0.1)';
+        statusEl.style.color = 'var(--green,#2e7d32)';
+        statusEl.textContent = '✅ HTML file load ho gayi! (' + file.name + ')';
+      }catch(err){
+        statusEl.style.background = 'rgba(198,40,40,0.08)';
+        statusEl.style.color = 'var(--red,#c62828)';
+        statusEl.textContent = '❌ HTML read nahi ho saka: ' + err.message;
+      }
+    };
+    reader2.readAsText(file);
+  } else {
+    statusEl.style.background = 'rgba(198,40,40,0.08)';
+    statusEl.style.color = 'var(--red,#c62828)';
+    statusEl.textContent = '❌ Sirf .html, .htm, .docx file support hai';
+  }
+  // Same input can be re-used for the next upload
+  input.value = '';
+}
+
 function eftOpenNewTopicModal(){
   var modal = document.getElementById('eftNewTopicModal');
   var editor = document.getElementById('eftNewTopicEditor');
   var nameInput = document.getElementById('eftNewTopicNameInput');
+  var statusEl = document.getElementById('eftFileStatus');
   if(!modal || !editor || !nameInput) return;
   editor.innerHTML = '';
   nameInput.value = '';
+  if(statusEl){ statusEl.style.display = 'none'; statusEl.textContent = ''; }
   modal.classList.add('show');
   setTimeout(function(){ editor.focus(); }, 150);
 }
