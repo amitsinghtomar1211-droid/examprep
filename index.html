@@ -1315,11 +1315,14 @@ body.night-mode #fcFactsPage .fcfp-tb-btn.fcfp-tb-topicsave{
   color:rgba(128,128,128,0.55);pointer-events:none;
 }
 /* Same safety net inside the edit modal, so pasted content never shows a
-   stray coloured border/left-line while the user is still editing it. */
+   stray coloured border/left-line while the user is still editing it.
+   NOTE: eftNewTopicEditor is intentionally excluded from the forced
+   border/background reset — when a styled HTML file is imported there we
+   WANT its inlined colours/borders/cards to show. Stray-artifact cleanup
+   for plain paste/DOCX in that editor is instead handled in JS via
+   _fcfpStripBg() at insert time (see eftHandleFileUpload / paste handler). */
 #fcfpRichEditor p, #fcfpRichEditor div, #fcfpRichEditor blockquote,
-#fcfpRichEditor li, #fcfpRichEditor span,
-#eftNewTopicEditor p, #eftNewTopicEditor div, #eftNewTopicEditor blockquote,
-#eftNewTopicEditor li, #eftNewTopicEditor span {
+#fcfpRichEditor li, #fcfpRichEditor span {
   border: none !important;
   box-shadow: none !important;
   background: transparent !important;
@@ -1335,6 +1338,20 @@ body.night-mode #fcFactsPage .fcfp-tb-btn.fcfp-tb-topicsave{
 #fcfpRichEditor mark.hl-g, #eftNewTopicEditor mark.hl-g { background:rgba(100,220,130,0.5); }
 #fcfpRichEditor mark.hl-b, #eftNewTopicEditor mark.hl-b { background:rgba(100,160,255,0.5); }
 #fcfpRichEditor mark.hl-dr, #eftNewTopicEditor mark.hl-dr { background:#8B0000; color:#fff; }
+/* Plain (non-imported) text in the new-topic editor still gets the same
+   stray-artifact reset as before — but ONLY when not inside an imported
+   styled block, so a designed import's own colours are never fought. */
+#eftNewTopicEditor > p, #eftNewTopicEditor > div:not(.efs-imported),
+#eftNewTopicEditor > blockquote, #eftNewTopicEditor > li, #eftNewTopicEditor > span {
+  border: none; box-shadow: none; background: transparent;
+}
+/* Imported styled-HTML block — let its own inline (baked-in) styles
+   render as-is, just make sure it doesn't overflow the editor width. */
+#eftNewTopicEditor .efs-imported, #eftNewTopicEditor .efs-imported *{
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+#eftNewTopicEditor .efs-imported{ overflow-x:hidden; }
 body.night-mode #fcfpRichEditor { background:rgba(255,255,255,0.05); color:#e8dcc8; border-color:rgba(200,200,200,0.15); }
 body.night-mode .fcfp-rich-toolbar { background:rgba(255,255,255,0.05); border-color:rgba(200,200,200,0.12); }
 body.night-mode .fcfp-rtb-btn { background:rgba(255,255,255,0.07); color:#e8dcc8; border-color:rgba(200,200,200,0.15); }
@@ -18024,6 +18041,10 @@ function _fcfpStripBg(root){
   var els = root.querySelectorAll('*');
   for(var i=0;i<els.length;i++){
     var el = els[i];
+    // Skip anything inside an imported, deliberately-styled HTML block
+    // (see eftHandleFileUpload) — that block's baked-in colours/borders
+    // are the whole point, not a stray paste artifact to clean up.
+    if(el.closest && el.closest('.efs-imported')) continue;
     if(el.style){
       el.style.removeProperty('background');
       el.style.removeProperty('background-color');
@@ -18919,22 +18940,92 @@ function eftHandleFileUpload(input){
     var reader2 = new FileReader();
     reader2.onload = function(e){
       try{
-        var htmlContent = e.target.result;
-        var bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-        if(bodyMatch && bodyMatch[1]) htmlContent = bodyMatch[1];
-        htmlContent = htmlContent.replace(/<script[\s\S]*?<\/script>/gi, '');
-        htmlContent = htmlContent.replace(/<style[\s\S]*?<\/style>/gi, '');
-        htmlContent = htmlContent.replace(/<!--[\s\S]*?-->/g, '');
-        htmlContent = htmlContent.trim();
+        var rawHtml = e.target.result;
+        // If the file carries its own <style> block (cards, colours,
+        // section headers etc. driven by CSS classes — like exported
+        // notes files), render it in a hidden iframe first so the browser
+        // actually applies that CSS, then bake every element's *computed*
+        // style into an inline "style" attribute before lifting the
+        // content out. This keeps the rich look (colours, borders,
+        // rounded cards, spacing) intact even after the <style> tag
+        // itself is stripped, and works for any styled HTML file — not
+        // just ones with inline styles already.
+        var hasStyleBlock = /<style[\s\S]*?<\/style>/i.test(rawHtml);
 
-        var tmp2 = document.createElement('div');
-        tmp2.innerHTML = htmlContent;
-        if(typeof _fcfpStripBg === 'function') _fcfpStripBg(tmp2);
-        editor.innerHTML = tmp2.innerHTML;
+        function finishInsert(html, keepStyling){
+          var tmp2 = document.createElement('div');
+          tmp2.innerHTML = html;
+          // Only strip stray backgrounds/borders when the file had no
+          // <style> block — for a styled export we WANT the inlined
+          // colours/borders/cards to survive.
+          if(!keepStyling && typeof _fcfpStripBg === 'function') _fcfpStripBg(tmp2);
+          if(keepStyling){
+            // Wrap so the editor's own "reset stray borders" CSS rule
+            // (which only targets direct, non-imported children) leaves
+            // this block's inlined styling alone.
+            var wrap = document.createElement('div');
+            wrap.className = 'efs-imported';
+            wrap.innerHTML = tmp2.innerHTML;
+            editor.innerHTML = '';
+            editor.appendChild(wrap);
+          } else {
+            editor.innerHTML = tmp2.innerHTML;
+          }
+          statusEl.style.background = 'rgba(46,125,50,0.1)';
+          statusEl.style.color = 'var(--green,#2e7d32)';
+          statusEl.textContent = '✅ HTML file load ho gayi (styling ke saath)! (' + file.name + ')';
+        }
 
-        statusEl.style.background = 'rgba(46,125,50,0.1)';
-        statusEl.style.color = 'var(--green,#2e7d32)';
-        statusEl.textContent = '✅ HTML file load ho gayi! (' + file.name + ')';
+        if(hasStyleBlock){
+          var iframe = document.createElement('iframe');
+          iframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:900px;height:1200px;visibility:hidden;';
+          document.body.appendChild(iframe);
+          iframe.onload = function(){
+            try{
+              var idoc = iframe.contentDocument;
+              var body = idoc.body;
+              // Properties worth freezing per element — covers the visual
+              // language most "designed" HTML exports use (cards, chips,
+              // coloured text, spacing, radius, gradients).
+              var PROPS = ['color','background','background-color','background-image',
+                'font-weight','font-style','text-decoration','font-size','font-family',
+                'border','border-radius','border-top','border-bottom','border-left','border-right',
+                'padding','margin','box-shadow','display','text-align','line-height',
+                'letter-spacing','text-transform','list-style','list-style-type'];
+              var all = body.querySelectorAll('*');
+              for(var i=0; i<all.length; i++){
+                var el = all[i];
+                var cs = iframe.contentWindow.getComputedStyle(el);
+                var decl = '';
+                for(var p=0; p<PROPS.length; p++){
+                  var v = cs.getPropertyValue(PROPS[p]);
+                  if(v) decl += PROPS[p] + ':' + v + ';';
+                }
+                if(decl) el.setAttribute('style', (el.getAttribute('style')||'') + decl);
+              }
+              var finalHtml = body.innerHTML
+                .replace(/<script[\s\S]*?<\/script>/gi, '')
+                .replace(/<!--[\s\S]*?-->/g, '');
+              document.body.removeChild(iframe);
+              finishInsert(finalHtml, true);
+            }catch(err2){
+              try{ document.body.removeChild(iframe); }catch(e3){}
+              statusEl.style.background = 'rgba(198,40,40,0.08)';
+              statusEl.style.color = 'var(--red,#c62828)';
+              statusEl.textContent = '❌ Styling apply nahi ho saki: ' + err2.message;
+            }
+          };
+          iframe.srcdoc = rawHtml;
+        } else {
+          // Plain HTML with no <style> block — old fast path.
+          var htmlContent = rawHtml;
+          var bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+          if(bodyMatch && bodyMatch[1]) htmlContent = bodyMatch[1];
+          htmlContent = htmlContent.replace(/<script[\s\S]*?<\/script>/gi, '');
+          htmlContent = htmlContent.replace(/<!--[\s\S]*?-->/g, '');
+          htmlContent = htmlContent.trim();
+          finishInsert(htmlContent, false);
+        }
       }catch(err){
         statusEl.style.background = 'rgba(198,40,40,0.08)';
         statusEl.style.color = 'var(--red,#c62828)';
