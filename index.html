@@ -16713,7 +16713,7 @@ function fcRenderCard(){
   var extraBody   = document.getElementById('fcExtraBody');
   var viewMoreBtn = document.getElementById('fcViewMoreBtn');
   if(extraEl && extraBody && viewMoreBtn){
-    var extraContent = card.extra ? String(card.extra).trim() : '';
+    var extraContent = _fcResolveCardExtra(card).trim();
     if(extraContent){
       extraBody.innerHTML = extraContent;
       // Old saved facts (from before the paste-cleanup fix) may still carry
@@ -17291,9 +17291,10 @@ function fcfpPersistExtra() {
       var cardIdx = st.queue[st.pos];
       var card = set.cards[cardIdx];
       if(card){
-        card.extra = updatedHtml;
-        save();
-        _fcSyncFlashcardSetToFirebase(key, set);
+        // Agar yeh card kisi topic se LIVE-LINKED hai, toh edit topic
+        // library mein save hogi (sab linked cards mein turant reflect
+        // hoga). Warna sirf isi card ka apna data update hoga.
+        _fcSaveCardExtraEdit(card, key, set, updatedHtml);
       }
     }
   } catch(err) { /* best-effort — never block the highlight/undo/redo UI on this */ }
@@ -18303,9 +18304,10 @@ function fcfpSaveEdit(){
       var cardIdx = st.queue[st.pos];
       var card = set.cards[cardIdx];
       if(card){
-        card.extra = updatedHtml;
-        save();
-        _fcSyncFlashcardSetToFirebase(key, set);
+        // Agar yeh card kisi topic se LIVE-LINKED hai, toh edit topic
+        // library mein save hogi (sab linked cards mein turant reflect
+        // hoga). Warna sirf isi card ka apna data update hoga.
+        _fcSaveCardExtraEdit(card, key, set, updatedHtml);
       }
     }
   }catch(err){}
@@ -18339,7 +18341,90 @@ async function _fcSyncFlashcardSetToFirebase(key, set){
 // tap a topic → preview/edit modal → OK → us card ke extra facts ke
 // niche shift ho jata hai. "💾 Save Topic" (topbar) → is card ke
 // current extra facts ko ek naye/existing topic naam se save karta hai.
+//
+// ── LINK-STATE MODEL (3 states, per card) ────────────────────────────
+// Card.extra + card.extraTopicId mil kar 3 states banate hain:
+//
+// 1) STANDALONE — card.extraTopicId khali hai (kabhi kisi topic se link
+//    nahi hua). card.extra mein poora text hota hai. Yahan edit karo to
+//    SIRF isi card ka data badalta hai — kabhi bhi global sync nahi hota.
+//
+// 2) LINKED (reference) — card.extraTopicId set hai AUR card.extra
+//    KHALI hai. Iska content render-time par seedha topic library
+//    (S.extraFactsTopics[topicId].html) se live utthaya jaata hai — koi
+//    duplicate text file mein save nahi hota (isse file-size bachta
+//    hai). Yahan edit karo (chahe kisi bhi linked card ke andar se ho,
+//    ya seedha Havoc → Extra Facts Topics page se ho) — badlaav TOPIC
+//    LIBRARY mein save hota hai, isliye turant is topic se linked SABHI
+//    cards mein reflect ho jaata hai.
+//
+// 3) LINKED-BUT-DETACHED (apna copy) — card.extraTopicId set hai
+//    (dikhata hai ki yeh kisi topic se import hua tha) LEKIN card.extra
+//    mein apna poora text hai jo ab topic ke original text se ALAG ho
+//    chuka hai (kyunki isme is specific card ke andar edit/highlight
+//    kiya gaya). Yeh ab is card ka INDEPENDENT/apna data ban chuka hai —
+//    yahan aage jo bhi edit ho, SIRF isi card tak simit rahega, topic
+//    library ko chhoo nahi payega.
+//
+// Transition rule: jab bhi kisi LINKED (reference) card ke andar user
+// edit karta hai, us edit ko TOPIC LIBRARY mein hi save kiya jaata hai
+// (state 2 mein hi rehta hai — card khud khali/reference hi rehta hai).
+// Sirf tab jab card standalone (state 1) ho, tab edit sirf card mein
+// jaata hai. State 3 abhi is naye system mein automatically create nahi
+// hota (naya import hamesha state 2 banata hai) — state 3 sirf legacy/
+// purane data ke liye hai jo pehle se text-copy ke saath save ho chuka
+// tha, taaki purana data kabhi na toote.
 // ═══════════════════════════════════════════════════════════════════
+
+// Render/edit har jagah is function se card ka "asli dikhne wala" extra
+// html nikalo — yeh handles both purana style (poora text card.extra
+// mein) aur naya style (khali card.extra + extraTopicId reference).
+function _fcResolveCardExtra(card){
+  if(!card) return '';
+  var own = card.extra ? String(card.extra) : '';
+  if(own.trim()) return own; // standalone ya detached (apna) text — jaisa hai waisa dikhao
+  // card.extra khali hai lekin ek topic link mojood hai → library se resolve karo
+  if(card.extraTopicId && S.extraFactsTopics){
+    var t = S.extraFactsTopics[card.extraTopicId];
+    if(t && t.html) return t.html;
+  }
+  return '';
+}
+
+// Kya yeh card abhi "LINKED (reference)" state mein hai — matlab iska
+// extra text topic library se live aa raha hai, apna khud ka nahi?
+function _fcCardIsLiveLinked(card){
+  return !!(card && card.extraTopicId && !(card.extra && String(card.extra).trim()));
+}
+
+// ── Central save-point for ANY edit made to a card's visible extra-facts
+// text (highlight, undo/redo, rich-edit, live-edit-mode) — chahe woh edit
+// kahin se bhi trigger hui ho (Play Mode full-screen page, inline list
+// mode, etc). Yahan decide hota hai ki updatedHtml kaha jaana chahiye:
+//   • Agar card abhi LIVE-LINKED hai (reference state) → topic library
+//     ko update karo, taaki isi topic se linked SABHI cards mein turant
+//     reflect ho jaaye. Card khud reference state mein hi rehta hai.
+//   • Warna (standalone ya already-detached apna text) → sirf isi card
+//     ka apna data update karo, kisi aur card/topic ko chhuo mat. ──
+function _fcSaveCardExtraEdit(card, key, set, updatedHtml){
+  if(!card) return;
+  if(_fcCardIsLiveLinked(card)){
+    // Is card ka content abhi topic library se aa raha tha → edit topic
+    // library mein hi save karo (card khud reference/khali hi rehta hai).
+    var t = S.extraFactsTopics && S.extraFactsTopics[card.extraTopicId];
+    if(t){
+      S.extraFactsTopics[card.extraTopicId] = { name: t.name, html: updatedHtml, updatedAt: Date.now() };
+      save();
+      _fcSyncTopicToFirebase(card.extraTopicId, S.extraFactsTopics[card.extraTopicId]);
+      return;
+    }
+    // Fallback: topic library mein nahi mila (edge case) — card mein hi rakh do.
+  }
+  // Standalone ya already-detached card → sirf isi card ka data update karo.
+  card.extra = updatedHtml;
+  if(set) save();
+  if(key && set) _fcSyncFlashcardSetToFirebase(key, set);
+}
 
 // Save one topic (create or update) into the global library + persist.
 function fcfpSaveTopicToLibrary(name, html){
@@ -18512,30 +18597,32 @@ function fcfpImportTopicIntoCard(){
   var isInlineImport = !!(_fcInlineTopicCtx && document.getElementById('fcFactsPage') && !document.getElementById('fcFactsPage').classList.contains('active'));
   if(pageContent && !isInlineImport){
     fcfpSaveSnapshot(); // so Undo can revert the import
-    var existing = pageContent.innerHTML.trim();
-    var wrapper = document.createElement('div');
-    wrapper.className = 'fcfp-imported-topic-block';
-    wrapper.setAttribute('data-topic-id', topicId);
-    wrapper.style.cssText = 'margin-top:' + (existing ? '14px' : '0') + ';padding-top:' + (existing ? '10px' : '0') + ';' + (existing ? 'border-top:1px dashed rgba(128,128,128,0.35);' : '');
-    wrapper.innerHTML = newHtml;
-    pageContent.appendChild(wrapper);
+    pageContent.innerHTML = newHtml; // topic se link karne par yehi is card ka poora content ban jaata hai
     fcfpReattachEraserListeners();
   }
 
   // Persist onto the card (source of truth) + link the card to this topic.
+  //
+  // Jab kisi card ko kisi topic se link kiya jaata hai, card LIVE-LINKED
+  // (reference) state mein chala jaata hai — chahe is card ke paas pehle
+  // apna standalone text ho ya khali ho, dono cases mein ab woh is topic
+  // se sync ho jaata hai: card.extra khali rakha jaata hai (koi duplicate
+  // text nahi), aur render-time par _fcResolveCardExtra() topic library se
+  // live content utha leta hai. Ab is card ke andar (ya kisi bhi doosre
+  // isi-topic-se-linked card ke andar) edit karoge, toh badlaav seedha
+  // topic library mein save hoga aur is topic se linked SABHI cards mein
+  // turant reflect ho jaayega (dekho _fcSaveCardExtraEdit()).
   var ctx = _fcfpCurrentCard();
   if(ctx && ctx.card){
     if(isInlineImport){
-      // Inline (list-mode) import: no facts overlay open, so append the
-      // topic content below whatever extra facts this card already has.
-      var existingExtra = String(ctx.card.extra || '').trim();
-      var sep = existingExtra ? '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed rgba(128,128,128,0.35);"></div>' : '';
-      ctx.card.extra = existingExtra + sep + newHtml;
+      // Inline (list-mode) import: no facts overlay open. Purana text
+      // (agar tha) discard karke ab yeh card is topic se live-linked ho
+      // jaata hai — reference-only, koi duplicate text nahi.
+      ctx.card.extra = '';
     } else {
       var extraBody = document.getElementById('fcExtraBody');
-      var updatedHtml = pageContent ? pageContent.innerHTML : '';
-      if(extraBody) extraBody.innerHTML = updatedHtml;
-      ctx.card.extra = updatedHtml;
+      if(extraBody) extraBody.innerHTML = newHtml;
+      ctx.card.extra = ''; // reference se resolve karo — ab yeh live-linked hai
     }
     ctx.card.extraTopicId = topicId;
     ctx.card.extraTopicName = t.name;
@@ -19231,7 +19318,7 @@ function fcOpenCardEditor(mode){
       '<div style="font-size:0.72rem;font-weight:700;color:var(--text2);margin-bottom:4px;">Jawab</div>'+
       '<textarea id="fcCardEditorA" rows="3" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid var(--border);font-family:inherit;font-size:0.85rem;margin-bottom:10px;resize:vertical;">'+(isEdit?card.a:'')+'</textarea>'+
       '<div style="font-size:0.72rem;font-weight:700;color:var(--text2);margin-bottom:4px;">ℹ️ Extra Jankari <span style="font-weight:400;opacity:0.7;">(optional — answer ke peeche dikhegi)</span></div>'+
-      '<textarea id="fcCardEditorExtra" rows="3" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid var(--border);font-family:inherit;font-size:0.85rem;margin-bottom:14px;resize:vertical;">'+(isEdit&&card.extra?card.extra:'')+'</textarea>'+
+      '<textarea id="fcCardEditorExtra" rows="3" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid var(--border);font-family:inherit;font-size:0.85rem;margin-bottom:14px;resize:vertical;">'+(isEdit&&card?_fcResolveCardExtra(card):'')+'</textarea>'+
       '<div style="display:flex;gap:8px;">'+
         '<button onclick="document.getElementById(\'fcCardEditorOverlay\').remove()" style="flex:1;padding:10px;border-radius:10px;border:1.5px solid var(--border);background:transparent;color:var(--text2);font-weight:700;cursor:pointer;font-size:0.78rem;">Cancel</button>'+
         '<button onclick="fcSaveCardEditor(\''+mode+'\')" style="flex:1;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#1565c0,#1F4E3D);color:#fff;font-weight:800;cursor:pointer;font-size:0.78rem;">Save</button>'+
@@ -19255,7 +19342,11 @@ function fcSaveCardEditor(mode){
     if(!st.queue || st.pos>=st.queue.length) return;
     var card = set.cards[st.queue[st.pos]];
     if(!card) return;
-    card.q = qVal; card.a = aVal; card.extra = extraVal;
+    card.q = qVal; card.a = aVal;
+    // Agar yeh card kisi topic se LIVE-LINKED hai, toh extra-facts edit
+    // topic library mein save hogi (sab linked cards mein turant
+    // reflect hoga). Warna sirf isi card ka apna data update hoga.
+    _fcSaveCardExtraEdit(card, key, set, extraVal);
     showToast('✅ Card update ho gaya','success');
   } else {
     var newCard = { id: 'fc_'+Date.now()+'_'+Math.floor(Math.random()*10000), q: qVal, a: aVal, extra: extraVal };
@@ -29586,8 +29677,9 @@ function msBuildCorpus(){
     set.cards.forEach(function(c){
       if(!c || !c.q) return;
       var text = 'Q: ' + c.q + '\nA: ' + (c.a||'');
-      if(c.extra && String(c.extra).trim()){
-        text += '\nExtra Facts: ' + _msStripHtml(c.extra);
+      var resolvedExtra = _fcResolveCardExtra(c);
+      if(resolvedExtra.trim()){
+        text += '\nExtra Facts: ' + _msStripHtml(resolvedExtra);
       }
       chunks.push({ type:'Flashcard', source: topicLabel + (c.cat?(' — '+c.cat):''), text: text });
     });
@@ -72132,7 +72224,7 @@ function _fcBuildInlineHtml(sid, secid, tid){
   var allAnswersVisible = set.cards.every(function(c){ return topicVisibility[c.id] === true; });
   var hasVisibleQuestions = set.cards.some(function(c){ return topicQVisibility[c.id] === true; });
   var allQuestionsVisible = set.cards.every(function(c){ return topicQVisibility[c.id] === true; });
-  var cardsWithExtra = set.cards.filter(function(c){ return c.extra && String(c.extra).trim(); });
+  var cardsWithExtra = set.cards.filter(function(c){ return _fcResolveCardExtra(c).trim(); });
   var hasVisibleExtras = cardsWithExtra.some(function(c){ return topicExVisibility[c.id] === true; });
   var allExtrasVisible = cardsWithExtra.length > 0 && cardsWithExtra.every(function(c){ return topicExVisibility[c.id] === true; });
 
@@ -72161,7 +72253,7 @@ function _fcBuildInlineHtml(sid, secid, tid){
     var answerButtonLabel = answerVisible ? '🙈 Answer Hide' : '👁 Answer Show';
     var questionVisible = topicQVisibility[c.id] !== false; // default visible
     var questionButtonLabel = questionVisible ? '🙈 Question Hide' : '👁 Question Show';
-    var hasExtra = c.extra && String(c.extra).trim();
+    var hasExtra = _fcResolveCardExtra(c).trim();
     var extraVisible = topicExVisibility[c.id] === true;
     var extraButtonLabel = extraVisible ? '🙈 Extra Hide' : '👁 Extra Show';
     var linkedTopic = !!(c.extraTopicId && S.extraFactsTopics && S.extraFactsTopics[c.extraTopicId]);
@@ -72203,7 +72295,7 @@ function _fcBuildInlineHtml(sid, secid, tid){
         (hasExtra ?
           '<div class="fc-inline-extra" style="'+(extraVisible?'display:block;':'display:none;')+';margin-top:8px;padding-top:8px;border-top:1.5px dashed rgba(163,118,63,0.35);font-size:0.78rem;line-height:1.6;color:#5c4a30;">' +
             '<div style="font-size:0.62rem;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#a3763f;margin-bottom:4px;">ℹ️ Extra Jankari</div>' +
-            c.extra +
+            _fcResolveCardExtra(c) +
           '</div>' : '') +
         '<div style="'+(answerVisible?'display:flex;':'display:none;')+';gap:8px;padding-top:8px;align-items:center;" class="fc-inline-mark">' +
           '<span style="font-size:0.72rem;color:var(--text2);flex-shrink:0;">Kaisa laga?</span>' +
@@ -72358,7 +72450,7 @@ function _fcInlineSetAllEx(sid, secid, tid, visible){
   S.flashcardExtraVisibility = S.flashcardExtraVisibility || {};
   S.flashcardExtraVisibility[key] = {};
   set.cards.forEach(function(c){
-    if(c.extra && String(c.extra).trim()) S.flashcardExtraVisibility[key][c.id] = !!visible;
+    if(_fcResolveCardExtra(c).trim()) S.flashcardExtraVisibility[key][c.id] = !!visible;
   });
   save();
   _fcInlineRenderCurrent();
