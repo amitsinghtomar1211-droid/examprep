@@ -18135,7 +18135,8 @@ function fcfpSendAiQuery(dest){
   fcfpCloseAiDestSheet();
 
   if(dest === 'grok'){
-    // Grok: Word-style formatted deliverable mangao
+    // Grok URL mein lambi query → HTTP 431 (Request Header Too Large).
+    // Isliye: full prompt CLIPBOARD pe copy + clean grok.com open; user paste kare.
     var grokExtra = [
       '',
       '── GROK DELIVERY (STRICT) ──',
@@ -18149,13 +18150,46 @@ function fcfpSendAiQuery(dest){
       'Ab seedha notes do — intro/disclaimer mat likho.'
     ].join('\n');
     var gq = query + grokExtra;
-    if(gq.length > 4000) gq = gq.slice(0, 4000);
-    // grok.com query deep-link (login required if session nahi)
-    var url = 'https://grok.com/?q=' + encodeURIComponent(gq);
-    window.open(url, '_blank', 'noopener');
-    if(typeof showToast === 'function') showToast('✦ Grok AI: "' + topicName + '"','success');
+
+    function _fcfpCopyAndOpenGrok(text){
+      var openGrok = function(){
+        // Clean URL only — no ?q= (avoids HTTP 431)
+        window.open('https://grok.com/', '_blank', 'noopener');
+        if(typeof showToast === 'function'){
+          showToast('✦ Prompt copy ho gaya — Grok mein paste (Ctrl+V / long-press) karo','success');
+        }
+      };
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(openGrok).catch(function(){
+          _fcfpFallbackCopy(text);
+          openGrok();
+        });
+      } else {
+        _fcfpFallbackCopy(text);
+        openGrok();
+      }
+    }
+    function _fcfpFallbackCopy(text){
+      try{
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly','');
+        ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, text.length);
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }catch(e){
+        // Last resort: short prompt dialog so user can still copy manually
+        try{ window.prompt('Grok ke liye prompt copy karo (Ctrl+C):', text.slice(0, 500)); }catch(e2){}
+      }
+    }
+    _fcfpCopyAndOpenGrok(gq);
   } else {
-    var url2 = 'https://www.google.com/search?q=' + encodeURIComponent(query) + '&udm=50';
+    // Google AI mode URL length tolerates more; still soft-cap
+    var gq2 = query.length > 2800 ? query.slice(0, 2800) : query;
+    var url2 = 'https://www.google.com/search?q=' + encodeURIComponent(gq2) + '&udm=50';
     window.open(url2, '_blank', 'noopener');
     if(typeof showToast === 'function') showToast('🔍 Google AI: "' + topicName + '"','success');
   }
