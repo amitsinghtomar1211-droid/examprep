@@ -10281,6 +10281,8 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <button id="fcfpThemeDark" class="fcfp-tool-btn" onclick="fcfpSetTheme('dark')" title="Dark">🌙</button>
     <div class="fcfp-tools-sep"></div>
     <button id="fcfpEditToggleBtn" class="fcfp-tool-btn fcfp-edit-toggle" onclick="fcfpToggleLiveEdit(event)" title="Poora content edit karo — pura page hi editable ho jayega">✎</button>
+    <button class="fcfp-tool-btn" onclick="document.getElementById('fcfpFileInsertInput').click();event.stopPropagation();" title="Word (.docx) ya HTML file insert karo">📎</button>
+    <input type="file" id="fcfpFileInsertInput" accept=".html,.htm,.docx" style="display:none;" onchange="fcfpHandleFileInsert(this)">
     <div class="fcfp-tools-sep"></div>
     <button class="fcfp-tool-btn" onclick="fcfpChangeFontSize(-1)" title="Font chhota karo">A-</button>
     <div class="fcfp-font-label" id="fcfpFontLabel">17</div>
@@ -10343,6 +10345,17 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
 
 <!-- Floating action bar removed — Search/Edit buttons moved to topbar -->
 <div id="fcfpActionBar" style="display:none!important;"></div>
+
+<!-- ══ AI Search destination: Google vs Grok ══ -->
+<div id="fcfpAiDestSheet" onclick="if(event.target===this) fcfpCloseAiDestSheet();" style="display:none;position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.55);align-items:flex-end;justify-content:center;">
+  <div onclick="event.stopPropagation();" style="width:100%;max-width:420px;background:var(--surface,#fff);border-radius:18px 18px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom,0px));box-shadow:0 -8px 30px rgba(0,0,0,0.3);">
+    <div style="font-size:0.92rem;font-weight:900;color:var(--text,#2c2416);margin-bottom:4px;">🤖 AI kahan bhejna hai?</div>
+    <div id="fcfpAiDestTopicLabel" style="font-size:0.74rem;color:var(--text2,#6b5a3f);margin-bottom:14px;line-height:1.5;">Topic select ho chuka hai</div>
+    <button type="button" onclick="fcfpSendAiQuery('google')" style="width:100%;padding:14px 12px;margin-bottom:10px;border-radius:12px;border:1.5px solid rgba(21,101,192,0.3);background:rgba(21,101,192,0.08);color:#1565c0;font-weight:800;font-size:0.88rem;cursor:pointer;font-family:inherit;text-align:left;">🔍 Google Chrome AI<br><span style="font-size:0.7rem;font-weight:600;opacity:0.85;">Google Search AI mode (udm=50)</span></button>
+    <button type="button" onclick="fcfpSendAiQuery('grok')" style="width:100%;padding:14px 12px;margin-bottom:10px;border-radius:12px;border:1.5px solid rgba(0,0,0,0.2);background:rgba(0,0,0,0.06);color:#111;font-weight:800;font-size:0.88rem;cursor:pointer;font-family:inherit;text-align:left;">✦ Grok AI<br><span style="font-size:0.7rem;font-weight:600;opacity:0.85;">Grok.com — login ho to seedha; nahi to login page</span></button>
+    <button type="button" onclick="fcfpCloseAiDestSheet()" style="width:100%;padding:12px;border-radius:12px;border:none;background:var(--surface2,#f4efe4);color:var(--text,#2c2416);font-weight:800;font-size:0.85rem;cursor:pointer;font-family:inherit;">Band Karo</button>
+  </div>
+</div>
 
 <!-- ══ Icon action: Read vs Insert (Facts page left icons) ══ -->
 <div id="fcfpLibActionSheet" onclick="if(event.target===this) fcfpCloseLibActionSheet();" style="display:none;position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.55);align-items:flex-end;justify-content:center;">
@@ -18095,18 +18108,59 @@ function fcfpSearchSelection(e){
   lines.push('Phir EXTRA / REVISION FACTS section upar wale Topic format mein.');
 
   var query = lines.join('\n').trim();
-  // Google AI mode length guard — keep head instructions + topic intact
-  if(query.length > 3200){
-    // trim long extraOwn first by rebuilding shorter
-    query = query.slice(0, 3200);
-  }
+  if(query.length > 3200) query = query.slice(0, 3200);
 
-  var url = 'https://www.google.com/search?q=' + encodeURIComponent(query) + '&udm=50';
-  window.open(url, '_blank', 'noopener');
+  // Store + destination choose (Google AI vs Grok)
+  window._fcfpPendingAiQuery = { query: query, topicName: topicName };
+  var lab = document.getElementById('fcfpAiDestTopicLabel');
+  if(lab) lab.textContent = 'Topic: "' + topicName + '" — kahan bhejna hai?';
+  var sheet = document.getElementById('fcfpAiDestSheet');
+  if(sheet) sheet.style.display = 'flex';
   _fcfpLastRange = null;
-  if(typeof showToast === 'function') showToast('🔎 AI Search open: topic "' + topicName + '"','success');
 }
 
+function fcfpCloseAiDestSheet(){
+  var sheet = document.getElementById('fcfpAiDestSheet');
+  if(sheet) sheet.style.display = 'none';
+}
+
+function fcfpSendAiQuery(dest){
+  var pending = window._fcfpPendingAiQuery;
+  if(!pending || !pending.query){
+    fcfpCloseAiDestSheet();
+    return;
+  }
+  var query = pending.query;
+  var topicName = pending.topicName || '';
+  fcfpCloseAiDestSheet();
+
+  if(dest === 'grok'){
+    // Grok: Word-style formatted deliverable mangao
+    var grokExtra = [
+      '',
+      '── GROK DELIVERY (STRICT) ──',
+      'Upar wale Revision Notes ko ek PROFESSIONAL Word-document style layout mein taiyar karo:',
+      '• Clear Title (topic) + Subheadings (H1/H2 style hierarchy)',
+      '• Bullet lists, short lines, ⭐/🔥/⚠️ markers preserved',
+      '• Clean visual hierarchy — headings bold, sections spaced, no wall-of-text',
+      '• Soft structured layout (exam-revision sheet look) — memorize-friendly order',
+      '• Agar platform allow kare to downloadable .docx / Word file ke roop mein do; warna copy-paste ready rich formatted text do jo Word mein paste karke perfect dikhe.',
+      '• Still HARD CAP: total content 150–250 words only.',
+      'Ab seedha notes do — intro/disclaimer mat likho.'
+    ].join('\n');
+    var gq = query + grokExtra;
+    if(gq.length > 4000) gq = gq.slice(0, 4000);
+    // grok.com query deep-link (login required if session nahi)
+    var url = 'https://grok.com/?q=' + encodeURIComponent(gq);
+    window.open(url, '_blank', 'noopener');
+    if(typeof showToast === 'function') showToast('✦ Grok AI: "' + topicName + '"','success');
+  } else {
+    var url2 = 'https://www.google.com/search?q=' + encodeURIComponent(query) + '&udm=50';
+    window.open(url2, '_blank', 'noopener');
+    if(typeof showToast === 'function') showToast('🔍 Google AI: "' + topicName + '"','success');
+  }
+  window._fcfpPendingAiQuery = null;
+}
 
 
 function _fcfpSelectedText(){
@@ -19593,6 +19647,134 @@ function fcfpUpdateAllLibBadges(){
 }
 
 // ── Similar Current dropdown (reuses same modal UI as extra, different lib) ──
+
+// ── Facts page: Word (.docx) / HTML file insert into active tab ──
+async function fcfpHandleFileInsert(input){
+  if(!input || !input.files || !input.files[0]) return;
+  var file = input.files[0];
+  var name = (file.name || '').toLowerCase();
+  var isDocx = name.endsWith('.docx');
+  var isHtml = name.endsWith('.html') || name.endsWith('.htm');
+  if(!isDocx && !isHtml){
+    if(typeof showToast==='function') showToast('Sirf .docx / .html support','error');
+    input.value = '';
+    return;
+  }
+  try{
+    var htmlContent = '';
+    if(isHtml){
+      htmlContent = await new Promise(function(resolve, reject){
+        var r = new FileReader();
+        r.onload = function(){ resolve(String(r.result||'')); };
+        r.onerror = reject;
+        r.readAsText(file);
+      });
+      // body extract if full document
+      try{
+        var m = htmlContent.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+        if(m) htmlContent = m[1];
+      }catch(e){}
+    } else {
+      if(typeof mammoth === 'undefined'){
+        if(typeof showToast==='function') showToast('Word reader load nahi hua','error');
+        input.value = '';
+        return;
+      }
+      var buf = await file.arrayBuffer();
+      var result = await mammoth.convertToHtml({arrayBuffer: buf});
+      htmlContent = result.value || '';
+    }
+    if(typeof _fcfpStripBg === 'function'){
+      try{
+        var tmp = document.createElement('div');
+        tmp.innerHTML = htmlContent;
+        _fcfpStripBg(tmp);
+        htmlContent = tmp.innerHTML;
+      }catch(e){}
+    }
+    // Insert into page content
+    var pageContent = document.getElementById('fcFactsPageContent');
+    if(!pageContent){
+      input.value = '';
+      return;
+    }
+    if(typeof fcfpSaveSnapshot === 'function') fcfpSaveSnapshot();
+    // Append to existing if any
+    var existing = (pageContent.innerHTML || '').trim();
+    pageContent.innerHTML = existing ? (existing + '<hr style="margin:12px 0;opacity:0.3;">' + htmlContent) : htmlContent;
+
+    var tab = (typeof _fcfpActiveTab !== 'undefined') ? _fcfpActiveTab : 'extra';
+    if(tab === 'extra'){
+      // Card ke saath save
+      if(typeof fcfpPersistActiveTabContent === 'function') fcfpPersistActiveTabContent();
+      if(typeof showToast==='function') showToast('✅ Extra Facts mein file add + card save','success');
+    } else {
+      // Static GK / Similar Current → hub library mein save + card pe sirf reference
+      await fcfpSaveInsertedFileToHub(htmlContent, file.name);
+    }
+  }catch(err){
+    console.warn('fcfpHandleFileInsert', err);
+    if(typeof showToast==='function') showToast('File insert fail','error');
+  }
+  input.value = '';
+}
+
+async function fcfpSaveInsertedFileToHub(htmlContent, fileName){
+  var tab = (typeof _fcfpActiveTab !== 'undefined') ? _fcfpActiveTab : 'similar';
+  var isStatic = (tab === 'static');
+  var defaultName = (fileName || 'Topic').replace(/\.(docx|html?|htm)$/i,'').trim() || 'New Topic';
+  var topicName = window.prompt(
+    isStatic
+      ? '📚 Static GK hub mein save — topic naam:'
+      : '📰 Current Affairs hub mein save — topic naam:',
+    defaultName
+  );
+  if(topicName === null){
+    // user cancel — content page pe dikhega but hub save nahi; local tab field pe rakho
+    if(typeof fcfpPersistActiveTabContent === 'function') fcfpPersistActiveTabContent();
+    if(typeof showToast==='function') showToast('Hub save cancel — content tab mein rakha','info');
+    return;
+  }
+  topicName = (topicName || '').trim() || defaultName;
+
+  var ctx = (typeof fcfpGetActiveCardCtx === 'function') ? fcfpGetActiveCardCtx() : null;
+  var card = ctx && ctx.card;
+
+  if(isStatic){
+    if(typeof fcfpSaveGenericTopicToLibrary === 'function'){
+      var id = fcfpSaveGenericTopicToLibrary('staticGkTopics', topicName, htmlContent);
+      if(card && id){
+        card.staticGkTopicId = id;
+        card.staticGkTopicName = topicName;
+        // Size control: full HTML card pe mat rakho jab hub linked ho
+        card.staticGk = '';
+        save();
+        if(ctx.key && ctx.set && typeof _fcSyncFlashcardSetToFirebase === 'function')
+          _fcSyncFlashcardSetToFirebase(ctx.key, ctx.set);
+      }
+      if(typeof showToast==='function') showToast('📚 Static GK hub + reference link','success');
+    }
+  } else {
+    // Similar Current → extraFactsTopics (Current Affairs hub)
+    if(typeof fcfpSaveTopicToLibrary === 'function'){
+      var id2 = fcfpSaveTopicToLibrary(topicName, htmlContent);
+      if(card && id2){
+        card.similarCurrentTopicId = id2;
+        card.similarCurrentTopicName = topicName;
+        card.extraTopicId = id2; // compat
+        card.extraTopicName = topicName;
+        card.similarCurrent = '';
+        save();
+        if(ctx.key && ctx.set && typeof _fcSyncFlashcardSetToFirebase === 'function')
+          _fcSyncFlashcardSetToFirebase(ctx.key, ctx.set);
+      }
+      if(typeof showToast==='function') showToast('📰 Current Affairs hub + reference link','success');
+    }
+  }
+  if(typeof fcfpUpdateSaveTopicBtn === 'function') fcfpUpdateSaveTopicBtn();
+  if(typeof fcfpUpdateTopicLibBtn === 'function') fcfpUpdateTopicLibBtn();
+}
+
 function fcfpOpenSimilarDropdown(e){
   if(e) e.stopPropagation();
   // Similar Current uses the EXISTING Extra Facts Topics library (Havoc)
