@@ -25,6 +25,8 @@
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <!-- Mammoth.js for Word (.docx) file reading -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<!-- PeerJS for Remote Keyboard / Cursor (same Wi-Fi, no second login) -->
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/11.6.0/firebase-app-compat.js"></script>
@@ -6372,6 +6374,39 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
 </div><!-- /creator-overlay -->
 
 <!-- LOGIN SCREEN -->
+<script>
+(function(){
+  try{
+    var p = new URLSearchParams(location.search||'');
+    var h = (location.hash||'').replace(/^#/, '');
+    window.__EPP_REMOTE_ONLY = (p.get('remote')==='1' || p.get('mode')==='remote' || h==='remote');
+  }catch(e){ window.__EPP_REMOTE_ONLY = false; }
+})();
+</script>
+<div id="eppRemoteRoot" style="display:none;position:fixed;inset:0;z-index:100000;background:linear-gradient(160deg,#0a1628,#1565c0);color:#fff;font-family:system-ui,sans-serif;flex-direction:column;">
+  <div style="padding:16px 18px 8px;">
+    <div style="font-size:1.1rem;font-weight:900;">🎮 Remote Control</div>
+    <div style="font-size:0.75rem;opacity:0.85;margin-top:4px;line-height:1.45;">Login ki zaroorat nahi. Main device ka code daalo — keyboard + cursor wahan control hoga.</div>
+  </div>
+  <div style="padding:8px 18px 12px;">
+    <label style="font-size:0.72rem;opacity:0.9;">Main device ka Code</label>
+    <input id="eppRemoteCodeInp" type="text" autocomplete="off" autocapitalize="off" placeholder="e.g. abc12xyz" style="width:100%;margin-top:6px;padding:12px 14px;border-radius:12px;border:none;font-size:1rem;font-weight:700;box-sizing:border-box;letter-spacing:0.04em;">
+    <button type="button" id="eppRemoteConnectBtn" style="width:100%;margin-top:10px;padding:13px;border:none;border-radius:12px;background:#fff;color:#0d47a1;font-weight:900;font-size:0.95rem;cursor:pointer;">🔗 Connect</button>
+    <div id="eppRemoteStatus" style="margin-top:10px;font-size:0.78rem;min-height:1.2em;opacity:0.95;">Disconnected</div>
+  </div>
+  <div id="eppRemotePad" style="flex:1;margin:8px 14px 14px;border-radius:18px;background:rgba(255,255,255,0.12);border:1.5px solid rgba(255,255,255,0.25);position:relative;touch-action:none;overflow:hidden;display:none;">
+    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:0.5;font-size:0.85rem;text-align:center;padding:20px;">👆 Yahan finger se cursor move karo<br>Tap = click</div>
+  </div>
+  <div id="eppRemoteTypeWrap" style="padding:0 14px 18px;display:none;">
+    <input id="eppRemoteTypeInp" type="text" placeholder="Yahan type karo…" style="width:100%;padding:14px;border-radius:12px;border:none;font-size:1.05rem;box-sizing:border-box;">
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button type="button" data-rk="Enter" class="epp-rk" style="flex:1;padding:12px;border-radius:10px;border:none;background:rgba(255,255,255,0.2);color:#fff;font-weight:800;">Enter</button>
+      <button type="button" data-rk="Backspace" class="epp-rk" style="flex:1;padding:12px;border-radius:10px;border:none;background:rgba(255,255,255,0.2);color:#fff;font-weight:800;">⌫</button>
+      <button type="button" data-rk="ArrowLeft" class="epp-rk" style="padding:12px 14px;border-radius:10px;border:none;background:rgba(255,255,255,0.2);color:#fff;font-weight:800;">←</button>
+      <button type="button" data-rk="ArrowRight" class="epp-rk" style="padding:12px 14px;border-radius:10px;border:none;background:rgba(255,255,255,0.2);color:#fff;font-weight:800;">→</button>
+    </div>
+  </div>
+</div>
 <div class="login-screen" id="loginScreen">
   <div class="login-box" id="loginBox" style="position:relative;overflow-y:auto;max-height:96vh;">
     <button onclick="_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();_devConsoleTap();" title="Debug Console" style="position:absolute;top:10px;right:10px;background:transparent;border:none;font-size:0.8rem;cursor:pointer;color:rgba(128,128,128,0.22);padding:4px;z-index:1;">🐛</button>
@@ -7472,6 +7507,24 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
         </div>
       </div>
       <!-- PWA INSTALL CARD -->
+      <div class="card" id="eppRemoteHostCard">
+        <div class="card-title">🎮 Remote Keyboard / Cursor</div>
+        <div style="font-size:0.78rem;color:var(--text2);line-height:1.55;margin-bottom:10px;">
+          Doosri device <b>bina login</b> ke remote ban sakti hai (same Wi‑Fi best).<br>
+          Remote URL: <code style="font-size:0.72rem;word-break:break-all;" id="eppRemoteUrlHint">…/?remote=1</code>
+        </div>
+        <div id="eppHostIdle">
+          <button class="btn btn-primary" style="width:100%;" onclick="eppHostStart()">▶ Remote Session Start</button>
+        </div>
+        <div id="eppHostActive" style="display:none;">
+          <div style="text-align:center;padding:12px;background:var(--surface2);border-radius:12px;margin-bottom:10px;">
+            <div style="font-size:0.72rem;color:var(--text2);">Doosri device pe yeh code daalo</div>
+            <div id="eppHostCode" style="font-size:1.6rem;font-weight:900;letter-spacing:0.08em;margin:6px 0;color:var(--accent);">———</div>
+            <div id="eppHostStatus" style="font-size:0.75rem;color:var(--text2);">Waiting…</div>
+          </div>
+          <button class="btn btn-outline" style="width:100%;" onclick="eppHostStop()">⏹ Session Band Karo</button>
+        </div>
+      </div>
       <div class="card" id="pwaSettingsCard">
         <div class="card-title">📱 App Install Karo (Free)</div>
         <div id="pwaInstallArea">
@@ -31527,6 +31580,273 @@ function injectManifest(){
   link.href = url;
 }
 
+
+// ═══════════════════════════════════════════════════════════
+// REMOTE KEYBOARD + CURSOR (PeerJS) — no second login
+// Main device: Settings → Remote Session Start
+// Other device: same deployed URL + ?remote=1  (no Git extra deploy)
+// ═══════════════════════════════════════════════════════════
+var _eppHostPeer = null, _eppHostConn = null;
+var _eppRemotePeer = null, _eppRemoteConn = null;
+var _eppCursor = null;
+var _eppLastPtr = {x: 0.5, y: 0.5};
+
+function eppEnsureCursor(){
+  if(_eppCursor && document.body.contains(_eppCursor)) return _eppCursor;
+  var el = document.createElement('div');
+  el.id = 'eppVirtualCursor';
+  el.style.cssText = 'position:fixed;width:18px;height:18px;margin-left:-9px;margin-top:-9px;border-radius:50%;border:2px solid #fff;background:rgba(21,101,192,0.85);box-shadow:0 0 0 2px rgba(21,101,192,0.35),0 2px 10px rgba(0,0,0,0.35);z-index:2147483646;pointer-events:none;display:none;left:50%;top:50%;transition:left 0.03s linear,top 0.03s linear;';
+  document.body.appendChild(el);
+  _eppCursor = el;
+  return el;
+}
+
+function eppHostStart(){
+  if(typeof Peer === 'undefined'){
+    if(typeof showToast==='function') showToast('PeerJS load nahi hua — net check karo','error');
+    return;
+  }
+  eppHostStop(true);
+  var peer = new Peer({ debug: 1 });
+  _eppHostPeer = peer;
+  document.getElementById('eppHostIdle').style.display = 'none';
+  document.getElementById('eppHostActive').style.display = '';
+  document.getElementById('eppHostStatus').textContent = 'Connecting…';
+  peer.on('open', function(id){
+    document.getElementById('eppHostCode').textContent = id;
+    document.getElementById('eppHostStatus').textContent = 'Waiting for remote…';
+    try{
+      var u = location.origin + location.pathname + '?remote=1';
+      var h = document.getElementById('eppRemoteUrlHint');
+      if(h) h.textContent = u;
+    }catch(e){}
+    if(typeof showToast==='function') showToast('🎮 Remote code ready','success');
+  });
+  peer.on('connection', function(conn){
+    _eppHostConn = conn;
+    document.getElementById('eppHostStatus').textContent = '✅ Remote connected';
+    eppEnsureCursor().style.display = 'block';
+    conn.on('data', function(msg){ eppHostOnData(msg); });
+    conn.on('close', function(){
+      document.getElementById('eppHostStatus').textContent = 'Remote disconnected';
+      if(_eppCursor) _eppCursor.style.display = 'none';
+    });
+  });
+  peer.on('error', function(err){
+    document.getElementById('eppHostStatus').textContent = 'Error: ' + (err && err.type || err);
+    if(typeof showToast==='function') showToast('Remote error: '+(err&&err.type||''),'error');
+  });
+}
+
+function eppHostStop(silent){
+  try{ if(_eppHostConn) _eppHostConn.close(); }catch(e){}
+  try{ if(_eppHostPeer) _eppHostPeer.destroy(); }catch(e){}
+  _eppHostConn = null; _eppHostPeer = null;
+  if(_eppCursor) _eppCursor.style.display = 'none';
+  var idle = document.getElementById('eppHostIdle');
+  var act = document.getElementById('eppHostActive');
+  if(idle) idle.style.display = '';
+  if(act) act.style.display = 'none';
+  if(!silent && typeof showToast==='function') showToast('Remote session band','info');
+}
+
+function eppHostOnData(msg){
+  if(!msg || !msg.t) return;
+  if(msg.t === 'ptr'){
+    var x = (msg.x||0) * window.innerWidth;
+    var y = (msg.y||0) * window.innerHeight;
+    _eppLastPtr = {x: msg.x||0, y: msg.y||0};
+    var c = eppEnsureCursor();
+    c.style.display = 'block';
+    c.style.left = x + 'px';
+    c.style.top = y + 'px';
+  } else if(msg.t === 'click'){
+    var x2 = (msg.x!=null?msg.x:_eppLastPtr.x) * window.innerWidth;
+    var y2 = (msg.y!=null?msg.y:_eppLastPtr.y) * window.innerHeight;
+    var el = document.elementFromPoint(x2, y2);
+    if(el){
+      try{ el.focus(); }catch(e){}
+      try{
+        el.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, clientX:x2, clientY:y2, view:window}));
+      }catch(e){}
+      // caret place for contenteditable
+      try{
+        if(el.isContentEditable || (el.closest && el.closest('[contenteditable="true"]'))){
+          var ce = el.isContentEditable ? el : el.closest('[contenteditable="true"]');
+          var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x2, y2) : null;
+          if(range){
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        }
+      }catch(e){}
+    }
+  } else if(msg.t === 'text'){
+    eppInsertText(msg.v || '');
+  } else if(msg.t === 'key'){
+    eppHandleRemoteKey(msg.key, msg.mod||{});
+  }
+}
+
+function eppInsertText(text){
+  if(!text) return;
+  var el = document.activeElement;
+  if(el && (el.tagName==='INPUT' || el.tagName==='TEXTAREA')){
+    var start = el.selectionStart||0, end = el.selectionEnd||0;
+    var v = el.value || '';
+    el.value = v.slice(0,start) + text + v.slice(end);
+    el.selectionStart = el.selectionEnd = start + text.length;
+    el.dispatchEvent(new Event('input', {bubbles:true}));
+    return;
+  }
+  var ce = el && el.isContentEditable ? el : (el && el.closest && el.closest('[contenteditable="true"]'));
+  if(ce){
+    try{
+      document.execCommand('insertText', false, text);
+    }catch(e){
+      ce.textContent = (ce.textContent||'') + text;
+    }
+    return;
+  }
+  // fallback: focus facts/notes editor if open
+  var note = document.getElementById('noteEditableArea') || document.getElementById('fcFactsPageContent');
+  if(note){
+    try{ note.focus(); document.execCommand('insertText', false, text); }catch(e){}
+  }
+}
+
+function eppHandleRemoteKey(key, mod){
+  var el = document.activeElement;
+  if(key === 'Backspace'){
+    if(el && (el.tagName==='INPUT'||el.tagName==='TEXTAREA')){
+      var s=el.selectionStart||0, e=el.selectionEnd||0, v=el.value||'';
+      if(s!==e){ el.value=v.slice(0,s)+v.slice(e); el.selectionStart=el.selectionEnd=s; }
+      else if(s>0){ el.value=v.slice(0,s-1)+v.slice(s); el.selectionStart=el.selectionEnd=s-1; }
+      el.dispatchEvent(new Event('input',{bubbles:true}));
+      return;
+    }
+    try{ document.execCommand('delete'); }catch(err){}
+    return;
+  }
+  if(key === 'Enter'){
+    eppInsertText('\n');
+    return;
+  }
+  if(key === 'ArrowLeft' || key === 'ArrowRight'){
+    if(el && (el.tagName==='INPUT'||el.tagName==='TEXTAREA')){
+      var pos = el.selectionStart||0;
+      pos = key==='ArrowLeft' ? Math.max(0,pos- mon1) : Math.min((el.value||'').length, pos+1);
+      // fix typo below
+    }
+  }
+  // arrows for inputs
+  if(el && (el.tagName==='INPUT'||el.tagName==='TEXTAREA')){
+    if(key==='ArrowLeft'||key==='ArrowRight'){
+      var p = el.selectionStart||0;
+      p = key==='ArrowLeft' ? Math.max(0,p-1) : Math.min((el.value||'').length, p+1);
+      el.selectionStart = el.selectionEnd = p;
+    }
+  }
+}
+
+// fix accidental typo injection - rewrite eppHandleRemoteKey cleanly in a second pass if needed
+
+function eppRemoteBoot(){
+  var root = document.getElementById('eppRemoteRoot');
+  var ls = document.getElementById('loginScreen');
+  if(ls) ls.style.display = 'none';
+  if(root){ root.style.display = 'flex'; }
+  document.body.style.overflow = 'hidden';
+  // hide main chrome if present
+  try{
+    var sb=document.getElementById('sidebar'); if(sb) sb.style.display='none';
+    var tb=document.querySelector('.topbar'); if(tb) tb.style.display='none';
+  }catch(e){}
+
+  var btn = document.getElementById('eppRemoteConnectBtn');
+  if(btn) btn.onclick = eppRemoteConnect;
+  var typeInp = document.getElementById('eppRemoteTypeInp');
+  if(typeInp){
+    typeInp.addEventListener('input', function(){
+      var v = typeInp.value;
+      if(!v || !_eppRemoteConn || !_eppRemoteConn.open) return;
+      _eppRemoteConn.send({t:'text', v:v});
+      typeInp.value = '';
+    });
+  }
+  document.querySelectorAll('.epp-rk').forEach(function(b){
+    b.onclick = function(){
+      if(!_eppRemoteConn || !_eppRemoteConn.open) return;
+      _eppRemoteConn.send({t:'key', key: b.getAttribute('data-rk')});
+    };
+  });
+  var pad = document.getElementById('eppRemotePad');
+  if(pad){
+    var sendPtr = function(ev, click){
+      if(!_eppRemoteConn || !_eppRemoteConn.open) return;
+      var rect = pad.getBoundingClientRect();
+      var t = (ev.touches && ev.touches[0]) || (ev.changedTouches && ev.changedTouches[0]) || ev;
+      var x = (t.clientX - rect.left) / Math.max(1, rect.width);
+      var y = (t.clientY - rect.top) / Math.max(1, rect.height);
+      x = Math.max(0, Math.min(1, x));
+      y = Math.max(0, Math.min(1, y));
+      if(click) _eppRemoteConn.send({t:'click', x:x, y:y});
+      else _eppRemoteConn.send({t:'ptr', x:x, y:y});
+    };
+    pad.addEventListener('touchstart', function(e){ e.preventDefault(); sendPtr(e,false); }, {passive:false});
+    pad.addEventListener('touchmove', function(e){ e.preventDefault(); sendPtr(e,false); }, {passive:false});
+    pad.addEventListener('touchend', function(e){ e.preventDefault(); sendPtr(e,true); }, {passive:false});
+    pad.addEventListener('mousedown', function(e){ sendPtr(e,false); });
+    pad.addEventListener('mousemove', function(e){ if(e.buttons===1) sendPtr(e,false); });
+    pad.addEventListener('mouseup', function(e){ sendPtr(e,true); });
+  }
+}
+
+function eppRemoteConnect(){
+  if(typeof Peer === 'undefined'){
+    document.getElementById('eppRemoteStatus').textContent = 'PeerJS load fail — net check karo';
+    return;
+  }
+  var code = (document.getElementById('eppRemoteCodeInp').value||'').trim();
+  if(!code){
+    document.getElementById('eppRemoteStatus').textContent = 'Code daalo';
+    return;
+  }
+  document.getElementById('eppRemoteStatus').textContent = 'Connecting…';
+  try{ if(_eppRemotePeer) _eppRemotePeer.destroy(); }catch(e){}
+  var peer = new Peer({ debug: 1 });
+  _eppRemotePeer = peer;
+  peer.on('open', function(){
+    var conn = peer.connect(code, { reliable: true });
+    _eppRemoteConn = conn;
+    conn.on('open', function(){
+      document.getElementById('eppRemoteStatus').textContent = '✅ Connected';
+      document.getElementById('eppRemotePad').style.display = '';
+      document.getElementById('eppRemoteTypeWrap').style.display = '';
+    });
+    conn.on('close', function(){
+      document.getElementById('eppRemoteStatus').textContent = 'Disconnected';
+    });
+    conn.on('error', function(err){
+      document.getElementById('eppRemoteStatus').textContent = 'Conn error';
+    });
+  });
+  peer.on('error', function(err){
+    document.getElementById('eppRemoteStatus').textContent = 'Error: ' + (err && err.type || '');
+  });
+}
+
+// Auto-boot remote UI
+if(window.__EPP_REMOTE_ONLY){
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', function(){ setTimeout(eppRemoteBoot, 50); });
+  } else {
+    setTimeout(eppRemoteBoot, 50);
+  }
+}
+
+
 // ==================== ANDROID BACK NAVIGATION ====================
 window.addEventListener('popstate',function(e){
   // Agar button se band kiya tha to yeh history.back() ka popstate hai — ignore karo
@@ -31862,6 +32182,10 @@ function _showKeyGateErr(msg){ showLoginError(msg); }
 
 // ── Login screen show/hide ──
 function showLoginScreen(){
+  if(window.__EPP_REMOTE_ONLY){
+    try{ if(typeof eppRemoteBoot === 'function') eppRemoteBoot(); }catch(e){}
+    return;
+  }
   const ls = document.getElementById('loginScreen');
   if(ls) ls.style.display = 'flex';
   switchAuthTab('login');
