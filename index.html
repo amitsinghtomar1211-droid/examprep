@@ -10319,8 +10319,8 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
 
   <!-- ══ FCFP LEFT SIDE: Topic Library icon (always visible) + Highlight icon; color dots + eraser appear when highlight is ON ══ -->
   <div id="fcfpSideLeft">
-    <button id="fcfpTopicLibBtn" class="fcfp-side-btn" onclick="fcfpOpenTopicDropdown(event);event.stopPropagation();" title="Similar Current — Extra Facts Topics se insert">📂</button>
-    <button id="fcfpStaticLibBtn" class="fcfp-side-btn" onclick="fcfpOpenStaticDropdown(event);event.stopPropagation();" title="Static GK Topics se insert">📚</button>
+    <button id="fcfpTopicLibBtn" class="fcfp-side-btn" onclick="fcfpOpenLibActionSheet('similar',event);event.stopPropagation();" title="Current Affairs — Read ya Insert">📂</button>
+    <button id="fcfpStaticLibBtn" class="fcfp-side-btn" onclick="fcfpOpenLibActionSheet('static',event);event.stopPropagation();" title="Static GK — Read ya Insert">📚</button>
     <button id="fcfpHlBtn" class="fcfp-side-btn" onclick="fcfpToggleHl();event.stopPropagation();" title="Highlight ON/OFF toggle">🖊</button>
     <button id="fcfpEsBtn" class="fcfp-side-btn" onclick="fcfpToggleEraser();event.stopPropagation();" title="Eraser — highlight hatao">🧹</button>
     <div id="fcfpDotY"  class="fcfp-color-dot fcfp-dot-sel" onclick="fcfpSelectColor('yellow');event.stopPropagation();" style="background:#ffe000;" title="Yellow"></div>
@@ -10343,6 +10343,17 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
 
 <!-- Floating action bar removed — Search/Edit buttons moved to topbar -->
 <div id="fcfpActionBar" style="display:none!important;"></div>
+
+<!-- ══ Icon action: Read vs Insert (Facts page left icons) ══ -->
+<div id="fcfpLibActionSheet" onclick="if(event.target===this) fcfpCloseLibActionSheet();" style="display:none;position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.55);align-items:flex-end;justify-content:center;">
+  <div onclick="event.stopPropagation();" style="width:100%;max-width:420px;background:var(--surface,#fff);border-radius:18px 18px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom,0px));box-shadow:0 -8px 30px rgba(0,0,0,0.3);">
+    <div id="fcfpLibActionTitle" style="font-size:0.92rem;font-weight:900;color:var(--text,#2c2416);margin-bottom:4px;">📂 Topics</div>
+    <div id="fcfpLibActionHint" style="font-size:0.74rem;color:var(--text2,#6b5a3f);margin-bottom:14px;line-height:1.5;">Kya karna chahte ho?</div>
+    <button type="button" onclick="fcfpLibActionChoose('read')" style="width:100%;padding:14px 12px;margin-bottom:10px;border-radius:12px;border:1.5px solid rgba(21,101,192,0.3);background:rgba(21,101,192,0.08);color:#1565c0;font-weight:800;font-size:0.88rem;cursor:pointer;font-family:inherit;text-align:left;">📖 Read Topics<br><span style="font-size:0.7rem;font-weight:600;opacity:0.85;">Library se padho / edit karo — play mode chalta rahega</span></button>
+    <button type="button" onclick="fcfpLibActionChoose('insert')" style="width:100%;padding:14px 12px;margin-bottom:10px;border-radius:12px;border:1.5px solid rgba(46,125,50,0.3);background:rgba(46,125,50,0.08);color:#2e7d32;font-weight:800;font-size:0.88rem;cursor:pointer;font-family:inherit;text-align:left;">📎 Insert Topic<br><span style="font-size:0.7rem;font-weight:600;opacity:0.85;">Is card ke active tab mein topic link / daalo</span></button>
+    <button type="button" onclick="fcfpCloseLibActionSheet()" style="width:100%;padding:12px;border-radius:12px;border:none;background:var(--surface2,#f4efe4);color:var(--text,#2c2416);font-weight:800;font-size:0.85rem;cursor:pointer;font-family:inherit;">Band Karo</button>
+  </div>
+</div>
 
 <!-- ══ FCFP TOPIC LIBRARY: small dropdown panel, opened from the 📂 left-side icon ══ -->
 <div id="fcfpTopicDropdown" onclick="if(event.target===this) fcfpCloseTopicDropdown(true);">
@@ -19577,11 +19588,68 @@ function _fcfpFillTopicDropdownList(topics){
     list.innerHTML = '<div class="fcfp-topic-dd-empty">Abhi koi topic nahi. Havoc menu se naya topic banao.</div>';
     return;
   }
+  var isRead = (typeof _fcfpLibAction !== 'undefined' && _fcfpLibAction === 'read');
   list.innerHTML = ids.map(function(id){
     var t = topics[id];
     var meta = (t.html||'').replace(/<[^>]+>/g,'').trim().length;
-    return '<div class="fcfp-topic-dd-item" onclick="fcfpOpenTopicPreviewFromMode(\''+id+'\')"><span>'+_fcEsc(t.name)+'</span><span class="fcfp-topic-dd-item-meta">'+meta+' chars</span></div>';
+    var click = isRead
+      ? ('fcfpReadTopicFromFacts(\''+id+'\')')
+      : ('fcfpOpenTopicPreviewFromMode(\''+id+'\')');
+    return '<div class="fcfp-topic-dd-item" onclick="'+click+'"><span>'+_fcEsc(t.name)+'</span><span class="fcfp-topic-dd-item-meta">'+(isRead?'📖 ':'')+meta+' chars</span></div>';
   }).join('');
+}
+
+// ── Facts-page icon: Read vs Insert ────────────────────────────────
+var _fcfpLibAction = 'insert'; // 'insert' | 'read'
+var _fcfpReturnToFactsAfterHubRead = false;
+
+function fcfpOpenLibActionSheet(mode, e){
+  if(e) e.stopPropagation();
+  _fcfpLibMode = (mode === 'static') ? 'static' : 'similar';
+  var sheet = document.getElementById('fcfpLibActionSheet');
+  var title = document.getElementById('fcfpLibActionTitle');
+  var hint = document.getElementById('fcfpLibActionHint');
+  if(title) title.textContent = _fcfpLibMode === 'static' ? '📚 Static GK Topics' : '📰 Current Affairs Topics';
+  if(hint) hint.textContent = 'Play mode band kiye bina padho, ya is card mein insert karo.';
+  if(sheet) sheet.style.display = 'flex';
+}
+function fcfpCloseLibActionSheet(){
+  var sheet = document.getElementById('fcfpLibActionSheet');
+  if(sheet) sheet.style.display = 'none';
+}
+function fcfpLibActionChoose(action){
+  _fcfpLibAction = action === 'read' ? 'read' : 'insert';
+  fcfpCloseLibActionSheet();
+  if(_fcfpLibMode === 'static'){
+    if(typeof fcfpOpenStaticDropdown === 'function') fcfpOpenStaticDropdown();
+  } else {
+    if(typeof fcfpOpenTopicDropdown === 'function') fcfpOpenTopicDropdown();
+  }
+  var dd = document.getElementById('fcfpTopicDropdown');
+  var title = dd && dd.querySelector('.fcfp-topic-dd-title');
+  var hint = dd && dd.querySelector('.fcfp-topic-dd-hint');
+  if(_fcfpLibAction === 'read'){
+    if(title) title.textContent = (_fcfpLibMode==='static'?'📚 Static GK':'📰 Current Affairs') + ' — Read';
+    if(hint) hint.textContent = 'Topic chuno → Full Reading Mode. Band karne par wapas isi Facts page / play mode par aaoge.';
+  } else {
+    if(title) title.textContent = (_fcfpLibMode==='static'?'📚 Static GK':'📰 Current Affairs') + ' — Insert';
+    if(hint) hint.textContent = 'Topic chuno → is card ke tab mein insert / link hoga.';
+  }
+  // Re-fill so item clicks match mode
+  var topics = _fcfpLibMode === 'static' ? (S.staticGkTopics||{}) : (S.extraFactsTopics||{});
+  _fcfpFillTopicDropdownList(topics);
+}
+
+function fcfpReadTopicFromFacts(topicId){
+  if(typeof fcfpCloseTopicDropdown === 'function') fcfpCloseTopicDropdown();
+  _fcfpReturnToFactsAfterHubRead = true;
+  if(_fcfpLibMode === 'static'){
+    if(typeof sgkOpenFullReading === 'function') sgkOpenFullReading(topicId);
+    else if(typeof showToast==='function') showToast('Static GK reader nahi mila','error');
+  } else {
+    if(typeof eftOpenFullReading === 'function') eftOpenFullReading(topicId);
+    else if(typeof showToast==='function') showToast('Current Affairs reader nahi mila','error');
+  }
 }
 
 // Wrap original open so mode resets to extra
@@ -22713,7 +22781,23 @@ function _forceCloseEditor() {
   }
   var _flashEditorModal = document.getElementById('notesEditorModalEl');
   if(_flashEditorModal) _flashEditorModal.classList.remove('fc-notes-flashcards');
-  document.body.style.overflow = '';
+
+  // Facts page se hub topic Read Mode: wapas Facts page, play mode intact
+  if(typeof _fcfpReturnToFactsAfterHubRead !== 'undefined' && _fcfpReturnToFactsAfterHubRead){
+    _fcfpReturnToFactsAfterHubRead = false;
+    var factsPage = document.getElementById('fcFactsPage');
+    if(factsPage){
+      factsPage.classList.add('active');
+      if(typeof _fcFactsPageOpen !== 'undefined') _fcFactsPageOpen = true;
+      document.body.style.overflow = 'hidden';
+      try{ if(typeof fcfpRenderActiveTabContent === 'function') fcfpRenderActiveTabContent(); }catch(e){}
+    } else {
+      document.body.style.overflow = '';
+    }
+    try{ if(_editorState) _editorState.specialType = null; }catch(e){}
+  } else {
+    document.body.style.overflow = '';
+  }
   
   // Study Canvas bhi band karo
   scOnEditorClose();
