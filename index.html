@@ -17679,6 +17679,205 @@ function hlUnwrapMarksIntersectingRange(range, root){
 }
 
 
+
+/* Partial recolor: selection ke andar ke marks ko split karke
+   SIRF selected portion ko naya colour do; baaki purana colour rehne do. */
+function hlApplyPartialRecolor(range, root, colorClass, extraStyle){
+  if(!range || !root || range.collapsed) return {changed:false, created:[]};
+  var created = [];
+  var changed = false;
+
+  // 1) Text nodes that intersect the selection
+  var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: function(node){
+      if(!node.nodeValue) return NodeFilter.FILTER_REJECT;
+      // Skip sticker/date chrome text
+      var p = node.parentElement;
+      if(p && (p.classList.contains('hl-new-sticker') || p.classList.contains('hl-date-label')))
+        return NodeFilter.FILTER_REJECT;
+      try{
+        if(typeof range.intersectsNode === 'function'){
+          return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        }
+      }catch(e){}
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  var nodes = [];
+  var n;
+  while((n = walker.nextNode())) nodes.push(n);
+
+  nodes.forEach(function(node){
+    if(!node.parentNode) return;
+    var start = 0, end = node.nodeValue.length;
+    // Precise offsets: start node / end node / middle nodes
+    if(node === range.startContainer && range.startContainer.nodeType === 3){
+      start = range.startOffset;
+    }
+    if(node === range.endContainer && range.endContainer.nodeType === 3){
+      end = range.endOffset;
+    }
+    // Safety clamp
+    if(start < 0) start = 0;
+    if(end > node.nodeValue.length) end = node.nodeValue.length;
+    if(start >= end) return;
+    // Skip pure-whitespace-only slices (accidental edge picks)
+    if(!node.nodeValue.slice(start, end).trim()) return;
+
+    // Find if this text sits inside a highlight mark
+    var hostMark = null;
+    var p = node.parentElement;
+    while(p && p !== root){
+      if(p.tagName === 'MARK' && /user-hl/.test(p.className||'')){ hostMark = p; break; }
+      p = p.parentElement;
+    }
+
+    if(hostMark){
+      // Split selected portion out of the existing mark into a NEW mark with new colour.
+      // Keep before/after pieces in the original mark (same old colour).
+      try{
+        // Isolate selected text into its own text node
+        var selectedNode = node;
+        if(end < selectedNode.nodeValue.length){
+          selectedNode.splitText(end);
+        }
+        if(start > 0){
+          selectedNode = selectedNode.splitText(start);
+        }
+        // selectedNode is now exactly the selected text, still inside hostMark
+        // If hostMark only contains this text (+ optional sticker/date), just change class
+        var meaningfulKids = [];
+        for(var i=0;i<hostMark.childNodes.length;i++){
+          var c = hostMark.childNodes[i];
+          if(c.nodeType === 1 && (c.classList.contains('hl-new-sticker') || c.classList.contains('hl-date-label'))) continue;
+          if(c.nodeType === 3 && !c.nodeValue) continue;
+          meaningfulKids.push(c);
+        }
+        if(meaningfulKids.length === 1 && meaningfulKids[0] === selectedNode){
+          // whole mark recolored
+          var keep = [];
+          (hostMark.className||'').split(/\s+/).forEach(function(cl){
+            if(cl && cl.indexOf('user-hl') !== 0) keep.push(cl);
+          });
+          hostMark.className = (keep.join(' ') + ' ' + colorClass).trim();
+          if(extraStyle){
+            if(extraStyle.backgroundColor !== undefined) hostMark.style.backgroundColor = extraStyle.backgroundColor || '';
+            if(extraStyle.color) hostMark.style.color = extraStyle.color;
+          } else {
+            // named class — clear inline bg so CSS class wins
+            if(hostMark.style) hostMark.style.backgroundColor = '';
+          }
+          changed = true;
+          created.push(hostMark);
+          return;
+        }
+
+        // Partial: create a new mark for selectedNode, insert it in place
+        var newMark = document.createElement('mark');
+        newMark.className = colorClass;
+        if(extraStyle){
+          if(extraStyle.backgroundColor) newMark.style.backgroundColor = extraStyle.backgroundColor;
+          if(extraStyle.color) newMark.style.color = extraStyle.color;
+        }
+        newMark.style.cursor = 'pointer';
+        newMark.style.display = 'inline';
+        // Insert newMark after selectedNode, then move selectedNode into it
+        hostMark.insertBefore(newMark, selectedNode.nextSibling);
+        newMark.appendChild(selectedNode);
+
+        // If hostMark now has empty text holes, that's fine — browser will collapse.
+        // But if hostMark has a "before" text and "after" text still inside same mark,
+        // the newMark sits between them inside the OLD mark — nested mark.
+        // Nested <mark> inside <mark> is valid; outer keeps old colour on its text,
+        // inner has new colour. CSS background on inner wins for that span.
+        // To avoid nested marks looking wrong, hoist newMark out of hostMark:
+        // Structure was: hostMark[ beforeText, selectedNode, afterText ]
+        // After: hostMark[ beforeText, newMark(selected), afterText ]
+        // Hoist: parent[ hostMark(before), newMark(selected), hostMark2(after) ] OR
+        // simpler: unwrap newMark from host by splitting hostMark around newMark.
+
+        var parent = hostMark.parentNode;
+        if(parent){
+          // Nodes before newMark stay in hostMark; nodes after go to a clone after
+          var afterNodes = [];
+          var sib = newMark.nextSibling;
+          while(sib){
+            afterNodes.push(sib);
+            sib = sib.nextSibling;
+          }
+          // Move newMark out: insert after hostMark
+          parent.insertBefore(newMark, hostMark.nextSibling);
+          if(afterNodes.length){
+            var afterMark = hostMark.cloneNode(false); // same class/style, no children
+            afterNodes.forEach(function(an){ afterMark.appendChild(an); });
+            // also move sticker/date if they were after? stickers usually firstChild
+            parent.insertBefore(afterMark, newMark.nextSibling);
+            // if afterMark empty of real text, remove it
+            if(!afterMark.textContent){ parent.removeChild(afterMark); }
+          }
+          // if hostMark has no real text left, remove it (keep stickers? drop with mark)
+          var hostText = '';
+          for(var j=0;j<hostMark.childNodes.length;j++){
+            var ch = hostMark.childNodes[j];
+            if(ch.nodeType===3) hostText += ch.nodeValue;
+            else if(ch.nodeType===1 && !ch.classList.contains('hl-new-sticker') && !ch.classList.contains('hl-date-label'))
+              hostText += (ch.textContent||'');
+          }
+          if(!hostText.trim()){
+            // move stickers out then remove empty host
+            hostMark.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(st){ st.remove(); });
+            if(hostMark.parentNode) hostMark.parentNode.removeChild(hostMark);
+          }
+        }
+        changed = true;
+        created.push(newMark);
+      }catch(err){
+        console.warn('partial recolor failed', err);
+      }
+    } else {
+      // Not inside a mark — wrap selected portion in new mark
+      try{
+        var nodeRange = document.createRange();
+        nodeRange.setStart(node, start);
+        nodeRange.setEnd(node, end);
+        var mark = document.createElement('mark');
+        mark.className = colorClass;
+        if(extraStyle){
+          if(extraStyle.backgroundColor) mark.style.backgroundColor = extraStyle.backgroundColor;
+          if(extraStyle.color) mark.style.color = extraStyle.color;
+        }
+        mark.style.cursor = 'pointer';
+        mark.style.display = 'inline';
+        nodeRange.surroundContents(mark);
+        changed = true;
+        created.push(mark);
+      }catch(err){
+        // fallback split
+        try{
+          var sn = node;
+          if(end < sn.nodeValue.length) sn.splitText(end);
+          if(start > 0) sn = sn.splitText(start);
+          var mark2 = document.createElement('mark');
+          mark2.className = colorClass;
+          if(extraStyle){
+            if(extraStyle.backgroundColor) mark2.style.backgroundColor = extraStyle.backgroundColor;
+            if(extraStyle.color) mark2.style.color = extraStyle.color;
+          }
+          mark2.style.cursor = 'pointer';
+          mark2.style.display = 'inline';
+          sn.parentNode.insertBefore(mark2, sn);
+          mark2.appendChild(sn);
+          changed = true;
+          created.push(mark2);
+        }catch(err2){}
+      }
+    }
+  });
+
+  try{ root.normalize(); }catch(e){}
+  return {changed:changed, created:created};
+}
+
 function hlEnsureNewSticker(mark){
   if(!mark || mark.querySelector('.hl-new-sticker')) return;
   var st = document.createElement('span');
@@ -17781,43 +17980,128 @@ function hlFindMarkFromEvent(e){
 }
 
 function hlBindLongPressOnRoot(root){
-  if(!root || root._hlDateBound) return;
+  if(!root) return;
+  // Always (re)bind — content replace ke baad bhi kaam kare
+  if(root._hlDateBound) return;
   root._hlDateBound = true;
-  // Date mode ON hone par highlight pe turant tap = NEW sticker + date picker.
-  // 2s long-press hata diya taaki Android native text-selection / Google search
-  // interfere na kare.
-  function onMarkActivate(e){
-    if(!_hlDateModeOn) return;
-    var mark = hlFindMarkFromEvent(e);
-    if(!mark) return;
-    try{ e.preventDefault(); e.stopPropagation(); }catch(err){}
+
+  // Date mode ON: highlight pe turant tap → calendar + NEW sticker
+  // (2s timer hata diya — Android native selection interfere na kare)
+  function activateMark(mark){
+    if(!_hlDateModeOn || !mark) return;
     try{ navigator.vibrate && navigator.vibrate(12); }catch(err){}
     hlOpenDatePicker(mark);
   }
-  root.addEventListener('click', onMarkActivate, true);
-  // touchend pe bhi (kuch devices pe click delay / cancel ho sakta hai)
-  root.addEventListener('touchend', function(e){
+
+  root.addEventListener('click', function(e){
     if(!_hlDateModeOn) return;
     var mark = hlFindMarkFromEvent(e);
     if(!mark) return;
     try{ e.preventDefault(); e.stopPropagation(); }catch(err){}
-    try{ navigator.vibrate && navigator.vibrate(12); }catch(err){}
-    hlOpenDatePicker(mark);
+    activateMark(mark);
+  }, true);
+
+  // touchend: kuch Android pe click delay/cancel ho sakta hai
+  var _touchMark = null, _touchX = 0, _touchY = 0;
+  root.addEventListener('touchstart', function(e){
+    if(!_hlDateModeOn) return;
+    var mark = hlFindMarkFromEvent(e);
+    if(!mark){ _touchMark = null; return; }
+    _touchMark = mark;
+    var t = e.touches[0];
+    _touchX = t.clientX; _touchY = t.clientY;
+    // Selection / callout block
+    try{ e.preventDefault(); }catch(err){}
   }, {passive:false, capture:true});
-  // Android long-press context menu / selection block karo jab date mode ON ho
+
+  root.addEventListener('touchmove', function(e){
+    if(!_touchMark) return;
+    var t = e.touches[0];
+    if(Math.abs(t.clientX-_touchX)>14 || Math.abs(t.clientY-_touchY)>14){
+      _touchMark = null; // scroll/drag — cancel
+    }
+  }, {passive:true, capture:true});
+
+  root.addEventListener('touchend', function(e){
+    if(!_hlDateModeOn || !_touchMark){ _touchMark = null; return; }
+    var mark = _touchMark;
+    _touchMark = null;
+    try{ e.preventDefault(); e.stopPropagation(); }catch(err){}
+    activateMark(mark);
+  }, {passive:false, capture:true});
+
+  root.addEventListener('touchcancel', function(){ _touchMark = null; }, true);
+
   root.addEventListener('contextmenu', function(e){
     if(!_hlDateModeOn) return;
     if(hlFindMarkFromEvent(e)){ e.preventDefault(); e.stopPropagation(); }
   }, true);
+
   root.addEventListener('selectstart', function(e){
     if(!_hlDateModeOn) return;
     if(hlFindMarkFromEvent(e)){ e.preventDefault(); }
   }, true);
 }
 
+
+// Global fallback: Date mode ON hone par kisi bhi highlight mark pe
+// tap/click se calendar khule — root bind miss ho to bhi kaam kare.
+(function(){
+  if(window._hlDateGlobalBound) return;
+  window._hlDateGlobalBound = true;
+  var touchMark = null, tx=0, ty=0;
+
+  function tryActivate(e, fromTouch){
+    if(!_hlDateModeOn) return false;
+    var mark = hlFindMarkFromEvent(e);
+    if(!mark) return false;
+    try{ e.preventDefault(); e.stopPropagation(); }catch(err){}
+    try{ navigator.vibrate && navigator.vibrate(12); }catch(err){}
+    hlOpenDatePicker(mark);
+    return true;
+  }
+
+  document.addEventListener('click', function(e){
+    tryActivate(e, false);
+  }, true);
+
+  document.addEventListener('touchstart', function(e){
+    if(!_hlDateModeOn){ touchMark=null; return; }
+    var mark = hlFindMarkFromEvent(e);
+    if(!mark){ touchMark=null; return; }
+    touchMark = mark;
+    var t = e.touches[0];
+    tx = t.clientX; ty = t.clientY;
+    // Android selection/callout rokne ke liye
+    try{ e.preventDefault(); }catch(err){}
+  }, {passive:false, capture:true});
+
+  document.addEventListener('touchmove', function(e){
+    if(!touchMark) return;
+    var t = e.touches[0];
+    if(Math.abs(t.clientX-tx)>14 || Math.abs(t.clientY-ty)>14) touchMark = null;
+  }, {passive:true, capture:true});
+
+  document.addEventListener('touchend', function(e){
+    if(!_hlDateModeOn || !touchMark){ touchMark=null; return; }
+    var mark = touchMark;
+    touchMark = null;
+    try{ e.preventDefault(); e.stopPropagation(); }catch(err){}
+    try{ navigator.vibrate && navigator.vibrate(12); }catch(err){}
+    hlOpenDatePicker(mark);
+  }, {passive:false, capture:true});
+
+  document.addEventListener('contextmenu', function(e){
+    if(!_hlDateModeOn) return;
+    if(hlFindMarkFromEvent(e)){ e.preventDefault(); e.stopPropagation(); }
+  }, true);
+})();
+
 function hlInitDateLongPress(){
-  hlBindLongPressOnRoot(document.getElementById('fcFactsPageContent'));
-  hlBindLongPressOnRoot(document.getElementById('rdContent'));
+  ['fcFactsPageContent','rdContent','noteEditableArea'].forEach(function(id){
+    var el = document.getElementById(id);
+    if(el){ el._hlDateBound=false; hlBindLongPressOnRoot(el); }
+  });
 }
 if(document.readyState === 'loading')
   document.addEventListener('DOMContentLoaded', function(){ setTimeout(hlInitDateLongPress, 600); });
@@ -17829,7 +18113,7 @@ else setTimeout(hlInitDateLongPress, 600);
   if(typeof _o === 'function'){
     window.fcShowExtraOverlay = function(){
       var r = _o.apply(this, arguments);
-      setTimeout(function(){ hlBindLongPressOnRoot(document.getElementById('fcFactsPageContent')); }, 200);
+      setTimeout(function(){ var el=document.getElementById('fcFactsPageContent'); if(el){ el._hlDateBound=false; hlBindLongPressOnRoot(el);} }, 200);
       return r;
     };
   }
@@ -17837,7 +18121,7 @@ else setTimeout(hlInitDateLongPress, 600);
   if(typeof _or === 'function'){
     window.openReadingMode = function(){
       var r = _or.apply(this, arguments);
-      setTimeout(function(){ hlBindLongPressOnRoot(document.getElementById('rdContent')); }, 200);
+      setTimeout(function(){ var el=document.getElementById('rdContent'); if(el){ el._hlDateBound=false; hlBindLongPressOnRoot(el);} }, 200);
       return r;
     };
   }
@@ -18157,99 +18441,40 @@ function fcfpApplyHighlightFromRange(range, text) {
     mint:'user-hl-mint', lavender:'user-hl-lavender', peach:'user-hl-peach'
   }[_fcfpHlColor] || 'user-hl';
 
-  // Save snapshot before highlight
   fcfpSaveSnapshot();
 
-  var madeAnyMark = false;
+  var result = {changed:false, created:[]};
   try {
-    // Pehle intersecting marks ka colour naye colour se update karo (unwrap mat karo)
-    // taaki re-highlight pe pehla colour hat-ke blank na ho jaye.
-    var existingMarks = Array.prototype.slice.call(ct.querySelectorAll('mark'));
-    existingMarks.forEach(function(m){
-      if(!hlIsHighlightMark(m)) return;
-      try{
-        if(typeof range.intersectsNode === 'function' && !range.intersectsNode(m)) return;
-      }catch(e){ return; }
-      // Preserve sticker / date children; only change highlight class
-      var keep = [];
-      m.className.split(/\s+/).forEach(function(c){
-        if(c && c.indexOf('user-hl') !== 0) keep.push(c);
-      });
-      m.className = (keep.join(' ') + ' ' + colorClass).trim();
-      m.style.cursor = (_fcfpHlMode === 'eraser') ? 'cell' : 'default';
-      fcfpAttachEraserToMark(m);
-      madeAnyMark = true;
-    });
-
-    // Collect every text node that actually intersects the selection range.
-    // Using a TreeWalker + range.intersectsNode is robust across paragraph
-    // and <br> boundaries (unlike surroundContents which requires the range
-    // to sit fully inside one parent element).
-    var walker = document.createTreeWalker(ct, NodeFilter.SHOW_TEXT, {
-      acceptNode: function(node){
-        if(!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
-        // Already inside a highlight mark? Skip — colour already updated above
-        var p = node.parentElement;
-        while(p && p !== ct){
-          if(hlIsHighlightMark(p)) return NodeFilter.FILTER_REJECT;
-          p = p.parentElement;
-        }
-        try{
-          if(typeof range.intersectsNode === 'function'){
-            return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-          }
-        }catch(e){}
-        return NodeFilter.FILTER_ACCEPT;
+    if(typeof hlApplyPartialRecolor === 'function'){
+      result = hlApplyPartialRecolor(range, ct, colorClass, null);
+    } else {
+      // fallback: old unwrap path
+      if(typeof hlUnwrapMarksIntersectingRange === 'function'){
+        try{ hlUnwrapMarksIntersectingRange(range, ct); }catch(e){}
       }
+    }
+    (result.created||[]).forEach(function(m){
+      try{ fcfpAttachEraserToMark(m); }catch(e){}
     });
+    // Also re-attach on any leftover marks
+    try{ fcfpReattachEraserListeners(); }catch(e){}
 
-    var nodes = [];
-    var n;
-    while((n = walker.nextNode())) nodes.push(n);
-
-    nodes.forEach(function(node){
-      var nodeRange = document.createRange();
-      nodeRange.selectNodeContents(node);
-      // Clip the node's own range to the intersection with the selection range
-      var start = 0, end = node.nodeValue.length;
-      if(node === range.startContainer) start = range.startOffset;
-      if(node === range.endContainer) end = range.endOffset;
-      if(start >= end) return;
-      nodeRange.setStart(node, start);
-      nodeRange.setEnd(node, end);
-
-      var mark = document.createElement('mark');
-      mark.className = colorClass;
-      mark.style.cursor = (_fcfpHlMode === 'eraser') ? 'cell' : 'default';
-      try {
-        nodeRange.surroundContents(mark);
-        fcfpAttachEraserToMark(mark);
-        madeAnyMark = true;
-      } catch(e) {
-        // Ek node ke liye bhi fail ho (rare) to us node ko skip karke aage badho
-      }
-    });
-
-    if(madeAnyMark){
+    if(result.changed){
       fcfpPersistExtra();
       if(typeof showToast === 'function') showToast('Highlight ho gaya! ✅', 'success');
     } else {
-      // Kuch bhi highlight nahi hua — snapshot revert karo aur user ko batao
       _fcfpUndoStack.pop();
       fcfpUpdateUndoRedoBtns();
       if(typeof showToast === 'function') showToast('Highlight nahi ho paaya, dobara try karo', 'error');
     }
   } catch(e) {
+    console.warn('fcfp highlight error', e);
     _fcfpUndoStack.pop();
     fcfpUpdateUndoRedoBtns();
     if(typeof showToast === 'function') showToast('Highlight nahi ho paaya, dobara try karo', 'error');
   }
 }
 
-// ── Apply Bold/Italic/Underline from current window selection ─────
-// Same drag-to-select-and-apply feel as highlight, but wraps the
-// selected text-nodes in <b>/<i>/<u> instead of <mark>. Mirrors
-// fcfpApplyHighlightFromSelection exactly.
 function fcfpApplyFmtFromSelection() {
   var sel = window.getSelection();
   if(!sel || sel.isCollapsed || sel.rangeCount === 0) return;
@@ -18408,34 +18633,23 @@ function fcfpFmtOnTouchEnd(e) {
 function fcfpAttachEraserToMark(mark) {
   if(mark._fcfpEraserFn) {
     mark.removeEventListener('pointerdown', mark._fcfpEraserFn);
-    mark.removeEventListener('click', mark._fcfpEraserFn);
   }
   mark._fcfpEraserFn = function(e) {
     if(_fcfpHlMode !== 'eraser') return;
     e.preventDefault();
     e.stopPropagation();
-    var target = this;
-    // Agar sticker/date span pe tap hua to parent mark use karo
-    if(target && target.classList && (target.classList.contains('hl-new-sticker') || target.classList.contains('hl-date-label'))){
-      target = target.closest('mark');
-    }
-    if(!target || target.tagName !== 'MARK') return;
     fcfpSaveSnapshot();
-    // Sticker / date labels pehle hatao
-    target.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
-    var parent = target.parentNode;
+    var parent = this.parentNode;
     if(!parent) return;
-    while(target.firstChild) parent.insertBefore(target.firstChild, target);
-    parent.removeChild(target);
-    try{ parent.normalize(); }catch(err){}
+    while(this.firstChild) parent.insertBefore(this.firstChild, this);
+    parent.removeChild(this);
     fcfpPersistExtra();
     if(typeof showToast === 'function') showToast('Highlight hata diya 🧹', 'success');
   };
   mark.addEventListener('pointerdown', mark._fcfpEraserFn);
-  mark.addEventListener('click', mark._fcfpEraserFn);
 }
 
-// Re-attach eraser listeners after undo/redo / content load
+// Re-attach eraser listeners after undo/redo
 function fcfpReattachEraserListeners() {
   var ct = document.getElementById('fcFactsPageContent');
   if(!ct) return;
@@ -18444,30 +18658,6 @@ function fcfpReattachEraserListeners() {
     m.style.cursor = (_fcfpHlMode === 'eraser') ? 'cell' : 'default';
     fcfpAttachEraserToMark(m);
   });
-  // Event delegation once — saved/hard-coded marks ke liye bhi eraser kaam kare
-  if(!ct._fcfpEraserDelegated){
-    ct._fcfpEraserDelegated = true;
-    ct.addEventListener('pointerdown', function(e){
-      if(_fcfpHlMode !== 'eraser') return;
-      var t = e.target;
-      while(t && t !== ct){
-        if(t.tagName === 'MARK' && /user-hl/.test(t.className||'')){
-          e.preventDefault(); e.stopPropagation();
-          fcfpSaveSnapshot();
-          t.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
-          var parent = t.parentNode;
-          if(!parent) return;
-          while(t.firstChild) parent.insertBefore(t.firstChild, t);
-          parent.removeChild(t);
-          try{ parent.normalize(); }catch(err){}
-          fcfpPersistExtra();
-          if(typeof showToast === 'function') showToast('Highlight hata diya 🧹', 'success');
-          return;
-        }
-        t = t.parentElement;
-      }
-    }, true);
-  }
 }
 
 // ── Mobile drag-to-highlight touchend — mirrors onNETouchEnd (Notes
@@ -23974,7 +24164,7 @@ function _doSaveNoteData() {
     n.lastEditedAt = new Date().toLocaleDateString('hi-IN');
     
     _editorState.highlights = [];
-    area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red').forEach(function(mark) {
+    area.querySelectorAll('mark[class*="user-hl"]').forEach(function(mark) {
       var cls   = mark.className;
       var color = cls.includes('pink') ? 'pink' : cls.includes('green') ? 'green' : cls.includes('blue') ? 'blue' : cls.includes('red') ? 'red' : 'yellow';
       var uid   = mark.getAttribute('data-hlid') || ('hl_' + Date.now() + '_' + Math.random().toString(36).slice(2));
@@ -24150,7 +24340,7 @@ function neLoadContent(text, isHtml) {
         _applyRichMode(area.innerHTML);
         // Re-populate highlights array from DOM (so eraser works correctly)
         _editorState.highlights = [];
-        area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red').forEach(function(mark) {
+        area.querySelectorAll('mark[class*="user-hl"]').forEach(function(mark) {
           var cls = mark.className;
           var color = cls.includes('pink') ? 'pink' : cls.includes('green') ? 'green' : cls.includes('blue') ? 'blue' : cls.includes('red') ? 'red' : 'yellow';
           var uid = mark.getAttribute('data-hlid');
@@ -27399,56 +27589,12 @@ function toggleEraserMode() {
 
 function neAttachEraserToMarks() {
   const area = document.getElementById('noteEditableArea');
-  if(!area) return;
-  // Saare user-hl* classes (saved highlights included)
   area.querySelectorAll('mark[class*="user-hl"]').forEach(mark => {
-    // Always re-attach (ensures undo/redo / load ke baad bhi listener sahi ho)
+    // Always re-attach (ensures undo/redo ke baad bhi listener sahi ho)
     mark.style.cursor = (_hlCurrentMode === 'eraser') ? 'cell' : 'default';
     mark.title = (_hlCurrentMode === 'eraser') ? '🧹 Tap karo to unhighlight' : 'Eraser ON karo to remove';
     neAttachUnhighlightToMark(mark);
   });
-  // Also attach on reading overlay if open
-  var rd = document.getElementById('rdContent');
-  if(rd){
-    rd.querySelectorAll('mark[class*="user-hl"]').forEach(mark => {
-      mark.style.cursor = (_hlCurrentMode === 'eraser') ? 'cell' : 'default';
-      mark.title = (_hlCurrentMode === 'eraser') ? '🧹 Tap karo to unhighlight' : 'Eraser ON karo to remove';
-      neAttachUnhighlightToMark(mark);
-    });
-  }
-  // Event delegation — hard-coded / saved marks jo listener miss karen
-  if(area && !area._neEraserDelegated){
-    area._neEraserDelegated = true;
-    area.addEventListener('pointerdown', function(e){
-      if(_hlCurrentMode !== 'eraser') return;
-      var t = e.target;
-      while(t && t !== area){
-        if(t.tagName === 'MARK' && /user-hl/.test(t.className||'')){
-          e.preventDefault(); e.stopPropagation();
-          // Reuse same unhighlight path
-          if(typeof neAttachUnhighlightToMark === 'function'){
-            // fire logic inline
-            neSaveSnapshot();
-            t.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
-            const hid = t.getAttribute('data-hlid');
-            const parent = t.parentNode;
-            if(!parent) return;
-            while(t.firstChild) parent.insertBefore(t.firstChild, t);
-            parent.removeChild(t);
-            if(hid && _editorState && _editorState.highlights){
-              _editorState.highlights = _editorState.highlights.filter(function(h){ return h.id !== hid; });
-            }
-            markModified();
-            showToast('Highlight hata diya 🧹', 'success');
-            setTimeout(neUpdateHlCanvasBtn, 50);
-            if(typeof window._neRmRearmIfActive === 'function') window._neRmRearmIfActive();
-          }
-          return;
-        }
-        t = t.parentElement;
-      }
-    }, true);
-  }
 }
 
 // ============ ADVANCED TOUCH HIGHLIGHT SYSTEM v2 ============
@@ -27931,8 +28077,6 @@ function applyHighlightFromRange(range, text) {
   const scrollEl = document.getElementById('neBody') || document.querySelector('.notes-editor-body');
   const savedScroll = scrollEl ? scrollEl.scrollTop : 0;
 
-  // Skip editor undo snapshot when highlighting inside the reading overlay;
-  // reading overlay has its own undo stack (_rdHlUndoStack)
   if(!_rdReadingOpen) neSaveSnapshot();
 
   const color = _editorState.hlColor;
@@ -27949,124 +28093,43 @@ function applyHighlightFromRange(range, text) {
              : 'user-hl';
   const uid = 'hl_' + Date.now();
 
-  // Support rdContent (reading overlay) as highlight target when reading mode is open
   var _rdContentEl = _rdReadingOpen ? document.getElementById('rdContent') : null;
   var _inRdMode = (_rdContentEl && _rdContentEl.contains(range.commonAncestorContainer));
   const area = _inRdMode ? _rdContentEl : document.getElementById('noteEditableArea');
   if(!area || !area.contains(range.commonAncestorContainer)) return;
-  // Reading overlay: save to its own undo stack before modifying
   if(_inRdMode) { _rdHlSaveSnapshot(); }
 
-  // Pehle intersecting marks ka colour update (unwrap mat karo) — re-highlight
-  // pe pehla colour turant naya colour ban jaye, blank intermediate step nahi.
-  try{
-    var _exMarks = Array.prototype.slice.call(area.querySelectorAll('mark'));
-    _exMarks.forEach(function(m){
-      if(!m || m.tagName !== 'MARK') return;
-      var cn = m.className || '';
-      if(!/user-hl/.test(cn)) return;
-      try{ if(typeof range.intersectsNode === 'function' && !range.intersectsNode(m)) return; }catch(e){ return; }
-      var keep = [];
-      cn.split(/\s+/).forEach(function(c){ if(c && c.indexOf('user-hl') !== 0) keep.push(c); });
-      m.className = (keep.join(' ') + ' ' + cls).trim();
-      if(isCustomHex) m.style.backgroundColor = color;
-      else if(m.style) m.style.backgroundColor = '';
-      if(_editorState.hlTextColor) m.style.color = _editorState.hlTextColor;
-      try{ neAttachUnhighlightToMark(m); }catch(e){}
-    });
-  }catch(e){}
-
-  // ── STEP 1: Range ke andar ke saare text nodes collect karo ──
-  function collectTextNodes(range) {
-    const nodes = [];
-    const walker = document.createTreeWalker(
-      range.commonAncestorContainer,
-      NodeFilter.SHOW_TEXT,
-      {
-        acceptNode: function(node) {
-          // Node fully outside range? Reject
-          if(!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
-          // Already inside a highlight mark? Skip (colour already updated)
-          var p = node.parentElement;
-          while(p && p !== area){
-            if(p.tagName === 'MARK' && /user-hl/.test(p.className||'')) return NodeFilter.FILTER_REJECT;
-            p = p.parentElement;
-          }
-          return NodeFilter.FILTER_ACCEPT;
-        }
-      }
-    );
-    // If commonAncestor itself is a text node
-    if(range.commonAncestorContainer.nodeType === Node.TEXT_NODE) {
-      nodes.push(range.commonAncestorContainer);
-    } else {
-      let node;
-      while((node = walker.nextNode())) nodes.push(node);
-    }
-    return nodes;
+  var extraStyle = null;
+  if(isCustomHex || _editorState.hlTextColor){
+    extraStyle = {
+      backgroundColor: isCustomHex ? color : '',
+      color: _editorState.hlTextColor || ''
+    };
   }
 
   try {
-    const textNodes = collectTextNodes(range);
-    if(!textNodes.length) { showToast('Text nahi mila, dobara try karo', 'error'); return; }
+    var result = (typeof hlApplyPartialRecolor === 'function')
+      ? hlApplyPartialRecolor(range, area, cls, extraStyle)
+      : {changed:false, created:[]};
 
-    const createdMarks = [];
+    if(!result.changed){
+      showToast('Text nahi mila, dobara try karo', 'error');
+      return;
+    }
 
-    textNodes.forEach(function(tNode, idx) {
-      // Ye text node range mein kitna part cover karta hai?
-      let startOffset = 0;
-      let endOffset = tNode.textContent.length;
-
-      if(idx === 0 && tNode === range.startContainer) {
-        startOffset = range.startOffset;
-      }
-      if(idx === textNodes.length - 1 && tNode === range.endContainer) {
-        endOffset = range.endOffset;
-      }
-      // Special: agar single node aur dono same hai
-      if(textNodes.length === 1) {
-        startOffset = (tNode === range.startContainer) ? range.startOffset : 0;
-        endOffset   = (tNode === range.endContainer)   ? range.endOffset   : tNode.textContent.length;
-      }
-
-      // Nothing to highlight in this node? Skip
-      if(startOffset >= endOffset) return;
-
-      // ── Safe split-and-wrap (zero DOM restructure) ──
-      // Split: [before | selectedPart | after] — pure text node ops
-      // tNode ke parent mein insertBefore se position maintain hoti hai
-
-      const fullText = tNode.textContent;
-      const beforeText = fullText.slice(0, startOffset);
-      const hlText     = fullText.slice(startOffset, endOffset);
-      const afterText  = fullText.slice(endOffset);
-
-      const mark = document.createElement('mark');
-      mark.className = cls;
-      mark.setAttribute('data-hlid', uid);
-      var _comboTextColor = _editorState.hlTextColor;
-      var _cssText = isCustomHex
-        ? ('cursor:pointer;display:inline;background-color:' + color + ';')
-        : 'cursor:pointer;display:inline;';
-      if(_comboTextColor) _cssText += ('color:' + _comboTextColor + ';');
-      mark.style.cssText = _cssText;
-      mark.title = 'Tap = Unhighlight';
-      mark.textContent = hlText;
-
-      const parent = tNode.parentNode;
-      if(!parent) return;
-
-      // Insert before/after nodes using a DocumentFragment (single reflow)
-      const frag = document.createDocumentFragment();
-      if(beforeText) frag.appendChild(document.createTextNode(beforeText));
-      frag.appendChild(mark);
-      if(afterText)  frag.appendChild(document.createTextNode(afterText));
-
-      parent.replaceChild(frag, tNode);
-      createdMarks.push(mark);
+    (result.created||[]).forEach(function(m){
+      try{
+        m.setAttribute('data-hlid', uid);
+        m.style.cursor = 'pointer';
+        m.style.display = 'inline';
+        m.title = 'Tap = Unhighlight';
+        if(typeof neAttachUnhighlightToMark === 'function') neAttachUnhighlightToMark(m);
+      }catch(e){}
     });
 
-    // ── Scroll restore (double rAF for full repaint) ──
+    // Re-attach on all marks (saved ones included)
+    try{ if(typeof neAttachEraserToMarks === 'function') neAttachEraserToMarks(); }catch(e){}
+
     if(scrollEl) {
       scrollEl.scrollTop = savedScroll;
       requestAnimationFrame(function(){
@@ -28075,66 +28138,56 @@ function applyHighlightFromRange(range, text) {
       });
     }
 
-    // Attach eraser listener to all created marks
-    createdMarks.forEach(function(m){ neAttachUnhighlightToMark(m); });
-
-    var highlightText = text || createdMarks.map(m=>m.textContent).join('');
+    var highlightText = text || (result.created||[]).map(function(m){ return m.textContent; }).join('');
     _editorState.highlights.push({ id: uid, text: highlightText, color, textColor: _editorState.hlTextColor || null });
     markModified();
     showToast('Highlight ho gaya!', 'success');
     trackActivity('highlight', { name: (text||'').substring(0,40), tid: _editorState.tid });
     setTimeout(neUpdateHlCanvasBtn, 50);
-    
-    // Auto-sync to Revision Page if enabled
+
     if(typeof _rvAutoSync !== 'undefined' && _rvAutoSync && highlightText.trim()){
       rvAutoAddHighlight(highlightText, color, uid);
     }
 
   } catch(err) {
+    console.warn('applyHighlightFromRange error', err);
     showToast('Highlight mein problem aai, dobara try karo', 'error');
   }
 }
 
-// Attach unhighlight listener to a mark element
 function neAttachUnhighlightToMark(mark) {
   // Remove purana listener agar pehle se hai (re-attach safe karne ke liye)
   if(mark._unhighlightFn) {
     mark.removeEventListener('pointerdown', mark._unhighlightFn);
-    mark.removeEventListener('click', mark._unhighlightFn);
   }
   mark._unhighlightFn = function(e) {
     if(_hlCurrentMode !== 'eraser') return;
     e.preventDefault();
     e.stopPropagation();
-    var target = this;
-    if(target && target.classList && (target.classList.contains('hl-new-sticker') || target.classList.contains('hl-date-label'))){
-      target = target.closest('mark') || target;
-    }
-    if(!target || target.tagName !== 'MARK') return;
     neSaveSnapshot();
-    const hid = target.getAttribute('data-hlid');
-    // Sticker / date labels pehle hatao
-    target.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
+    const hid = this.getAttribute('data-hlid');
 
     // Safe removal: insert text nodes before/after mark, then remove mark
-    const parent = target.parentNode;
+    // This avoids DOM restructure that shifts line positions
+    const parent = this.parentNode;
     if(!parent) return;
 
-    while(target.firstChild) {
-      parent.insertBefore(target.firstChild, target);
+    // Move all child nodes of mark before the mark (preserving their exact positions)
+    while(this.firstChild) {
+      parent.insertBefore(this.firstChild, this);
     }
-    parent.removeChild(target);
+    // Now remove the empty mark tag
+    parent.removeChild(this);
+    // Do NOT call normalize() -- it merges text nodes and can shift layout
 
-    if(_editorState && _editorState.highlights){
-      _editorState.highlights = _editorState.highlights.filter(h => h.id !== hid);
-    }
+    _editorState.highlights = _editorState.highlights.filter(h => h.id !== hid);
     markModified();
     showToast('Highlight hata diya 🧹', 'success');
+    // Update highlights→canvas button badge
     setTimeout(neUpdateHlCanvasBtn, 50);
     if(typeof window._neRmRearmIfActive === 'function') window._neRmRearmIfActive();
   };
   mark.addEventListener('pointerdown', mark._unhighlightFn);
-  mark.addEventListener('click', mark._unhighlightFn);
 }
 
 // ============ MAGNIFIER (smooth, no DOM thrash) ============
@@ -28290,7 +28343,7 @@ function toggleHighlightMode() {
 function clearAllHighlightsInEditor() {
   // Legacy function - kept for compatibility
   const area = document.getElementById('noteEditableArea');
-  area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red').forEach(mark => {
+  area.querySelectorAll('mark[class*="user-hl"]').forEach(mark => {
     mark.replaceWith(document.createTextNode(mark.textContent));
   });
   _editorState.highlights = [];
@@ -45560,7 +45613,7 @@ function fcSaveFact() {
 function openHighlightExport() {
   var area = document.getElementById('noteEditableArea');
   if(!area) { showToast('Editor mein jaao pehle!', 'error'); return; }
-  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red');
+  var marks = area.querySelectorAll('mark[class*="user-hl"]');
   if(marks.length === 0) { showToast('Koi highlight nahi hai!', 'error'); return; }
   var old = document.getElementById('hlExportModal');
   if(old) old.remove();
@@ -50323,7 +50376,7 @@ function scDrop(e){
 function neUpdateHlCanvasBtn() {
   var area = document.getElementById('noteEditableArea');
   if(!area) return;
-  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red');
+  var marks = area.querySelectorAll('mark[class*="user-hl"]');
   var count = marks.length;
 
   // Footer button
@@ -50559,7 +50612,7 @@ function _ngmRenderHlList() {
   if(!area) { container.innerHTML = '<div style="font-size:0.76rem;color:var(--text2);">Notes editor open karo pehle.</div>'; return; }
 
   // Collect marks in DOM order
-  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red');
+  var marks = area.querySelectorAll('mark[class*="user-hl"]');
   if(!marks || marks.length === 0) {
     container.innerHTML = '<div style="font-size:0.76rem;color:var(--text2);">Koi highlight nahi mila. Pehle notes mein text highlight karo.</div>';
     if(actionRow) actionRow.style.display = 'none';
@@ -50764,7 +50817,7 @@ function _ngmRenderAllGroups() {
   // Build hlId → text map from DOM
   var hlTextMap = {};
   if(area) {
-    var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red');
+    var marks = area.querySelectorAll('mark[class*="user-hl"]');
     marks.forEach(function(mark) {
       var hlId = mark.getAttribute('data-hlid');
       if(!hlId) return;
@@ -50845,7 +50898,7 @@ window.ngmGetGroupedHighlights = function() {
   var area = document.getElementById('noteEditableArea');
   if(!area) return [];
 
-  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red');
+  var marks = area.querySelectorAll('mark[class*="user-hl"]');
   if(!marks || marks.length === 0) return [];
 
   // Build hlMap in DOM order
@@ -50927,7 +50980,7 @@ window.neSyncHighlightsToBoth = function() {
     return; 
   }
 
-  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red');
+  var marks = area.querySelectorAll('mark[class*="user-hl"]');
   if(!marks || marks.length === 0) {
     if(typeof showToast === 'function') showToast('Koi highlighted text nahi mila! Pehle highlight karo.', 'error');
     return;
@@ -50978,7 +51031,7 @@ window.neSendAllHighlightsToCanvas = function() {
   var area = document.getElementById('noteEditableArea');
   if(!area) { showToast && showToast('Notes editor open nahi hai!', 'error'); return; }
 
-  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red');
+  var marks = area.querySelectorAll('mark[class*="user-hl"]');
   if(!marks || marks.length === 0) {
     showToast && showToast('⚠️ Koi highlighted text nahi mila! Pehle text highlight karo.', 'error');
     return;
@@ -61881,7 +61934,7 @@ window.rvSyncAllHighlights = function(){
     return;
   }
   
-  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red');
+  var marks = area.querySelectorAll('mark[class*="user-hl"]');
   if(marks.length === 0){
     if(typeof showToast === 'function') showToast('Koi highlight nahi mila', 'error');
     return;
@@ -62074,7 +62127,7 @@ window.scRegenNewHighlights = function(){
     if(typeof showToast==='function') showToast('Notes editor open nahi hai!', 'error');
     return;
   }
-  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red');
+  var marks = area.querySelectorAll('mark[class*="user-hl"]');
   if(!marks || !marks.length){
     if(typeof showToast==='function') showToast('Koi highlight nahi mila!', 'error');
     return;
@@ -62092,7 +62145,7 @@ window.rvRegenNewHighlights = function(){
     if(typeof showToast==='function') showToast('Notes editor open nahi hai! Pehle koi note kholo.', 'error');
     return;
   }
-  var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red');
+  var marks = area.querySelectorAll('mark[class*="user-hl"]');
   if(!marks || !marks.length){
     if(typeof showToast==='function') showToast('Notes me koi highlight nahi hai abhi!', 'error');
     return;
@@ -66966,7 +67019,7 @@ function neSummaryGetText() {
   var area = document.getElementById('noteEditableArea');
   if (!area) return '';
   if (_neSummaryMode === 'hl') {
-    var marks = area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red');
+    var marks = area.querySelectorAll('mark[class*="user-hl"]');
     if (marks.length === 0) return '';
     var lines = [];
     marks.forEach(function(m) { var t = (m.textContent||'').trim(); if(t) lines.push(t); });
@@ -75284,5 +75337,19 @@ function openFlashcardsInEditor(sid, secid, tid){
 }
 </script>
 
+
+<!-- Highlight Date + NEW sticker picker -->
+<div id="hlDatePickerModal" onclick="if(event.target===this)hlCloseDatePicker()">
+  <div id="hlDatePickerBox" onclick="event.stopPropagation()">
+    <div style="font-size:0.95rem;font-weight:800;color:var(--text);margin-bottom:6px;">📅 Date + NEW sticker</div>
+    <div style="font-size:0.75rem;color:var(--text2);margin-bottom:12px;line-height:1.5;">Highlight pe date set karo — NEW sticker auto lag jayega</div>
+    <input type="date" id="hlDatePickerInput" style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg);color:var(--text);font-size:0.9rem;box-sizing:border-box;margin-bottom:14px;font-family:inherit;">
+    <div style="display:flex;gap:8px;">
+      <button type="button" onclick="hlCloseDatePicker()" style="flex:1;padding:10px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-weight:700;font-size:0.82rem;cursor:pointer;">Cancel</button>
+      <button type="button" onclick="hlClearDateOnMark()" style="flex:1;padding:10px;border-radius:10px;border:1.5px solid rgba(198,40,40,0.3);background:rgba(198,40,40,0.08);color:var(--red);font-weight:700;font-size:0.82rem;cursor:pointer;">Clear</button>
+      <button type="button" onclick="hlApplyDateOnMark()" style="flex:1;padding:10px;border-radius:10px;border:none;background:#1565c0;color:#fff;font-weight:800;font-size:0.82rem;cursor:pointer;">Set Date</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
