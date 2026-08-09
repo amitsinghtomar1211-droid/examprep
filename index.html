@@ -10320,8 +10320,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
   <!-- ══ FCFP LEFT SIDE: Topic Library icon (always visible) + Highlight icon; color dots + eraser appear when highlight is ON ══ -->
   <div id="fcfpSideLeft">
     <button id="fcfpTopicLibBtn" class="fcfp-side-btn" onclick="fcfpOpenTopicDropdown(event);event.stopPropagation();" title="Similar Current — Extra Facts Topics se insert">📂</button>
-    <button id="fcfpSimilarLibBtn" class="fcfp-side-btn" onclick="fcfpOpenSimilarDropdown(event);event.stopPropagation();" title="Similar Current Topic Library">📰</button>
-    <button id="fcfpStaticLibBtn" class="fcfp-side-btn" onclick="fcfpOpenStaticDropdown(event);event.stopPropagation();" title="Static GK Topic Library">📚</button>
+    <button id="fcfpStaticLibBtn" class="fcfp-side-btn" onclick="fcfpOpenStaticDropdown(event);event.stopPropagation();" title="Static GK Topics se insert">📚</button>
     <button id="fcfpHlBtn" class="fcfp-side-btn" onclick="fcfpToggleHl();event.stopPropagation();" title="Highlight ON/OFF toggle">🖊</button>
     <button id="fcfpEsBtn" class="fcfp-side-btn" onclick="fcfpToggleEraser();event.stopPropagation();" title="Eraser — highlight hatao">🧹</button>
     <div id="fcfpDotY"  class="fcfp-color-dot fcfp-dot-sel" onclick="fcfpSelectColor('yellow');event.stopPropagation();" style="background:#ffe000;" title="Yellow"></div>
@@ -17368,26 +17367,31 @@ function fcfpSelectColor(color) {
 // rest of the app. ──
 function fcfpPersistExtra() {
   try {
-    // Tab-aware: similar/static tabs apne field mein save karte hain,
-    // extra tab purane _fcSaveCardExtraEdit path par jaata hai.
-    if(typeof _fcfpActiveTab !== 'undefined' && _fcfpActiveTab && _fcfpActiveTab !== 'extra' && typeof fcfpPersistActiveTabContent === 'function'){
+    // ALWAYS tab-aware: har tab sirf apne field mein save karta hai.
+    // Cross-tab replace / overwrite kabhi nahi.
+    if(typeof fcfpPersistActiveTabContent === 'function'){
       fcfpPersistActiveTabContent();
-      // Keep play-mode mini extra body in sync only for classic extra view
+      // Card-back mini "extra" sirf Extra Facts (own) tab ke liye sync karo
+      if((typeof _fcfpActiveTab === 'undefined' || _fcfpActiveTab === 'extra')){
+        var pageContent = document.getElementById('fcFactsPageContent');
+        var extraBody = document.getElementById('fcExtraBody');
+        if(extraBody && pageContent) extraBody.innerHTML = pageContent.innerHTML;
+      }
+      if(typeof fcfpUpdateSaveTopicBtn === 'function') fcfpUpdateSaveTopicBtn();
       return;
     }
+    // Fallback (should rarely hit)
     var pageContent = document.getElementById('fcFactsPageContent');
-    var extraBody = document.getElementById('fcExtraBody');
     var updatedHtml = pageContent ? pageContent.innerHTML : '';
-    if(extraBody) extraBody.innerHTML = updatedHtml;
-
     var key = _fcTopicKey(_fcPlayState.sid, _fcPlayState.secid, _fcPlayState.tid);
     var set = S.flashcardSets[key];
     var st = _fcPlayState.session;
     if(set && st && st.queue && st.pos < st.queue.length){
-      var cardIdx = st.queue[st.pos];
-      var card = set.cards[cardIdx];
+      var card = set.cards[st.queue[st.pos]];
       if(card){
-        _fcSaveCardExtraEdit(card, key, set, updatedHtml);
+        card.extra = updatedHtml;
+        save();
+        _fcSyncFlashcardSetToFirebase(key, set);
       }
     }
   } catch(err) { /* best-effort */ }
@@ -18383,26 +18387,9 @@ function fcfpSaveEdit(){
   // 2) Re-attach highlight eraser listeners to any newly added marks
   fcfpReattachEraserListeners();
 
-  // 3) Persist the change into card.extra (source of truth)
-  var pageContent2 = document.getElementById('fcFactsPageContent');
-  var extraBody = document.getElementById('fcExtraBody');
-  var updatedHtml = pageContent2 ? pageContent2.innerHTML : '';
-  if(extraBody) extraBody.innerHTML = updatedHtml;
-
+  // 3) Tab-aware persist — sirf ACTIVE tab ke field mein save
   try{
-    var key = _fcTopicKey(_fcPlayState.sid, _fcPlayState.secid, _fcPlayState.tid);
-    var set = S.flashcardSets[key];
-    var st = _fcPlayState.session;
-    if(set && st && st.queue && st.pos < st.queue.length){
-      var cardIdx = st.queue[st.pos];
-      var card = set.cards[cardIdx];
-      if(card){
-        // Agar yeh card kisi topic se LIVE-LINKED hai, toh edit topic
-        // library mein save hogi (sab linked cards mein turant reflect
-        // hoga). Warna sirf isi card ka apna data update hoga.
-        _fcSaveCardExtraEdit(card, key, set, updatedHtml);
-      }
-    }
+    if(typeof fcfpPersistExtra === 'function') fcfpPersistExtra();
   }catch(err){}
 
   fcfpCloseEditModal();
@@ -18533,19 +18520,7 @@ function _fcCardIsLiveLinked(card){
 //     ka apna data update karo, kisi aur card/topic ko chhuo mat. ──
 function _fcSaveCardExtraEdit(card, key, set, updatedHtml){
   if(!card) return;
-  if(_fcCardIsLiveLinked(card)){
-    // Is card ka content abhi topic library se aa raha tha → edit topic
-    // library mein hi save karo (card khud reference/khali hi rehta hai).
-    var t = S.extraFactsTopics && S.extraFactsTopics[card.extraTopicId];
-    if(t){
-      S.extraFactsTopics[card.extraTopicId] = { name: t.name, html: updatedHtml, updatedAt: Date.now() };
-      save();
-      _fcSyncTopicToFirebase(card.extraTopicId, S.extraFactsTopics[card.extraTopicId]);
-      return;
-    }
-    // Fallback: topic library mein nahi mila (edge case) — card mein hi rakh do.
-  }
-  // Standalone ya already-detached card → sirf isi card ka data update karo.
+  // SIRF Extra Facts (own) field — similar/static yahan kabhi nahi aate.
   card.extra = updatedHtml;
   if(set) save();
   if(key && set) _fcSyncFlashcardSetToFirebase(key, set);
@@ -18781,26 +18756,47 @@ function fcfpImportTopicIntoCard(){
 // current extra facts under (create new, or overwrite an existing one). ──
 function fcfpOpenTopicSaveModal(e){
   if(e){ e.stopPropagation(); }
+  var tab = (typeof _fcfpActiveTab !== 'undefined') ? _fcfpActiveTab : 'extra';
+  // Extra Facts = card ka apna data — hub mein save ki zaroorat nahi
+  if(tab === 'extra'){
+    if(typeof showToast === 'function') showToast('ℹ️ Extra Facts card ka apna data hai — hub mein save nahi hota. Similar Current / Static GK tab use karo.', 'info');
+    return;
+  }
   var modal = document.getElementById('fcfpTopicSaveModal');
   var input = document.getElementById('fcfpTopicSaveNameInput');
   var datalist = document.getElementById('fcfpTopicSaveNameList');
   if(!modal || !input) return;
 
+  // Pehle current tab ka content persist karo
+  try{ if(typeof fcfpPersistActiveTabContent === 'function') fcfpPersistActiveTabContent(); }catch(err){}
+
   var ctx = _fcfpCurrentCard();
   var pageContent = document.getElementById('fcFactsPageContent');
   var hasContent = pageContent && pageContent.innerHTML.replace(/<[^>]+>/g,'').trim().length > 0;
   if(!hasContent){
-    if(typeof showToast === 'function') showToast('Pehle is card mein kuch extra facts likho', 'error');
+    if(typeof showToast === 'function') showToast('Pehle is tab mein kuch content likho', 'error');
     return;
   }
 
-  input.value = (ctx && ctx.card && ctx.card.extraTopicName) ? ctx.card.extraTopicName : '';
+  var topics = {};
+  var prefill = '';
+  if(tab === 'static'){
+    topics = S.staticGkTopics || {};
+    prefill = (ctx && ctx.card && ctx.card.staticGkTopicName) ? ctx.card.staticGkTopicName : '';
+  } else {
+    // similar → Extra Facts Topics hub
+    topics = S.extraFactsTopics || {};
+    prefill = (ctx && ctx.card && (ctx.card.similarCurrentTopicName || ctx.card.extraTopicName)) ? (ctx.card.similarCurrentTopicName || ctx.card.extraTopicName) : '';
+  }
+  input.value = prefill;
   if(datalist){
-    var topics = S.extraFactsTopics || {};
     datalist.innerHTML = Object.keys(topics).map(function(id){
       return '<option value="' + _fcEsc(topics[id].name) + '">';
     }).join('');
   }
+  // Title hint on modal if present
+  var titleEl = modal.querySelector('.fcfp-topic-pv-title');
+  if(titleEl) titleEl.textContent = tab === 'static' ? '💾 Static GK Topic Save Karo' : '💾 Similar Current Topic Save Karo';
   modal.classList.add('show');
   setTimeout(function(){ input.focus(); }, 150);
 }
@@ -18816,24 +18812,47 @@ function fcfpConfirmSaveTopic(){
     if(typeof showToast === 'function') showToast('Topic ka naam likho', 'error');
     return;
   }
+  var tab = (typeof _fcfpActiveTab !== 'undefined') ? _fcfpActiveTab : 'extra';
+  if(tab === 'extra'){
+    fcfpCloseTopicSaveModal();
+    if(typeof showToast === 'function') showToast('Extra Facts hub mein save nahi hota', 'info');
+    return;
+  }
   var pageContent = document.getElementById('fcFactsPageContent');
-  var html = pageContent ? pageContent.innerHTML : '';
+  var contentHtml = pageContent ? pageContent.innerHTML : '';
 
-  var topicId = fcfpSaveTopicToLibrary(name, html);
-  if(!topicId){ fcfpCloseTopicSaveModal(); return; }
-
-  // Link this card to the topic too, so it's clear where its extra facts came from.
+  var topicId = null;
   var ctx = _fcfpCurrentCard();
-  if(ctx && ctx.card){
-    ctx.card.extraTopicId = topicId;
-    ctx.card.extraTopicName = name;
-    save();
-    _fcSyncFlashcardSetToFirebase(ctx.key, ctx.set);
+  if(tab === 'static'){
+    topicId = fcfpSaveGenericTopicToLibrary('staticGkTopics', name, contentHtml);
+    if(topicId && ctx && ctx.card){
+      ctx.card.staticGk = ''; // live-link to hub
+      ctx.card.staticGkTopicId = topicId;
+      ctx.card.staticGkTopicName = name;
+      save();
+      _fcSyncFlashcardSetToFirebase(ctx.key, ctx.set);
+    }
+  } else {
+    // similar → Extra Facts Topics collection
+    topicId = fcfpSaveTopicToLibrary(name, contentHtml);
+    if(topicId && ctx && ctx.card){
+      ctx.card.similarCurrent = '';
+      ctx.card.similarCurrentTopicId = topicId;
+      ctx.card.similarCurrentTopicName = name;
+      ctx.card.extraTopicId = topicId;
+      ctx.card.extraTopicName = name;
+      // NEVER touch card.extra
+      save();
+      _fcSyncFlashcardSetToFirebase(ctx.key, ctx.set);
+    }
   }
 
+  if(!topicId){ fcfpCloseTopicSaveModal(); return; }
+
   fcfpUpdateTopicLinkBadge();
+  if(typeof fcfpUpdateSaveTopicBtn === 'function') fcfpUpdateSaveTopicBtn();
   fcfpCloseTopicSaveModal();
-  if(typeof showToast === 'function') showToast('💾 Topic "' + name + '" save ho gaya! ✅', 'success');
+  if(typeof showToast === 'function') showToast('💾 Topic "' + name + '" ' + (tab==='static'?'Static GK':'Similar Current') + ' hub mein save! ✅', 'success');
 }
 
 // ── Small visual cue on the 📂 icon: filled/highlighted when the
@@ -19327,6 +19346,10 @@ var _fcfpLibMode = 'extra';   // which library dropdown is open
 
 function fcfpSetActiveTab(tab, skipSave){
   if(!tab) tab = 'extra';
+  // Live-edit ON ho to pehle band + save, phir switch — warna galat field mein chala jayega
+  if(!skipSave && typeof _fcfpLiveEditOn !== 'undefined' && _fcfpLiveEditOn && typeof fcfpEndLiveEdit === 'function'){
+    try{ fcfpEndLiveEdit(); }catch(e){}
+  }
   // Save current visible content into the PREVIOUS tab's bucket before switching
   if(!skipSave && _fcfpActiveTab && _fcfpActiveTab !== tab){
     try{ fcfpPersistActiveTabContent(); }catch(e){ console.warn('tab persist', e); }
@@ -19354,6 +19377,25 @@ function fcfpSetActiveTab(tab, skipSave){
     div.textContent = tab==='static' ? '📚 Static GK' : (tab==='similar' ? '📰 Similar Current' : 'ℹ️ Extra Facts');
   }
   fcfpRenderActiveTabContent();
+  if(typeof fcfpUpdateSaveTopicBtn === 'function') fcfpUpdateSaveTopicBtn();
+}
+
+function fcfpUpdateSaveTopicBtn(){
+  var btn = document.querySelector('#fcFactsPage .fcfp-tb-topicsave');
+  if(!btn) return;
+  var tab = (typeof _fcfpActiveTab !== 'undefined') ? _fcfpActiveTab : 'extra';
+  if(tab === 'extra'){
+    btn.style.display = 'none';
+    btn.title = 'Extra Facts hub mein save nahi hota';
+  } else if(tab === 'static'){
+    btn.style.display = '';
+    btn.title = 'Is Static GK content ko Static GK Topics hub mein save karo';
+    btn.textContent = '💾 Save Static GK Topic';
+  } else {
+    btn.style.display = '';
+    btn.title = 'Is Similar Current content ko Extra Facts Topics hub mein save karo';
+    btn.textContent = '💾 Save Similar Topic';
+  }
 }
 
 function fcfpGetActiveCardCtx(){
@@ -19412,14 +19454,10 @@ function fcfpPersistActiveTabContent(){
       if(ctx.key && ctx.set) _fcSyncFlashcardSetToFirebase(ctx.key, ctx.set);
     }
   } else {
-    // extra tab — use existing central save
-    if(typeof _fcSaveCardExtraEdit === 'function'){
-      _fcSaveCardExtraEdit(card, ctx.key, ctx.set, html);
-    } else {
-      card.extra = html;
-      save();
-      if(ctx.key && ctx.set) _fcSyncFlashcardSetToFirebase(ctx.key, ctx.set);
-    }
+    // extra tab — SIRF card.extra (own Q-A data). Topic fields chhune mat.
+    card.extra = html;
+    save();
+    if(ctx.key && ctx.set) _fcSyncFlashcardSetToFirebase(ctx.key, ctx.set);
   }
 }
 
@@ -19452,17 +19490,11 @@ function fcfpSaveGenericTopicToLibrary(libKey, name, html){
 
 function fcfpUpdateAllLibBadges(){
   var ctx = fcfpGetActiveCardCtx();
-  var sBtn = document.getElementById('fcfpSimilarLibBtn');
   var gBtn = document.getElementById('fcfpStaticLibBtn');
-  if(sBtn){
-    var sl = !!(ctx && ctx.card && ctx.card.similarCurrentTopicId);
-    sBtn.classList.toggle('fcfp-topic-linked', sl);
-    sBtn.title = sl ? ('📰 Linked: ' + (ctx.card.similarCurrentTopicName||'')) : '📰 Similar Current Topic Library';
-  }
   if(gBtn){
     var gl = !!(ctx && ctx.card && ctx.card.staticGkTopicId);
     gBtn.classList.toggle('fcfp-topic-linked', gl);
-    gBtn.title = gl ? ('📚 Linked: ' + (ctx.card.staticGkTopicName||'')) : '📚 Static GK Topic Library';
+    gBtn.title = gl ? ('📚 Linked: ' + (ctx.card.staticGkTopicName||'')) : '📚 Static GK Topics se insert';
   }
 }
 
@@ -19606,6 +19638,7 @@ function fcfpOpenTopicPreviewFromMode(topicId){
         else if(!hasE && !hasS && hasG) tab = 'static';
       }
       fcfpSetActiveTab(tab, true);
+      if(typeof fcfpUpdateSaveTopicBtn === 'function') fcfpUpdateSaveTopicBtn();
     }catch(err){}
     return r;
   };
