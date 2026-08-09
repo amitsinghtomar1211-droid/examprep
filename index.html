@@ -10482,7 +10482,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <!-- Highlight & Eraser -->
     <button id="rdRmHlBtn" class="rd-btn" onclick="rdRmToggleHl();event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;" title="Highlight karo">🖊</button>
     <button id="rdRmEsBtn" class="rd-btn" onclick="rdRmToggleEraser();event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;" title="Highlight hatao">🧹</button>
-    <button id="rdDateModeBtn" class="rd-btn" onclick="hlToggleDateMode(event);event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;" title="📅 Date mode OFF — ON karke highlight pe 2s long-press se NEW sticker + date">📅</button>
+    <button id="rdDateModeBtn" class="rd-btn" onclick="hlToggleDateMode(event);event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;" title="📅 Date mode OFF — ON karke highlight pe tap se NEW sticker + date">📅</button>
     <!-- Text Colour — koi bhi selected text (highlighted ya normal) ka colour badlo -->
     <button id="rdTextColorBtn" class="rd-btn" onclick="rdOpenTextColorPicker();event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;position:relative;" title="Text ka colour badlo">
       🎨<span id="rdTextColorDot" style="position:absolute;bottom:2px;right:4px;width:8px;height:8px;border-radius:50%;background:#000;border:1px solid rgba(255,255,255,0.7);"></span>
@@ -10556,7 +10556,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
     </button>
     <div class="fcfp-tools-sep"></div>
-    <button id="fcfpDateModeBtn" class="fcfp-tool-btn" onclick="hlToggleDateMode(event)" title="📅 Date mode OFF — ON karke highlight pe 2s long-press se NEW sticker + date">📅</button>
+    <button id="fcfpDateModeBtn" class="fcfp-tool-btn" onclick="hlToggleDateMode(event)" title="📅 Date mode OFF — ON karke highlight pe tap se NEW sticker + date">📅</button>
   </div>
 
   <div id="fcfpEditLiveBanner">✎ Edit Mode ON — seedha type karo, off karte hi save ho jayega</div>
@@ -17636,10 +17636,10 @@ function hlToggleDateMode(e){
     b.classList.toggle('active', _hlDateModeOn);
     b.style.opacity = _hlDateModeOn ? '1' : '';
     b.style.background = _hlDateModeOn ? 'rgba(25,118,210,0.22)' : '';
-    b.title = _hlDateModeOn ? '📅 Date mode ON — highlight pe 2s long-press se NEW sticker + date' : '📅 Date mode OFF';
+    b.title = _hlDateModeOn ? '📅 Date mode ON — highlight pe tap se NEW sticker + date' : '📅 Date mode OFF';
   });
   if(typeof showToast==='function')
-    showToast(_hlDateModeOn ? '📅 Date mode ON — ab highlight pe 2s hold karo' : '📅 Date mode OFF', 'info');
+    showToast(_hlDateModeOn ? '📅 Date mode ON — ab highlight pe tap karo' : '📅 Date mode OFF', 'info');
 }
 
 /* Editing modes start hone par Date mode auto-OFF */
@@ -17783,52 +17783,36 @@ function hlFindMarkFromEvent(e){
 function hlBindLongPressOnRoot(root){
   if(!root || root._hlDateBound) return;
   root._hlDateBound = true;
-  var startX=0, startY=0;
-  function clearT(){
-    if(_hlLongPressTimer){ clearTimeout(_hlLongPressTimer); _hlLongPressTimer=null; }
-    _hlLongPressMark = null;
+  // Date mode ON hone par highlight pe turant tap = NEW sticker + date picker.
+  // 2s long-press hata diya taaki Android native text-selection / Google search
+  // interfere na kare.
+  function onMarkActivate(e){
+    if(!_hlDateModeOn) return;
+    var mark = hlFindMarkFromEvent(e);
+    if(!mark) return;
+    try{ e.preventDefault(); e.stopPropagation(); }catch(err){}
+    try{ navigator.vibrate && navigator.vibrate(12); }catch(err){}
+    hlOpenDatePicker(mark);
   }
-  root.addEventListener('touchstart', function(e){
+  root.addEventListener('click', onMarkActivate, true);
+  // touchend pe bhi (kuch devices pe click delay / cancel ho sakta hai)
+  root.addEventListener('touchend', function(e){
+    if(!_hlDateModeOn) return;
     var mark = hlFindMarkFromEvent(e);
     if(!mark) return;
-    var t = e.touches[0];
-    startX = t.clientX; startY = t.clientY;
-    _hlLongPressMark = mark;
-    clearTimeout(_hlLongPressTimer);
-    _hlLongPressTimer = setTimeout(function(){
-      _hlLongPressTimer = null;
-      if(!_hlDateModeOn) return;
-      if(_hlLongPressMark){
-        try{ navigator.vibrate && navigator.vibrate(12); }catch(err){}
-        hlOpenDatePicker(_hlLongPressMark);
-      }
-    }, 2000);
-  }, {passive:true});
-  root.addEventListener('touchmove', function(e){
-    if(!_hlLongPressTimer) return;
-    var t = e.touches[0];
-    if(Math.abs(t.clientX-startX)>12 || Math.abs(t.clientY-startY)>12) clearT();
-  }, {passive:true});
-  root.addEventListener('touchend', clearT, {passive:true});
-  root.addEventListener('touchcancel', clearT, {passive:true});
-  // desktop
-  root.addEventListener('mousedown', function(e){
-    if(e.button !== 0) return;
-    var mark = hlFindMarkFromEvent(e);
-    if(!mark) return;
-    startX = e.clientX; startY = e.clientY;
-    _hlLongPressMark = mark;
-    _hlLongPressTimer = setTimeout(function(){
-      _hlLongPressTimer = null;
-      if(!_hlDateModeOn) return;
-      if(_hlLongPressMark) hlOpenDatePicker(_hlLongPressMark);
-    }, 2000);
-  });
-  root.addEventListener('mousemove', function(e){
-    if(!_hlLongPressTimer) return;
-    if(Math.abs(e.clientX-startX)>12 || Math.abs(e.clientY-startY)>12) clearT();
-  });
-  root.addEventListener('mouseup', clearT);
+    try{ e.preventDefault(); e.stopPropagation(); }catch(err){}
+    try{ navigator.vibrate && navigator.vibrate(12); }catch(err){}
+    hlOpenDatePicker(mark);
+  }, {passive:false, capture:true});
+  // Android long-press context menu / selection block karo jab date mode ON ho
+  root.addEventListener('contextmenu', function(e){
+    if(!_hlDateModeOn) return;
+    if(hlFindMarkFromEvent(e)){ e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  root.addEventListener('selectstart', function(e){
+    if(!_hlDateModeOn) return;
+    if(hlFindMarkFromEvent(e)){ e.preventDefault(); }
+  }, true);
 }
 
 function hlInitDateLongPress(){
@@ -18178,9 +18162,25 @@ function fcfpApplyHighlightFromRange(range, text) {
 
   var madeAnyMark = false;
   try {
-    if(typeof hlUnwrapMarksIntersectingRange === 'function'){
-      try{ hlUnwrapMarksIntersectingRange(range, ct); }catch(e){}
-    }
+    // Pehle intersecting marks ka colour naye colour se update karo (unwrap mat karo)
+    // taaki re-highlight pe pehla colour hat-ke blank na ho jaye.
+    var existingMarks = Array.prototype.slice.call(ct.querySelectorAll('mark'));
+    existingMarks.forEach(function(m){
+      if(!hlIsHighlightMark(m)) return;
+      try{
+        if(typeof range.intersectsNode === 'function' && !range.intersectsNode(m)) return;
+      }catch(e){ return; }
+      // Preserve sticker / date children; only change highlight class
+      var keep = [];
+      m.className.split(/\s+/).forEach(function(c){
+        if(c && c.indexOf('user-hl') !== 0) keep.push(c);
+      });
+      m.className = (keep.join(' ') + ' ' + colorClass).trim();
+      m.style.cursor = (_fcfpHlMode === 'eraser') ? 'cell' : 'default';
+      fcfpAttachEraserToMark(m);
+      madeAnyMark = true;
+    });
+
     // Collect every text node that actually intersects the selection range.
     // Using a TreeWalker + range.intersectsNode is robust across paragraph
     // and <br> boundaries (unlike surroundContents which requires the range
@@ -18188,6 +18188,12 @@ function fcfpApplyHighlightFromRange(range, text) {
     var walker = document.createTreeWalker(ct, NodeFilter.SHOW_TEXT, {
       acceptNode: function(node){
         if(!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        // Already inside a highlight mark? Skip — colour already updated above
+        var p = node.parentElement;
+        while(p && p !== ct){
+          if(hlIsHighlightMark(p)) return NodeFilter.FILTER_REJECT;
+          p = p.parentElement;
+        }
         try{
           if(typeof range.intersectsNode === 'function'){
             return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
@@ -18402,31 +18408,66 @@ function fcfpFmtOnTouchEnd(e) {
 function fcfpAttachEraserToMark(mark) {
   if(mark._fcfpEraserFn) {
     mark.removeEventListener('pointerdown', mark._fcfpEraserFn);
+    mark.removeEventListener('click', mark._fcfpEraserFn);
   }
   mark._fcfpEraserFn = function(e) {
     if(_fcfpHlMode !== 'eraser') return;
     e.preventDefault();
     e.stopPropagation();
+    var target = this;
+    // Agar sticker/date span pe tap hua to parent mark use karo
+    if(target && target.classList && (target.classList.contains('hl-new-sticker') || target.classList.contains('hl-date-label'))){
+      target = target.closest('mark');
+    }
+    if(!target || target.tagName !== 'MARK') return;
     fcfpSaveSnapshot();
-    var parent = this.parentNode;
+    // Sticker / date labels pehle hatao
+    target.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
+    var parent = target.parentNode;
     if(!parent) return;
-    while(this.firstChild) parent.insertBefore(this.firstChild, this);
-    parent.removeChild(this);
+    while(target.firstChild) parent.insertBefore(target.firstChild, target);
+    parent.removeChild(target);
+    try{ parent.normalize(); }catch(err){}
     fcfpPersistExtra();
     if(typeof showToast === 'function') showToast('Highlight hata diya 🧹', 'success');
   };
   mark.addEventListener('pointerdown', mark._fcfpEraserFn);
+  mark.addEventListener('click', mark._fcfpEraserFn);
 }
 
-// Re-attach eraser listeners after undo/redo
+// Re-attach eraser listeners after undo/redo / content load
 function fcfpReattachEraserListeners() {
   var ct = document.getElementById('fcFactsPageContent');
   if(!ct) return;
-  var marks = ct.querySelectorAll('mark.user-hl,mark.user-hl-pink,mark.user-hl-green,mark.user-hl-blue,mark.user-hl-red,mark.user-hl-darkred,mark.user-hl-mint,mark.user-hl-lavender,mark.user-hl-peach');
+  var marks = ct.querySelectorAll('mark[class*="user-hl"]');
   marks.forEach(function(m) {
     m.style.cursor = (_fcfpHlMode === 'eraser') ? 'cell' : 'default';
     fcfpAttachEraserToMark(m);
   });
+  // Event delegation once — saved/hard-coded marks ke liye bhi eraser kaam kare
+  if(!ct._fcfpEraserDelegated){
+    ct._fcfpEraserDelegated = true;
+    ct.addEventListener('pointerdown', function(e){
+      if(_fcfpHlMode !== 'eraser') return;
+      var t = e.target;
+      while(t && t !== ct){
+        if(t.tagName === 'MARK' && /user-hl/.test(t.className||'')){
+          e.preventDefault(); e.stopPropagation();
+          fcfpSaveSnapshot();
+          t.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
+          var parent = t.parentNode;
+          if(!parent) return;
+          while(t.firstChild) parent.insertBefore(t.firstChild, t);
+          parent.removeChild(t);
+          try{ parent.normalize(); }catch(err){}
+          fcfpPersistExtra();
+          if(typeof showToast === 'function') showToast('Highlight hata diya 🧹', 'success');
+          return;
+        }
+        t = t.parentElement;
+      }
+    }, true);
+  }
 }
 
 // ── Mobile drag-to-highlight touchend — mirrors onNETouchEnd (Notes
@@ -27358,12 +27399,56 @@ function toggleEraserMode() {
 
 function neAttachEraserToMarks() {
   const area = document.getElementById('noteEditableArea');
-  area.querySelectorAll('mark.user-hl, mark.user-hl-pink, mark.user-hl-green, mark.user-hl-blue, mark.user-hl-red').forEach(mark => {
-    // Always re-attach (ensures undo/redo ke baad bhi listener sahi ho)
+  if(!area) return;
+  // Saare user-hl* classes (saved highlights included)
+  area.querySelectorAll('mark[class*="user-hl"]').forEach(mark => {
+    // Always re-attach (ensures undo/redo / load ke baad bhi listener sahi ho)
     mark.style.cursor = (_hlCurrentMode === 'eraser') ? 'cell' : 'default';
     mark.title = (_hlCurrentMode === 'eraser') ? '🧹 Tap karo to unhighlight' : 'Eraser ON karo to remove';
     neAttachUnhighlightToMark(mark);
   });
+  // Also attach on reading overlay if open
+  var rd = document.getElementById('rdContent');
+  if(rd){
+    rd.querySelectorAll('mark[class*="user-hl"]').forEach(mark => {
+      mark.style.cursor = (_hlCurrentMode === 'eraser') ? 'cell' : 'default';
+      mark.title = (_hlCurrentMode === 'eraser') ? '🧹 Tap karo to unhighlight' : 'Eraser ON karo to remove';
+      neAttachUnhighlightToMark(mark);
+    });
+  }
+  // Event delegation — hard-coded / saved marks jo listener miss karen
+  if(area && !area._neEraserDelegated){
+    area._neEraserDelegated = true;
+    area.addEventListener('pointerdown', function(e){
+      if(_hlCurrentMode !== 'eraser') return;
+      var t = e.target;
+      while(t && t !== area){
+        if(t.tagName === 'MARK' && /user-hl/.test(t.className||'')){
+          e.preventDefault(); e.stopPropagation();
+          // Reuse same unhighlight path
+          if(typeof neAttachUnhighlightToMark === 'function'){
+            // fire logic inline
+            neSaveSnapshot();
+            t.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
+            const hid = t.getAttribute('data-hlid');
+            const parent = t.parentNode;
+            if(!parent) return;
+            while(t.firstChild) parent.insertBefore(t.firstChild, t);
+            parent.removeChild(t);
+            if(hid && _editorState && _editorState.highlights){
+              _editorState.highlights = _editorState.highlights.filter(function(h){ return h.id !== hid; });
+            }
+            markModified();
+            showToast('Highlight hata diya 🧹', 'success');
+            setTimeout(neUpdateHlCanvasBtn, 50);
+            if(typeof window._neRmRearmIfActive === 'function') window._neRmRearmIfActive();
+          }
+          return;
+        }
+        t = t.parentElement;
+      }
+    }, true);
+  }
 }
 
 // ============ ADVANCED TOUCH HIGHLIGHT SYSTEM v2 ============
@@ -27872,9 +27957,24 @@ function applyHighlightFromRange(range, text) {
   // Reading overlay: save to its own undo stack before modifying
   if(_inRdMode) { _rdHlSaveSnapshot(); }
 
-  if(typeof hlUnwrapMarksIntersectingRange === 'function'){
-    try{ hlUnwrapMarksIntersectingRange(range, area); }catch(e){}
-  }
+  // Pehle intersecting marks ka colour update (unwrap mat karo) — re-highlight
+  // pe pehla colour turant naya colour ban jaye, blank intermediate step nahi.
+  try{
+    var _exMarks = Array.prototype.slice.call(area.querySelectorAll('mark'));
+    _exMarks.forEach(function(m){
+      if(!m || m.tagName !== 'MARK') return;
+      var cn = m.className || '';
+      if(!/user-hl/.test(cn)) return;
+      try{ if(typeof range.intersectsNode === 'function' && !range.intersectsNode(m)) return; }catch(e){ return; }
+      var keep = [];
+      cn.split(/\s+/).forEach(function(c){ if(c && c.indexOf('user-hl') !== 0) keep.push(c); });
+      m.className = (keep.join(' ') + ' ' + cls).trim();
+      if(isCustomHex) m.style.backgroundColor = color;
+      else if(m.style) m.style.backgroundColor = '';
+      if(_editorState.hlTextColor) m.style.color = _editorState.hlTextColor;
+      try{ neAttachUnhighlightToMark(m); }catch(e){}
+    });
+  }catch(e){}
 
   // ── STEP 1: Range ke andar ke saare text nodes collect karo ──
   function collectTextNodes(range) {
@@ -27886,6 +27986,12 @@ function applyHighlightFromRange(range, text) {
         acceptNode: function(node) {
           // Node fully outside range? Reject
           if(!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
+          // Already inside a highlight mark? Skip (colour already updated)
+          var p = node.parentElement;
+          while(p && p !== area){
+            if(p.tagName === 'MARK' && /user-hl/.test(p.className||'')) return NodeFilter.FILTER_REJECT;
+            p = p.parentElement;
+          }
           return NodeFilter.FILTER_ACCEPT;
         }
       }
@@ -27994,35 +28100,41 @@ function neAttachUnhighlightToMark(mark) {
   // Remove purana listener agar pehle se hai (re-attach safe karne ke liye)
   if(mark._unhighlightFn) {
     mark.removeEventListener('pointerdown', mark._unhighlightFn);
+    mark.removeEventListener('click', mark._unhighlightFn);
   }
   mark._unhighlightFn = function(e) {
     if(_hlCurrentMode !== 'eraser') return;
     e.preventDefault();
     e.stopPropagation();
+    var target = this;
+    if(target && target.classList && (target.classList.contains('hl-new-sticker') || target.classList.contains('hl-date-label'))){
+      target = target.closest('mark') || target;
+    }
+    if(!target || target.tagName !== 'MARK') return;
     neSaveSnapshot();
-    const hid = this.getAttribute('data-hlid');
+    const hid = target.getAttribute('data-hlid');
+    // Sticker / date labels pehle hatao
+    target.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
 
     // Safe removal: insert text nodes before/after mark, then remove mark
-    // This avoids DOM restructure that shifts line positions
-    const parent = this.parentNode;
+    const parent = target.parentNode;
     if(!parent) return;
 
-    // Move all child nodes of mark before the mark (preserving their exact positions)
-    while(this.firstChild) {
-      parent.insertBefore(this.firstChild, this);
+    while(target.firstChild) {
+      parent.insertBefore(target.firstChild, target);
     }
-    // Now remove the empty mark tag
-    parent.removeChild(this);
-    // Do NOT call normalize() -- it merges text nodes and can shift layout
+    parent.removeChild(target);
 
-    _editorState.highlights = _editorState.highlights.filter(h => h.id !== hid);
+    if(_editorState && _editorState.highlights){
+      _editorState.highlights = _editorState.highlights.filter(h => h.id !== hid);
+    }
     markModified();
     showToast('Highlight hata diya 🧹', 'success');
-    // Update highlights→canvas button badge
     setTimeout(neUpdateHlCanvasBtn, 50);
     if(typeof window._neRmRearmIfActive === 'function') window._neRmRearmIfActive();
   };
   mark.addEventListener('pointerdown', mark._unhighlightFn);
+  mark.addEventListener('click', mark._unhighlightFn);
 }
 
 // ============ MAGNIFIER (smooth, no DOM thrash) ============
