@@ -718,34 +718,37 @@ body.night-mode .eft-mini-back{background:#2a2016;}
 }
 #fcFactsPage.active{display:flex;}
 #fcFactsPage .fcfp-topbar{
-  flex-shrink:0;display:flex;align-items:center;gap:10px;
+  position:absolute;top:0;left:0;right:0;z-index:40;
+  display:flex;align-items:center;gap:10px;
   padding:14px 14px calc(14px + env(safe-area-inset-top,0px));
   padding-top:calc(14px + env(safe-area-inset-top,0px));
   background:var(--surface,#fff);border-bottom:1.5px solid var(--border,#e0d8c8);
-  transition:background 0.25s ease, border-color 0.25s ease,
-             max-height 0.3s cubic-bezier(0.4,0,0.2,1), opacity 0.25s ease, padding 0.3s ease;
+  transition:opacity 0.2s ease, transform 0.2s ease;
   overflow:hidden;max-height:120px;
+  box-shadow:0 2px 12px rgba(0,0,0,0.06);
 }
 #fcFactsPage .fcfp-topbar.fcfp-bar-hidden{
-  max-height:0 !important;opacity:0 !important;
-  padding-top:0 !important;padding-bottom:0 !important;
-  border-bottom-width:0 !important;pointer-events:none;
+  opacity:0 !important;
+  transform:translateY(-100%);
+  pointer-events:none;
 }
 
 /* ── Reading Mode toolbar row: theme + font size + download/print ── */
 #fcFactsPage .fcfp-toolsbar{
-  flex-shrink:0;display:flex;align-items:center;gap:5px;
+  position:absolute;left:0;right:0;z-index:40;
+  top:var(--fcfp-top-h, 56px);
+  display:flex;align-items:center;gap:5px;
   padding:8px 12px;overflow-x:auto;-webkit-overflow-scrolling:touch;
   scrollbar-width:none;-ms-overflow-style:none;
   background:var(--surface2,#f4efe4);border-bottom:1.5px solid var(--border,#e0d8c8);
-  transition:background 0.25s ease, border-color 0.25s ease,
-             max-height 0.3s cubic-bezier(0.4,0,0.2,1), opacity 0.25s ease, padding 0.3s ease;
+  transition:opacity 0.2s ease, transform 0.2s ease;
   max-height:60px;
+  box-shadow:0 2px 10px rgba(0,0,0,0.05);
 }
 #fcFactsPage .fcfp-toolsbar.fcfp-bar-hidden{
-  max-height:0 !important;opacity:0 !important;
-  padding-top:0 !important;padding-bottom:0 !important;
-  border-bottom-width:0 !important;pointer-events:none;
+  opacity:0 !important;
+  transform:translateY(-120%);
+  pointer-events:none;
 }
 #fcFactsPage .fcfp-toolsbar::-webkit-scrollbar{display:none;}
 #fcFactsPage .fcfp-tool-btn{
@@ -827,7 +830,8 @@ body.night-mode #fcFactsPage .fcfp-close{background:rgba(201,160,96,0.16);color:
 body.night-mode #fcFactsPage .fcfp-title{color:#c9a060;}
 #fcFactsPage .fcfp-body{
   flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;
-  padding:22px 20px calc(40px + env(safe-area-inset-bottom,0px));
+  padding:calc(22px + var(--fcfp-bars-h, 100px)) 20px calc(40px + env(safe-area-inset-bottom,0px));
+  overscroll-behavior:contain;
 }
 #fcFactsPage .fcfp-content{
   max-width:640px;margin:0 auto;
@@ -17062,6 +17066,7 @@ function fcShowExtraOverlay(e){
   fcfpApplyFontSize();
   // Tools start visible, then auto-hide after a few seconds — same as
   // the Notes Editor's Reading Mode.
+  if(typeof fcfpMeasureBars === 'function') fcfpMeasureBars();
   if(typeof fcfpShowBars === 'function') fcfpShowBars();
   // Show highlight/eraser/undo/redo side buttons
   fcfpShowSideButtons();
@@ -17303,7 +17308,30 @@ function fcfpPrint() {
 var _fcfpBarsVisible = true;
 var _fcfpAutoHideTimer = null;
 
+function fcfpMeasureBars(){
+  var page = document.getElementById('fcFactsPage');
+  var top = document.getElementById('fcfpTopbar');
+  var tools = document.getElementById('fcfpToolsbar');
+  if(!page) return;
+  // Measure natural height while visible (temporarily unhide if needed)
+  var th = top ? top.offsetHeight : 0;
+  var th2 = tools ? tools.offsetHeight : 0;
+  if(top && top.classList.contains('fcfp-bar-hidden')){
+    // use scrollHeight as estimate when hidden
+    th = top.scrollHeight || th || 56;
+  }
+  if(tools && tools.classList.contains('fcfp-bar-hidden')){
+    th2 = tools.scrollHeight || th2 || 48;
+  }
+  page.style.setProperty('--fcfp-top-h', th + 'px');
+  // Body padding stays CONSTANT (bars overlay) — set once from full height
+  var barsH = (th || 56) + (th2 || 48);
+  page.style.setProperty('--fcfp-bars-h', barsH + 'px');
+}
+
 function fcfpHideBars() {
+  var body = document.getElementById('fcFactsPageBody');
+  var keep = body ? body.scrollTop : 0;
   _fcfpBarsVisible = false;
   var top = document.getElementById('fcfpTopbar');
   var tools = document.getElementById('fcfpToolsbar');
@@ -17312,9 +17340,16 @@ function fcfpHideBars() {
   if(tools) tools.classList.add('fcfp-bar-hidden');
   if(restore) restore.classList.add('show');
   if(_fcfpAutoHideTimer) { clearTimeout(_fcfpAutoHideTimer); _fcfpAutoHideTimer = null; }
+  // Overlay bars — layout/scroll unchanged; still pin scrollTop hard
+  if(body){
+    body.scrollTop = keep;
+    requestAnimationFrame(function(){ body.scrollTop = keep; });
+  }
 }
 
 function fcfpShowBars() {
+  var body = document.getElementById('fcFactsPageBody');
+  var keep = body ? body.scrollTop : 0;
   _fcfpBarsVisible = true;
   var top = document.getElementById('fcfpTopbar');
   var tools = document.getElementById('fcfpToolsbar');
@@ -17322,7 +17357,12 @@ function fcfpShowBars() {
   if(top) top.classList.remove('fcfp-bar-hidden');
   if(tools) tools.classList.remove('fcfp-bar-hidden');
   if(restore) restore.classList.remove('show');
+  try{ fcfpMeasureBars(); }catch(e){}
   fcfpResetAutoHide();
+  if(body){
+    body.scrollTop = keep;
+    requestAnimationFrame(function(){ body.scrollTop = keep; });
+  }
 }
 
 function fcfpResetAutoHide() {
