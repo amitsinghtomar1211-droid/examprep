@@ -18074,6 +18074,7 @@ function fcfpSearchSelection(e){
   lines.push('10) ⭐ CRITICAL — CONTENT VOLUME BY WEIGHTAGE: Topic ki exam-importance aur weightage dekhkar facts ki sankhya / depth khud decide karo. Bahut important / high-weightage topic = zyada precise high-yield facts (quota bharne ke liye random/basic trivia MAT daalo). Kam important / kam data wala topic = utne hi solid facts jitne genuinely useful hon — forced filler MAT banao, important angles SKIP mat karo. Goal: quality + completeness, not a fixed bullet count.');
   lines.push('11) Maujud Extra Facts se DUPLICATE mat do; unse alag / deeper / missing exam-angles bharto. Agar Extra Facts mein koi claim galat lage to pehle short FACT CHECK (sirf galat claims) phir naye EXTRA FACTS.');
   lines.push('12) Output itna compact ho ki topic 3–10 minute mein revise ho sake, lekin completeness mat girao.');
+  lines.push('13) MEMORIZE-FRIENDLY ARRANGEMENT (bahut zaroori): Facts aise order aur group mein do ki student ko yaad rakhna asaan ho — related points ek saath; number/year/article clusters; compare-contrast pairs ek ke baad ek; cause→effect; easy→hard flow; subtopic headings clear; similar/confusing items ⚠️ ke paas. Random bullet dump mat do — structured revision sequence do jisse 1 baar padhke yaad ho.');
   lines.push('');
   lines.push('OUTPUT FORMAT (strict — koi intro/disclaimer/closing mat likho):');
   lines.push('');
@@ -19706,6 +19707,13 @@ function fcfpResetNotesEditorZ(){
 function fcfpReadTopicFromFacts(topicId){
   if(typeof fcfpCloseTopicDropdown === 'function') fcfpCloseTopicDropdown();
   _fcfpReturnToFactsAfterHubRead = true;
+  // Facts page temporarily hide — warna back/popstate Facts band karke play toot jata hai
+  // aur Notes Editor ke andar Full Reading Mode z-index se peeche reh jata hai
+  var factsPage = document.getElementById('fcFactsPage');
+  if(factsPage && factsPage.classList.contains('active')){
+    factsPage.classList.remove('active');
+    // _fcFactsPageOpen true rakho conceptually via return flag; UI hide
+  }
   if(_fcfpLibMode === 'static'){
     if(typeof sgkOpenFullReading === 'function') sgkOpenFullReading(topicId);
     else if(typeof showToast==='function') showToast('Static GK reader nahi mila','error');
@@ -19713,7 +19721,6 @@ function fcfpReadTopicFromFacts(topicId){
     if(typeof eftOpenFullReading === 'function') eftOpenFullReading(topicId);
     else if(typeof showToast==='function') showToast('Current Affairs reader nahi mila','error');
   }
-  // Open hone ke baad z-index upar lao taaki Facts page ke upar dikhe
   setTimeout(function(){
     fcfpElevateNotesEditorAboveFacts();
     var ov = document.getElementById('notesEditorOverlay');
@@ -19721,6 +19728,7 @@ function fcfpReadTopicFromFacts(topicId){
       ov.classList.add('show');
       ov.style.display = '';
     }
+    document.body.style.overflow = 'hidden';
   }, 0);
   setTimeout(fcfpElevateNotesEditorAboveFacts, 50);
 }
@@ -28720,6 +28728,10 @@ function openReadingMode(title, text, richHtml, syncBack) {
   // syncBack override: if explicitly passed, use it; otherwise keep whatever was set by caller
   if(typeof syncBack !== 'undefined') _rdSyncBackOnClose = !!syncBack;
   var overlay = document.getElementById('readingOverlay');
+  // Facts→Hub→Notes path: reading overlay notes editor ke upar aana chahiye
+  if(typeof _fcfpReturnToFactsAfterHubRead !== 'undefined' && _fcfpReturnToFactsAfterHubRead && overlay){
+    overlay.style.zIndex = '1000005';
+  }
   var contentEl = document.getElementById('rdContent');
   var titleEl = document.getElementById('rdTitle');
   var wordCountEl = document.getElementById('rdWordCount');
@@ -28820,10 +28832,18 @@ function closeReadingMode() {
     _rdSyncBackOnClose = false;
   }
 
-  document.getElementById('readingOverlay').classList.remove('show');
+  var _rdOv = document.getElementById('readingOverlay');
+  if(_rdOv){
+    _rdOv.classList.remove('show');
+    if(_rdOv.style.zIndex === '1000005') _rdOv.style.zIndex = '';
+  }
   var fill = document.getElementById('rdProgress');
   if(fill) fill.style.width = '0%';
-  document.body.style.overflow = '';
+  // Agar Notes Editor abhi bhi Facts-hub path se khula hai to body scroll lock mat hatao
+  var _neStill = document.getElementById('notesEditorOverlay');
+  var _keepLock = (typeof _fcfpReturnToFactsAfterHubRead !== 'undefined' && _fcfpReturnToFactsAfterHubRead && _neStill && _neStill.classList.contains('show'));
+  if(!_keepLock) document.body.style.overflow = '';
+  else document.body.style.overflow = 'hidden';
   if(_rdAutoHideTimer) clearTimeout(_rdAutoHideTimer);
   _rdControlsVisible = true;
   _rdReadingOpen = false;
@@ -31296,33 +31316,33 @@ window.addEventListener('popstate',function(e){
   // (UI pehle hi band ho chuki hai, play mode intact hai)
   if(_fcfpClosingByButton){ _fcfpClosingByButton = false; return; }
 
-  // Flashcard "View More" full-screen facts page khula hai (browser back button case)
-  const fcfp=document.getElementById('fcFactsPage');
-  if(fcfp&&fcfp.classList.contains('active')){
-    fcfp.classList.remove('active');
-    if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip();
-    document.body.style.overflow='';
-    _fcFactsPageOpen=false;
-    return;
-  }
-  // Reading Mode khula hai
+  // Reading Mode pehle handle karo (Notes ke upar ho sakta hai)
   const ro=document.getElementById('readingOverlay');
   if(ro&&ro.classList.contains('show')){
     closeReadingMode();
     return;
   }
+  // Notes Editor (Facts→Hub Read path included)
   const ne=document.getElementById('notesEditorOverlay');
   if(ne&&ne.classList.contains('show')){
     if(typeof _editorState!=='undefined'&&_editorState.modified){
-      // Mobile back button -- state wapas push karo taaki back se bahar na jaaye
       history.pushState({type:'notesEditor'},'');
-      // Popup dikhao (agar already nahi dikhaya hua)
       var existingPopup = document.getElementById('unsavedPopupOverlay');
       if(!existingPopup) showUnsavedPopup();
     } else {
-      _editorState.modified = false; // Safety
+      _editorState.modified = false;
       _forceCloseEditor();
     }
+    return;
+  }
+  // Flashcard "View More" facts page — hub-read return path me temporarily inactive rehta hai
+  const fcfp=document.getElementById('fcFactsPage');
+  if(fcfp&&fcfp.classList.contains('active')){
+    // Agar hub-read se wapas aane wala flag set hai lekin notes band ho chuka — restore handled in _forceCloseEditor
+    fcfp.classList.remove('active');
+    if(typeof fcfpHideSearchChip==='function') fcfpHideSearchChip();
+    document.body.style.overflow='';
+    _fcFactsPageOpen=false;
     return;
   }
   const openModal=document.querySelector('.modal-overlay.show');
