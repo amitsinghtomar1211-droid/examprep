@@ -6397,9 +6397,16 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <input id="eppRemoteCodeInp" type="text" autocomplete="off" autocapitalize="off" placeholder="Code (optional if QR)" style="width:100%;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:#fff;font-size:0.95rem;font-weight:700;box-sizing:border-box;">
     <button type="button" id="eppRemoteConnectBtn" style="width:100%;margin-top:8px;padding:12px;border:none;border-radius:12px;background:linear-gradient(135deg,#1976d2,#42a5f5);color:#fff;font-weight:900;font-size:0.92rem;">🔗 Connect</button>
   </div>
-  <div id="eppRemotePad" style="flex:1;margin:6px 12px;border-radius:18px;background:radial-gradient(ellipse at center,rgba(25,118,210,0.18),rgba(255,255,255,0.04));border:1.5px solid rgba(255,255,255,0.16);position:relative;touch-action:none;overflow:hidden;display:none;">
-    <div id="eppPadHint" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:0.4;font-size:0.8rem;text-align:center;padding:24px;line-height:1.5;">Touchpad = main screen<br>Move = cursor · Double-tap = click<br>2 fingers = scroll</div>
-    <div id="eppPadFinger" style="display:none;position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:rgba(100,181,246,0.9);box-shadow:0 0 0 4px rgba(100,181,246,0.25);pointer-events:none;"></div>
+  <div id="eppRemotePadRow" style="flex:1;margin:6px 10px;display:none;gap:8px;min-height:0;">
+    <div id="eppRemotePad" style="flex:1;border-radius:18px;background:radial-gradient(ellipse at center,rgba(25,118,210,0.18),rgba(255,255,255,0.04));border:1.5px solid rgba(255,255,255,0.16);position:relative;touch-action:none;overflow:hidden;min-width:0;">
+      <div id="eppPadHint" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:0.4;font-size:0.78rem;text-align:center;padding:24px;line-height:1.5;">Touchpad = main screen<br>Move → 2s lock (double-tap click)<br>Right strip = scroll</div>
+      <div id="eppPadFinger" style="display:none;position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:rgba(100,181,246,0.9);box-shadow:0 0 0 4px rgba(100,181,246,0.25);pointer-events:none;"></div>
+      <div id="eppPadLockBadge" style="display:none;position:absolute;top:10px;left:50%;transform:translateX(-50%);padding:4px 10px;border-radius:999px;background:rgba(255,152,0,0.92);color:#111;font-size:0.68rem;font-weight:900;pointer-events:none;">🔒 LOCKED 2s</div>
+    </div>
+    <div id="eppRemoteScrollStrip" style="width:36px;flex-shrink:0;border-radius:14px;background:rgba(255,255,255,0.08);border:1.5px solid rgba(255,255,255,0.18);position:relative;touch-action:none;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+      <div style="font-size:0.65rem;opacity:0.55;pointer-events:none;writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:0.08em;">SCROLL</div>
+      <div id="eppScrollThumb" style="position:absolute;left:4px;right:4px;height:48px;top:20%;border-radius:10px;background:rgba(100,181,246,0.85);box-shadow:0 2px 8px rgba(0,0,0,0.25);pointer-events:none;"></div>
+    </div>
   </div>
   <div id="eppRemoteTypeWrap" style="padding:8px 12px calc(12px + env(safe-area-inset-bottom,0px));display:none;">
     <input id="eppRemoteTypeInp" type="text" enterkeyhint="send" placeholder="Type here…" style="width:100%;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.07);color:#fff;font-size:1rem;box-sizing:border-box;">
@@ -31601,6 +31608,10 @@ var _eppLastPtr = {x: 0.5, y: 0.5};
 var _eppCursorTarget = {x: 0.5, y: 0.5};
 var _eppCursorRaf = null;
 var _eppCursorVisible = false;
+var _eppCursorLocked = false;
+var _eppCursorLockTimer = null;
+var _eppCursorLockPos = {x: 0.5, y: 0.5};
+var _EPP_LOCK_MS = 2000;
 
 function eppEnsureCursor(){
   if(_eppCursor && document.body.contains(_eppCursor)) return _eppCursor;
@@ -31633,9 +31644,40 @@ function eppCursorTick(){
   }
 }
 
+function eppSetCursorLockedStyle(locked){
+  var c = eppEnsureCursor();
+  var path = c.querySelector('path');
+  if(locked){
+    if(path){ path.setAttribute('fill', '#ffb300'); path.setAttribute('stroke', '#e65100'); }
+    c.style.filter = 'drop-shadow(0 0 6px rgba(255,152,0,0.9))';
+  } else {
+    if(path){ path.setAttribute('fill', '#fff'); path.setAttribute('stroke', '#1565c0'); }
+    c.style.filter = '';
+  }
+}
+
+function eppArmCursorLock(nx, ny){
+  _eppCursorLocked = true;
+  _eppCursorLockPos = {x: nx, y: ny};
+  _eppCursorTarget = {x: nx, y: ny};
+  _eppLastPtr = {x: nx, y: ny};
+  eppSetCursorLockedStyle(true);
+  var c = eppEnsureCursor();
+  c.style.display = 'block';
+  c.style.transform = 'translate3d(' + (nx*window.innerWidth) + 'px,' + (ny*window.innerHeight) + 'px,0)';
+  if(_eppCursorLockTimer) clearTimeout(_eppCursorLockTimer);
+  _eppCursorLockTimer = setTimeout(function(){
+    _eppCursorLocked = false;
+    _eppCursorLockTimer = null;
+    eppSetCursorLockedStyle(false);
+  }, _EPP_LOCK_MS);
+}
+
 function eppSetCursorNorm(nx, ny, immediate){
   nx = Math.max(0, Math.min(1, nx));
   ny = Math.max(0, Math.min(1, ny));
+  // Locked window: ignore move so double-tap stays on target
+  if(_eppCursorLocked) return;
   _eppCursorTarget = {x: nx, y: ny};
   _eppCursorVisible = true;
   var c = eppEnsureCursor();
@@ -31720,10 +31762,15 @@ function eppHostOnData(msg){
   if(!msg || !msg.t) return;
   if(msg.t === 'ptr'){
     eppSetCursorNorm(msg.x||0, msg.y||0, false);
+  } else if(msg.t === 'lock'){
+    eppArmCursorLock(msg.x||0, msg.y||0);
   } else if(msg.t === 'click'){
-    var x2 = (msg.x!=null?msg.x:_eppLastPtr.x) * window.innerWidth;
-    var y2 = (msg.y!=null?msg.y:_eppLastPtr.y) * window.innerHeight;
-    eppSetCursorNorm(msg.x!=null?msg.x:_eppLastPtr.x, msg.y!=null?msg.y:_eppLastPtr.y, true);
+    // Always click at locked pos if active, else message / last
+    var cx = _eppCursorLocked ? _eppCursorLockPos.x : (msg.x!=null?msg.x:_eppLastPtr.x);
+    var cy = _eppCursorLocked ? _eppCursorLockPos.y : (msg.y!=null?msg.y:_eppLastPtr.y);
+    var x2 = cx * window.innerWidth;
+    var y2 = cy * window.innerHeight;
+    eppSetCursorNorm(cx, cy, true);
     var el = document.elementFromPoint(x2, y2);
     // temporarily hide cursor so elementFromPoint is accurate
     if(_eppCursor) _eppCursor.style.display = 'none';
@@ -31909,16 +31956,18 @@ function eppRemoteBindPad(){
   if(!pad || pad._eppBound) return;
   pad._eppBound = true;
   var finger = document.getElementById('eppPadFinger');
+  var lockBadge = document.getElementById('eppPadLockBadge');
   var lastTap = 0;
-  var lastScrollY = 0;
-  var mode = 'none'; // move | scroll
+  var touchMoved = false;
+  var lockUntil = 0;
+  var lockedNorm = {x: 0.5, y: 0.5};
 
   function normFromEvent(ev){
     var rect = pad.getBoundingClientRect();
     var t = (ev.touches && ev.touches[0]) || (ev.changedTouches && ev.changedTouches[0]) || ev;
     var x = (t.clientX - rect.left) / Math.max(1, rect.width);
     var y = (t.clientY - rect.top) / Math.max(1, rect.height);
-    return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)), clientX: t.clientX, clientY: t.clientY };
+    return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
   }
 
   function showFinger(nx, ny){
@@ -31933,14 +31982,33 @@ function eppRemoteBindPad(){
     if(_eppRemoteConn && _eppRemoteConn.open) _eppRemoteConn.send(msg);
   }
 
+  function armLocalLock(n){
+    lockUntil = Date.now() + 2000;
+    lockedNorm = {x: n.x, y: n.y};
+    if(lockBadge) lockBadge.style.display = 'block';
+    if(finger){
+      finger.style.background = 'rgba(255,152,0,0.95)';
+      finger.style.boxShadow = '0 0 0 5px rgba(255,152,0,0.3)';
+    }
+    send({t:'lock', x:n.x, y:n.y});
+    setTimeout(function(){
+      if(Date.now() >= lockUntil - 20){
+        if(lockBadge) lockBadge.style.display = 'none';
+        if(finger){
+          finger.style.background = 'rgba(100,181,246,0.9)';
+          finger.style.boxShadow = '0 0 0 4px rgba(100,181,246,0.25)';
+        }
+      }
+    }, 2000);
+  }
+
+  function isLocked(){ return Date.now() < lockUntil; }
+
   pad.addEventListener('touchstart', function(e){
     e.preventDefault();
-    if(e.touches.length >= 2){
-      mode = 'scroll';
-      lastScrollY = e.touches[0].clientY;
-      return;
-    }
-    mode = 'move';
+    touchMoved = false;
+    // During lock: ignore move origin, only track for double-tap
+    if(isLocked()) return;
     var n = normFromEvent(e);
     showFinger(n.x, n.y);
     send({t:'ptr', x:n.x, y:n.y});
@@ -31948,15 +32016,8 @@ function eppRemoteBindPad(){
 
   pad.addEventListener('touchmove', function(e){
     e.preventDefault();
-    if(mode === 'scroll' || e.touches.length >= 2){
-      mode = 'scroll';
-      var y = e.touches[0].clientY;
-      var dy = lastScrollY - y; // finger up => scroll down content
-      lastScrollY = y;
-      // scale for natural feel
-      send({t:'scroll', dx:0, dy: dy * 1.35});
-      return;
-    }
+    if(isLocked()) return; // frozen — double-tap safe
+    touchMoved = true;
     var n = normFromEvent(e);
     showFinger(n.x, n.y);
     send({t:'ptr', x:n.x, y:n.y});
@@ -31964,43 +32025,79 @@ function eppRemoteBindPad(){
 
   pad.addEventListener('touchend', function(e){
     e.preventDefault();
-    if(mode === 'scroll'){
-      mode = 'none';
-      return;
-    }
-    var n = normFromEvent(e);
+    var n = isLocked() ? lockedNorm : normFromEvent(e);
     showFinger(n.x, n.y);
-    send({t:'ptr', x:n.x, y:n.y});
     var now = Date.now();
-    if(now - lastTap < 320){
-      // double-tap = click
+    // Double-tap → click at locked / current pos
+    if(now - lastTap < 350){
       send({t:'click', x:n.x, y:n.y});
       lastTap = 0;
-      if(finger){
-        finger.style.transform = 'scale(0.75)';
-        setTimeout(function(){ if(finger) finger.style.transform = ''; }, 120);
-      }
-    } else {
-      lastTap = now;
+      return;
     }
-    mode = 'none';
+    lastTap = now;
+    // First touch end: move + arm 2s lock (if not already locked from prior)
+    if(!isLocked()){
+      send({t:'ptr', x:n.x, y:n.y});
+      armLocalLock(n);
+    }
   }, {passive:false});
 
-  // mouse fallback (desktop testing)
+  // mouse fallback
   var mouseDown = false;
-  pad.addEventListener('mousedown', function(e){ mouseDown = true; var n=normFromEvent(e); showFinger(n.x,n.y); send({t:'ptr',x:n.x,y:n.y}); });
-  pad.addEventListener('mousemove', function(e){ if(!mouseDown) return; var n=normFromEvent(e); showFinger(n.x,n.y); send({t:'ptr',x:n.x,y:n.y}); });
+  pad.addEventListener('mousedown', function(e){
+    mouseDown = true;
+    if(isLocked()) return;
+    var n=normFromEvent(e); showFinger(n.x,n.y); send({t:'ptr',x:n.x,y:n.y});
+  });
+  pad.addEventListener('mousemove', function(e){
+    if(!mouseDown || isLocked()) return;
+    var n=normFromEvent(e); showFinger(n.x,n.y); send({t:'ptr',x:n.x,y:n.y});
+  });
   pad.addEventListener('mouseup', function(e){
     mouseDown = false;
-    var n=normFromEvent(e);
+    var n = isLocked() ? lockedNorm : normFromEvent(e);
     var now = Date.now();
-    if(now - lastTap < 320){ send({t:'click', x:n.x, y:n.y}); lastTap=0; }
-    else lastTap = now;
+    if(now - lastTap < 350){ send({t:'click', x:n.x, y:n.y}); lastTap=0; return; }
+    lastTap = now;
+    if(!isLocked()){ send({t:'ptr',x:n.x,y:n.y}); armLocalLock(n); }
   });
-  pad.addEventListener('wheel', function(e){
-    e.preventDefault();
-    send({t:'scroll', dx:e.deltaX, dy:e.deltaY});
-  }, {passive:false});
+
+  // Vertical scroll strip — one finger
+  var strip = document.getElementById('eppRemoteScrollStrip');
+  var thumb = document.getElementById('eppScrollThumb');
+  if(strip && !strip._eppBound){
+    strip._eppBound = true;
+    var lastY = null;
+    function stripY(ev){
+      var t = (ev.touches && ev.touches[0]) || (ev.changedTouches && ev.changedTouches[0]) || ev;
+      return t.clientY;
+    }
+    function moveThumb(clientY){
+      if(!thumb) return;
+      var rect = strip.getBoundingClientRect();
+      var th = thumb.offsetHeight || 48;
+      var y = clientY - rect.top - th/2;
+      y = Math.max(0, Math.min(rect.height - th, y));
+      thumb.style.top = y + 'px';
+    }
+    function onStart(ev){ ev.preventDefault(); lastY = stripY(ev); moveThumb(lastY); }
+    function onMove(ev){
+      ev.preventDefault();
+      var y = stripY(ev);
+      if(lastY == null){ lastY = y; return; }
+      var dy = lastY - y; // drag up = scroll content down
+      lastY = y;
+      moveThumb(y);
+      send({t:'scroll', dx:0, dy: dy * 1.8});
+    }
+    function onEnd(ev){ ev.preventDefault(); lastY = null; }
+    strip.addEventListener('touchstart', onStart, {passive:false});
+    strip.addEventListener('touchmove', onMove, {passive:false});
+    strip.addEventListener('touchend', onEnd, {passive:false});
+    strip.addEventListener('mousedown', function(e){ onStart(e); strip._md=true; });
+    window.addEventListener('mousemove', function(e){ if(strip._md) onMove(e); });
+    window.addEventListener('mouseup', function(e){ if(strip._md){ strip._md=false; onEnd(e); } });
+  }
 }
 
 function eppRemoteConnect(){
@@ -32022,6 +32119,8 @@ function eppRemoteConnect(){
     _eppRemoteConn = conn;
     conn.on('open', function(){
       document.getElementById('eppRemoteStatus').textContent = '✅ Connected — pad = main screen';
+      var row = document.getElementById('eppRemotePadRow');
+      if(row) row.style.display = 'flex';
       document.getElementById('eppRemotePad').style.display = '';
       document.getElementById('eppRemoteTypeWrap').style.display = '';
       var cp = document.getElementById('eppRemoteConnectPanel');
