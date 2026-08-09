@@ -19051,7 +19051,7 @@ function eftOpenFullReading(id){
   _editorState.richHTML = _fcfpCleanStoredHtml(t.html || '');
 
   document.getElementById('notesEditorTitle').textContent = '📂 ' + t.name;
-  document.getElementById('notesEditorMeta').textContent = '📄 Extra Facts Topic';
+  document.getElementById('notesEditorMeta').textContent = '📄 Current Affairs Topic';
 
   neLoadContent('', false); // uses _editorState.richHTML set above
   neSetEditMode(false);
@@ -19063,7 +19063,7 @@ function eftOpenFullReading(id){
   var _ud = document.getElementById('unsavedDot'); if(_ud) _ud.style.display = 'none';
   var dot2 = document.getElementById('unsavedDot2'); if(dot2) dot2.style.display = 'none';
   var _snb = document.getElementById('saveNoteBtn'); if(_snb) _snb.style.display = '';
-  neUpdateStatusBar('📂 Extra Facts Topic — Edit ya Highlight karo');
+  neUpdateStatusBar('📰 Current Affairs Topic — Edit ya Highlight karo');
 
   var ov = document.getElementById('notesEditorOverlay');
   ov.removeAttribute('data-viewer');
@@ -19740,7 +19740,173 @@ function _libRenderSelected(selId, areaId, libKey, label){
 }
 
 function sctRenderSelected(){ _libRenderSelected('sctSelect','sctPreviewArea','similarCurrentTopics','📰 Similar Current'); }
-function sgkRenderSelected(){ _libRenderSelected('sgkSelect','sgkPreviewArea','staticGkTopics','📚 Static GK'); }
+
+// Static GK hub — Current Affairs (eft) jaisa full preview + Full Reading Mode
+function sgkRenderSelected(){
+  var sel = document.getElementById('sgkSelect');
+  var area = document.getElementById('sgkPreviewArea');
+  if(!sel || !area) return;
+  var id = sel.value;
+  var t = id ? (S.staticGkTopics || {})[id] : null;
+
+  if(!t){
+    area.innerHTML = '<div class="card" style="text-align:center;padding:32px 16px;color:var(--text2);">' +
+      '📚 Ek Static GK topic select karo — uski jankari yahan dikhegi.<br><br>' +
+      '<span style="font-size:0.75rem;opacity:0.8;">Naya topic "➕ Naya Static GK Topic Banao" se banao (HTML/Word file bhi support).</span>' +
+    '</div>';
+    return;
+  }
+
+  var linkedCards = [];
+  try{
+    Object.keys(S.flashcardSets || {}).forEach(function(key){
+      var set = S.flashcardSets[key];
+      (set.cards || []).forEach(function(c){
+        if(c && c.staticGkTopicId === id){
+          linkedCards.push({ q: c.q || '(bina prashna)', a: c.a || '' });
+        }
+      });
+    });
+  }catch(e){}
+
+  var dateStr = t.updatedAt ? new Date(t.updatedAt).toLocaleString('hi-IN') : '';
+  var cleanHtml = (typeof _fcfpCleanStoredHtml === 'function') ? _fcfpCleanStoredHtml(t.html || '') : (t.html || '');
+  area.innerHTML =
+    '<div class="card" style="margin-bottom:12px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">' +
+        '<div><div class="card-title" style="margin-bottom:2px;">📚 ' + _fcEsc(t.name) + '</div>' +
+        '<div style="font-size:0.7rem;color:var(--text2);">Last update: ' + dateStr + (linkedCards.length ? ' • ' + linkedCards.length + ' card(s) se linked' : '') + '</div></div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+          '<button class="btn btn-sm" style="background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;" onclick="sgkOpenFullReading(\''+id+'\')">📖 Full Reading Mode</button>' +
+          '<button class="btn btn-sm" onclick="sgkRenameTopic(\''+id+'\')">✏️ Rename</button>' +
+          '<button class="btn btn-sm" style="color:#c62828;" onclick="sgkDeleteTopic(\''+id+'\')">🗑 Delete</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div id="sgkPvEditor" contenteditable="true" spellcheck="false" style="min-height:120px;line-height:1.7;font-size:0.9rem;outline:none;">' + cleanHtml + '</div>' +
+      '<div style="display:flex;gap:10px;margin-top:12px;">' +
+        '<button class="btn btn-primary" style="flex:1;" onclick="sgkSaveEdited(\''+id+'\')">✅ Changes Save Karo</button>' +
+      '</div>' +
+    '</div>' +
+    (linkedCards.length ? '<div class="card" style="margin-top:12px;"><div class="card-title" style="font-size:0.8rem;margin-bottom:10px;">🔗 Is topic se linked cards — tap karke answer dekho</div>' +
+      '<div class="eft-linked-cards">' + linkedCards.map(function(c, i){
+        return '<div class="eft-mini-card" onclick="this.classList.toggle(\'flipped\')">' +
+          '<div class="eft-mini-inner">' +
+            '<div class="eft-mini-face eft-mini-front">' +
+              '<div class="eft-mini-label">Question</div>' +
+              '<div class="eft-mini-text">' + _fcEsc(c.q) + '</div>' +
+              '<div class="eft-mini-hint">Tap karke answer dekho ↺</div>' +
+            '</div>' +
+            '<div class="eft-mini-face eft-mini-back">' +
+              '<div class="eft-mini-label">Answer</div>' +
+              '<div class="eft-mini-text">' + (c.a || '<span style="opacity:0.6;">(koi answer nahi)</span>') + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }).join('') + '</div></div>' : '');
+}
+
+var _sgkEditorState = { topicId: null };
+function sgkOpenFullReading(id){
+  var t = (S.staticGkTopics || {})[id];
+  if(!t){ if(typeof showToast==='function') showToast('Topic nahi mila','error'); return; }
+
+  _sgkEditorState.topicId = id;
+  _editorState.sid = null;
+  _editorState.secid = null;
+  _editorState.tid = null;
+  _editorState.noteIdx = null;
+  _editorState.specialType = 'staticgktopic';
+  _editorState.modified = false;
+  _editorState.highlights = [];
+  _editorState.richHTML = (typeof _fcfpCleanStoredHtml === 'function') ? _fcfpCleanStoredHtml(t.html || '') : (t.html || '');
+
+  document.getElementById('notesEditorTitle').textContent = '📚 ' + t.name;
+  document.getElementById('notesEditorMeta').textContent = '📄 Static GK Topic';
+
+  if(typeof neLoadContent === 'function') neLoadContent('', false);
+  if(typeof neSetEditMode === 'function') neSetEditMode(false);
+  if(typeof setHlMode === 'function') setHlMode('off');
+  if(typeof neResetToolbar === 'function') neResetToolbar();
+  if(typeof neSetTheme === 'function') neSetTheme(_neState.theme, true);
+  var area = document.getElementById('noteEditableArea');
+  if(area) area.style.fontSize = _neState.fontSize + 'px';
+  var fl = document.getElementById('neFontLabel'); if(fl) fl.textContent = _neState.fontSize;
+  var _ud = document.getElementById('unsavedDot'); if(_ud) _ud.style.display = 'none';
+  var dot2 = document.getElementById('unsavedDot2'); if(dot2) dot2.style.display = 'none';
+  var _snb = document.getElementById('saveNoteBtn'); if(_snb) _snb.style.display = '';
+  if(typeof neUpdateStatusBar === 'function') neUpdateStatusBar('📚 Static GK Topic — Edit ya Highlight karo');
+
+  var ov = document.getElementById('notesEditorOverlay');
+  if(ov){
+    ov.removeAttribute('data-viewer');
+    ov.style.display = '';
+    ov.classList.add('show');
+  }
+  document.body.style.overflow = 'hidden';
+  history.pushState({type:'notesEditor'}, '');
+  setTimeout(function(){ if(typeof neUpdateHlCanvasBtn === 'function') neUpdateHlCanvasBtn(); }, 200);
+}
+
+function sgkSaveEdited(id){
+  var editor = document.getElementById('sgkPvEditor');
+  var t = (S.staticGkTopics || {})[id];
+  if(!editor || !t) return;
+  t.html = editor.innerHTML;
+  t.updatedAt = Date.now();
+  save();
+  if(typeof _fcSyncGenericTopicToFirebase === 'function') _fcSyncGenericTopicToFirebase('staticGkTopics', id, t);
+  if(typeof showToast === 'function') showToast('✅ Static GK topic update ho gaya!', 'success');
+  sgkRenderTopicSelect();
+}
+
+function sgkRenameTopic(id){
+  var t = (S.staticGkTopics || {})[id];
+  if(!t) return;
+  var newName = prompt('Naya topic naam:', t.name);
+  if(newName === null) return;
+  newName = newName.trim();
+  if(!newName) return;
+  t.name = newName;
+  t.updatedAt = Date.now();
+  save();
+  if(typeof _fcSyncGenericTopicToFirebase === 'function') _fcSyncGenericTopicToFirebase('staticGkTopics', id, t);
+  try{
+    Object.keys(S.flashcardSets || {}).forEach(function(key){
+      var set = S.flashcardSets[key];
+      (set.cards || []).forEach(function(c){
+        if(c && c.staticGkTopicId === id) c.staticGkTopicName = newName;
+      });
+    });
+    save();
+  }catch(e){}
+  if(typeof showToast === 'function') showToast('✅ Rename ho gaya!', 'success');
+  sgkRenderTopicSelect();
+  sgkRenderSelected();
+}
+
+function sgkDeleteTopic(id){
+  var t = (S.staticGkTopics || {})[id];
+  if(!t) return;
+  if(!confirm('"' + t.name + '" Static GK topic delete karein? Global library se hatega — cards mein already linked jankari text safe rahegi.')) return;
+  delete S.staticGkTopics[id];
+  save();
+  try{
+    if(_db && _currentUser){ _db.collection('users').doc(_effectiveUID).collection('staticGkTopics').doc(id).delete().catch(function(){}); }
+  }catch(e){}
+  try{
+    Object.keys(S.flashcardSets || {}).forEach(function(key){
+      var set = S.flashcardSets[key];
+      (set.cards || []).forEach(function(c){
+        if(c && c.staticGkTopicId === id){ c.staticGkTopicId = null; c.staticGkTopicName = null; }
+      });
+    });
+    save();
+  }catch(e){}
+  if(typeof showToast === 'function') showToast('🗑 Topic delete ho gaya', 'success');
+  renderStaticGkTopicsPage();
+}
 
 function _libSaveTopicEdit(libKey, id){
   var el = document.getElementById('_libPv_'+libKey);
@@ -22654,6 +22820,17 @@ function _doSaveNoteData() {
     _t.updatedAt = Date.now();
     save();
     _fcSyncTopicToFirebase(_eftId, _t);
+    return true;
+  }
+  if(_editorState.specialType === 'staticgktopic') {
+    var _sgkId = _sgkEditorState && _sgkEditorState.topicId;
+    var _st = _sgkId ? (S.staticGkTopics || {})[_sgkId] : null;
+    if(!_st) return false;
+    var _area2 = document.getElementById('noteEditableArea');
+    _st.html = _area2 ? _area2.innerHTML : _st.html;
+    _st.updatedAt = Date.now();
+    save();
+    if(typeof _fcSyncGenericTopicToFirebase === 'function') _fcSyncGenericTopicToFirebase('staticGkTopics', _sgkId, _st);
     return true;
   }
 
