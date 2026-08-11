@@ -24184,11 +24184,14 @@ function _doSaveNoteData() {
     });
     
     n.editorHighlights = _editorState.highlights.slice();
-    n.editorRichHTML   = area.innerHTML;
-    n.editorSavedAt    = Date.now(); // ✅ FIX: timestamp so cloud-vs-local merge uses newer version
+    n.editorRichHTML   = area ? area.innerHTML : (n.editorRichHTML || '');
+    n.richHTML         = n.editorRichHTML; // backup field — load path checks both
+    n.editorSavedAt    = Date.now(); // cloud-vs-local merge uses newer version
+    n.content          = plainText;
     if(canvasObjs)  n.canvasObjs  = canvasObjs;
     if(drawStrokes) n.drawStrokes = drawStrokes;
     if(qmapData)    n.qmapData    = qmapData;
+    console.info('[💾 _doSaveNoteData] note saved idx='+_editorState.noteIdx+' richLen='+(n.editorRichHTML||'').length+' plainLen='+(plainText||'').length);
   }
   
   return true;
@@ -29444,6 +29447,7 @@ async function saveEditedNote() {
   console.info('[💾 saveEditedNote] ✅ localStorage updated, modified=false');
 
   // ⚡ GRANULAR SAVE: Sirf edited topic Firebase mein bhejo — pura dump nahi!
+  var _fbResult = null;
   if(_isAdmin && _currentUser && _db){
     var _gTid   = _editorState.tid;
     var _gSid   = _editorState.sid;
@@ -29458,9 +29462,19 @@ async function saveEditedNote() {
       try{
         await saveTopicToFirebase(_gTid, _gSid, _gSecid);
         setSyncStatus('synced');
+        _fbResult = { ok: true, ms: 0, source: 'topic' };
         console.info('[💾 saveEditedNote] ✅ Topic Firebase update SUCCESS — tid:'+_gTid);
+        // Verify note still has rich HTML after save path
+        try {
+          var _vt = getTop(_gSid, _gSecid, _gTid);
+          var _vn = _vt && _vt.notes && _vt.notes[_editorState.noteIdx];
+          if(_vn) {
+            console.info('[💾 saveEditedNote] verify editorRichHTML len=' + ((_vn.editorRichHTML||'').length) + ' editorSavedAt=' + (_vn.editorSavedAt||0));
+          }
+        } catch(ve) {}
       }catch(e){
         setSyncStatus('error');
+        _fbResult = { ok: false, error: (e && e.message) || String(e), code: 'TOPIC_SAVE_FAIL' };
         console.error('[💾 saveEditedNote] ❌ Topic Firebase update FAILED — '+e.message);
       }
     }
@@ -29493,14 +29507,14 @@ async function saveEditedNote() {
   neUpdateStatusBar('✅ Save Ho Gaya! -- Ab aur edit kar sakte hain');
   
   // Library tree update karo (agar topic view khula ho to)
-  renderLibraryTree();
+  try { renderLibraryTree(); } catch(e) {}
 
   var tvModal = document.getElementById('topicViewModal');
   if(tvModal && tvModal.classList.contains('show')) {
-    viewTopic(_editorState.sid, _editorState.secid, _editorState.tid);
+    try { viewTopic(_editorState.sid, _editorState.secid, _editorState.tid); } catch(e) {}
   }
 
-  showSaveSuccessPopup(_fbResult);
+  try { showSaveSuccessPopup(_fbResult); } catch(e) { console.warn('[💾 saveEditedNote] popup', e); }
 }
 function showSaveSuccessPopup(fbResult) {
   const old = document.getElementById('saveSuccessPopup');
