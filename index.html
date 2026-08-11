@@ -11070,7 +11070,7 @@ let _hideAnswers=false;
 let _vaultCurrentFilter='all';
 
 let _editorClosing = false; // Notes editor close prevention flag
-function save(){try{localStorage.setItem('epp5',JSON.stringify(S));}catch(e){}}
+function save(){try{localStorage.setItem('epp5',JSON.stringify(S));return true;}catch(e){console.error('[save] localStorage FAIL',e&&e.message);try{showToast('⚠️ Local storage full — note IDB backup use hoga','warning');}catch(e2){}return false;}}
 function load(){
   try{
     const d=JSON.parse(localStorage.getItem('epp5')||'{}');
@@ -23865,6 +23865,43 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   } else {
   neLoadContent(n.content, false);
   }
+  // Async: IndexedDB backup may be newer than cloud/memory — apply when ready
+  (function(_tid, _n, _idx){
+    if(typeof _loadNoteBackupAsync !== 'function') return;
+    _loadNoteBackupAsync(_tid, _n, _idx).then(function(bak){
+      if(!bak) return;
+      var bakRich = bak.editorRichHTML || bak.richHTML || '';
+      var bakAt = bak.editorSavedAt || 0;
+      if(!bakRich) return;
+      var memAt = (_n && _n.editorSavedAt) || 0;
+      var area = document.getElementById('noteEditableArea');
+      if(!area) return;
+      // Apply if backup is newer OR current area is empty/short while backup has content
+      var curLen = (area.innerHTML || '').length;
+      if(bakAt >= memAt || (bakRich.length > curLen + 50)){
+        console.info('[openNotesEditor] applying IDB/local backup len='+bakRich.length+' bakAt='+bakAt+' memAt='+memAt+' curLen='+curLen);
+        _n.editorRichHTML = bakRich;
+        _n.richHTML = bakRich;
+        _n.editorSavedAt = bakAt;
+        if(bak.editorHighlights) _n.editorHighlights = bak.editorHighlights;
+        if(bak.content) _n.content = bak.content;
+        _editorState.richHTML = bakRich;
+        if(typeof _setHTML === 'function'){
+          // neLoadContent internal not exported — set directly
+        }
+        if(bakRich.indexOf('__imgRef__') >= 0 && typeof _restoreImagesFromIDB === 'function'){
+          _restoreImagesFromIDB(bakRich).then(function(restored){
+            area.innerHTML = restored;
+            if(typeof _doProgressiveImgRestore === 'function') setTimeout(function(){ _doProgressiveImgRestore(area); }, 30);
+            if(typeof updateNEWordCount === 'function') updateNEWordCount();
+          });
+        } else {
+          area.innerHTML = bakRich;
+          if(typeof updateNEWordCount === 'function') updateNEWordCount();
+        }
+      }
+    }).catch(function(e){ console.warn('[openNotesEditor] backup load', e); });
+  })(tid, n, noteIdx);
   neSetEditMode(false);
   setHlMode('off'); // Default: highlight OFF
   _eraserModeOn = false;
@@ -24094,23 +24131,56 @@ function _ensureNoteIds(t){
 function _noteLocalKey(tid, noteId, noteIdx){
   return 'epp_note_bak_' + String(tid) + '_' + String(noteId || ('idx'+noteIdx));
 }
+function _noteIdbKey(tid, noteId, noteIdx){
+  return String(tid) + '__' + String(noteId || ('idx'+noteIdx));
+}
+function _openNotesContentDB(){
+  return new Promise(function(resolve, reject){
+    try {
+      var req = indexedDB.open('epp_notes_content_v1', 1);
+      req.onupgradeneeded = function(e){
+        var db = e.target.result;
+        if(!db.objectStoreNames.contains('notes')){
+          db.createObjectStore('notes', { keyPath: 'key' });
+        }
+      };
+      req.onsuccess = function(){ resolve(req.result); };
+      req.onerror = function(){ reject(req.error); };
+    } catch(e){ reject(e); }
+  });
+}
 function _saveNoteLocalBackup(tid, n, noteIdx){
+  if(!n) return Promise.resolve(false);
+  var payload = {
+    key: _noteIdbKey(tid, n.id, noteIdx),
+    id: n.id,
+    tid: String(tid),
+    noteIdx: noteIdx,
+    editorRichHTML: n.editorRichHTML || '',
+    richHTML: n.richHTML || n.editorRichHTML || '',
+    content: n.content || '',
+    editorHighlights: n.editorHighlights || [],
+    editorSavedAt: n.editorSavedAt || Date.now(),
+    name: n.name || ''
+  };
+  // localStorage (small notes)
   try {
-    if(!n) return;
-    var key = _noteLocalKey(tid, n.id, noteIdx);
-    var payload = {
-      id: n.id,
-      editorRichHTML: n.editorRichHTML || '',
-      richHTML: n.richHTML || n.editorRichHTML || '',
-      content: n.content || '',
-      editorHighlights: n.editorHighlights || [],
-      editorSavedAt: n.editorSavedAt || Date.now(),
-      name: n.name || ''
-    };
-    localStorage.setItem(key, JSON.stringify(payload));
-  } catch(e){ console.warn('[note-bak] save fail', e && e.message); }
+    localStorage.setItem(_noteLocalKey(tid, n.id, noteIdx), JSON.stringify(payload));
+  } catch(e){ console.warn('[note-bak] localStorage fail', e && e.message); }
+  // IndexedDB (large notes — primary)
+  return _openNotesContentDB().then(function(db){
+    return new Promise(function(resolve){
+      try {
+        var tx = db.transaction('notes', 'readwrite');
+        tx.objectStore('notes').put(payload);
+        tx.oncomplete = function(){ resolve(true); };
+        tx.onerror = function(){ resolve(false); };
+      } catch(e){ resolve(false); }
+    });
+  }).catch(function(){ return false; });
 }
 function _loadNoteLocalBackup(tid, n, noteIdx){
+  // sync localStorage only — IDB is async via _loadNoteBackupAsync
   try {
     var keys = [
       _noteLocalKey(tid, n && n.id, noteIdx),
@@ -24128,6 +24198,39 @@ function _loadNoteLocalBackup(tid, n, noteIdx){
     });
     return best;
   } catch(e){ return null; }
+}
+function _loadNoteBackupAsync(tid, n, noteIdx){
+  var ls = _loadNoteLocalBackup(tid, n, noteIdx);
+  return _openNotesContentDB().then(function(db){
+    return new Promise(function(resolve){
+      try {
+        var key = _noteIdbKey(tid, n && n.id, noteIdx);
+        var tx = db.transaction('notes', 'readonly');
+        var req = tx.objectStore('notes').get(key);
+        req.onsuccess = function(){
+          var idb = req.result || null;
+          // also try idx key
+          if(!idb){
+            var req2 = tx.objectStore('notes').get(_noteIdbKey(tid, null, noteIdx));
+            req2.onsuccess = function(){
+              idb = req2.result || null;
+              resolve(_pickNewerNoteBackup(ls, idb));
+            };
+            req2.onerror = function(){ resolve(ls); };
+          } else {
+            resolve(_pickNewerNoteBackup(ls, idb));
+          }
+        };
+        req.onerror = function(){ resolve(ls); };
+      } catch(e){ resolve(ls); }
+    });
+  }).catch(function(){ return ls; });
+}
+function _pickNewerNoteBackup(a, b){
+  if(!a && !b) return null;
+  if(!a) return b;
+  if(!b) return a;
+  return ((a.editorSavedAt||0) >= (b.editorSavedAt||0)) ? a : b;
 }
 
 function _doSaveNoteData() {
@@ -24189,8 +24292,9 @@ function _doSaveNoteData() {
 
   if(isSpecial === 'finalnotes') {
     t.finalNotes = plainText;
-    t.finalNotesAt = new Date().toLocaleDateString('hi-IN');
+    t.finalNotesAt = Date.now();
     t.finalNotesHTML = richHTML;
+    try{ _saveNoteLocalBackup(t.id, {id:'finalnotes', editorRichHTML:richHTML, content:plainText, editorSavedAt:Date.now()}, 'finalnotes'); }catch(e){}
     if(canvasObjs)  t.finalNotesCanvasObjs = canvasObjs;
     if(drawStrokes) t.finalNotesDrawStrokes = drawStrokes;
     if(qmapData)    t.finalNotesQmapData    = qmapData;
@@ -29511,9 +29615,19 @@ async function saveEditedNote() {
     return;
   }
 
-  save(); // localStorage mein save
+  // CRITICAL: wait for IndexedDB note backup before anything else
+  try {
+    var _tSave = getTop(_editorState.sid, _editorState.secid, _editorState.tid);
+    var _nSave = _tSave && _tSave.notes && _tSave.notes[_editorState.noteIdx];
+    if(_nSave) {
+      var _bakOk = await _saveNoteLocalBackup(_editorState.tid, _nSave, _editorState.noteIdx);
+      console.info('[💾 saveEditedNote] IDB/local note backup='+_bakOk+' richLen='+((_nSave.editorRichHTML||'').length));
+    }
+  } catch(be){ console.warn('[💾 saveEditedNote] backup error', be); }
+
+  var _lsOk = save(); // localStorage mein save
   _editorState.modified = false; // ← Immediately clear — "Save and Exit" dialog nahi aayega during async wait
-  console.info('[💾 saveEditedNote] ✅ localStorage updated, modified=false');
+  console.info('[💾 saveEditedNote] ✅ localStorage updated lsOk='+_lsOk+' modified=false');
 
   // ⚡ GRANULAR SAVE: Sirf edited topic Firebase mein bhejo — pura dump nahi!
   var _fbResult = null;
@@ -29529,15 +29643,22 @@ async function saveEditedNote() {
       }
       console.info('[💾 saveEditedNote] ⚡ Granular topic save — tid:'+_gTid);
       try{
-        await saveTopicToFirebase(_gTid, _gSid, _gSecid);
-        setSyncStatus('synced');
-        _fbResult = { ok: true, ms: 0, source: 'topic' };
-        console.info('[💾 saveEditedNote] ✅ Topic Firebase update SUCCESS — tid:'+_gTid);
-        // Verify note still has rich HTML after save path
+        var _sr = await saveTopicToFirebase(_gTid, _gSid, _gSecid);
+        if(_sr && _sr.ok === false){
+          setSyncStatus('error');
+          _fbResult = { ok: false, error: _sr.error || 'topic save failed', code: 'TOPIC_SAVE_FAIL' };
+          console.error('[💾 saveEditedNote] ❌ Topic Firebase update FAILED — '+(_sr.error||''));
+        } else {
+          setSyncStatus('synced');
+          _fbResult = { ok: true, ms: 0, source: 'topic' };
+          console.info('[💾 saveEditedNote] ✅ Topic Firebase update SUCCESS — tid:'+_gTid);
+        }
         try {
           var _vt = getTop(_gSid, _gSecid, _gTid);
           var _vn = _vt && _vt.notes && _vt.notes[_editorState.noteIdx];
           if(_vn) {
+            // Force IDB backup again after FB path (images may have been rewritten)
+            await _saveNoteLocalBackup(_gTid, _vn, _editorState.noteIdx);
             console.info('[💾 saveEditedNote] verify editorRichHTML len=' + ((_vn.editorRichHTML||'').length) + ' editorSavedAt=' + (_vn.editorSavedAt||0));
           }
         } catch(ve) {}
@@ -41832,9 +41953,11 @@ async function saveTopicToFirebase(tid, subjId, secId){
       else if(_sz >= 768*1024) _szmsg += ' — thoda bada hai, images compress karo';
       showToast(_szmsg, _sz >= 768*1024 ? 'warning' : 'success');
     } catch(e2){}
+    return { ok: true, tid: String(tid) };
   }catch(e){
     console.warn('Topic sync error:', e.message);
     setSyncStatus('error');
+    return { ok: false, error: e.message || String(e) };
   }
 }
 
