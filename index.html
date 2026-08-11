@@ -13167,7 +13167,7 @@ function viewTopic(sid,secid,tid){
     { id:'master',   cls:'cat-master',   icon:'⚡', name:'Master Notes',sub: t.masterNotes  ? 'AI deep notes' :'Not generated' },
     { id:'raw',      cls:'cat-raw',      icon:'📄', name:'Raw Notes',   sub: `${(t.notes||[]).length} notes`, badge:(t.notes||[]).length||null },
     { id:'flashcards2', cls:'cat-fc',    icon:'🃏', name:'Flashcards',  sub: (_fcSetForCats && _fcSetForCats.cards && _fcSetForCats.cards.length) ? (`${_fcSetForCats.cards.length} cards`) : 'Empty — add karo', badge: (_fcSetForCats && _fcSetForCats.cards && _fcSetForCats.cards.length) || null },
-    { id:'topicquiz', cls:'cat-facts', icon:'❓', name:'Quizzes', sub: (function(){ var qs=t.topicQuizzes||[]; var att=(t.topicQuizAttempts||[]).length; if(!qs.length) return 'Banao / Play / History'; return qs.length+' quiz'+(att?(' · '+att+' attempts'):''); })(), badge: (t.topicQuizzes&&t.topicQuizzes.length)||null },
+    { id:'topicquiz', cls:'cat-facts', icon:'❓', name:'Quizzes', sub: (function(){ var info=(typeof tqTopicStats==='function')?tqTopicStats(sid,secid,tid):{q:0,a:0}; if(!info.q) return 'Banao / Play / History'; return info.q+' quiz'+(info.a?(' · '+info.a+' attempts'):''); })(), badge: (typeof tqTopicStats==='function'&&tqTopicStats(sid,secid,tid).q)||null },
     { id:'facts',    cls:'cat-facts',    icon:'📌', name:'Facts',       sub: `${(t.savedFacts||[]).length} saved`, badge:(t.savedFacts||[]).length||null },
     { id:'nodemap',  cls:'cat-master',   icon:'🗺️', name:'Node Maps',   sub: t.aiNodeMaps&&t.aiNodeMaps.length ? `${t.aiNodeMaps.length} maps saved` : 'AI se banao', badge: (t.aiNodeMaps&&t.aiNodeMaps.length)||null },
     { id:'perfect',  cls:'cat-perfect',  icon:'🎯', name:'Exam Notes',  sub: t.perfectNotes ? '✅ Perfect notes ready' : 'Generate karo', badge: t.perfectNotes ? '✓' : null },
@@ -75534,7 +75534,8 @@ function openFlashcardsInEditor(sid, secid, tid){
 
 
 
-<!-- TOPIC QUIZ MODULE -->
+
+<!-- TOPIC QUIZ MODULE: separate Firebase collections + bulk import -->
 <style>
 #tqPlayOverlay{position:fixed;inset:0;z-index:1000020;display:none;flex-direction:column;background:#0f2030;color:#e8f0f8;}
 #tqPlayOverlay.open{display:flex;}
@@ -75561,6 +75562,7 @@ function openFlashcardsInEditor(sid, secid, tid){
 .tq-filter-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);}
 .tq-q-block{background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;}
 .tq-toggle{font-size:0.68rem;font-weight:800;padding:3px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);cursor:pointer;color:var(--text2);}
+.tq-idchip{font-size:0.62rem;font-family:monospace;color:var(--text2);background:var(--surface2);padding:2px 6px;border-radius:6px;word-break:break-all;}
 </style>
 <div id="tqPlayOverlay">
   <div id="tqPlayTop">
@@ -75569,7 +75571,7 @@ function openFlashcardsInEditor(sid, secid, tid){
       <div id="tqPlayTitle" style="font-weight:800;font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Quiz</div>
       <div id="tqPlayMeta" style="font-size:0.7rem;opacity:0.75;">Q 1/10</div>
     </div>
-    <button type="button" class="tq-chip" id="tqBtnTheme" title="Background">&#127912;</button>
+    <button type="button" class="tq-chip" id="tqBtnTheme" title="Background">Theme</button>
     <button type="button" id="tqBtnSubmit" style="padding:7px 12px;border-radius:10px;border:none;background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;font-weight:800;font-size:0.78rem;cursor:pointer;">Submit</button>
   </div>
   <div id="tqPlayBody">
@@ -75579,19 +75581,35 @@ function openFlashcardsInEditor(sid, secid, tid){
 </div>
 <script>
 (function(){
+/* ================================================================
+   TOPIC QUIZ — separate from topic document
+   Local:  S.topicQuizBank = { [quizId]: quizDoc }
+           S.topicQuizAttemptBank = { [attemptId]: attemptDoc }
+   Firebase:
+     users/{uid}/topicQuizzes/{quizId}
+     users/{uid}/topicQuizAttempts/{attemptId}
+   quizDoc: { id, sid, secid, tid, topicKey, name, questions:[], createdAt, updatedAt }
+   ================================================================ */
+
+if (typeof S !== 'undefined') {
+  S.topicQuizBank = S.topicQuizBank || {};
+  S.topicQuizAttemptBank = S.topicQuizAttemptBank || {};
+}
+
 var _tqCtx = { sid:null, secid:null, tid:null };
 var _tqAtt = null;
 var _tqTheme = 'dark';
 try { _tqTheme = localStorage.getItem('tqTheme') || 'dark'; } catch(e) {}
 var _tqHistFilter = { result:'all', diff:'all', saved:'all' };
+var _tqLoading = false;
 
-function tqGetTopic(){ return getTop(_tqCtx.sid, _tqCtx.secid, _tqCtx.tid); }
-function tqPersist(){
-  try { save(); } catch(e) {}
-  try {
-    if (typeof saveTopicToFirebase === 'function')
-      saveTopicToFirebase(_tqCtx.tid, _tqCtx.sid, _tqCtx.secid);
-  } catch(e) {}
+function tqTopicKey(sid, secid, tid){
+  if (typeof _fcTopicKey === 'function') return _fcTopicKey(sid, secid, tid);
+  return String(sid) + '_' + String(secid) + '_' + String(tid);
+}
+function tqUid(){
+  return (typeof _effectiveUID !== 'undefined' && _effectiveUID) ? _effectiveUID
+    : (typeof _currentUser !== 'undefined' && _currentUser && _currentUser.uid) ? _currentUser.uid : null;
 }
 function tqEsc(s){
   return String(s == null ? '' : s)
@@ -75612,6 +75630,167 @@ function tqShuffle(arr){
   }
   return a;
 }
+function tqNormalizeQuestions(arr){
+  var out = [];
+  if (!Array.isArray(arr)) return out;
+  arr.forEach(function(item, i){
+    if (!item || !item.q || !Array.isArray(item.options) || item.options.length < 2) return;
+    var opts = item.options.slice(0, 4).map(String);
+    while (opts.length < 4) opts.push('');
+    out.push({
+      id: item.id || ('qq_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2,6)),
+      q: String(item.q),
+      options: opts,
+      correct: (typeof item.correct === 'number' ? item.correct : 0),
+      explanation: item.explanation ? String(item.explanation) : ''
+    });
+  });
+  return out;
+}
+
+function tqListQuizzes(sid, secid, tid){
+  S.topicQuizBank = S.topicQuizBank || {};
+  var key = tqTopicKey(sid, secid, tid);
+  var list = [];
+  Object.keys(S.topicQuizBank).forEach(function(id){
+    var q = S.topicQuizBank[id];
+    if (!q) return;
+    if (String(q.tid) === String(tid) || q.topicKey === key) list.push(q);
+  });
+  // migrate legacy topic-embedded once
+  try {
+    var t = getTop(sid, secid, tid);
+    if (t && t.topicQuizzes && t.topicQuizzes.length) {
+      t.topicQuizzes.forEach(function(old){
+        if (!old || !old.id) return;
+        if (S.topicQuizBank[old.id]) return;
+        var doc = {
+          id: old.id,
+          sid: sid, secid: secid, tid: tid,
+          topicKey: key,
+          name: old.name || 'Quiz',
+          questions: tqNormalizeQuestions(old.questions || []),
+          createdAt: old.createdAt || Date.now(),
+          updatedAt: Date.now(),
+          migratedFromTopic: true
+        };
+        S.topicQuizBank[doc.id] = doc;
+        list.push(doc);
+        tqSaveQuizDoc(doc);
+      });
+      t.topicQuizzes = [];
+      try { save(); } catch(e) {}
+    }
+  } catch(e) {}
+  list.sort(function(a,b){ return (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0); });
+  return list;
+}
+function tqListAttempts(sid, secid, tid){
+  S.topicQuizAttemptBank = S.topicQuizAttemptBank || {};
+  var key = tqTopicKey(sid, secid, tid);
+  var list = [];
+  Object.keys(S.topicQuizAttemptBank).forEach(function(id){
+    var a = S.topicQuizAttemptBank[id];
+    if (!a) return;
+    if (String(a.tid) === String(tid) || a.topicKey === key) list.push(a);
+  });
+  try {
+    var t = getTop(sid, secid, tid);
+    if (t && t.topicQuizAttempts && t.topicQuizAttempts.length) {
+      t.topicQuizAttempts.forEach(function(old){
+        if (!old || !old.id) return;
+        if (S.topicQuizAttemptBank[old.id]) return;
+        var doc = Object.assign({}, old, {
+          sid: sid, secid: secid, tid: tid, topicKey: key
+        });
+        S.topicQuizAttemptBank[doc.id] = doc;
+        list.push(doc);
+        tqSaveAttemptDoc(doc);
+      });
+      t.topicQuizAttempts = [];
+      try { save(); } catch(e) {}
+    }
+  } catch(e) {}
+  list.sort(function(a,b){ return (b.date||0) - (a.date||0); });
+  return list;
+}
+
+window.tqTopicStats = function(sid, secid, tid){
+  return { q: tqListQuizzes(sid, secid, tid).length, a: tqListAttempts(sid, secid, tid).length };
+};
+
+function tqLocalSaveState(){
+  try { save(); } catch(e) {}
+}
+
+function tqSaveQuizDoc(doc){
+  S.topicQuizBank = S.topicQuizBank || {};
+  S.topicQuizBank[doc.id] = doc;
+  tqLocalSaveState();
+  var uid = tqUid();
+  if (!_db || !uid) return Promise.resolve();
+  var clean = doc;
+  try {
+    if (typeof _fsClean === 'function') clean = _fsClean(doc);
+  } catch(e) {}
+  return _db.collection('users').doc(uid).collection('topicQuizzes').doc(String(doc.id)).set(clean)
+    .catch(function(e){ console.warn('[tq] quiz firebase save', e && e.message); });
+}
+function tqDeleteQuizDoc(quizId){
+  S.topicQuizBank = S.topicQuizBank || {};
+  delete S.topicQuizBank[quizId];
+  tqLocalSaveState();
+  var uid = tqUid();
+  if (!_db || !uid) return;
+  _db.collection('users').doc(uid).collection('topicQuizzes').doc(String(quizId)).delete()
+    .catch(function(e){ console.warn('[tq] quiz firebase delete', e && e.message); });
+}
+function tqSaveAttemptDoc(doc){
+  S.topicQuizAttemptBank = S.topicQuizAttemptBank || {};
+  S.topicQuizAttemptBank[doc.id] = doc;
+  tqLocalSaveState();
+  var uid = tqUid();
+  if (!_db || !uid) return Promise.resolve();
+  var clean = doc;
+  try {
+    if (typeof _fsClean === 'function') clean = _fsClean(doc);
+  } catch(e) {}
+  return _db.collection('users').doc(uid).collection('topicQuizAttempts').doc(String(doc.id)).set(clean)
+    .catch(function(e){ console.warn('[tq] attempt firebase save', e && e.message); });
+}
+
+function tqLoadFromFirebase(sid, secid, tid){
+  var uid = tqUid();
+  if (!_db || !uid) return Promise.resolve();
+  var key = tqTopicKey(sid, secid, tid);
+  S.topicQuizBank = S.topicQuizBank || {};
+  S.topicQuizAttemptBank = S.topicQuizAttemptBank || {};
+  return Promise.all([
+    _db.collection('users').doc(uid).collection('topicQuizzes').where('topicKey', '==', key).get()
+      .catch(function(){
+        return _db.collection('users').doc(uid).collection('topicQuizzes').where('tid', '==', tid).get();
+      }),
+    _db.collection('users').doc(uid).collection('topicQuizAttempts').where('topicKey', '==', key).get()
+      .catch(function(){
+        return _db.collection('users').doc(uid).collection('topicQuizAttempts').where('tid', '==', tid).get();
+      })
+  ]).then(function(res){
+    var qSnap = res[0], aSnap = res[1];
+    if (qSnap && qSnap.forEach) {
+      qSnap.forEach(function(d){
+        var data = d.data();
+        if (data) { data.id = data.id || d.id; S.topicQuizBank[data.id] = data; }
+      });
+    }
+    if (aSnap && aSnap.forEach) {
+      aSnap.forEach(function(d){
+        var data = d.data();
+        if (data) { data.id = data.id || d.id; S.topicQuizAttemptBank[data.id] = data; }
+      });
+    }
+    tqLocalSaveState();
+  }).catch(function(e){ console.warn('[tq] load firebase', e && e.message); });
+}
 
 window.tqRenderHub = function(subBody, sid, secid, tid){
   _tqCtx = { sid:sid, secid:secid, tid:tid };
@@ -75620,80 +75799,73 @@ window.tqRenderHub = function(subBody, sid, secid, tid){
     subBody.innerHTML = '<div style="padding:16px;color:var(--text2);">Topic nahi mila</div>';
     return;
   }
-  if (!t.topicQuizzes) t.topicQuizzes = [];
-  if (!t.topicQuizAttempts) t.topicQuizAttempts = [];
-  var qs = t.topicQuizzes;
-  var atts = t.topicQuizAttempts.slice().sort(function(a,b){ return (b.date||0) - (a.date||0); });
+  subBody.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text2);">Quizzes load ho rahe hain...</div>';
+  tqLoadFromFirebase(sid, secid, tid).then(function(){
+    tqRenderHubInner(subBody, sid, secid, tid);
+  });
+  // also show local immediately
+  setTimeout(function(){ tqRenderHubInner(subBody, sid, secid, tid); }, 0);
+};
+
+function tqRenderHubInner(subBody, sid, secid, tid){
+  if (!subBody) return;
+  var qs = tqListQuizzes(sid, secid, tid);
+  var atts = tqListAttempts(sid, secid, tid);
 
   var html = '<div style="padding:4px 2px 18px;">';
+  html += '<div style="font-size:0.72rem;color:var(--text2);margin-bottom:10px;line-height:1.5;">Quizzes topic document se alag Firebase (<b>topicQuizzes</b> / <b>topicQuizAttempts</b>) mein save hote hain. Bulk JSON bhi support.</div>';
   html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
   html += '<button type="button" class="btn btn-primary btn-sm" id="tqHubAddBtn">+ Naya Quiz</button>';
+  html += '<button type="button" class="btn btn-outline btn-sm" id="tqHubBulkBtn">Bulk JSON</button>';
   html += '<button type="button" class="btn btn-outline btn-sm" id="tqHubHistBtn">History (' + atts.length + ')</button>';
-  if (t.quizLink) {
-    html += '<button type="button" class="btn btn-outline btn-sm" id="tqHubExtBtn">External Link</button>';
-  }
-  if (typeof _isAdmin !== 'undefined' && _isAdmin) {
-    html += '<button type="button" class="btn btn-outline btn-xs" id="tqHubLinkBtn">Link set</button>';
-  }
   html += '</div>';
 
   if (!qs.length) {
     html += '<div class="tq-hub-card" style="text-align:center;padding:28px 14px;">';
-    html += '<div style="font-size:2rem;margin-bottom:8px;">?</div>';
-    html += '<div style="font-weight:800;margin-bottom:6px;">Abhi koi in-app quiz nahi</div>';
-    html += '<div style="font-size:0.78rem;color:var(--text2);line-height:1.6;margin-bottom:12px;">Yahin se quiz banao, attempt karo, history is topic mein save hogi.</div>';
+    html += '<div style="font-weight:800;margin-bottom:6px;">Abhi koi quiz nahi</div>';
+    html += '<div style="font-size:0.78rem;color:var(--text2);line-height:1.6;margin-bottom:12px;">+ Naya Quiz ya Bulk JSON se questions add karo.</div>';
     html += '<button type="button" class="btn btn-primary btn-sm" id="tqHubAddBtn2">+ Pehla Quiz Banao</button>';
     html += '</div>';
   } else {
-    qs.forEach(function(qz, qi){
+    qs.forEach(function(qz){
       var nQ = (qz.questions || []).length;
       var lastAtt = atts.find(function(a){ return String(a.quizId) === String(qz.id); });
-      html += '<div class="tq-hub-card" data-qi="' + qi + '">';
+      html += '<div class="tq-hub-card">';
       html += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">';
       html += '<div style="min-width:0;flex:1;">';
       html += '<div style="font-weight:800;color:var(--accent);font-size:0.95rem;">' + tqEsc(qz.name) + '</div>';
       html += '<div style="font-size:0.72rem;color:var(--text2);margin-top:3px;">' + nQ + ' questions';
       if (lastAtt) html += ' · last ' + (lastAtt.score||0) + '/' + (lastAtt.total||nQ) + ' (' + (lastAtt.pct||0) + '%)';
-      html += '</div></div>';
+      html += '</div>';
+      html += '<div class="tq-idchip" style="margin-top:4px;">ID: ' + tqEsc(qz.id) + '</div>';
+      html += '</div>';
       html += '<div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">';
       html += '<button type="button" class="btn btn-primary btn-xs tq-play" data-qid="' + tqEsc(qz.id) + '">Play</button>';
       html += '<button type="button" class="btn btn-outline btn-xs tq-shuf" data-qid="' + tqEsc(qz.id) + '">Shuffle</button>';
       html += '<button type="button" class="btn btn-outline btn-xs tq-edit" data-qid="' + tqEsc(qz.id) + '">Edit</button>';
+      html += '<button type="button" class="btn btn-outline btn-xs tq-bulk-add" data-qid="' + tqEsc(qz.id) + '">+JSON</button>';
       html += '<button type="button" class="btn btn-danger btn-xs tq-del" data-qid="' + tqEsc(qz.id) + '">Del</button>';
       html += '</div></div></div>';
     });
   }
 
   if (atts.length) {
-    html += '<div style="font-weight:800;font-size:0.85rem;margin:16px 0 8px;color:var(--text);">Recent Attempts</div>';
+    html += '<div style="font-weight:800;font-size:0.85rem;margin:16px 0 8px;">Recent Attempts</div>';
     atts.slice(0,5).forEach(function(a){
       html += '<div class="tq-hist-item tq-open-att" data-aid="' + tqEsc(a.id) + '" style="cursor:pointer;">';
       html += '<div style="font-weight:800;font-size:0.84rem;">' + tqEsc(a.quizName || 'Quiz') + '</div>';
       html += '<div style="font-size:0.72rem;color:var(--text2);margin-top:2px;">' + (a.score||0) + '/' + (a.total||0) + ' · ' + (a.pct||0) + '% · ' + tqFmtDate(a.date) + '</div>';
       html += '</div>';
     });
-    if (atts.length > 5) {
-      html += '<button type="button" class="btn btn-outline btn-sm" style="width:100%;" id="tqHubHistBtn2">Saari history dekho</button>';
-    }
   }
   html += '</div>';
   subBody.innerHTML = html;
 
-  function bind(id, fn){
-    var el = document.getElementById(id);
-    if (el) el.onclick = fn;
-  }
+  function bind(id, fn){ var el = document.getElementById(id); if (el) el.onclick = fn; }
   bind('tqHubAddBtn', function(){ tqOpenCreateForm(sid, secid, tid, null); });
   bind('tqHubAddBtn2', function(){ tqOpenCreateForm(sid, secid, tid, null); });
+  bind('tqHubBulkBtn', function(){ tqOpenBulkCreate(sid, secid, tid, null); });
   bind('tqHubHistBtn', function(){ tqShowHistory(sid, secid, tid); });
-  bind('tqHubHistBtn2', function(){ tqShowHistory(sid, secid, tid); });
-  bind('tqHubExtBtn', function(){
-    var link = (t.quizLink || '').trim();
-    if (!/^https?:\/\//i.test(link)) link = 'https://' + link;
-    window.open(link, '_blank', 'noopener,noreferrer');
-  });
-  bind('tqHubLinkBtn', function(){ editTopicQuizLink(sid, secid, tid); });
-
   subBody.querySelectorAll('.tq-play').forEach(function(btn){
     btn.onclick = function(){ tqStartAttempt(btn.getAttribute('data-qid'), sid, secid, tid, false); };
   });
@@ -75703,30 +75875,115 @@ window.tqRenderHub = function(subBody, sid, secid, tid){
   subBody.querySelectorAll('.tq-edit').forEach(function(btn){
     btn.onclick = function(){ tqOpenCreateForm(sid, secid, tid, btn.getAttribute('data-qid')); };
   });
+  subBody.querySelectorAll('.tq-bulk-add').forEach(function(btn){
+    btn.onclick = function(){ tqOpenBulkCreate(sid, secid, tid, btn.getAttribute('data-qid')); };
+  });
   subBody.querySelectorAll('.tq-del').forEach(function(btn){
     btn.onclick = function(){ tqDeleteQuiz(btn.getAttribute('data-qid'), sid, secid, tid); };
   });
   subBody.querySelectorAll('.tq-open-att').forEach(function(el){
     el.onclick = function(){ tqOpenAttemptDetail(el.getAttribute('data-aid'), sid, secid, tid); };
   });
-};
+}
 
-function tqOpenCreateForm(sid, secid, tid, editId){
+/* ---- Bulk JSON ---- */
+function tqOpenBulkCreate(sid, secid, tid, quizId){
   _tqCtx = { sid:sid, secid:secid, tid:tid };
-  var t = getTop(sid, secid, tid);
-  if (!t) return;
-  var existing = null;
-  if (editId) {
-    existing = (t.topicQuizzes || []).find(function(q){ return String(q.id) === String(editId); });
-  }
+  var existing = quizId ? (S.topicQuizBank || {})[quizId] : null;
   var old = document.getElementById('tqEditorOverlay');
   if (old) old.remove();
   var ov = document.createElement('div');
   ov.id = 'tqEditorOverlay';
   ov.style.cssText = 'position:fixed;inset:0;z-index:1000030;background:rgba(0,0,0,0.55);display:flex;align-items:flex-start;justify-content:center;padding:16px 12px;overflow-y:auto;';
+  ov.innerHTML = '<div style="background:var(--surface);color:var(--text);border-radius:16px;padding:16px;width:100%;max-width:560px;margin-bottom:40px;box-shadow:0 12px 40px rgba(0,0,0,0.3);">' +
+    '<div style="font-weight:900;font-size:1.05rem;margin-bottom:8px;">Bulk JSON Import</div>' +
+    '<div style="font-size:0.72rem;color:var(--text2);line-height:1.6;margin-bottom:10px;">Format: <code>[{"q":"...","options":["A","B","C","D"],"correct":0,"explanation":"..."}]</code><br>correct: 0=A,1=B,2=C,3=D. Firebase alag collection mein save hoga.</div>' +
+    (existing
+      ? ('<div class="tq-idchip" style="margin-bottom:8px;">Existing quiz: ' + tqEsc(existing.name) + ' · ' + tqEsc(existing.id) + '</div>')
+      : ('<div class="field-group"><label class="field-label">Naye quiz ka naam *</label><input class="inp" id="tqBulkName" placeholder="Polity Set 1"></div>')) +
+    '<textarea class="inp" id="tqBulkJson" rows="12" placeholder=\'[{"q":"Sawaal?","options":["A","B","C","D"],"correct":0,"explanation":""}]\' style="font-family:monospace;font-size:0.75rem;"></textarea>' +
+    '<div style="display:flex;gap:8px;margin-top:12px;">' +
+    '<button type="button" class="btn btn-outline" style="flex:1;" id="tqBulkCancel">Cancel</button>' +
+    '<button type="button" class="btn btn-primary" style="flex:1;" id="tqBulkSave">Import Save</button>' +
+    '</div></div>';
+  document.body.appendChild(ov);
+  document.getElementById('tqBulkCancel').onclick = function(){ ov.remove(); };
+  document.getElementById('tqBulkSave').onclick = function(){
+    var raw = (document.getElementById('tqBulkJson').value || '').trim();
+    var arr;
+    try { arr = JSON.parse(raw); } catch(e) {
+      showToast('Invalid JSON', 'error'); return;
+    }
+    if (!Array.isArray(arr) || !arr.length) { showToast('JSON array chahiye', 'error'); return; }
+    var questions = tqNormalizeQuestions(arr);
+    if (!questions.length) { showToast('Valid questions nahi mile', 'error'); return; }
+    if (existing) {
+      existing.questions = (existing.questions || []).concat(questions);
+      existing.updatedAt = Date.now();
+      tqSaveQuizDoc(existing);
+      showToast(questions.length + ' questions add + Firebase save', 'success');
+    } else {
+      var name = ((document.getElementById('tqBulkName') || {}).value || '').trim() || ('Bulk Quiz ' + new Date().toLocaleDateString('hi-IN'));
+      var id = 'tq_' + Date.now();
+      var doc = {
+        id: id,
+        sid: sid, secid: secid, tid: tid,
+        topicKey: tqTopicKey(sid, secid, tid),
+        name: name,
+        questions: questions,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      tqSaveQuizDoc(doc);
+      showToast('Quiz ban gaya · ' + questions.length + ' Q · ID: ' + id, 'success');
+    }
+    ov.remove();
+    tvShowSub('topicquiz', sid, secid, tid);
+  };
+}
 
+/* Console helpers (chhote app jaisa) */
+window.tqAddQuestions = function(sid, secid, tid, quizId, qArray){
+  if (!quizId) { console.error('[TQ] quizId required'); return; }
+  var quiz = (S.topicQuizBank || {})[quizId];
+  if (!quiz) { console.error('[TQ] Quiz not found', quizId); return; }
+  var questions = tqNormalizeQuestions(qArray);
+  quiz.questions = (quiz.questions || []).concat(questions);
+  quiz.updatedAt = Date.now();
+  if (sid != null) { quiz.sid = sid; quiz.secid = secid; quiz.tid = tid; quiz.topicKey = tqTopicKey(sid,secid,tid); }
+  tqSaveQuizDoc(quiz);
+  console.log('[TQ] Added', questions.length, 'total', quiz.questions.length);
+  if (typeof showToast === 'function') showToast(questions.length + ' questions imported', 'success');
+  return { added: questions.length, total: quiz.questions.length, quizId: quiz.id };
+};
+window.tqCreateQuizWithQuestions = function(sid, secid, tid, name, qArray){
+  var questions = tqNormalizeQuestions(qArray);
+  if (!questions.length) { console.error('[TQ] no valid questions'); return null; }
+  var id = 'tq_' + Date.now();
+  var doc = {
+    id: id,
+    sid: sid, secid: secid, tid: tid,
+    topicKey: tqTopicKey(sid, secid, tid),
+    name: name || ('Quiz ' + id),
+    questions: questions,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  tqSaveQuizDoc(doc);
+  console.log('[TQ] Created', id, 'with', questions.length, 'questions');
+  if (typeof showToast === 'function') showToast('Quiz created: ' + id, 'success');
+  return doc;
+};
+
+function tqOpenCreateForm(sid, secid, tid, editId){
+  _tqCtx = { sid:sid, secid:secid, tid:tid };
+  var existing = editId ? (S.topicQuizBank || {})[editId] : null;
+  var old = document.getElementById('tqEditorOverlay');
+  if (old) old.remove();
+  var ov = document.createElement('div');
+  ov.id = 'tqEditorOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:1000030;background:rgba(0,0,0,0.55);display:flex;align-items:flex-start;justify-content:center;padding:16px 12px;overflow-y:auto;';
   var qs = (existing && existing.questions) ? existing.questions : [{ q:'', options:['','','',''], correct:0, explanation:'' }];
-
   function rowHtml(q, i){
     var h = '<div class="tq-q-block" data-qi="' + i + '">';
     h += '<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><b style="font-size:0.8rem;">Q' + (i+1) + '</b>';
@@ -75742,9 +75999,9 @@ function tqOpenCreateForm(sid, secid, tid, editId){
     h += '</div>';
     return h;
   }
-
-  ov.innerHTML = '<div style="background:var(--surface);color:var(--text);border-radius:16px;padding:16px;width:100%;max-width:560px;box-shadow:0 12px 40px rgba(0,0,0,0.3);margin-bottom:40px;">' +
+  ov.innerHTML = '<div style="background:var(--surface);color:var(--text);border-radius:16px;padding:16px;width:100%;max-width:560px;margin-bottom:40px;box-shadow:0 12px 40px rgba(0,0,0,0.3);">' +
     '<div style="font-weight:900;font-size:1.05rem;margin-bottom:10px;">' + (existing ? 'Quiz Edit' : '+ Naya Quiz') + '</div>' +
+    (existing ? ('<div class="tq-idchip" style="margin-bottom:8px;">ID: ' + tqEsc(existing.id) + ' (auto / Firebase alag)</div>') : '') +
     '<div class="field-group"><label class="field-label">Quiz naam *</label>' +
     '<input class="inp" id="tqNameIn" value="' + tqEsc(existing ? existing.name : '') + '" placeholder="e.g. Polity Basics Set 1"></div>' +
     '<div id="tqQList">' + qs.map(rowHtml).join('') + '</div>' +
@@ -75754,7 +76011,6 @@ function tqOpenCreateForm(sid, secid, tid, editId){
     '<button type="button" class="btn btn-primary" style="flex:1;" id="tqEditorSave">Save</button>' +
     '</div></div>';
   document.body.appendChild(ov);
-
   function bindRm(){
     ov.querySelectorAll('.tq-rm-q').forEach(function(btn){
       btn.onclick = function(){ var b = btn.closest('.tq-q-block'); if (b) b.remove(); };
@@ -75770,61 +76026,64 @@ function tqOpenCreateForm(sid, secid, tid, editId){
     bindRm();
   };
   document.getElementById('tqEditorCancel').onclick = function(){ ov.remove(); };
-  document.getElementById('tqEditorSave').onclick = function(){
-    tqSaveQuiz(existing ? existing.id : null);
-  };
+  document.getElementById('tqEditorSave').onclick = function(){ tqSaveQuizFromForm(existing ? existing.id : null); };
 }
 
-function tqSaveQuiz(editId){
-  var t = tqGetTopic();
-  if (!t) return;
-  var nameEl = document.getElementById('tqNameIn');
-  var name = (nameEl && nameEl.value || '').trim();
+function tqSaveQuizFromForm(editId){
+  var sid = _tqCtx.sid, secid = _tqCtx.secid, tid = _tqCtx.tid;
+  var name = ((document.getElementById('tqNameIn') || {}).value || '').trim();
   if (!name) { showToast('Quiz naam likho', 'error'); return; }
   var blocks = document.querySelectorAll('#tqQList .tq-q-block');
-  var questions = [];
-  blocks.forEach(function(b, idx){
+  var raw = [];
+  blocks.forEach(function(b){
     var q = ((b.querySelector('.tq-q-text') || {}).value || '').trim();
     if (!q) return;
     var opts = [];
     b.querySelectorAll('.tq-opt-in').forEach(function(inp){ opts.push((inp.value || '').trim()); });
-    while (opts.length < 4) opts.push('');
     var corrEl = b.querySelector('input[type=radio]:checked');
-    var correct = corrEl ? Number(corrEl.value) : 0;
-    var expl = ((b.querySelector('.tq-expl') || {}).value || '').trim();
-    questions.push({ id: 'qq_' + Date.now() + '_' + idx, q:q, options:opts, correct:correct, explanation:expl });
+    raw.push({
+      q: q,
+      options: opts,
+      correct: corrEl ? Number(corrEl.value) : 0,
+      explanation: ((b.querySelector('.tq-expl') || {}).value || '').trim()
+    });
   });
-  if (!questions.length) { showToast('Kam se kam 1 question chahiye', 'error'); return; }
-  if (!t.topicQuizzes) t.topicQuizzes = [];
-  if (editId) {
-    var qz = t.topicQuizzes.find(function(x){ return String(x.id) === String(editId); });
-    if (qz) { qz.name = name; qz.questions = questions; qz.updatedAt = Date.now(); }
+  var questions = tqNormalizeQuestions(raw);
+  if (!questions.length) { showToast('Kam se kam 1 question', 'error'); return; }
+  var doc;
+  if (editId && (S.topicQuizBank || {})[editId]) {
+    doc = S.topicQuizBank[editId];
+    doc.name = name;
+    doc.questions = questions;
+    doc.updatedAt = Date.now();
   } else {
-    t.topicQuizzes.push({ id: 'tq_' + Date.now(), name:name, questions:questions, createdAt: Date.now() });
+    doc = {
+      id: 'tq_' + Date.now(),
+      sid: sid, secid: secid, tid: tid,
+      topicKey: tqTopicKey(sid, secid, tid),
+      name: name,
+      questions: questions,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
   }
-  tqPersist();
+  tqSaveQuizDoc(doc);
   var ov = document.getElementById('tqEditorOverlay');
   if (ov) ov.remove();
-  showToast('Quiz save ho gaya!', 'success');
-  tvShowSub('topicquiz', _tqCtx.sid, _tqCtx.secid, _tqCtx.tid);
+  showToast('Saved · Firebase topicQuizzes · ID ' + doc.id, 'success');
+  tvShowSub('topicquiz', sid, secid, tid);
 }
 
 function tqDeleteQuiz(id, sid, secid, tid){
-  if (!confirm('Yeh quiz delete karein? Attempts history safe rahegi.')) return;
-  var t = getTop(sid, secid, tid);
-  if (!t) return;
-  t.topicQuizzes = (t.topicQuizzes || []).filter(function(q){ return String(q.id) !== String(id); });
-  _tqCtx = { sid:sid, secid:secid, tid:tid };
-  tqPersist();
-  showToast('Quiz delete ho gaya', 'info');
+  if (!confirm('Quiz delete? Attempts history alag collection mein rehti hai.')) return;
+  tqDeleteQuizDoc(id);
+  showToast('Quiz delete', 'info');
   tvShowSub('topicquiz', sid, secid, tid);
 }
 
 function tqStartAttempt(quizId, sid, secid, tid, shuffle){
   _tqCtx = { sid:sid, secid:secid, tid:tid };
-  var t = getTop(sid, secid, tid);
-  if (!t) return;
-  var quiz = (t.topicQuizzes || []).find(function(q){ return String(q.id) === String(quizId); });
+  var quiz = (S.topicQuizBank || {})[quizId];
   if (!quiz || !(quiz.questions || []).length) { showToast('Quiz / questions nahi mile', 'error'); return; }
   var qCopy = JSON.parse(JSON.stringify(quiz));
   if (shuffle) {
@@ -75859,20 +76118,17 @@ function tqStartAttempt(quizId, sid, secid, tid, shuffle){
 
 function tqCycleTheme(){
   var order = ['dark', 'light', 'sepia'];
-  var i = order.indexOf(_tqTheme);
-  _tqTheme = order[(i + 1) % order.length];
+  _tqTheme = order[(order.indexOf(_tqTheme) + 1) % order.length];
   try { localStorage.setItem('tqTheme', _tqTheme); } catch(e) {}
   var ov = document.getElementById('tqPlayOverlay');
   if (ov) ov.className = 'open tq-' + _tqTheme;
 }
-
 function tqClosePlay(){
   if (_tqAtt && !_tqAtt.submitted) {
-    if (!confirm('Quiz band karein? Submit ke baad hi history save hoti hai.')) return;
+    if (!confirm('Band karein? Submit ke baad history save hoti hai.')) return;
   }
   tqForceClosePlay();
 }
-
 function tqForceClosePlay(){
   _tqAtt = null;
   var ov = document.getElementById('tqPlayOverlay');
@@ -75893,11 +76149,7 @@ function tqRenderQ(){
   var total = qs.length;
   document.getElementById('tqPlayMeta').textContent = 'Q ' + (i+1) + ' / ' + total;
   document.getElementById('tqPlayFill').style.width = (Math.round(i / Math.max(total,1) * 100)) + '%';
-
-  var html = '';
-  html += '<div style="font-size:0.7rem;font-weight:800;opacity:0.7;margin-bottom:6px;">Question ' + (i+1);
-  if (st.marked[i]) html += ' · Marked';
-  html += '</div>';
+  var html = '<div style="font-size:0.7rem;font-weight:800;opacity:0.7;margin-bottom:6px;">Question ' + (i+1) + (st.marked[i] ? ' · Marked' : '') + '</div>';
   html += '<div style="font-size:1rem;font-weight:700;line-height:1.65;margin-bottom:14px;">' + tqEsc(q.q) + '</div>';
   (q.options || []).forEach(function(opt, oi){
     if (!String(opt || '').trim() && oi > 1) return;
@@ -75909,15 +76161,13 @@ function tqRenderQ(){
     }
     html += '<button type="button" class="' + cls + '" data-oi="' + oi + '">' + String.fromCharCode(65+oi) + '. ' + tqEsc(opt) + '</button>';
   });
-
   if (st.reveal || st.submitted) {
     var ok = st.answers[i] === q.correct;
     html += '<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:' + (ok ? 'rgba(102,187,106,0.15)' : 'rgba(239,83,80,0.12)') + ';font-size:0.82rem;line-height:1.55;">';
     html += ok ? 'Sahi!' : ('Galat. Sahi: <b>' + tqEsc((q.options || [])[q.correct] || '') + '</b>');
-    if (q.explanation) html += '<div style="margin-top:6px;opacity:0.9;">' + tqEsc(q.explanation) + '</div>';
+    if (q.explanation) html += '<div style="margin-top:6px;">' + tqEsc(q.explanation) + '</div>';
     html += '</div>';
   }
-
   html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;">';
   html += '<button type="button" class="tq-chip' + (st.difficulty[i]==='easy'?' on-easy':'') + '" data-diff="easy">Easy</button>';
   html += '<button type="button" class="tq-chip' + (st.difficulty[i]==='moderate'?' on-moderate':'') + '" data-diff="moderate">Moderate</button>';
@@ -75926,13 +76176,11 @@ function tqRenderQ(){
   html += '<button type="button" class="tq-chip" id="tqSaveBtn">' + (st.saved[i] ? 'Saved' : 'Save') + '</button>';
   if (!st.reveal && !st.submitted) html += '<button type="button" class="tq-chip" id="tqRevealBtn">Answer</button>';
   html += '</div>';
-
   html += '<div style="display:flex;gap:8px;margin-top:16px;">';
   html += '<button type="button" class="btn btn-outline" style="flex:1;" id="tqPrevBtn"' + (i===0?' disabled':'') + '>Prev</button>';
   html += '<button type="button" class="btn btn-primary" style="flex:1;" id="tqNextBtn">' + (i===total-1 ? 'Finish' : 'Next') + '</button>';
   html += '</div>';
-
-  html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:16px;" id="tqDots">';
+  html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:16px;">';
   for (var d = 0; d < total; d++) {
     var bg = 'rgba(255,255,255,0.12)';
     if (st.answers[d] !== null) bg = 'rgba(66,165,245,0.45)';
@@ -75941,10 +76189,8 @@ function tqRenderQ(){
     html += '<button type="button" class="tq-dot" data-d="' + d + '" style="width:28px;height:28px;border-radius:8px;border:none;background:' + bg + ';color:#fff;font-size:0.68rem;font-weight:800;cursor:pointer;">' + (d+1) + '</button>';
   }
   html += '</div>';
-
   var card = document.getElementById('tqPlayCard');
   card.innerHTML = html;
-
   card.querySelectorAll('.tq-opt').forEach(function(btn){
     btn.onclick = function(){
       if (!_tqAtt || _tqAtt.submitted) return;
@@ -75954,7 +76200,6 @@ function tqRenderQ(){
   });
   card.querySelectorAll('[data-diff]').forEach(function(btn){
     btn.onclick = function(){
-      if (!_tqAtt) return;
       var d = btn.getAttribute('data-diff');
       _tqAtt.difficulty[_tqAtt.currentQ] = (_tqAtt.difficulty[_tqAtt.currentQ] === d) ? null : d;
       tqRenderQ();
@@ -75988,32 +76233,23 @@ function tqNav(dir){
   _tqAtt.reveal = false;
   tqRenderQ();
 }
-
 function tqConfirmSubmit(){
   if (!_tqAtt || _tqAtt.submitted) return;
   var answered = _tqAtt.answers.filter(function(a){ return a !== null; }).length;
-  var total = _tqAtt.quiz.questions.length;
-  if (!confirm('Submit karein?\nAnswered: ' + answered + '/' + total)) return;
+  if (!confirm('Submit?\nAnswered: ' + answered + '/' + _tqAtt.quiz.questions.length)) return;
   tqSubmit();
 }
-
 function tqSubmit(){
   var st = _tqAtt;
   if (!st) return;
   st.submitted = true;
-  var t = tqGetTopic();
-  if (!t) return;
   var items = st.quiz.questions.map(function(q, idx){
     var sel = st.answers[idx];
     return {
-      q: q.q,
-      options: q.options,
-      correct: q.correct,
-      selected: sel,
+      q: q.q, options: q.options, correct: q.correct, selected: sel,
       isCorrect: sel !== null && sel === q.correct,
       difficulty: st.difficulty[idx] || null,
-      marked: !!st.marked[idx],
-      saved: !!st.saved[idx],
+      marked: !!st.marked[idx], saved: !!st.saved[idx],
       explanation: q.explanation || '',
       hideQ: false, hideA: false, hideE: false
     };
@@ -76025,23 +76261,19 @@ function tqSubmit(){
     id: 'tqa_' + Date.now(),
     quizId: st.quizId,
     quizName: st.quizName,
+    sid: _tqCtx.sid, secid: _tqCtx.secid, tid: _tqCtx.tid,
+    topicKey: tqTopicKey(_tqCtx.sid, _tqCtx.secid, _tqCtx.tid),
     date: Date.now(),
-    score: score,
-    total: total,
-    pct: pct,
+    score: score, total: total, pct: pct,
     timeTaken: Math.round((Date.now() - st.startTime) / 1000),
     items: items
   };
-  if (!t.topicQuizAttempts) t.topicQuizAttempts = [];
-  t.topicQuizAttempts.unshift(att);
-  if (t.topicQuizAttempts.length > 30) t.topicQuizAttempts = t.topicQuizAttempts.slice(0, 30);
-  tqPersist();
+  tqSaveAttemptDoc(att);
 
   var html = '<div style="text-align:center;padding:20px 8px;">';
-  html += '<div style="font-size:2.6rem;">' + (pct >= 80 ? 'Trophy' : 'Done') + '</div>';
   html += '<div style="font-size:1.8rem;font-weight:900;margin:8px 0;">' + score + '/' + total + '</div>';
   html += '<div style="font-size:1.1rem;font-weight:800;color:#66bb6a;">' + pct + '%</div>';
-  html += '<div style="font-size:0.78rem;opacity:0.75;margin-top:6px;">Time: ' + Math.floor(att.timeTaken/60) + 'm ' + (att.timeTaken%60) + 's</div>';
+  html += '<div style="font-size:0.78rem;opacity:0.75;margin-top:6px;">Saved in Firebase topicQuizAttempts</div>';
   html += '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:18px;">';
   html += '<button type="button" class="btn btn-primary" id="tqResAnalysis">Analysis</button>';
   html += '<button type="button" class="btn btn-outline" style="color:inherit;border-color:rgba(255,255,255,0.3);" id="tqResRetry">Reattempt</button>';
@@ -76049,7 +76281,6 @@ function tqSubmit(){
   html += '</div></div>';
   document.getElementById('tqPlayCard').innerHTML = html;
   document.getElementById('tqPlayFill').style.width = '100%';
-  document.getElementById('tqPlayMeta').textContent = 'Complete · ' + pct + '%';
   document.getElementById('tqResAnalysis').onclick = function(){
     var aid = att.id;
     tqForceClosePlay();
@@ -76059,32 +76290,26 @@ function tqSubmit(){
     tqStartAttempt(String(st.quizId), _tqCtx.sid, _tqCtx.secid, _tqCtx.tid, false);
   };
   document.getElementById('tqResHub').onclick = function(){ tqForceClosePlay(); };
-  showToast('Attempt save - topic history mein', 'success');
+  showToast('Attempt Firebase mein save', 'success');
 }
 
 function tqShowHistory(sid, secid, tid){
-  _tqCtx = { sid:sid, secid:secid, tid:tid };
-  var t = getTop(sid, secid, tid);
-  if (!t) return;
-  var atts = (t.topicQuizAttempts || []).slice().sort(function(a,b){ return (b.date||0)-(a.date||0); });
+  var atts = tqListAttempts(sid, secid, tid);
   var subBody = document.getElementById('tvSubBody');
   var subTitle = document.getElementById('tvSubTitle');
   if (subTitle) subTitle.textContent = 'Quiz History';
   if (!subBody) return;
   if (!atts.length) {
-    subBody.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text2);">Koi attempt nahi - pehle quiz play karo.</div>';
+    subBody.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text2);">Koi attempt nahi.</div>';
     return;
   }
   var html = '<div style="padding:4px 2px 20px;">';
-  html += '<button type="button" class="btn btn-outline btn-xs" style="margin-bottom:10px;" id="tqHistBack">Back to Quizzes</button>';
+  html += '<button type="button" class="btn btn-outline btn-xs" style="margin-bottom:10px;" id="tqHistBack">Back</button>';
   atts.forEach(function(a){
     html += '<div class="tq-hist-item tq-open-att" data-aid="' + tqEsc(a.id) + '" style="cursor:pointer;">';
-    html += '<div style="display:flex;justify-content:space-between;gap:8px;">';
-    html += '<div style="font-weight:800;">' + tqEsc(a.quizName || 'Quiz') + '</div>';
-    html += '<div style="font-weight:900;color:' + (a.pct >= 50 ? 'var(--green)' : 'var(--red)') + ';">' + (a.pct||0) + '%</div>';
-    html += '</div>';
-    html += '<div style="font-size:0.72rem;color:var(--text2);margin-top:3px;">' + (a.score||0) + '/' + (a.total||0) + ' · ' + tqFmtDate(a.date) + '</div>';
-    html += '</div>';
+    html += '<div style="display:flex;justify-content:space-between;"><div style="font-weight:800;">' + tqEsc(a.quizName || 'Quiz') + '</div>';
+    html += '<div style="font-weight:900;color:' + (a.pct>=50?'var(--green)':'var(--red)') + ';">' + (a.pct||0) + '%</div></div>';
+    html += '<div style="font-size:0.72rem;color:var(--text2);margin-top:3px;">' + (a.score||0) + '/' + (a.total||0) + ' · ' + tqFmtDate(a.date) + '</div></div>';
   });
   html += '</div>';
   subBody.innerHTML = html;
@@ -76095,10 +76320,7 @@ function tqShowHistory(sid, secid, tid){
 }
 
 window.tqOpenAttemptDetail = function(attId, sid, secid, tid){
-  _tqCtx = { sid:sid, secid:secid, tid:tid };
-  var t = getTop(sid, secid, tid);
-  if (!t) return;
-  var att = (t.topicQuizAttempts || []).find(function(a){ return String(a.id) === String(attId); });
+  var att = (S.topicQuizAttemptBank || {})[attId];
   if (!att) { showToast('Attempt nahi mila', 'error'); return; }
   try {
     var modal = document.getElementById('topicViewModal');
@@ -76107,14 +76329,13 @@ window.tqOpenAttemptDetail = function(attId, sid, secid, tid){
   setTimeout(function(){
     var subBody = document.getElementById('tvSubBody');
     var subTitle = document.getElementById('tvSubTitle');
-    if (subTitle) subTitle.textContent = (att.quizName || 'Attempt');
+    if (subTitle) subTitle.textContent = att.quizName || 'Attempt';
     if (!subBody) return;
     try {
       document.getElementById('tvScreenA').style.display = 'none';
       document.getElementById('tvScreenA').classList.remove('active');
       var B = document.getElementById('tvScreenB');
-      B.style.display = 'flex';
-      B.classList.add('active');
+      B.style.display = 'flex'; B.classList.add('active');
     } catch(e) {}
     tqRenderAttemptAnalysis(subBody, att, sid, secid, tid);
   }, 120);
@@ -76123,12 +76344,8 @@ window.tqOpenAttemptDetail = function(attId, sid, secid, tid){
 function tqRenderAttemptAnalysis(subBody, att, sid, secid, tid){
   var f = _tqHistFilter;
   var items = (att.items || []).map(function(it, idx){
-    var o = {};
-    for (var k in it) o[k] = it[k];
-    o._i = idx;
-    return o;
-  });
-  items = items.filter(function(it){
+    var o = {}; for (var k in it) o[k] = it[k]; o._i = idx; return o;
+  }).filter(function(it){
     if (f.result === 'correct' && !it.isCorrect) return false;
     if (f.result === 'wrong' && (it.isCorrect || it.selected === null)) return false;
     if (f.result === 'skipped' && it.selected !== null) return false;
@@ -76137,14 +76354,11 @@ function tqRenderAttemptAnalysis(subBody, att, sid, secid, tid){
     if (f.diff !== 'all' && it.difficulty !== f.diff) return false;
     return true;
   });
-
   var html = '<div style="padding:2px 2px 24px;">';
-  html += '<button type="button" class="btn btn-outline btn-xs" style="margin-bottom:8px;" id="tqAnaBack">Back History</button>';
-  html += '<div class="tq-hub-card" style="text-align:center;">';
-  html += '<div style="font-size:1.4rem;font-weight:900;color:var(--accent);">' + (att.score||0) + '/' + (att.total||0) + ' · ' + (att.pct||0) + '%</div>';
+  html += '<button type="button" class="btn btn-outline btn-xs" style="margin-bottom:8px;" id="tqAnaBack">Back</button>';
+  html += '<div class="tq-hub-card" style="text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:var(--accent);">' + (att.score||0) + '/' + (att.total||0) + ' · ' + (att.pct||0) + '%</div>';
   html += '<div style="font-size:0.72rem;color:var(--text2);">' + tqFmtDate(att.date) + '</div></div>';
-
-  html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;" id="tqFiltResult">';
+  html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;">';
   [['all','Sab'],['correct','Sahi'],['wrong','Galat'],['skipped','Skip'],['marked','Marked']].forEach(function(x){
     html += '<button type="button" class="tq-filter-btn' + (f.result===x[0]?' active':'') + '" data-k="result" data-v="' + x[0] + '">' + x[1] + '</button>';
   });
@@ -76152,56 +76366,37 @@ function tqRenderAttemptAnalysis(subBody, att, sid, secid, tid){
   [['all','Diff: Sab'],['easy','Easy'],['moderate','Moderate'],['hard','Hard']].forEach(function(x){
     html += '<button type="button" class="tq-filter-btn' + (f.diff===x[0]?' active':'') + '" data-k="diff" data-v="' + x[0] + '">' + x[1] + '</button>';
   });
-  html += '<button type="button" class="tq-filter-btn' + (f.saved==='all'?' active':'') + '" data-k="saved" data-v="all">Saved: Sab</button>';
-  html += '<button type="button" class="tq-filter-btn' + (f.saved==='saved'?' active':'') + '" data-k="saved" data-v="saved">Saved only</button>';
+  html += '<button type="button" class="tq-filter-btn' + (f.saved==='saved'?' active':'') + '" data-k="saved" data-v="saved">Saved</button>';
   html += '</div>';
-
   html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">';
   html += '<button type="button" class="tq-toggle" data-bulk="Q" data-hide="1">Hide Q</button>';
   html += '<button type="button" class="tq-toggle" data-bulk="Q" data-hide="0">Show Q</button>';
-  html += '<button type="button" class="tq-toggle" data-bulk="A" data-hide="1">Hide Ans</button>';
-  html += '<button type="button" class="tq-toggle" data-bulk="A" data-hide="0">Show Ans</button>';
-  html += '<button type="button" class="tq-toggle" data-bulk="E" data-hide="1">Hide Expl</button>';
-  html += '<button type="button" class="tq-toggle" data-bulk="E" data-hide="0">Show Expl</button>';
+  html += '<button type="button" class="tq-toggle" data-bulk="A" data-hide="1">Hide A</button>';
+  html += '<button type="button" class="tq-toggle" data-bulk="A" data-hide="0">Show A</button>';
+  html += '<button type="button" class="tq-toggle" data-bulk="E" data-hide="1">Hide E</button>';
+  html += '<button type="button" class="tq-toggle" data-bulk="E" data-hide="0">Show E</button>';
   html += '</div>';
-
-  if (!items.length) {
-    html += '<div style="text-align:center;color:var(--text2);padding:16px;">Is filter se koi question nahi.</div>';
-  }
-
   items.forEach(function(it){
     var border = it.isCorrect ? 'var(--green)' : (it.selected === null ? 'var(--border)' : 'var(--red)');
     html += '<div class="tq-q-block" style="border-left:3px solid ' + border + ';" data-ii="' + it._i + '">';
     html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">';
-    html += '<button type="button" class="tq-toggle tq-ih" data-kind="Q">' + (it.hideQ ? 'Show' : 'Hide') + ' Q</button>';
-    html += '<button type="button" class="tq-toggle tq-ih" data-kind="A">' + (it.hideA ? 'Show' : 'Hide') + ' A</button>';
-    html += '<button type="button" class="tq-toggle tq-ih" data-kind="E">' + (it.hideE ? 'Show' : 'Hide') + ' E</button>';
-    if (it.difficulty) html += '<span class="tq-toggle" style="cursor:default;">' + tqEsc(it.difficulty) + '</span>';
-    if (it.marked) html += '<span class="tq-toggle" style="cursor:default;">Marked</span>';
-    if (it.saved) html += '<span class="tq-toggle" style="cursor:default;">Saved</span>';
+    html += '<button type="button" class="tq-toggle tq-ih" data-kind="Q">' + (it.hideQ?'Show':'Hide') + ' Q</button>';
+    html += '<button type="button" class="tq-toggle tq-ih" data-kind="A">' + (it.hideA?'Show':'Hide') + ' A</button>';
+    html += '<button type="button" class="tq-toggle tq-ih" data-kind="E">' + (it.hideE?'Show':'Hide') + ' E</button>';
     html += '</div>';
-    if (!it.hideQ) {
-      html += '<div style="font-size:0.68rem;font-weight:800;color:var(--text2);">SAWAAL</div>';
-      html += '<div style="font-size:0.88rem;font-weight:700;margin-bottom:8px;line-height:1.55;">' + tqEsc(it.q) + '</div>';
-    }
+    if (!it.hideQ) html += '<div style="font-weight:700;margin-bottom:6px;">' + tqEsc(it.q) + '</div>';
     if (!it.hideA) {
-      html += '<div style="font-size:0.68rem;font-weight:800;color:var(--text2);">OPTIONS</div>';
       (it.options || []).forEach(function(op, oi){
-        if (!String(op || '').trim() && oi > 1) return;
-        var mark = '';
-        if (oi === it.correct) mark = ' [OK]';
-        if (it.selected === oi && oi !== it.correct) mark = ' [X]';
-        html += '<div style="font-size:0.82rem;padding:4px 0;line-height:1.45;">' + String.fromCharCode(65+oi) + '. ' + tqEsc(op) + mark + '</div>';
+        if (!String(op||'').trim() && oi > 1) return;
+        var mark = (oi === it.correct) ? ' [OK]' : (it.selected === oi ? ' [X]' : '');
+        html += '<div style="font-size:0.82rem;">' + String.fromCharCode(65+oi) + '. ' + tqEsc(op) + mark + '</div>';
       });
     }
-    if (!it.hideE && it.explanation) {
-      html += '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:var(--surface2);font-size:0.8rem;line-height:1.5;">' + tqEsc(it.explanation) + '</div>';
-    }
+    if (!it.hideE && it.explanation) html += '<div style="margin-top:8px;padding:8px;background:var(--surface2);border-radius:8px;font-size:0.8rem;">' + tqEsc(it.explanation) + '</div>';
     html += '</div>';
   });
   html += '</div>';
   subBody.innerHTML = html;
-
   document.getElementById('tqAnaBack').onclick = function(){ tqShowHistory(sid, secid, tid); };
   subBody.querySelectorAll('.tq-filter-btn').forEach(function(btn){
     btn.onclick = function(){
@@ -76211,64 +76406,39 @@ function tqRenderAttemptAnalysis(subBody, att, sid, secid, tid){
   });
   subBody.querySelectorAll('[data-bulk]').forEach(function(btn){
     btn.onclick = function(){
-      tqBulkHide(att.id, btn.getAttribute('data-bulk'), btn.getAttribute('data-hide') === '1', sid, secid, tid);
+      var kind = btn.getAttribute('data-bulk');
+      var hide = btn.getAttribute('data-hide') === '1';
+      (att.items || []).forEach(function(it){
+        if (kind === 'Q') it.hideQ = hide;
+        if (kind === 'A') it.hideA = hide;
+        if (kind === 'E') it.hideE = hide;
+      });
+      tqSaveAttemptDoc(att);
+      tqOpenAttemptDetail(att.id, sid, secid, tid);
     };
   });
   subBody.querySelectorAll('.tq-ih').forEach(function(btn){
     btn.onclick = function(){
-      var block = btn.closest('[data-ii]');
-      var idx = Number(block.getAttribute('data-ii'));
-      tqToggleItemHide(att.id, idx, btn.getAttribute('data-kind'), sid, secid, tid);
+      var idx = Number(btn.closest('[data-ii]').getAttribute('data-ii'));
+      var it = att.items[idx];
+      var kind = btn.getAttribute('data-kind');
+      if (kind === 'Q') it.hideQ = !it.hideQ;
+      if (kind === 'A') it.hideA = !it.hideA;
+      if (kind === 'E') it.hideE = !it.hideE;
+      tqSaveAttemptDoc(att);
+      tqOpenAttemptDetail(att.id, sid, secid, tid);
     };
   });
 }
 
-function tqBulkHide(attId, kind, hide, sid, secid, tid){
-  var t = getTop(sid, secid, tid);
-  if (!t) return;
-  var att = (t.topicQuizAttempts || []).find(function(a){ return String(a.id) === String(attId); });
-  if (!att) return;
-  (att.items || []).forEach(function(it){
-    if (kind === 'Q') it.hideQ = hide;
-    if (kind === 'A') it.hideA = hide;
-    if (kind === 'E') it.hideE = hide;
-  });
-  _tqCtx = { sid:sid, secid:secid, tid:tid };
-  tqPersist();
-  tqOpenAttemptDetail(attId, sid, secid, tid);
-}
-
-function tqToggleItemHide(attId, idx, kind, sid, secid, tid){
-  var t = getTop(sid, secid, tid);
-  if (!t) return;
-  var att = (t.topicQuizAttempts || []).find(function(a){ return String(a.id) === String(attId); });
-  if (!att || !att.items || !att.items[idx]) return;
-  var it = att.items[idx];
-  if (kind === 'Q') it.hideQ = !it.hideQ;
-  if (kind === 'A') it.hideA = !it.hideA;
-  if (kind === 'E') it.hideE = !it.hideE;
-  _tqCtx = { sid:sid, secid:secid, tid:tid };
-  tqPersist();
-  tqOpenAttemptDetail(attId, sid, secid, tid);
-}
-
-// Wire play overlay top buttons once
-document.addEventListener('DOMContentLoaded', function(){
-  var b = document.getElementById('tqBtnBack');
-  if (b) b.onclick = function(){ tqClosePlay(); };
-  var th = document.getElementById('tqBtnTheme');
-  if (th) th.onclick = function(){ tqCycleTheme(); };
-  var su = document.getElementById('tqBtnSubmit');
-  if (su) su.onclick = function(){ tqConfirmSubmit(); };
-});
-// Also bind immediately if DOM already ready
-(function(){
-  var b = document.getElementById('tqBtnBack');
-  if (b) b.onclick = function(){ tqClosePlay(); };
-  var th = document.getElementById('tqBtnTheme');
-  if (th) th.onclick = function(){ tqCycleTheme(); };
-  var su = document.getElementById('tqBtnSubmit');
-  if (su) su.onclick = function(){ tqConfirmSubmit(); };
+(function bindTop(){
+  function wire(){
+    var b = document.getElementById('tqBtnBack'); if (b) b.onclick = function(){ tqClosePlay(); };
+    var th = document.getElementById('tqBtnTheme'); if (th) th.onclick = function(){ tqCycleTheme(); };
+    var su = document.getElementById('tqBtnSubmit'); if (su) su.onclick = function(){ tqConfirmSubmit(); };
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
+  else wire();
 })();
 
 })();
