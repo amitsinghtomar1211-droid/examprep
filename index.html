@@ -2493,7 +2493,46 @@ body.night-mode .ai-chat-dismiss-pill{background:var(--border);}
 .doc .rd-font-size{color:#5f6368;}
 /* Bold-looking section titles in plain text (non-rich) */
 .reading-overlay.doc #rdContent b,
-.reading-overlay.doc #rdContent strong{color:#202124;}
+.reading-overlay.doc #rdContent strong{color:#202124;font-weight:700;}
+/* Enhanced doc classes applied by rdEnhanceDocLayout */
+.reading-overlay.doc #rdContent .rd-doc-title{
+  display:block;color:#1a73e8!important;font-size:1.45em!important;font-weight:600!important;
+  line-height:1.35!important;margin:0 0 0.55em!important;
+  font-family:'Noto Sans Devanagari','Roboto','Arial',sans-serif!important;
+}
+.reading-overlay.doc #rdContent .rd-doc-h1{
+  display:block;color:#1a73e8!important;font-size:1.22em!important;font-weight:600!important;
+  line-height:1.4!important;margin:1.15em 0 0.45em!important;
+  font-family:'Noto Sans Devanagari','Roboto','Arial',sans-serif!important;
+}
+.reading-overlay.doc #rdContent .rd-doc-h2{
+  display:block;color:#1a73e8!important;font-size:1.08em!important;font-weight:600!important;
+  line-height:1.4!important;margin:0.95em 0 0.4em!important;
+  font-family:'Noto Sans Devanagari','Roboto','Arial',sans-serif!important;
+}
+.reading-overlay.doc #rdContent .rd-doc-sub{
+  display:block;color:#5f6368!important;font-size:0.95em!important;font-weight:400!important;
+  line-height:1.55!important;margin:0 0 0.85em!important;
+}
+.reading-overlay.doc #rdContent .rd-doc-li,
+.reading-overlay.doc #rdContent li.rd-doc-li{
+  display:block;position:relative;padding-left:1.15em;margin:0.28em 0 0.28em;
+  color:#202124;line-height:1.65;
+}
+.reading-overlay.doc #rdContent .rd-doc-li::before{
+  content:'•';position:absolute;left:0;color:#202124;font-weight:700;
+}
+.reading-overlay.doc #rdContent .rd-doc-p{
+  display:block;color:#202124;margin:0 0 0.55em;line-height:1.72;
+}
+.reading-overlay.doc #rdContent ul{list-style:disc;padding-left:1.4em;margin:0.4em 0 0.8em;}
+.reading-overlay.doc #rdContent ol{list-style:decimal;padding-left:1.4em;margin:0.4em 0 0.8em;}
+.reading-overlay.doc #rdContent li{margin:0.28em 0;line-height:1.65;color:#202124;}
+.reading-overlay.doc #rdContent p{margin:0 0 0.55em;color:#202124;line-height:1.72;}
+/* Force any inline blue from source */
+.reading-overlay.doc #rdContent [style*="color: rgb(26, 115, 232)"],
+.reading-overlay.doc #rdContent [style*="color:#1a73e8"],
+.reading-overlay.doc #rdContent [style*="color: #1a73e8"]{color:#1a73e8!important;}
 
 .rd-bottombar.rd-hidden{transform:translateY(110%);opacity:0;pointer-events:none;}
 
@@ -29816,6 +29855,8 @@ function openReadingMode(title, text, richHtml, syncBack) {
     contentEl.className = 'reading-content';
     contentEl.style.whiteSpace = 'pre-wrap';
   }
+  contentEl.removeAttribute('data-rd-doc-enhanced');
+  contentEl.removeAttribute('data-rd-orig-html');
   // Snapshot for dirty-check on close — auto-save tabhi jab user ne
   // reading mode ke andar highlight/edit kiya ho
   window._rdOpenSnapshotHtml = contentEl.innerHTML;
@@ -30038,6 +30079,144 @@ function rdDownloadAsTxt(titleArg, contentElArg) {
 // legacy compat
 function rdToggleFullscreen() { rdRequestFullscreen(); }
 
+
+// Google-Docs-like structure: blue headings, bullets, spacing
+function rdEnhanceDocLayout(ct){
+  if(!ct) return;
+  // Already enhanced this HTML snapshot?
+  if(ct.getAttribute('data-rd-doc-enhanced') === '1') return;
+
+  var html = ct.innerHTML || '';
+  var plain = (ct.textContent || '').trim();
+  if(!plain) return;
+
+  // If mostly plain text (few tags), build structured HTML from lines
+  var tagCount = (html.match(/<(p|div|h[1-6]|li|ul|ol)\b/gi) || []).length;
+  var isFlat = tagCount < 3 || !ct.classList.contains('rd-rich');
+
+  function looksTitle(line){
+    var t = line.replace(/<[^>]+>/g,'').trim();
+    if(!t || t.length > 120) return false;
+    if(/^(भाग|भाग\s*\d|unit\s*\d|chapter)/i.test(t)) return true;
+    if(/क्विक\s*रिवी|quick\s*revision|संपूर्ण/i.test(t) && t.length < 80) return true;
+    return false;
+  }
+  function looksH1(line){
+    var t = line.replace(/<[^>]+>/g,'').trim();
+    if(!t || t.length > 140) return false;
+    if(/^भाग\s*\d+/i.test(t)) return true;
+    if(/^\d+\.\s+\S/.test(t) && t.length < 100) return true;
+    if(/mission|मिशन|upcoming/i.test(t) && t.length < 90 && !/^[•\-\*]/.test(t)) return true;
+    return false;
+  }
+  function looksH2(line){
+    var t = line.replace(/<[^>]+>/g,'').trim();
+    if(!t || t.length > 100) return false;
+    if(/^\d+\.\d+/.test(t)) return true; // 1.1, 2.3
+    if(/^(लक्ष्य|परीक्षण|प्रमुख|अन्य)/i.test(t) && t.length < 60) return true;
+    return false;
+  }
+  function looksSub(line){
+    var t = line.replace(/<[^>]+>/g,'').trim();
+    return /^\(.*\)$/.test(t) || (/यूनिट|unit\s*\d/i.test(t) && t.length < 120);
+  }
+  function looksBullet(line){
+    var t = line.replace(/<[^>]+>/g,'').trim();
+    return /^([•●○▪▸►\-\*]|\d+[\.\)])\s+/.test(t);
+  }
+  function stripBullet(line){
+    return line.replace(/^([•●○▪▸►\-\*]|\d+[\.\)])\s+/, '');
+  }
+
+  if(isFlat){
+    // Split by <br> or newlines into lines
+    var work = html;
+    if(!/<(p|div|br|li)\b/i.test(work)){
+      work = (ct.textContent || '').split(/\n/).map(function(l){ return l; }).join('\n');
+      var lines = work.split(/\n/);
+      var out = [];
+      var first = true;
+      lines.forEach(function(raw){
+        var line = String(raw || '').trim();
+        if(!line){ out.push('<div class="rd-doc-p" style="height:0.45em"></div>'); return; }
+        if(first && (looksTitle(line) || line.length < 90)){
+          out.push('<div class="rd-doc-title">' + line + '</div>');
+          first = false; return;
+        }
+        first = false;
+        if(looksSub(line)) out.push('<div class="rd-doc-sub">' + line + '</div>');
+        else if(looksH1(line)) out.push('<div class="rd-doc-h1">' + line + '</div>');
+        else if(looksH2(line)) out.push('<div class="rd-doc-h2">' + line + '</div>');
+        else if(looksBullet(line)) out.push('<div class="rd-doc-li">' + stripBullet(line) + '</div>');
+        else out.push('<div class="rd-doc-p">' + line + '</div>');
+      });
+      ct.innerHTML = out.join('');
+      ct.className = 'reading-content rd-rich';
+      ct.style.whiteSpace = 'normal';
+    } else {
+      // Has some HTML — split on br into blocks
+      var parts = html.replace(/<div[^>]*>/gi,'\n').replace(/<\/div>/gi,'\n')
+        .replace(/<p[^>]*>/gi,'\n').replace(/<\/p>/gi,'\n')
+        .replace(/<br\s*\/?>/gi,'\n').split(/\n/);
+      var out2 = [];
+      var first2 = true;
+      parts.forEach(function(raw){
+        var line = String(raw || '').replace(/<[^>]+>/g, function(m){
+          // keep bold/italic marks
+          if(/^<\/?(b|strong|i|em|u|mark)\b/i.test(m)) return m;
+          return '';
+        }).trim();
+        if(!line) return;
+        // restore simple: if original had tags keep a cleaned version
+        var clean = String(raw || '').trim();
+        clean = clean.replace(/<\/?(div|p|span)[^>]*>/gi,'');
+        if(!clean.replace(/<[^>]+>/g,'').trim()) return;
+        var textOnly = clean.replace(/<[^>]+>/g,'').trim();
+        if(first2 && (looksTitle(textOnly) || textOnly.length < 90)){
+          out2.push('<div class="rd-doc-title">' + clean + '</div>');
+          first2 = false; return;
+        }
+        first2 = false;
+        if(looksSub(textOnly)) out2.push('<div class="rd-doc-sub">' + clean + '</div>');
+        else if(looksH1(textOnly)) out2.push('<div class="rd-doc-h1">' + clean + '</div>');
+        else if(looksH2(textOnly)) out2.push('<div class="rd-doc-h2">' + clean + '</div>');
+        else if(looksBullet(textOnly)) out2.push('<div class="rd-doc-li">' + stripBullet(clean) + '</div>');
+        else out2.push('<div class="rd-doc-p">' + clean + '</div>');
+      });
+      if(out2.length){
+        ct.innerHTML = out2.join('');
+        ct.className = 'reading-content rd-rich';
+        ct.style.whiteSpace = 'normal';
+      }
+    }
+  } else {
+    // Rich HTML: tag headings + list items with classes
+    ct.classList.add('rd-rich');
+    var blocks = ct.querySelectorAll('h1,h2,h3,h4,p,div,li');
+    blocks.forEach(function(el, idx){
+      if(el.closest('mark')) return;
+      var t = (el.textContent || '').trim();
+      if(!t) return;
+      if(el.tagName === 'H1' || (idx === 0 && t.length < 100)) el.classList.add('rd-doc-title');
+      else if(el.tagName === 'H2' || looksH1(t)) el.classList.add('rd-doc-h1');
+      else if(el.tagName === 'H3' || looksH2(t)) el.classList.add('rd-doc-h2');
+      else if(el.tagName === 'LI' || looksBullet(t)) el.classList.add('rd-doc-li');
+      else if(looksSub(t)) el.classList.add('rd-doc-sub');
+    });
+    // Also force h1-h3 colors via inline if needed
+    ct.querySelectorAll('h1,h2,h3,h4').forEach(function(h){
+      h.style.color = '#1a73e8';
+      h.style.fontWeight = '600';
+    });
+  }
+
+  ct.setAttribute('data-rd-doc-enhanced', '1');
+}
+
+function rdClearDocEnhancementFlag(ct){
+  if(ct) ct.removeAttribute('data-rd-doc-enhanced');
+}
+
 function rdSetTheme(theme, skipSave) {
   _rdState.theme = theme;
   if(!skipSave) localStorage.setItem('rdTheme', theme);
@@ -30045,6 +30224,18 @@ function rdSetTheme(theme, skipSave) {
   if(overlay) overlay.className = 'reading-overlay show ' + theme;
   var ct = document.getElementById('rdContent');
   if(ct){
+    // Preserve original HTML once so we can re-apply doc layout cleanly
+    if(!ct.getAttribute('data-rd-orig-html')) {
+      ct.setAttribute('data-rd-orig-html', ct.innerHTML);
+    }
+    if(theme !== 'doc') {
+      // restore original content when leaving doc mode
+      var orig = ct.getAttribute('data-rd-orig-html');
+      if(orig != null && ct.getAttribute('data-rd-doc-enhanced') === '1') {
+        ct.innerHTML = orig;
+        ct.removeAttribute('data-rd-doc-enhanced');
+      }
+    }
     if(theme === 'answer' || theme === 'play'){
       ct.style.fontFamily = "'Georgia','Tiro Devanagari Hindi','Noto Sans Devanagari',serif";
       ct.style.fontWeight = '600';
@@ -30057,6 +30248,7 @@ function rdSetTheme(theme, skipSave) {
       ct.style.lineHeight = '1.72';
       ct.style.letterSpacing = '0.1px';
       ct.style.color = '#202124';
+      try { rdEnhanceDocLayout(ct); } catch(e) { console.warn('rdEnhanceDocLayout', e); }
     } else {
       ct.style.fontFamily = '';
       ct.style.fontWeight = '';
