@@ -75637,6 +75637,27 @@ function openFlashcardsInEditor(sid, secid, tid){
   display:inline-flex;align-items:center;justify-content:center;
 }
 #tqPlayOverlay.tq-dark .tq-icon-btn{background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.12);color:#c5d0de;}
+#tqPlayOverlay.tq-night{
+  background:linear-gradient(160deg,#0a1628 0%,#0d2644 40%,#123050 100%);
+  color:#dce6f2;
+}
+#tqPlayOverlay.tq-night #tqPlayShell{background:rgba(18,28,42,0.96);}
+#tqPlayOverlay.tq-night #tqPlayTop{background:#152238;border-bottom-color:rgba(255,255,255,0.08);}
+#tqPlayOverlay.tq-night #tqPlayTitle{color:#ffb74d;}
+#tqPlayOverlay.tq-night #tqPlayMeta{color:#8b9cb3;}
+#tqPlayOverlay.tq-night #tqPlayBody{background:#0f1a2a;}
+#tqPlayOverlay.tq-night #tqPlayBar{background:rgba(255,255,255,0.1);}
+#tqPlayOverlay.tq-night .tq-card{background:linear-gradient(165deg,#1a2740,#152032);border-color:rgba(255,255,255,0.1);color:#e6eaf0;}
+#tqPlayOverlay.tq-night .tq-card-ans{background:linear-gradient(165deg,#2a2418,#221e14);border-color:rgba(201,160,96,0.25);}
+#tqPlayOverlay.tq-night .tq-qtext{color:#e8eef6;}
+#tqPlayOverlay.tq-night .tq-opt{border-color:rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:#dce6f2;}
+#tqPlayOverlay.tq-night .tq-chip{border-color:rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:#c5d0de;}
+#tqPlayOverlay.tq-night #tqBottomBar{background:#152238;border-top-color:rgba(255,255,255,0.08);}
+#tqPlayOverlay.tq-night #tqJumpSheet{background:rgba(20,30,45,0.98);border-color:rgba(255,255,255,0.1);}
+#tqPlayOverlay.tq-night .tq-dot{border-color:rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#c5d0de;}
+#tqPlayOverlay.tq-night .tq-icon-btn{background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.12);color:#c5d0de;}
+#tqPlayOverlay.tq-night #tqTimerChip{background:rgba(255,167,38,0.15);color:#ffb74d;}
+
 .tq-badge{
   display:inline-block;padding:4px 12px;border-radius:20px;font-size:0.72rem;font-weight:800;
   background:rgba(255,202,40,0.25);color:#e65100;margin-bottom:10px;
@@ -75958,10 +75979,10 @@ function tqRenderHubInner(subBody, sid, secid, tid){
   bind('tqHubBulkBtn', function(){ tqOpenBulkCreate(sid, secid, tid, null); });
   bind('tqHubHistBtn', function(){ tqShowHistory(sid, secid, tid); });
   subBody.querySelectorAll('.tq-play').forEach(function(btn){
-    btn.onclick = function(){ tqStartAttempt(btn.getAttribute('data-qid'), sid, secid, tid, false); };
+    btn.onclick = function(){ tqPickModeThenStart(btn.getAttribute('data-qid'), sid, secid, tid, false); };
   });
   subBody.querySelectorAll('.tq-shuf').forEach(function(btn){
-    btn.onclick = function(){ tqStartAttempt(btn.getAttribute('data-qid'), sid, secid, tid, true); };
+    btn.onclick = function(){ tqPickModeThenStart(btn.getAttribute('data-qid'), sid, secid, tid, true); };
   });
   subBody.querySelectorAll('.tq-edit').forEach(function(btn){
     btn.onclick = function(){ tqOpenCreateForm(sid, secid, tid, btn.getAttribute('data-qid')); };
@@ -76187,7 +76208,35 @@ function tqDeleteQuiz(id, sid, secid, tid){
   tvShowSub('topicquiz', sid, secid, tid);
 }
 
-function tqStartAttempt(quizId, sid, secid, tid, shuffle){
+function tqPickModeThenStart(quizId, sid, secid, tid, shuffle){
+  var quiz = (S.topicQuizBank || {})[quizId];
+  if (!quiz || !(quiz.questions || []).length) { showToast('Quiz / questions nahi mile', 'error'); return; }
+  var old = document.getElementById('tqModePickOverlay');
+  if (old) old.remove();
+  var ov = document.createElement('div');
+  ov.id = 'tqModePickOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:1000040;background:rgba(15,30,50,0.55);display:flex;align-items:center;justify-content:center;padding:16px;';
+  ov.innerHTML = '<div style="background:#fff;border-radius:18px;padding:20px 16px;width:100%;max-width:360px;box-shadow:0 16px 40px rgba(31,74,117,0.35);font-family:Nunito,system-ui,sans-serif;">' +
+    '<div style="font-weight:900;font-size:1.1rem;color:#e65100;margin-bottom:6px;">Mode choose karo</div>' +
+    '<div style="font-size:0.78rem;color:#37526d;line-height:1.5;margin-bottom:14px;">' + (quiz.name || 'Quiz') + ' · ' + (quiz.questions||[]).length + ' questions</div>' +
+    '<button type="button" id="tqModePractice" style="width:100%;text-align:left;padding:14px;border-radius:14px;border:1.5px solid rgba(46,125,50,0.35);background:rgba(46,125,50,0.08);margin-bottom:10px;cursor:pointer;">' +
+      '<div style="font-weight:800;color:#2e7d32;font-size:0.95rem;">Practice Mode</div>' +
+      '<div style="font-size:0.72rem;color:#37526d;margin-top:4px;line-height:1.45;">Option select karte hi sahi/galat + explanation dikhega</div>' +
+    '</button>' +
+    '<button type="button" id="tqModeExam" style="width:100%;text-align:left;padding:14px;border-radius:14px;border:1.5px solid rgba(21,101,192,0.35);background:rgba(21,101,192,0.08);margin-bottom:10px;cursor:pointer;">' +
+      '<div style="font-weight:800;color:#1565c0;font-size:0.95rem;">Exam Mode</div>' +
+      '<div style="font-size:0.72rem;color:#37526d;margin-top:4px;line-height:1.45;">Submit tak sahi/galat aur explanation nahi dikhega</div>' +
+    '</button>' +
+    '<button type="button" id="tqModeCancel" style="width:100%;padding:10px;border-radius:12px;border:1.5px solid #bdd5ea;background:#f4f9fe;font-weight:700;color:#37526d;cursor:pointer;">Cancel</button>' +
+  '</div>';
+  document.body.appendChild(ov);
+  document.getElementById('tqModeCancel').onclick = function(){ ov.remove(); };
+  document.getElementById('tqModePractice').onclick = function(){ ov.remove(); tqStartAttempt(quizId, sid, secid, tid, shuffle, 'practice'); };
+  document.getElementById('tqModeExam').onclick = function(){ ov.remove(); tqStartAttempt(quizId, sid, secid, tid, shuffle, 'exam'); };
+}
+
+function tqStartAttempt(quizId, sid, secid, tid, shuffle, mode){
+  mode = mode || 'practice';
   _tqCtx = { sid:sid, secid:secid, tid:tid };
   var quiz = (S.topicQuizBank || {})[quizId];
   if (!quiz || !(quiz.questions || []).length) { showToast('Quiz / questions nahi mile', 'error'); return; }
@@ -76208,6 +76257,7 @@ function tqStartAttempt(quizId, sid, secid, tid, shuffle){
     quizId: quiz.id,
     quizName: quiz.name,
     quiz: qCopy,
+    mode: mode,
     answers: qCopy.questions.map(function(){ return null; }),
     marked: qCopy.questions.map(function(){ return false; }),
     difficulty: qCopy.questions.map(function(){ return null; }),
@@ -76222,8 +76272,11 @@ function tqStartAttempt(quizId, sid, secid, tid, shuffle){
   };
   try { closeModal('topicViewModal'); } catch(e) {}
   var ov = document.getElementById('tqPlayOverlay');
+  if (document.body.classList.contains('night-mode') && (!_tqTheme || _tqTheme === 'mint')) {
+    _tqTheme = 'night';
+  }
   ov.className = 'open tq-' + _tqTheme;
-  document.getElementById('tqPlayTitle').textContent = quiz.name;
+  document.getElementById('tqPlayTitle').textContent = quiz.name + (mode === 'exam' ? ' · Exam' : ' · Practice');
   document.body.style.overflow = 'hidden';
   var chip = document.getElementById('tqTimerChip');
   if (timer.type === 'none') {
@@ -76329,7 +76382,8 @@ function tqRenderJumpSheet(){
   sheet.querySelectorAll('.tq-dot').forEach(function(btn){
     btn.onclick = function(){
       _tqAtt.currentQ = Number(btn.getAttribute('data-d'));
-      _tqAtt.reveal = false;
+      if (_tqAtt.mode === 'practice' && _tqAtt.answers[_tqAtt.currentQ] !== null) _tqAtt.reveal = true;
+      else _tqAtt.reveal = false;
       if (_tqAtt.timer && _tqAtt.timer.type === 'perQ') _tqAtt.perQLeft = _tqAtt.timer.value;
       _tqJumpOpen = false;
       sheet.classList.remove('open');
@@ -76387,7 +76441,7 @@ function tqRenderQ(){
   html += '<button type="button" class="tq-chip' + (st.difficulty[i]==='hard'?' on-hard':'') + '" data-diff="hard">Hard</button>';
   html += '<button type="button" class="tq-chip' + (st.marked[i]?' on-mark':'') + '" id="tqMarkBtn">Mark</button>';
   html += '<button type="button" class="tq-chip' + (st.saved[i]?' on-save':'') + '" id="tqSaveBtn">Save</button>';
-  if (!st.reveal && !st.submitted) html += '<button type="button" class="tq-chip" id="tqRevealBtn">Answer</button>';
+  if (st.mode === 'practice' && !st.reveal && !st.submitted) html += '<button type="button" class="tq-chip" id="tqRevealBtn">Answer</button>';
   html += '</div>';
 
   var card = document.getElementById('tqPlayCard');
@@ -76395,7 +76449,11 @@ function tqRenderQ(){
   card.querySelectorAll('.tq-opt').forEach(function(btn){
     btn.onclick = function(){
       if (!_tqAtt || _tqAtt.submitted) return;
+      // Exam: lock answer after choose optional - allow change until submit
       _tqAtt.answers[_tqAtt.currentQ] = Number(btn.getAttribute('data-oi'));
+      if (_tqAtt.mode === 'practice') {
+        _tqAtt.reveal = true;
+      }
       tqRenderQ();
     };
   });
@@ -76416,13 +76474,19 @@ function tqRenderQ(){
 }
 
 function tqCycleTheme(){
-  var order = ['mint', 'sepia', 'dark'];
+  var order = ['mint', 'sepia', 'night', 'dark'];
   var i = order.indexOf(_tqTheme);
   if (i < 0) i = 0;
   _tqTheme = order[(i + 1) % order.length];
   try { localStorage.setItem('tqTheme', _tqTheme); } catch(e) {}
   var ov = document.getElementById('tqPlayOverlay');
   if (ov) ov.className = 'open tq-' + _tqTheme;
+  // Night mode: mirror app night if available
+  if (_tqTheme === 'night') {
+    try { document.body.classList.add('tq-night-active'); } catch(e) {}
+  } else {
+    try { document.body.classList.remove('tq-night-active'); } catch(e) {}
+  }
 }
 function tqClosePlay(){
   if (_tqAtt && !_tqAtt.submitted) {
@@ -76530,7 +76594,8 @@ function tqNav(dir){
   if (n < 0) return;
   if (n >= _tqAtt.quiz.questions.length) { tqConfirmSubmit(); return; }
   _tqAtt.currentQ = n;
-  _tqAtt.reveal = false;
+  if (_tqAtt.mode === 'practice' && _tqAtt.answers[n] !== null) _tqAtt.reveal = true;
+  else _tqAtt.reveal = false;
   if (_tqAtt.timer && _tqAtt.timer.type === 'perQ') _tqAtt.perQLeft = _tqAtt.timer.value;
   tqRenderQ();
 }
@@ -76588,7 +76653,7 @@ function tqSubmit(){
     setTimeout(function(){ tqOpenAttemptDetail(aid, _tqCtx.sid, _tqCtx.secid, _tqCtx.tid); }, 200);
   };
   document.getElementById('tqResRetry').onclick = function(){
-    tqStartAttempt(String(st.quizId), _tqCtx.sid, _tqCtx.secid, _tqCtx.tid, false);
+    tqPickModeThenStart(String(st.quizId), _tqCtx.sid, _tqCtx.secid, _tqCtx.tid, false);
   };
   document.getElementById('tqResHub').onclick = function(){ tqForceClosePlay(); };
   showToast('Attempt Firebase mein save', 'success');
