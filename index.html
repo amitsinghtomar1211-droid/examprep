@@ -75533,7 +75533,8 @@ function openFlashcardsInEditor(sid, secid, tid){
 </script>
 
 
-<!-- ═══ TOPIC QUIZ MODULE (in-app create / play / history) ═══ -->
+
+<!-- TOPIC QUIZ MODULE -->
 <style>
 #tqPlayOverlay{position:fixed;inset:0;z-index:1000020;display:none;flex-direction:column;background:#0f2030;color:#e8f0f8;}
 #tqPlayOverlay.open{display:flex;}
@@ -75563,227 +75564,276 @@ function openFlashcardsInEditor(sid, secid, tid){
 </style>
 <div id="tqPlayOverlay">
   <div id="tqPlayTop">
-    <button type="button" onclick="tqClosePlay()" style="width:36px;height:36px;border-radius:50%;border:none;background:rgba(255,255,255,0.12);color:inherit;font-weight:900;cursor:pointer;">‹</button>
+    <button type="button" id="tqBtnBack" style="width:36px;height:36px;border-radius:50%;border:none;background:rgba(255,255,255,0.12);color:inherit;font-weight:900;cursor:pointer;">&#8249;</button>
     <div style="flex:1;min-width:0;">
       <div id="tqPlayTitle" style="font-weight:800;font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Quiz</div>
       <div id="tqPlayMeta" style="font-size:0.7rem;opacity:0.75;">Q 1/10</div>
     </div>
-    <button type="button" class="tq-chip" onclick="tqCycleTheme()" title="Background">🎨</button>
-    <button type="button" onclick="tqConfirmSubmit()" style="padding:7px 12px;border-radius:10px;border:none;background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;font-weight:800;font-size:0.78rem;cursor:pointer;">Submit</button>
+    <button type="button" class="tq-chip" id="tqBtnTheme" title="Background">&#127912;</button>
+    <button type="button" id="tqBtnSubmit" style="padding:7px 12px;border-radius:10px;border:none;background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;font-weight:800;font-size:0.78rem;cursor:pointer;">Submit</button>
   </div>
   <div id="tqPlayBody">
     <div id="tqPlayBar"><div id="tqPlayFill"></div></div>
     <div id="tqPlayCard"></div>
   </div>
 </div>
-
 <script>
-/* ================================================================
-   TOPIC QUIZ MODULE — create, attempt, history analysis (per topic)
-   Data on topic: t.topicQuizzes[], t.topicQuizAttempts[]
-   ================================================================ */
+(function(){
 var _tqCtx = { sid:null, secid:null, tid:null };
 var _tqAtt = null;
-var _tqTheme = localStorage.getItem('tqTheme') || 'dark';
+var _tqTheme = 'dark';
+try { _tqTheme = localStorage.getItem('tqTheme') || 'dark'; } catch(e) {}
 var _tqHistFilter = { result:'all', diff:'all', saved:'all' };
 
-function tqGetTopic(){
-  return getTop(_tqCtx.sid, _tqCtx.secid, _tqCtx.tid);
-}
+function tqGetTopic(){ return getTop(_tqCtx.sid, _tqCtx.secid, _tqCtx.tid); }
 function tqPersist(){
-  try{ save(); }catch(e){}
-  try{
-    if(typeof saveTopicToFirebase === 'function')
+  try { save(); } catch(e) {}
+  try {
+    if (typeof saveTopicToFirebase === 'function')
       saveTopicToFirebase(_tqCtx.tid, _tqCtx.sid, _tqCtx.secid);
-  }catch(e){}
+  } catch(e) {}
 }
 function tqEsc(s){
-  return String(s==null?'':s)
+  return String(s == null ? '' : s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;');
 }
+function tqFmtDate(ts){
+  if (!ts) return '-';
+  try {
+    return new Date(ts).toLocaleString('hi-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+  } catch(e) { return '-'; }
+}
+function tqShuffle(arr){
+  var a = arr.slice();
+  for (var i = a.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
+}
 
-function tqRenderHub(subBody, sid, secid, tid){
+window.tqRenderHub = function(subBody, sid, secid, tid){
   _tqCtx = { sid:sid, secid:secid, tid:tid };
   var t = getTop(sid, secid, tid);
-  if(!t){ subBody.innerHTML = '<div style="padding:16px;color:var(--text2);">Topic nahi mila</div>'; return; }
-  t.topicQuizzes = t.topicQuizzes || [];
-  t.topicQuizAttempts = t.topicQuizAttempts || [];
-
-  var qs = t.topicQuizzes;
-  var atts = t.topicQuizAttempts.slice().sort(function(a,b){ return (b.date||0)-(a.date||0); });
-
-  var html = '';
-  html += '<div style="padding:4px 2px 18px;">';
-  html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
-  html += '<button class="btn btn-primary btn-sm" onclick="tqOpenCreateForm('+sid+','+secid+','+tid+')">➕ Naya Quiz</button>';
-  html += '<button class="btn btn-outline btn-sm" onclick="tqShowHistory('+sid+','+secid+','+tid+')">📜 History ('+atts.length+')</button>';
-  if(t.quizLink){
-    html += '<button class="btn btn-outline btn-sm" onclick="window.open(\\''+tqEsc(t.quizLink).replace(/'/g,'')+'\\',\\'_blank\\')">🔗 External Link</button>';
+  if (!t) {
+    subBody.innerHTML = '<div style="padding:16px;color:var(--text2);">Topic nahi mila</div>';
+    return;
   }
-  if(typeof _isAdmin !== 'undefined' && _isAdmin){
-    html += '<button class="btn btn-outline btn-xs" onclick="editTopicQuizLink('+sid+','+secid+','+tid+')">✏️ Link set</button>';
+  if (!t.topicQuizzes) t.topicQuizzes = [];
+  if (!t.topicQuizAttempts) t.topicQuizAttempts = [];
+  var qs = t.topicQuizzes;
+  var atts = t.topicQuizAttempts.slice().sort(function(a,b){ return (b.date||0) - (a.date||0); });
+
+  var html = '<div style="padding:4px 2px 18px;">';
+  html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
+  html += '<button type="button" class="btn btn-primary btn-sm" id="tqHubAddBtn">+ Naya Quiz</button>';
+  html += '<button type="button" class="btn btn-outline btn-sm" id="tqHubHistBtn">History (' + atts.length + ')</button>';
+  if (t.quizLink) {
+    html += '<button type="button" class="btn btn-outline btn-sm" id="tqHubExtBtn">External Link</button>';
+  }
+  if (typeof _isAdmin !== 'undefined' && _isAdmin) {
+    html += '<button type="button" class="btn btn-outline btn-xs" id="tqHubLinkBtn">Link set</button>';
   }
   html += '</div>';
 
-  if(!qs.length){
+  if (!qs.length) {
     html += '<div class="tq-hub-card" style="text-align:center;padding:28px 14px;">';
-    html += '<div style="font-size:2rem;margin-bottom:8px;">❓</div>';
+    html += '<div style="font-size:2rem;margin-bottom:8px;">?</div>';
     html += '<div style="font-weight:800;margin-bottom:6px;">Abhi koi in-app quiz nahi</div>';
-    html += '<div style="font-size:0.78rem;color:var(--text2);line-height:1.6;margin-bottom:12px;">Yahin se quiz banao, attempt karo, aur history is topic overview mein save hogi — filters, hide/unhide, difficulty ke saath.</div>';
-    html += '<button class="btn btn-primary btn-sm" onclick="tqOpenCreateForm('+sid+','+secid+','+tid+')">➕ Pehla Quiz Banao</button>';
+    html += '<div style="font-size:0.78rem;color:var(--text2);line-height:1.6;margin-bottom:12px;">Yahin se quiz banao, attempt karo, history is topic mein save hogi.</div>';
+    html += '<button type="button" class="btn btn-primary btn-sm" id="tqHubAddBtn2">+ Pehla Quiz Banao</button>';
     html += '</div>';
   } else {
-    qs.forEach(function(qz){
-      var nQ = (qz.questions||[]).length;
-      var lastAtt = atts.find(function(a){ return String(a.quizId)===String(qz.id); });
-      html += '<div class="tq-hub-card">';
+    qs.forEach(function(qz, qi){
+      var nQ = (qz.questions || []).length;
+      var lastAtt = atts.find(function(a){ return String(a.quizId) === String(qz.id); });
+      html += '<div class="tq-hub-card" data-qi="' + qi + '">';
       html += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">';
       html += '<div style="min-width:0;flex:1;">';
-      html += '<div style="font-weight:800;color:var(--accent);font-size:0.95rem;">'+tqEsc(qz.name)+'</div>';
-      html += '<div style="font-size:0.72rem;color:var(--text2);margin-top:3px;">'+nQ+' questions';
-      if(lastAtt) html += ' · last '+ (lastAtt.score||0)+'/'+(lastAtt.total||nQ)+' ('+(lastAtt.pct||0)+'%)';
+      html += '<div style="font-weight:800;color:var(--accent);font-size:0.95rem;">' + tqEsc(qz.name) + '</div>';
+      html += '<div style="font-size:0.72rem;color:var(--text2);margin-top:3px;">' + nQ + ' questions';
+      if (lastAtt) html += ' · last ' + (lastAtt.score||0) + '/' + (lastAtt.total||nQ) + ' (' + (lastAtt.pct||0) + '%)';
       html += '</div></div>';
       html += '<div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">';
-      html += '<button class="btn btn-primary btn-xs" onclick="tqStartAttempt(\\''+String(qz.id).replace(/'/g,'')+'\\','+sid+','+secid+','+tid+',false)">▶️ Play</button>';
-      html += '<button class="btn btn-outline btn-xs" onclick="tqStartAttempt(\\''+String(qz.id).replace(/'/g,'')+'\\','+sid+','+secid+','+tid+',true)">🔀 Shuffle</button>';
-      html += '<button class="btn btn-outline btn-xs" onclick="tqEditQuiz(\\''+String(qz.id).replace(/'/g,'')+'\\','+sid+','+secid+','+tid+')">✏️</button>';
-      html += '<button class="btn btn-danger btn-xs" onclick="tqDeleteQuiz(\\''+String(qz.id).replace(/'/g,'')+'\\','+sid+','+secid+','+tid+')">🗑</button>';
+      html += '<button type="button" class="btn btn-primary btn-xs tq-play" data-qid="' + tqEsc(qz.id) + '">Play</button>';
+      html += '<button type="button" class="btn btn-outline btn-xs tq-shuf" data-qid="' + tqEsc(qz.id) + '">Shuffle</button>';
+      html += '<button type="button" class="btn btn-outline btn-xs tq-edit" data-qid="' + tqEsc(qz.id) + '">Edit</button>';
+      html += '<button type="button" class="btn btn-danger btn-xs tq-del" data-qid="' + tqEsc(qz.id) + '">Del</button>';
       html += '</div></div></div>';
     });
   }
 
-  // Mini recent attempts
-  if(atts.length){
-    html += '<div style="font-weight:800;font-size:0.85rem;margin:16px 0 8px;color:var(--text);">📜 Recent Attempts</div>';
+  if (atts.length) {
+    html += '<div style="font-weight:800;font-size:0.85rem;margin:16px 0 8px;color:var(--text);">Recent Attempts</div>';
     atts.slice(0,5).forEach(function(a){
-      html += '<div class="tq-hist-item" onclick="tqOpenAttemptDetail(\\''+String(a.id).replace(/'/g,'')+'\\','+sid+','+secid+','+tid+')">';
-      html += '<div style="font-weight:800;font-size:0.84rem;">'+tqEsc(a.quizName||'Quiz')+'</div>';
-      html += '<div style="font-size:0.72rem;color:var(--text2);margin-top:2px;">'+(a.score||0)+'/'+(a.total||0)+' · '+(a.pct||0)+'% · '+tqFmtDate(a.date)+'</div>';
+      html += '<div class="tq-hist-item tq-open-att" data-aid="' + tqEsc(a.id) + '" style="cursor:pointer;">';
+      html += '<div style="font-weight:800;font-size:0.84rem;">' + tqEsc(a.quizName || 'Quiz') + '</div>';
+      html += '<div style="font-size:0.72rem;color:var(--text2);margin-top:2px;">' + (a.score||0) + '/' + (a.total||0) + ' · ' + (a.pct||0) + '% · ' + tqFmtDate(a.date) + '</div>';
       html += '</div>';
     });
-    if(atts.length>5){
-      html += '<button class="btn btn-outline btn-sm" style="width:100%;" onclick="tqShowHistory('+sid+','+secid+','+tid+')">Saari history dekho →</button>';
+    if (atts.length > 5) {
+      html += '<button type="button" class="btn btn-outline btn-sm" style="width:100%;" id="tqHubHistBtn2">Saari history dekho</button>';
     }
   }
   html += '</div>';
   subBody.innerHTML = html;
-}
 
-function tqFmtDate(ts){
-  if(!ts) return '—';
-  try{ return new Date(ts).toLocaleString('hi-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }
-  catch(e){ return '—'; }
-}
+  function bind(id, fn){
+    var el = document.getElementById(id);
+    if (el) el.onclick = fn;
+  }
+  bind('tqHubAddBtn', function(){ tqOpenCreateForm(sid, secid, tid, null); });
+  bind('tqHubAddBtn2', function(){ tqOpenCreateForm(sid, secid, tid, null); });
+  bind('tqHubHistBtn', function(){ tqShowHistory(sid, secid, tid); });
+  bind('tqHubHistBtn2', function(){ tqShowHistory(sid, secid, tid); });
+  bind('tqHubExtBtn', function(){
+    var link = (t.quizLink || '').trim();
+    if (!/^https?:\/\//i.test(link)) link = 'https://' + link;
+    window.open(link, '_blank', 'noopener,noreferrer');
+  });
+  bind('tqHubLinkBtn', function(){ editTopicQuizLink(sid, secid, tid); });
+
+  subBody.querySelectorAll('.tq-play').forEach(function(btn){
+    btn.onclick = function(){ tqStartAttempt(btn.getAttribute('data-qid'), sid, secid, tid, false); };
+  });
+  subBody.querySelectorAll('.tq-shuf').forEach(function(btn){
+    btn.onclick = function(){ tqStartAttempt(btn.getAttribute('data-qid'), sid, secid, tid, true); };
+  });
+  subBody.querySelectorAll('.tq-edit').forEach(function(btn){
+    btn.onclick = function(){ tqOpenCreateForm(sid, secid, tid, btn.getAttribute('data-qid')); };
+  });
+  subBody.querySelectorAll('.tq-del').forEach(function(btn){
+    btn.onclick = function(){ tqDeleteQuiz(btn.getAttribute('data-qid'), sid, secid, tid); };
+  });
+  subBody.querySelectorAll('.tq-open-att').forEach(function(el){
+    el.onclick = function(){ tqOpenAttemptDetail(el.getAttribute('data-aid'), sid, secid, tid); };
+  });
+};
 
 function tqOpenCreateForm(sid, secid, tid, editId){
   _tqCtx = { sid:sid, secid:secid, tid:tid };
-  var t = getTop(sid,secid,tid);
-  if(!t) return;
+  var t = getTop(sid, secid, tid);
+  if (!t) return;
   var existing = null;
-  if(editId){
-    existing = (t.topicQuizzes||[]).find(function(q){ return String(q.id)===String(editId); });
+  if (editId) {
+    existing = (t.topicQuizzes || []).find(function(q){ return String(q.id) === String(editId); });
   }
+  var old = document.getElementById('tqEditorOverlay');
+  if (old) old.remove();
   var ov = document.createElement('div');
   ov.id = 'tqEditorOverlay';
   ov.style.cssText = 'position:fixed;inset:0;z-index:1000030;background:rgba(0,0,0,0.55);display:flex;align-items:flex-start;justify-content:center;padding:16px 12px;overflow-y:auto;';
+
   var qs = (existing && existing.questions) ? existing.questions : [{ q:'', options:['','','',''], correct:0, explanation:'' }];
+
   function rowHtml(q, i){
-    return '<div class="tq-q-block" data-qi="'+i+'">'+
-      '<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><b style="font-size:0.8rem;">Q'+(i+1)+'</b>'+
-      '<button type="button" class="tq-toggle" onclick="this.closest(\\'.tq-q-block\\').remove()">✕ Hatao</button></div>'+
-      '<textarea class="inp tq-q-text" rows="2" placeholder="Sawaal...">'+tqEsc(q.q||'')+'</textarea>'+
-      [0,1,2,3].map(function(oi){
-        return '<div style="display:flex;align-items:center;gap:6px;margin-top:6px;">'+
-          '<input type="radio" name="tqCorr_'+i+'" '+(Number(q.correct)===oi?'checked':'')+' value="'+oi+'">'+
-          '<input class="inp tq-opt-in" data-oi="'+oi+'" placeholder="Option '+(oi+1)+'" value="'+tqEsc((q.options&&q.options[oi])||'')+'" style="flex:1;padding:7px 9px;">'+
-          '</div>';
-      }).join('')+
-      '<textarea class="inp tq-expl" rows="2" placeholder="Explanation (optional)" style="margin-top:6px;">'+tqEsc(q.explanation||'')+'</textarea>'+
-      '</div>';
+    var h = '<div class="tq-q-block" data-qi="' + i + '">';
+    h += '<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><b style="font-size:0.8rem;">Q' + (i+1) + '</b>';
+    h += '<button type="button" class="tq-toggle tq-rm-q">Hatao</button></div>';
+    h += '<textarea class="inp tq-q-text" rows="2" placeholder="Sawaal...">' + tqEsc(q.q || '') + '</textarea>';
+    for (var oi = 0; oi < 4; oi++) {
+      h += '<div style="display:flex;align-items:center;gap:6px;margin-top:6px;">';
+      h += '<input type="radio" name="tqCorr_' + i + '" value="' + oi + '"' + (Number(q.correct) === oi ? ' checked' : '') + '>';
+      h += '<input class="inp tq-opt-in" data-oi="' + oi + '" placeholder="Option ' + (oi+1) + '" value="' + tqEsc((q.options && q.options[oi]) || '') + '" style="flex:1;padding:7px 9px;">';
+      h += '</div>';
+    }
+    h += '<textarea class="inp tq-expl" rows="2" placeholder="Explanation (optional)" style="margin-top:6px;">' + tqEsc(q.explanation || '') + '</textarea>';
+    h += '</div>';
+    return h;
   }
-  ov.innerHTML = '<div style="background:var(--surface);color:var(--text);border-radius:16px;padding:16px;width:100%;max-width:560px;box-shadow:0 12px 40px rgba(0,0,0,0.3);margin-bottom:40px;">'+
-    '<div style="font-weight:900;font-size:1.05rem;margin-bottom:10px;">'+(existing?'✏️ Quiz Edit':'➕ Naya Quiz')+'</div>'+
-    '<div class="field-group"><label class="field-label">Quiz naam *</label>'+
-    '<input class="inp" id="tqNameIn" value="'+tqEsc(existing?existing.name:'')+'" placeholder="e.g. Polity Basics Set 1"></div>'+
-    '<div id="tqQList">'+qs.map(rowHtml).join('')+'</div>'+
-    '<button type="button" class="btn btn-outline btn-sm" style="width:100%;margin:8px 0;" onclick="tqEditorAddQ()">➕ Question add</button>'+
-    '<div style="display:flex;gap:8px;margin-top:10px;">'+
-    '<button type="button" class="btn btn-outline" style="flex:1;" onclick="document.getElementById(\\'tqEditorOverlay\\').remove()">Cancel</button>'+
-    '<button type="button" class="btn btn-primary" style="flex:1;" onclick="tqSaveQuiz('+(existing?('\\''+String(existing.id).replace(/'/g,'')+'\\''):'null')+')">💾 Save</button>'+
+
+  ov.innerHTML = '<div style="background:var(--surface);color:var(--text);border-radius:16px;padding:16px;width:100%;max-width:560px;box-shadow:0 12px 40px rgba(0,0,0,0.3);margin-bottom:40px;">' +
+    '<div style="font-weight:900;font-size:1.05rem;margin-bottom:10px;">' + (existing ? 'Quiz Edit' : '+ Naya Quiz') + '</div>' +
+    '<div class="field-group"><label class="field-label">Quiz naam *</label>' +
+    '<input class="inp" id="tqNameIn" value="' + tqEsc(existing ? existing.name : '') + '" placeholder="e.g. Polity Basics Set 1"></div>' +
+    '<div id="tqQList">' + qs.map(rowHtml).join('') + '</div>' +
+    '<button type="button" class="btn btn-outline btn-sm" style="width:100%;margin:8px 0;" id="tqAddQBtn">+ Question add</button>' +
+    '<div style="display:flex;gap:8px;margin-top:10px;">' +
+    '<button type="button" class="btn btn-outline" style="flex:1;" id="tqEditorCancel">Cancel</button>' +
+    '<button type="button" class="btn btn-primary" style="flex:1;" id="tqEditorSave">Save</button>' +
     '</div></div>';
   document.body.appendChild(ov);
-  window.tqEditorAddQ = function(){
+
+  function bindRm(){
+    ov.querySelectorAll('.tq-rm-q').forEach(function(btn){
+      btn.onclick = function(){ var b = btn.closest('.tq-q-block'); if (b) b.remove(); };
+    });
+  }
+  bindRm();
+  document.getElementById('tqAddQBtn').onclick = function(){
     var list = document.getElementById('tqQList');
-    if(!list) return;
     var i = list.querySelectorAll('.tq-q-block').length;
     var div = document.createElement('div');
-    div.innerHTML = rowHtml({q:'',options:['','','',''],correct:0,explanation:''}, i);
+    div.innerHTML = rowHtml({ q:'', options:['','','',''], correct:0, explanation:'' }, i);
     list.appendChild(div.firstChild);
+    bindRm();
+  };
+  document.getElementById('tqEditorCancel').onclick = function(){ ov.remove(); };
+  document.getElementById('tqEditorSave').onclick = function(){
+    tqSaveQuiz(existing ? existing.id : null);
   };
 }
 
 function tqSaveQuiz(editId){
   var t = tqGetTopic();
-  if(!t) return;
-  var name = (document.getElementById('tqNameIn').value||'').trim();
-  if(!name){ showToast('Quiz naam likho','error'); return; }
+  if (!t) return;
+  var nameEl = document.getElementById('tqNameIn');
+  var name = (nameEl && nameEl.value || '').trim();
+  if (!name) { showToast('Quiz naam likho', 'error'); return; }
   var blocks = document.querySelectorAll('#tqQList .tq-q-block');
   var questions = [];
   blocks.forEach(function(b, idx){
-    var q = (b.querySelector('.tq-q-text').value||'').trim();
-    if(!q) return;
+    var q = ((b.querySelector('.tq-q-text') || {}).value || '').trim();
+    if (!q) return;
     var opts = [];
-    b.querySelectorAll('.tq-opt-in').forEach(function(inp){ opts.push((inp.value||'').trim()); });
-    while(opts.length<4) opts.push('');
+    b.querySelectorAll('.tq-opt-in').forEach(function(inp){ opts.push((inp.value || '').trim()); });
+    while (opts.length < 4) opts.push('');
     var corrEl = b.querySelector('input[type=radio]:checked');
     var correct = corrEl ? Number(corrEl.value) : 0;
-    var expl = (b.querySelector('.tq-expl').value||'').trim();
-    questions.push({ id: 'qq_'+Date.now()+'_'+idx, q:q, options:opts, correct:correct, explanation:expl });
+    var expl = ((b.querySelector('.tq-expl') || {}).value || '').trim();
+    questions.push({ id: 'qq_' + Date.now() + '_' + idx, q:q, options:opts, correct:correct, explanation:expl });
   });
-  if(!questions.length){ showToast('Kam se kam 1 question chahiye','error'); return; }
-  t.topicQuizzes = t.topicQuizzes || [];
-  if(editId){
-    var qz = t.topicQuizzes.find(function(x){ return String(x.id)===String(editId); });
-    if(qz){ qz.name=name; qz.questions=questions; qz.updatedAt=Date.now(); }
+  if (!questions.length) { showToast('Kam se kam 1 question chahiye', 'error'); return; }
+  if (!t.topicQuizzes) t.topicQuizzes = [];
+  if (editId) {
+    var qz = t.topicQuizzes.find(function(x){ return String(x.id) === String(editId); });
+    if (qz) { qz.name = name; qz.questions = questions; qz.updatedAt = Date.now(); }
   } else {
-    t.topicQuizzes.push({ id:'tq_'+Date.now(), name:name, questions:questions, createdAt:Date.now() });
+    t.topicQuizzes.push({ id: 'tq_' + Date.now(), name:name, questions:questions, createdAt: Date.now() });
   }
   tqPersist();
   var ov = document.getElementById('tqEditorOverlay');
-  if(ov) ov.remove();
-  showToast('✅ Quiz save ho gaya!','success');
+  if (ov) ov.remove();
+  showToast('Quiz save ho gaya!', 'success');
   tvShowSub('topicquiz', _tqCtx.sid, _tqCtx.secid, _tqCtx.tid);
 }
 
-function tqEditQuiz(id, sid, secid, tid){
-  tqOpenCreateForm(sid, secid, tid, id);
-}
 function tqDeleteQuiz(id, sid, secid, tid){
-  if(!confirm('Yeh quiz delete karein? Attempts history safe rahegi.')) return;
-  var t = getTop(sid,secid,tid);
-  if(!t) return;
-  t.topicQuizzes = (t.topicQuizzes||[]).filter(function(q){ return String(q.id)!==String(id); });
-  _tqCtx = {sid:sid,secid:secid,tid:tid};
+  if (!confirm('Yeh quiz delete karein? Attempts history safe rahegi.')) return;
+  var t = getTop(sid, secid, tid);
+  if (!t) return;
+  t.topicQuizzes = (t.topicQuizzes || []).filter(function(q){ return String(q.id) !== String(id); });
+  _tqCtx = { sid:sid, secid:secid, tid:tid };
   tqPersist();
-  showToast('Quiz delete ho gaya','info');
+  showToast('Quiz delete ho gaya', 'info');
   tvShowSub('topicquiz', sid, secid, tid);
 }
 
 function tqStartAttempt(quizId, sid, secid, tid, shuffle){
   _tqCtx = { sid:sid, secid:secid, tid:tid };
-  var t = getTop(sid,secid,tid);
-  if(!t) return;
-  var quiz = (t.topicQuizzes||[]).find(function(q){ return String(q.id)===String(quizId); });
-  if(!quiz || !(quiz.questions||[]).length){ showToast('Quiz / questions nahi mile','error'); return; }
+  var t = getTop(sid, secid, tid);
+  if (!t) return;
+  var quiz = (t.topicQuizzes || []).find(function(q){ return String(q.id) === String(quizId); });
+  if (!quiz || !(quiz.questions || []).length) { showToast('Quiz / questions nahi mile', 'error'); return; }
   var qCopy = JSON.parse(JSON.stringify(quiz));
-  if(shuffle){
+  if (shuffle) {
     qCopy.questions = tqShuffle(qCopy.questions);
     qCopy.questions.forEach(function(q){
       var ct = q.options[q.correct];
       q.options = tqShuffle(q.options.slice());
       q.correct = q.options.indexOf(ct);
-      if(q.correct<0) q.correct = 0;
+      if (q.correct < 0) q.correct = 0;
     });
   }
   _tqAtt = {
@@ -75799,161 +75849,160 @@ function tqStartAttempt(quizId, sid, secid, tid, shuffle){
     submitted: false,
     reveal: false
   };
-  try{ closeModal('topicViewModal'); }catch(e){}
+  try { closeModal('topicViewModal'); } catch(e) {}
   var ov = document.getElementById('tqPlayOverlay');
-  ov.className = 'open tq-'+_tqTheme;
+  ov.className = 'open tq-' + _tqTheme;
   document.getElementById('tqPlayTitle').textContent = quiz.name;
   document.body.style.overflow = 'hidden';
   tqRenderQ();
 }
 
-function tqShuffle(arr){
-  var a = arr.slice();
-  for(var i=a.length-1;i>0;i--){
-    var j = Math.floor(Math.random()*(i+1));
-    var t = a[i]; a[i]=a[j]; a[j]=t;
-  }
-  return a;
-}
-
 function tqCycleTheme(){
-  var order = ['dark','light','sepia'];
+  var order = ['dark', 'light', 'sepia'];
   var i = order.indexOf(_tqTheme);
-  _tqTheme = order[(i+1)%order.length];
-  localStorage.setItem('tqTheme', _tqTheme);
+  _tqTheme = order[(i + 1) % order.length];
+  try { localStorage.setItem('tqTheme', _tqTheme); } catch(e) {}
   var ov = document.getElementById('tqPlayOverlay');
-  if(ov) ov.className = 'open tq-'+_tqTheme;
+  if (ov) ov.className = 'open tq-' + _tqTheme;
 }
 
 function tqClosePlay(){
-  if(_tqAtt && !_tqAtt.submitted){
-    if(!confirm('Quiz band karein? Progress is attempt ki save nahi hogi (Submit ke baad history mein aati hai).')) return;
+  if (_tqAtt && !_tqAtt.submitted) {
+    if (!confirm('Quiz band karein? Submit ke baad hi history save hoti hai.')) return;
   }
+  tqForceClosePlay();
+}
+
+function tqForceClosePlay(){
   _tqAtt = null;
   var ov = document.getElementById('tqPlayOverlay');
-  if(ov){ ov.classList.remove('open'); ov.className = ''; }
+  if (ov) { ov.classList.remove('open'); ov.className = ''; }
   document.body.style.overflow = '';
-  // reopen topic quiz hub
-  try{
+  try {
     viewTopic(_tqCtx.sid, _tqCtx.secid, _tqCtx.tid);
     setTimeout(function(){ tvShowSub('topicquiz', _tqCtx.sid, _tqCtx.secid, _tqCtx.tid); }, 150);
-  }catch(e){}
+  } catch(e) {}
 }
 
 function tqRenderQ(){
   var st = _tqAtt;
-  if(!st) return;
+  if (!st) return;
   var qs = st.quiz.questions;
   var i = st.currentQ;
   var q = qs[i];
   var total = qs.length;
-  document.getElementById('tqPlayMeta').textContent = 'Q '+(i+1)+' / '+total;
-  document.getElementById('tqPlayFill').style.width = (Math.round((i)/Math.max(total,1)*100))+'%';
+  document.getElementById('tqPlayMeta').textContent = 'Q ' + (i+1) + ' / ' + total;
+  document.getElementById('tqPlayFill').style.width = (Math.round(i / Math.max(total,1) * 100)) + '%';
 
   var html = '';
-  html += '<div style="font-size:0.7rem;font-weight:800;opacity:0.7;margin-bottom:6px;">Question '+(i+1)+
-    (st.marked[i]?' · <span style="color:#ffb74d;">🔖 Marked</span>':'')+'</div>';
-  html += '<div style="font-size:1rem;font-weight:700;line-height:1.65;margin-bottom:14px;">'+tqEsc(q.q)+'</div>';
-  (q.options||[]).forEach(function(opt, oi){
-    if(!String(opt||'').trim() && oi>1) return;
+  html += '<div style="font-size:0.7rem;font-weight:800;opacity:0.7;margin-bottom:6px;">Question ' + (i+1);
+  if (st.marked[i]) html += ' · Marked';
+  html += '</div>';
+  html += '<div style="font-size:1rem;font-weight:700;line-height:1.65;margin-bottom:14px;">' + tqEsc(q.q) + '</div>';
+  (q.options || []).forEach(function(opt, oi){
+    if (!String(opt || '').trim() && oi > 1) return;
     var cls = 'tq-opt';
-    if(st.answers[i]===oi) cls += ' sel';
-    if(st.reveal || st.submitted){
-      if(oi===q.correct) cls += ' correct';
-      else if(st.answers[i]===oi && oi!==q.correct) cls += ' wrong';
+    if (st.answers[i] === oi) cls += ' sel';
+    if (st.reveal || st.submitted) {
+      if (oi === q.correct) cls += ' correct';
+      else if (st.answers[i] === oi && oi !== q.correct) cls += ' wrong';
     }
-    html += '<button type="button" class="'+cls+'" onclick="tqSelectOpt('+oi+')">'+String.fromCharCode(65+oi)+'. '+tqEsc(opt)+'</button>';
+    html += '<button type="button" class="' + cls + '" data-oi="' + oi + '">' + String.fromCharCode(65+oi) + '. ' + tqEsc(opt) + '</button>';
   });
 
-  if(st.reveal || st.submitted){
-    var ok = st.answers[i]===q.correct;
-    html += '<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:'+(ok?'rgba(102,187,106,0.15)':'rgba(239,83,80,0.12)')+';font-size:0.82rem;line-height:1.55;">';
-    html += ok?'✅ Sahi!':'❌ Galat. Sahi: <b>'+tqEsc((q.options||[])[q.correct]||'')+'</b>';
-    if(q.explanation) html += '<div style="margin-top:6px;opacity:0.9;">'+tqEsc(q.explanation)+'</div>';
+  if (st.reveal || st.submitted) {
+    var ok = st.answers[i] === q.correct;
+    html += '<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:' + (ok ? 'rgba(102,187,106,0.15)' : 'rgba(239,83,80,0.12)') + ';font-size:0.82rem;line-height:1.55;">';
+    html += ok ? 'Sahi!' : ('Galat. Sahi: <b>' + tqEsc((q.options || [])[q.correct] || '') + '</b>');
+    if (q.explanation) html += '<div style="margin-top:6px;opacity:0.9;">' + tqEsc(q.explanation) + '</div>';
     html += '</div>';
   }
 
   html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;">';
-  html += '<button type="button" class="tq-chip'+(st.difficulty[i]==='easy'?' on-easy':'')+'" onclick="tqSetDiff(\\'easy\\')">😌 Easy</button>';
-  html += '<button type="button" class="tq-chip'+(st.difficulty[i]==='moderate'?' on-moderate':'')+'" onclick="tqSetDiff(\\'moderate\\')">🙂 Moderate</button>';
-  html += '<button type="button" class="tq-chip'+(st.difficulty[i]==='hard'?' on-hard':'')+'" onclick="tqSetDiff(\\'hard\\')">😣 Hard</button>';
-  html += '<button type="button" class="tq-chip" onclick="tqToggleMark()">'+(st.marked[i]?'🔖 Marked':'🔖 Mark')+'</button>';
-  html += '<button type="button" class="tq-chip" onclick="tqToggleSave()">'+(st.saved[i]?'📌 Saved':'📌 Save')+'</button>';
-  if(!st.reveal && !st.submitted) html += '<button type="button" class="tq-chip" onclick="tqReveal()">👁 Answer</button>';
+  html += '<button type="button" class="tq-chip' + (st.difficulty[i]==='easy'?' on-easy':'') + '" data-diff="easy">Easy</button>';
+  html += '<button type="button" class="tq-chip' + (st.difficulty[i]==='moderate'?' on-moderate':'') + '" data-diff="moderate">Moderate</button>';
+  html += '<button type="button" class="tq-chip' + (st.difficulty[i]==='hard'?' on-hard':'') + '" data-diff="hard">Hard</button>';
+  html += '<button type="button" class="tq-chip" id="tqMarkBtn">' + (st.marked[i] ? 'Marked' : 'Mark') + '</button>';
+  html += '<button type="button" class="tq-chip" id="tqSaveBtn">' + (st.saved[i] ? 'Saved' : 'Save') + '</button>';
+  if (!st.reveal && !st.submitted) html += '<button type="button" class="tq-chip" id="tqRevealBtn">Answer</button>';
   html += '</div>';
 
   html += '<div style="display:flex;gap:8px;margin-top:16px;">';
-  html += '<button type="button" class="btn btn-outline" style="flex:1;" onclick="tqNav(-1)" '+(i===0?'disabled':'')+'>← Prev</button>';
-  html += '<button type="button" class="btn btn-primary" style="flex:1;" onclick="tqNav(1)">'+(i===total-1?'Finish →':'Next →')+'</button>';
+  html += '<button type="button" class="btn btn-outline" style="flex:1;" id="tqPrevBtn"' + (i===0?' disabled':'') + '>Prev</button>';
+  html += '<button type="button" class="btn btn-primary" style="flex:1;" id="tqNextBtn">' + (i===total-1 ? 'Finish' : 'Next') + '</button>';
   html += '</div>';
 
-  // overview dots
-  html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:16px;">';
-  for(var d=0;d<total;d++){
+  html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:16px;" id="tqDots">';
+  for (var d = 0; d < total; d++) {
     var bg = 'rgba(255,255,255,0.12)';
-    if(st.answers[d]!==null) bg = 'rgba(66,165,245,0.45)';
-    if(st.marked[d]) bg = 'rgba(255,167,38,0.55)';
-    if(d===i) bg = '#42a5f5';
-    html += '<button type="button" onclick="_tqAtt.currentQ='+d+';_tqAtt.reveal=false;tqRenderQ();" style="width:28px;height:28px;border-radius:8px;border:none;background:'+bg+';color:#fff;font-size:0.68rem;font-weight:800;cursor:pointer;">'+(d+1)+'</button>';
+    if (st.answers[d] !== null) bg = 'rgba(66,165,245,0.45)';
+    if (st.marked[d]) bg = 'rgba(255,167,38,0.55)';
+    if (d === i) bg = '#42a5f5';
+    html += '<button type="button" class="tq-dot" data-d="' + d + '" style="width:28px;height:28px;border-radius:8px;border:none;background:' + bg + ';color:#fff;font-size:0.68rem;font-weight:800;cursor:pointer;">' + (d+1) + '</button>';
   }
   html += '</div>';
 
-  document.getElementById('tqPlayCard').innerHTML = html;
+  var card = document.getElementById('tqPlayCard');
+  card.innerHTML = html;
+
+  card.querySelectorAll('.tq-opt').forEach(function(btn){
+    btn.onclick = function(){
+      if (!_tqAtt || _tqAtt.submitted) return;
+      _tqAtt.answers[_tqAtt.currentQ] = Number(btn.getAttribute('data-oi'));
+      tqRenderQ();
+    };
+  });
+  card.querySelectorAll('[data-diff]').forEach(function(btn){
+    btn.onclick = function(){
+      if (!_tqAtt) return;
+      var d = btn.getAttribute('data-diff');
+      _tqAtt.difficulty[_tqAtt.currentQ] = (_tqAtt.difficulty[_tqAtt.currentQ] === d) ? null : d;
+      tqRenderQ();
+    };
+  });
+  var mb = document.getElementById('tqMarkBtn');
+  if (mb) mb.onclick = function(){ _tqAtt.marked[_tqAtt.currentQ] = !_tqAtt.marked[_tqAtt.currentQ]; tqRenderQ(); };
+  var sb = document.getElementById('tqSaveBtn');
+  if (sb) sb.onclick = function(){ _tqAtt.saved[_tqAtt.currentQ] = !_tqAtt.saved[_tqAtt.currentQ]; tqRenderQ(); };
+  var rb = document.getElementById('tqRevealBtn');
+  if (rb) rb.onclick = function(){ _tqAtt.reveal = true; tqRenderQ(); };
+  var pb = document.getElementById('tqPrevBtn');
+  if (pb) pb.onclick = function(){ tqNav(-1); };
+  var nb = document.getElementById('tqNextBtn');
+  if (nb) nb.onclick = function(){ tqNav(1); };
+  card.querySelectorAll('.tq-dot').forEach(function(btn){
+    btn.onclick = function(){
+      _tqAtt.currentQ = Number(btn.getAttribute('data-d'));
+      _tqAtt.reveal = false;
+      tqRenderQ();
+    };
+  });
 }
 
-function tqSelectOpt(oi){
-  if(!_tqAtt || _tqAtt.submitted) return;
-  _tqAtt.answers[_tqAtt.currentQ] = oi;
-  tqRenderQ();
-}
-function tqSetDiff(d){
-  if(!_tqAtt) return;
-  _tqAtt.difficulty[_tqAtt.currentQ] = (_tqAtt.difficulty[_tqAtt.currentQ]===d)?null:d;
-  tqRenderQ();
-}
-function tqToggleMark(){
-  if(!_tqAtt) return;
-  var i=_tqAtt.currentQ;
-  _tqAtt.marked[i] = !_tqAtt.marked[i];
-  tqRenderQ();
-}
-function tqToggleSave(){
-  if(!_tqAtt) return;
-  var i=_tqAtt.currentQ;
-  _tqAtt.saved[i] = !_tqAtt.saved[i];
-  tqRenderQ();
-}
-function tqReveal(){
-  if(!_tqAtt) return;
-  _tqAtt.reveal = true;
-  tqRenderQ();
-}
 function tqNav(dir){
-  if(!_tqAtt) return;
+  if (!_tqAtt) return;
   var n = _tqAtt.currentQ + dir;
-  if(n<0) return;
-  if(n >= _tqAtt.quiz.questions.length){
-    tqConfirmSubmit();
-    return;
-  }
+  if (n < 0) return;
+  if (n >= _tqAtt.quiz.questions.length) { tqConfirmSubmit(); return; }
   _tqAtt.currentQ = n;
   _tqAtt.reveal = false;
   tqRenderQ();
 }
+
 function tqConfirmSubmit(){
-  if(!_tqAtt || _tqAtt.submitted) return;
-  var answered = _tqAtt.answers.filter(function(a){ return a!==null; }).length;
+  if (!_tqAtt || _tqAtt.submitted) return;
+  var answered = _tqAtt.answers.filter(function(a){ return a !== null; }).length;
   var total = _tqAtt.quiz.questions.length;
-  if(!confirm('Submit karein?\\nAnswered: '+answered+'/'+total)) return;
+  if (!confirm('Submit karein?\nAnswered: ' + answered + '/' + total)) return;
   tqSubmit();
 }
 
 function tqSubmit(){
   var st = _tqAtt;
-  if(!st) return;
+  if (!st) return;
   st.submitted = true;
   var t = tqGetTopic();
-  if(!t) return;
+  if (!t) return;
   var items = st.quiz.questions.map(function(q, idx){
     var sel = st.answers[idx];
     return {
@@ -75961,7 +76010,7 @@ function tqSubmit(){
       options: q.options,
       correct: q.correct,
       selected: sel,
-      isCorrect: sel!==null && sel===q.correct,
+      isCorrect: sel !== null && sel === q.correct,
       difficulty: st.difficulty[idx] || null,
       marked: !!st.marked[idx],
       saved: !!st.saved[idx],
@@ -75971,216 +76020,258 @@ function tqSubmit(){
   });
   var score = items.filter(function(x){ return x.isCorrect; }).length;
   var total = items.length;
-  var pct = total ? Math.round(score/total*100) : 0;
+  var pct = total ? Math.round(score / total * 100) : 0;
   var att = {
-    id: 'tqa_'+Date.now(),
+    id: 'tqa_' + Date.now(),
     quizId: st.quizId,
     quizName: st.quizName,
     date: Date.now(),
     score: score,
     total: total,
     pct: pct,
-    timeTaken: Math.round((Date.now()-st.startTime)/1000),
+    timeTaken: Math.round((Date.now() - st.startTime) / 1000),
     items: items
   };
-  t.topicQuizAttempts = t.topicQuizAttempts || [];
+  if (!t.topicQuizAttempts) t.topicQuizAttempts = [];
   t.topicQuizAttempts.unshift(att);
-  // keep last 30 attempts per topic
-  if(t.topicQuizAttempts.length>30) t.topicQuizAttempts = t.topicQuizAttempts.slice(0,30);
+  if (t.topicQuizAttempts.length > 30) t.topicQuizAttempts = t.topicQuizAttempts.slice(0, 30);
   tqPersist();
 
-  // Result screen inside play overlay
   var html = '<div style="text-align:center;padding:20px 8px;">';
-  html += '<div style="font-size:2.6rem;">'+(pct>=80?'🏆':pct>=50?'🎯':'📚')+'</div>';
-  html += '<div style="font-size:1.8rem;font-weight:900;margin:8px 0;">'+score+'/'+total+'</div>';
-  html += '<div style="font-size:1.1rem;font-weight:800;color:#66bb6a;">'+pct+'%</div>';
-  html += '<div style="font-size:0.78rem;opacity:0.75;margin-top:6px;">Time: '+Math.floor(att.timeTaken/60)+'m '+(att.timeTaken%60)+'s</div>';
+  html += '<div style="font-size:2.6rem;">' + (pct >= 80 ? 'Trophy' : 'Done') + '</div>';
+  html += '<div style="font-size:1.8rem;font-weight:900;margin:8px 0;">' + score + '/' + total + '</div>';
+  html += '<div style="font-size:1.1rem;font-weight:800;color:#66bb6a;">' + pct + '%</div>';
+  html += '<div style="font-size:0.78rem;opacity:0.75;margin-top:6px;">Time: ' + Math.floor(att.timeTaken/60) + 'm ' + (att.timeTaken%60) + 's</div>';
   html += '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:18px;">';
-  html += '<button class="btn btn-primary" onclick="tqOpenAttemptDetail(\\''+att.id+'\\','+_tqCtx.sid+','+_tqCtx.secid+','+_tqCtx.tid+');tqForceClosePlay();">📊 Analysis</button>';
-  html += '<button class="btn btn-outline" style="color:inherit;border-color:rgba(255,255,255,0.3);" onclick="tqStartAttempt(\\''+String(st.quizId).replace(/'/g,'')+'\\','+_tqCtx.sid+','+_tqCtx.secid+','+_tqCtx.tid+',false)">🔄 Reattempt</button>';
-  html += '<button class="btn btn-outline" style="color:inherit;border-color:rgba(255,255,255,0.3);" onclick="tqForceClosePlay()">Hub</button>';
+  html += '<button type="button" class="btn btn-primary" id="tqResAnalysis">Analysis</button>';
+  html += '<button type="button" class="btn btn-outline" style="color:inherit;border-color:rgba(255,255,255,0.3);" id="tqResRetry">Reattempt</button>';
+  html += '<button type="button" class="btn btn-outline" style="color:inherit;border-color:rgba(255,255,255,0.3);" id="tqResHub">Hub</button>';
   html += '</div></div>';
   document.getElementById('tqPlayCard').innerHTML = html;
   document.getElementById('tqPlayFill').style.width = '100%';
-  document.getElementById('tqPlayMeta').textContent = 'Complete · '+pct+'%';
-  showToast('✅ Attempt save — topic history mein','success');
-}
-
-function tqForceClosePlay(){
-  _tqAtt = null;
-  var ov = document.getElementById('tqPlayOverlay');
-  if(ov){ ov.classList.remove('open'); ov.className=''; }
-  document.body.style.overflow = '';
-  try{
-    viewTopic(_tqCtx.sid, _tqCtx.secid, _tqCtx.tid);
-    setTimeout(function(){ tvShowSub('topicquiz', _tqCtx.sid, _tqCtx.secid, _tqCtx.tid); }, 150);
-  }catch(e){}
+  document.getElementById('tqPlayMeta').textContent = 'Complete · ' + pct + '%';
+  document.getElementById('tqResAnalysis').onclick = function(){
+    var aid = att.id;
+    tqForceClosePlay();
+    setTimeout(function(){ tqOpenAttemptDetail(aid, _tqCtx.sid, _tqCtx.secid, _tqCtx.tid); }, 200);
+  };
+  document.getElementById('tqResRetry').onclick = function(){
+    tqStartAttempt(String(st.quizId), _tqCtx.sid, _tqCtx.secid, _tqCtx.tid, false);
+  };
+  document.getElementById('tqResHub').onclick = function(){ tqForceClosePlay(); };
+  showToast('Attempt save - topic history mein', 'success');
 }
 
 function tqShowHistory(sid, secid, tid){
-  _tqCtx = {sid:sid,secid:secid,tid:tid};
-  var t = getTop(sid,secid,tid);
-  if(!t) return;
-  var atts = (t.topicQuizAttempts||[]).slice().sort(function(a,b){ return (b.date||0)-(a.date||0); });
+  _tqCtx = { sid:sid, secid:secid, tid:tid };
+  var t = getTop(sid, secid, tid);
+  if (!t) return;
+  var atts = (t.topicQuizAttempts || []).slice().sort(function(a,b){ return (b.date||0)-(a.date||0); });
   var subBody = document.getElementById('tvSubBody');
   var subTitle = document.getElementById('tvSubTitle');
-  if(subTitle) subTitle.textContent = '📜 Quiz History';
-  if(!subBody) return;
-  if(!atts.length){
-    subBody.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text2);">Koi attempt nahi — pehle quiz play karo.</div>';
+  if (subTitle) subTitle.textContent = 'Quiz History';
+  if (!subBody) return;
+  if (!atts.length) {
+    subBody.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text2);">Koi attempt nahi - pehle quiz play karo.</div>';
     return;
   }
   var html = '<div style="padding:4px 2px 20px;">';
-  html += '<button class="btn btn-outline btn-xs" style="margin-bottom:10px;" onclick="tvShowSub(\\'topicquiz\\','+sid+','+secid+','+tid+')">← Quizzes</button>';
+  html += '<button type="button" class="btn btn-outline btn-xs" style="margin-bottom:10px;" id="tqHistBack">Back to Quizzes</button>';
   atts.forEach(function(a){
-    html += '<div class="tq-hist-item" style="cursor:pointer;" onclick="tqOpenAttemptDetail(\\''+String(a.id).replace(/'/g,'')+'\\','+sid+','+secid+','+tid+')">';
+    html += '<div class="tq-hist-item tq-open-att" data-aid="' + tqEsc(a.id) + '" style="cursor:pointer;">';
     html += '<div style="display:flex;justify-content:space-between;gap:8px;">';
-    html += '<div style="font-weight:800;">'+tqEsc(a.quizName||'Quiz')+'</div>';
-    html += '<div style="font-weight:900;color:'+(a.pct>=50?'var(--green)':'var(--red)')+';">'+(a.pct||0)+'%</div>';
+    html += '<div style="font-weight:800;">' + tqEsc(a.quizName || 'Quiz') + '</div>';
+    html += '<div style="font-weight:900;color:' + (a.pct >= 50 ? 'var(--green)' : 'var(--red)') + ';">' + (a.pct||0) + '%</div>';
     html += '</div>';
-    html += '<div style="font-size:0.72rem;color:var(--text2);margin-top:3px;">'+(a.score||0)+'/'+(a.total||0)+' · '+tqFmtDate(a.date)+'</div>';
+    html += '<div style="font-size:0.72rem;color:var(--text2);margin-top:3px;">' + (a.score||0) + '/' + (a.total||0) + ' · ' + tqFmtDate(a.date) + '</div>';
     html += '</div>';
   });
   html += '</div>';
   subBody.innerHTML = html;
+  document.getElementById('tqHistBack').onclick = function(){ tvShowSub('topicquiz', sid, secid, tid); };
+  subBody.querySelectorAll('.tq-open-att').forEach(function(el){
+    el.onclick = function(){ tqOpenAttemptDetail(el.getAttribute('data-aid'), sid, secid, tid); };
+  });
 }
 
-function tqOpenAttemptDetail(attId, sid, secid, tid){
-  _tqCtx = {sid:sid,secid:secid,tid:tid};
-  var t = getTop(sid,secid,tid);
-  if(!t) return;
-  var att = (t.topicQuizAttempts||[]).find(function(a){ return String(a.id)===String(attId); });
-  if(!att){ showToast('Attempt nahi mila','error'); return; }
-
-  // Ensure topic view is open on quiz hub path
-  try{
-    if(!document.getElementById('topicViewModal').classList.contains('show')){
-      viewTopic(sid,secid,tid);
-    }
-  }catch(e){}
-
+window.tqOpenAttemptDetail = function(attId, sid, secid, tid){
+  _tqCtx = { sid:sid, secid:secid, tid:tid };
+  var t = getTop(sid, secid, tid);
+  if (!t) return;
+  var att = (t.topicQuizAttempts || []).find(function(a){ return String(a.id) === String(attId); });
+  if (!att) { showToast('Attempt nahi mila', 'error'); return; }
+  try {
+    var modal = document.getElementById('topicViewModal');
+    if (modal && !modal.classList.contains('show')) viewTopic(sid, secid, tid);
+  } catch(e) {}
   setTimeout(function(){
     var subBody = document.getElementById('tvSubBody');
     var subTitle = document.getElementById('tvSubTitle');
-    if(subTitle) subTitle.textContent = '📊 '+ (att.quizName||'Attempt');
-    if(!subBody) return;
-    // show screen B
-    try{
-      document.getElementById('tvScreenA').style.display='none';
+    if (subTitle) subTitle.textContent = (att.quizName || 'Attempt');
+    if (!subBody) return;
+    try {
+      document.getElementById('tvScreenA').style.display = 'none';
       document.getElementById('tvScreenA').classList.remove('active');
-      var B=document.getElementById('tvScreenB');
-      B.style.display='flex'; B.classList.add('active');
-    }catch(e){}
+      var B = document.getElementById('tvScreenB');
+      B.style.display = 'flex';
+      B.classList.add('active');
+    } catch(e) {}
     tqRenderAttemptAnalysis(subBody, att, sid, secid, tid);
   }, 120);
-}
+};
 
 function tqRenderAttemptAnalysis(subBody, att, sid, secid, tid){
   var f = _tqHistFilter;
-  var items = (att.items||[]).map(function(it, idx){ return Object.assign({_i:idx}, it); });
+  var items = (att.items || []).map(function(it, idx){
+    var o = {};
+    for (var k in it) o[k] = it[k];
+    o._i = idx;
+    return o;
+  });
   items = items.filter(function(it){
-    if(f.result==='correct' && !it.isCorrect) return false;
-    if(f.result==='wrong' && (it.isCorrect || it.selected===null)) return false;
-    if(f.result==='skipped' && it.selected!==null) return false;
-    if(f.result==='marked' && !it.marked) return false;
-    if(f.saved==='saved' && !it.saved) return false;
-    if(f.diff!=='all' && it.difficulty!==f.diff) return false;
+    if (f.result === 'correct' && !it.isCorrect) return false;
+    if (f.result === 'wrong' && (it.isCorrect || it.selected === null)) return false;
+    if (f.result === 'skipped' && it.selected !== null) return false;
+    if (f.result === 'marked' && !it.marked) return false;
+    if (f.saved === 'saved' && !it.saved) return false;
+    if (f.diff !== 'all' && it.difficulty !== f.diff) return false;
     return true;
   });
 
-  function fb(key, val, label){
-    var active = (key==='result'?f.result:key==='diff'?f.diff:f.saved)===val;
-    return '<button type="button" class="tq-filter-btn'+(active?' active':'')+'" onclick="_tqHistFilter.'+key+'=\\''+val+'\\';tqOpenAttemptDetail(\\''+String(att.id).replace(/'/g,'')+'\\','+sid+','+secid+','+tid+')">'+label+'</button>';
-  }
-
   var html = '<div style="padding:2px 2px 24px;">';
-  html += '<button class="btn btn-outline btn-xs" style="margin-bottom:8px;" onclick="tqShowHistory('+sid+','+secid+','+tid+')">← History</button>';
+  html += '<button type="button" class="btn btn-outline btn-xs" style="margin-bottom:8px;" id="tqAnaBack">Back History</button>';
   html += '<div class="tq-hub-card" style="text-align:center;">';
-  html += '<div style="font-size:1.4rem;font-weight:900;color:var(--accent);">'+(att.score||0)+'/'+(att.total||0)+' · '+(att.pct||0)+'%</div>';
-  html += '<div style="font-size:0.72rem;color:var(--text2);">'+tqFmtDate(att.date)+'</div></div>';
+  html += '<div style="font-size:1.4rem;font-weight:900;color:var(--accent);">' + (att.score||0) + '/' + (att.total||0) + ' · ' + (att.pct||0) + '%</div>';
+  html += '<div style="font-size:0.72rem;color:var(--text2);">' + tqFmtDate(att.date) + '</div></div>';
 
-  html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;">';
-  html += fb('result','all','Sab')+fb('result','correct','✅ Sahi')+fb('result','wrong','❌ Galat')+fb('result','skipped','⏭ Skip')+fb('result','marked','🔖 Marked');
+  html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;" id="tqFiltResult">';
+  [['all','Sab'],['correct','Sahi'],['wrong','Galat'],['skipped','Skip'],['marked','Marked']].forEach(function(x){
+    html += '<button type="button" class="tq-filter-btn' + (f.result===x[0]?' active':'') + '" data-k="result" data-v="' + x[0] + '">' + x[1] + '</button>';
+  });
   html += '</div><div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;">';
-  html += fb('diff','all','Diff: Sab')+fb('diff','easy','Easy')+fb('diff','moderate','Moderate')+fb('diff','hard','Hard');
-  html += fb('saved','all','Saved: Sab')+fb('saved','saved','📌 Saved');
+  [['all','Diff: Sab'],['easy','Easy'],['moderate','Moderate'],['hard','Hard']].forEach(function(x){
+    html += '<button type="button" class="tq-filter-btn' + (f.diff===x[0]?' active':'') + '" data-k="diff" data-v="' + x[0] + '">' + x[1] + '</button>';
+  });
+  html += '<button type="button" class="tq-filter-btn' + (f.saved==='all'?' active':'') + '" data-k="saved" data-v="all">Saved: Sab</button>';
+  html += '<button type="button" class="tq-filter-btn' + (f.saved==='saved'?' active':'') + '" data-k="saved" data-v="saved">Saved only</button>';
   html += '</div>';
 
   html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">';
-  html += '<button class="tq-toggle" onclick="tqBulkHide(\\''+att.id+'\\',\\'Q\\',true,'+sid+','+secid+','+tid+')">Hide Q</button>';
-  html += '<button class="tq-toggle" onclick="tqBulkHide(\\''+att.id+'\\',\\'Q\\',false,'+sid+','+secid+','+tid+')">Show Q</button>';
-  html += '<button class="tq-toggle" onclick="tqBulkHide(\\''+att.id+'\\',\\'A\\',true,'+sid+','+secid+','+tid+')">Hide Ans</button>';
-  html += '<button class="tq-toggle" onclick="tqBulkHide(\\''+att.id+'\\',\\'A\\',false,'+sid+','+secid+','+tid+')">Show Ans</button>';
-  html += '<button class="tq-toggle" onclick="tqBulkHide(\\''+att.id+'\\',\\'E\\',true,'+sid+','+secid+','+tid+')">Hide Expl</button>';
-  html += '<button class="tq-toggle" onclick="tqBulkHide(\\''+att.id+'\\',\\'E\\',false,'+sid+','+secid+','+tid+')">Show Expl</button>';
+  html += '<button type="button" class="tq-toggle" data-bulk="Q" data-hide="1">Hide Q</button>';
+  html += '<button type="button" class="tq-toggle" data-bulk="Q" data-hide="0">Show Q</button>';
+  html += '<button type="button" class="tq-toggle" data-bulk="A" data-hide="1">Hide Ans</button>';
+  html += '<button type="button" class="tq-toggle" data-bulk="A" data-hide="0">Show Ans</button>';
+  html += '<button type="button" class="tq-toggle" data-bulk="E" data-hide="1">Hide Expl</button>';
+  html += '<button type="button" class="tq-toggle" data-bulk="E" data-hide="0">Show Expl</button>';
   html += '</div>';
 
-  if(!items.length){
+  if (!items.length) {
     html += '<div style="text-align:center;color:var(--text2);padding:16px;">Is filter se koi question nahi.</div>';
   }
 
   items.forEach(function(it){
-    var border = it.isCorrect ? 'var(--green)' : (it.selected===null ? 'var(--border)' : 'var(--red)');
-    html += '<div class="tq-q-block" style="border-left:3px solid '+border+';">';
+    var border = it.isCorrect ? 'var(--green)' : (it.selected === null ? 'var(--border)' : 'var(--red)');
+    html += '<div class="tq-q-block" style="border-left:3px solid ' + border + ';" data-ii="' + it._i + '">';
     html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">';
-    html += '<button class="tq-toggle" onclick="tqToggleItemHide(\\''+att.id+'\\','+it._i+',\\'Q\\','+sid+','+secid+','+tid+')">'+(it.hideQ?'Show':'Hide')+' Q</button>';
-    html += '<button class="tq-toggle" onclick="tqToggleItemHide(\\''+att.id+'\\','+it._i+',\\'A\\','+sid+','+secid+','+tid+')">'+(it.hideA?'Show':'Hide')+' A</button>';
-    html += '<button class="tq-toggle" onclick="tqToggleItemHide(\\''+att.id+'\\','+it._i+',\\'E\\','+sid+','+secid+','+tid+')">'+(it.hideE?'Show':'Hide')+' E</button>';
-    if(it.difficulty) html += '<span class="tq-toggle" style="cursor:default;">'+tqEsc(it.difficulty)+'</span>';
-    if(it.marked) html += '<span class="tq-toggle" style="cursor:default;">🔖</span>';
-    if(it.saved) html += '<span class="tq-toggle" style="cursor:default;">📌</span>';
+    html += '<button type="button" class="tq-toggle tq-ih" data-kind="Q">' + (it.hideQ ? 'Show' : 'Hide') + ' Q</button>';
+    html += '<button type="button" class="tq-toggle tq-ih" data-kind="A">' + (it.hideA ? 'Show' : 'Hide') + ' A</button>';
+    html += '<button type="button" class="tq-toggle tq-ih" data-kind="E">' + (it.hideE ? 'Show' : 'Hide') + ' E</button>';
+    if (it.difficulty) html += '<span class="tq-toggle" style="cursor:default;">' + tqEsc(it.difficulty) + '</span>';
+    if (it.marked) html += '<span class="tq-toggle" style="cursor:default;">Marked</span>';
+    if (it.saved) html += '<span class="tq-toggle" style="cursor:default;">Saved</span>';
     html += '</div>';
-    if(!it.hideQ){
+    if (!it.hideQ) {
       html += '<div style="font-size:0.68rem;font-weight:800;color:var(--text2);">SAWAAL</div>';
-      html += '<div style="font-size:0.88rem;font-weight:700;margin-bottom:8px;line-height:1.55;">'+tqEsc(it.q)+'</div>';
+      html += '<div style="font-size:0.88rem;font-weight:700;margin-bottom:8px;line-height:1.55;">' + tqEsc(it.q) + '</div>';
     }
-    if(!it.hideA){
+    if (!it.hideA) {
       html += '<div style="font-size:0.68rem;font-weight:800;color:var(--text2);">OPTIONS</div>';
-      (it.options||[]).forEach(function(op, oi){
-        if(!String(op||'').trim() && oi>1) return;
+      (it.options || []).forEach(function(op, oi){
+        if (!String(op || '').trim() && oi > 1) return;
         var mark = '';
-        if(oi===it.correct) mark = ' ✅';
-        if(it.selected===oi && oi!==it.correct) mark = ' ❌';
-        html += '<div style="font-size:0.82rem;padding:4px 0;line-height:1.45;">'+String.fromCharCode(65+oi)+'. '+tqEsc(op)+mark+'</div>';
+        if (oi === it.correct) mark = ' [OK]';
+        if (it.selected === oi && oi !== it.correct) mark = ' [X]';
+        html += '<div style="font-size:0.82rem;padding:4px 0;line-height:1.45;">' + String.fromCharCode(65+oi) + '. ' + tqEsc(op) + mark + '</div>';
       });
     }
-    if(!it.hideE && it.explanation){
-      html += '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:var(--surface2);font-size:0.8rem;line-height:1.5;">'+tqEsc(it.explanation)+'</div>';
+    if (!it.hideE && it.explanation) {
+      html += '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:var(--surface2);font-size:0.8rem;line-height:1.5;">' + tqEsc(it.explanation) + '</div>';
     }
     html += '</div>';
   });
   html += '</div>';
   subBody.innerHTML = html;
+
+  document.getElementById('tqAnaBack').onclick = function(){ tqShowHistory(sid, secid, tid); };
+  subBody.querySelectorAll('.tq-filter-btn').forEach(function(btn){
+    btn.onclick = function(){
+      _tqHistFilter[btn.getAttribute('data-k')] = btn.getAttribute('data-v');
+      tqOpenAttemptDetail(att.id, sid, secid, tid);
+    };
+  });
+  subBody.querySelectorAll('[data-bulk]').forEach(function(btn){
+    btn.onclick = function(){
+      tqBulkHide(att.id, btn.getAttribute('data-bulk'), btn.getAttribute('data-hide') === '1', sid, secid, tid);
+    };
+  });
+  subBody.querySelectorAll('.tq-ih').forEach(function(btn){
+    btn.onclick = function(){
+      var block = btn.closest('[data-ii]');
+      var idx = Number(block.getAttribute('data-ii'));
+      tqToggleItemHide(att.id, idx, btn.getAttribute('data-kind'), sid, secid, tid);
+    };
+  });
 }
 
 function tqBulkHide(attId, kind, hide, sid, secid, tid){
-  var t = getTop(sid,secid,tid);
-  if(!t) return;
-  var att = (t.topicQuizAttempts||[]).find(function(a){ return String(a.id)===String(attId); });
-  if(!att) return;
-  (att.items||[]).forEach(function(it){
-    if(kind==='Q') it.hideQ = hide;
-    if(kind==='A') it.hideA = hide;
-    if(kind==='E') it.hideE = hide;
+  var t = getTop(sid, secid, tid);
+  if (!t) return;
+  var att = (t.topicQuizAttempts || []).find(function(a){ return String(a.id) === String(attId); });
+  if (!att) return;
+  (att.items || []).forEach(function(it){
+    if (kind === 'Q') it.hideQ = hide;
+    if (kind === 'A') it.hideA = hide;
+    if (kind === 'E') it.hideE = hide;
   });
-  _tqCtx = {sid:sid,secid:secid,tid:tid};
+  _tqCtx = { sid:sid, secid:secid, tid:tid };
   tqPersist();
   tqOpenAttemptDetail(attId, sid, secid, tid);
 }
 
 function tqToggleItemHide(attId, idx, kind, sid, secid, tid){
-  var t = getTop(sid,secid,tid);
-  if(!t) return;
-  var att = (t.topicQuizAttempts||[]).find(function(a){ return String(a.id)===String(attId); });
-  if(!att || !att.items || !att.items[idx]) return;
+  var t = getTop(sid, secid, tid);
+  if (!t) return;
+  var att = (t.topicQuizAttempts || []).find(function(a){ return String(a.id) === String(attId); });
+  if (!att || !att.items || !att.items[idx]) return;
   var it = att.items[idx];
-  if(kind==='Q') it.hideQ = !it.hideQ;
-  if(kind==='A') it.hideA = !it.hideA;
-  if(kind==='E') it.hideE = !it.hideE;
-  _tqCtx = {sid:sid,secid:secid,tid:tid};
+  if (kind === 'Q') it.hideQ = !it.hideQ;
+  if (kind === 'A') it.hideA = !it.hideA;
+  if (kind === 'E') it.hideE = !it.hideE;
+  _tqCtx = { sid:sid, secid:secid, tid:tid };
   tqPersist();
   tqOpenAttemptDetail(attId, sid, secid, tid);
 }
+
+// Wire play overlay top buttons once
+document.addEventListener('DOMContentLoaded', function(){
+  var b = document.getElementById('tqBtnBack');
+  if (b) b.onclick = function(){ tqClosePlay(); };
+  var th = document.getElementById('tqBtnTheme');
+  if (th) th.onclick = function(){ tqCycleTheme(); };
+  var su = document.getElementById('tqBtnSubmit');
+  if (su) su.onclick = function(){ tqConfirmSubmit(); };
+});
+// Also bind immediately if DOM already ready
+(function(){
+  var b = document.getElementById('tqBtnBack');
+  if (b) b.onclick = function(){ tqClosePlay(); };
+  var th = document.getElementById('tqBtnTheme');
+  if (th) th.onclick = function(){ tqCycleTheme(); };
+  var su = document.getElementById('tqBtnSubmit');
+  if (su) su.onclick = function(){ tqConfirmSubmit(); };
+})();
+
+})();
 </script>
 </body>
 </html>
