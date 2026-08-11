@@ -14398,7 +14398,7 @@ function tvAddRawNote(sid, secid, tid){
     const newIdx = (t.notes||[]).length;
     const noteName = 'Note ' + (newIdx + 1);
     if(!t.notes) t.notes = [];
-    t.notes.push({ name: noteName, content: '', wordCount: 0, addedAt: new Date().toLocaleDateString('hi-IN'), editorHighlights:[], editorRichHTML:null });
+    t.notes.push({ id: 'n_'+Date.now()+'_'+Math.random().toString(36).slice(2,7), name: noteName, content: '', wordCount: 0, addedAt: new Date().toLocaleDateString('hi-IN'), editorHighlights:[], editorRichHTML:null, editorSavedAt:0 });
     save();
     openNotesEditor(sid, secid, tid, newIdx);
   }, 200);
@@ -23813,8 +23813,25 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   _editorState.hlColor = 'yellow';
   _editorState.hlTextColor = null;
   _editorState.highlights = (n.editorHighlights || []).map(h => ({...h})); // Deep copy
+  // Ensure note id exists
+  if(!n.id){ n.id = 'n_' + tid + '_' + noteIdx + '_' + Date.now().toString(36); }
+  // Use richest/newest content: in-memory note vs localStorage backup
+  var _bak = (typeof _loadNoteLocalBackup === 'function') ? _loadNoteLocalBackup(tid, n, noteIdx) : null;
+  var _memRich = n.editorRichHTML || n.richHTML || '';
+  var _memAt = n.editorSavedAt || 0;
+  var _bakRich = _bak ? (_bak.editorRichHTML || _bak.richHTML || '') : '';
+  var _bakAt = _bak ? (_bak.editorSavedAt || 0) : 0;
+  if(_bakRich && _bakAt > _memAt){
+    console.info('[openNotesEditor] restoring from localStorage backup (newer) bakAt='+_bakAt+' memAt='+_memAt+' len='+_bakRich.length);
+    n.editorRichHTML = _bakRich;
+    n.richHTML = _bakRich;
+    n.editorSavedAt = _bakAt;
+    if(_bak.editorHighlights) n.editorHighlights = _bak.editorHighlights;
+    if(_bak.content) n.content = _bak.content;
+  }
   // Use richHTML if available (contains highlight markup or original formatting)
   _editorState.richHTML = n.editorRichHTML || n.richHTML || null;
+  console.info('[openNotesEditor] load richLen='+((_editorState.richHTML||'').length)+' noteId='+(n.id||'')+' savedAt='+(n.editorSavedAt||0));
   // 🔗 Hub Reference: live HTML from Current Affairs / Static GK (no copy stored)
   var _hubResolvedHtml = null;
   var _hubMetaLabel = '';
@@ -24064,6 +24081,55 @@ function showUnsavedPopup() {
   };
 }
 
+
+// Ensure every note has stable id (fix for cloud/local merge)
+function _ensureNoteIds(t){
+  if(!t || !t.notes) return;
+  t.notes.forEach(function(n, i){
+    if(!n.id){
+      n.id = 'n_' + (t.id||'t') + '_' + i + '_' + Date.now().toString(36);
+    }
+  });
+}
+function _noteLocalKey(tid, noteId, noteIdx){
+  return 'epp_note_bak_' + String(tid) + '_' + String(noteId || ('idx'+noteIdx));
+}
+function _saveNoteLocalBackup(tid, n, noteIdx){
+  try {
+    if(!n) return;
+    var key = _noteLocalKey(tid, n.id, noteIdx);
+    var payload = {
+      id: n.id,
+      editorRichHTML: n.editorRichHTML || '',
+      richHTML: n.richHTML || n.editorRichHTML || '',
+      content: n.content || '',
+      editorHighlights: n.editorHighlights || [],
+      editorSavedAt: n.editorSavedAt || Date.now(),
+      name: n.name || ''
+    };
+    localStorage.setItem(key, JSON.stringify(payload));
+  } catch(e){ console.warn('[note-bak] save fail', e && e.message); }
+}
+function _loadNoteLocalBackup(tid, n, noteIdx){
+  try {
+    var keys = [
+      _noteLocalKey(tid, n && n.id, noteIdx),
+      _noteLocalKey(tid, null, noteIdx)
+    ];
+    var best = null;
+    keys.forEach(function(key){
+      var raw = localStorage.getItem(key);
+      if(!raw) return;
+      try {
+        var p = JSON.parse(raw);
+        if(!p || !(p.editorRichHTML || p.richHTML)) return;
+        if(!best || (p.editorSavedAt||0) > (best.editorSavedAt||0)) best = p;
+      } catch(e){}
+    });
+    return best;
+  } catch(e){ return null; }
+}
+
 function _doSaveNoteData() {
   // Extra Facts Topic (global library) — standalone content, not tied to any
   // subject/section/topic, so it must be handled before the getTop() guard
@@ -24183,6 +24249,7 @@ function _doSaveNoteData() {
       _editorState.highlights.push({ id: uid, text: mark.textContent, color: color });
     });
     
+    if(!n.id) n.id = 'n_' + (_editorState.tid||'t') + '_' + _editorState.noteIdx + '_' + Date.now().toString(36);
     n.editorHighlights = _editorState.highlights.slice();
     n.editorRichHTML   = area ? area.innerHTML : (n.editorRichHTML || '');
     n.richHTML         = n.editorRichHTML; // backup field — load path checks both
@@ -24191,7 +24258,9 @@ function _doSaveNoteData() {
     if(canvasObjs)  n.canvasObjs  = canvasObjs;
     if(drawStrokes) n.drawStrokes = drawStrokes;
     if(qmapData)    n.qmapData    = qmapData;
-    console.info('[💾 _doSaveNoteData] note saved idx='+_editorState.noteIdx+' richLen='+(n.editorRichHTML||'').length+' plainLen='+(plainText||'').length);
+    // Bulletproof local backup (survives cloud overwrite / missing note.id merge bugs)
+    _saveNoteLocalBackup(_editorState.tid, n, _editorState.noteIdx);
+    console.info('[💾 _doSaveNoteData] note saved idx='+_editorState.noteIdx+' id='+n.id+' richLen='+(n.editorRichHTML||'').length+' plainLen='+(plainText||'').length+' savedAt='+n.editorSavedAt);
   }
   
   return true;
@@ -42371,7 +42440,11 @@ async function loadFromFirebase(){
       if(t.smartNotesHTML) localEditorData['sn_'+t.id] = { html: t.smartNotesHTML, ts: t.smartNotesAt || 0 };
       if(t.masterNotesHTML) localEditorData['mn_'+t.id] = { html: t.masterNotesHTML, ts: t.masterNotesAt || 0 };
       (t.notes||[]).forEach(function(n){
-        if(n.editorRichHTML) localEditorData['n_'+n.id] = { richHTML:n.editorRichHTML, highlights:n.editorHighlights||[], ts: n.editorSavedAt || 0 };
+        if(!n.id) n.id = 'n_'+(t.id||'t')+'_'+Math.random().toString(36).slice(2,8);
+        if(n.editorRichHTML) {
+          localEditorData['n_'+n.id] = { richHTML:n.editorRichHTML, highlights:n.editorHighlights||[], ts: n.editorSavedAt || 0 };
+          localEditorData['n_idx_'+t.id+'_'+(t.notes||[]).indexOf(n)] = localEditorData['n_'+n.id];
+        }
       });
     }); });
 
@@ -42403,15 +42476,28 @@ async function loadFromFirebase(){
       if(_snLocal && _snLocal.html && (_snLocal.ts || 0) > (t.smartNotesAt || 0)) t.smartNotesHTML = _snLocal.html;
       var _mnLocal = localEditorData['mn_'+t.id];
       if(_mnLocal && _mnLocal.html && (_mnLocal.ts || 0) > (t.masterNotesAt || 0)) t.masterNotesHTML = _mnLocal.html;
-      t.notes.forEach(function(n){
+      t.notes.forEach(function(n, nIdx){
+        if(!n.id) n.id = 'n_' + (t.id||'t') + '_' + nIdx + '_' + Date.now().toString(36);
         if(!n.editorHighlights) n.editorHighlights=[];
         if(n.editorRichHTML===undefined) n.editorRichHTML=null;
         delete n.canvasPNG;
-        var ld = localEditorData['n_'+n.id];
+        var ld = localEditorData['n_'+n.id] || localEditorData['n_idx_'+t.id+'_'+nIdx];
         // ✅ FIX: sirf tab local richHTML lagao jab local timestamp zyada ho (newer)
         if(ld && ld.richHTML && (ld.ts || 0) > (n.editorSavedAt || 0)){
           n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[];
+          n.editorSavedAt=ld.ts||n.editorSavedAt;
         }
+        // Extra: dedicated localStorage backup
+        try {
+          var bak = (typeof _loadNoteLocalBackup === 'function') ? _loadNoteLocalBackup(t.id, n, nIdx) : null;
+          if(bak && (bak.editorRichHTML||bak.richHTML) && (bak.editorSavedAt||0) > (n.editorSavedAt||0)){
+            n.editorRichHTML = bak.editorRichHTML || bak.richHTML;
+            n.richHTML = n.editorRichHTML;
+            n.editorSavedAt = bak.editorSavedAt;
+            if(bak.editorHighlights) n.editorHighlights = bak.editorHighlights;
+            console.info('[loadFromFirebase] note backup applied tid='+t.id+' idx='+nIdx+' len='+(n.editorRichHTML||'').length);
+          }
+        } catch(e){}
       });
     }); });
 
@@ -42795,22 +42881,29 @@ function _applyTopicUpdate(tid, newTopicData){
             // Agar local canvas newer hai ya live hai — remote se mat overwrite karo
             // notes[] — remote ke changes merge karo lekin active note ka editorRichHTML protect karo
             if(newTopicData.notes){
-              newTopicData.notes.forEach(function(remoteNote){
+              newTopicData.notes.forEach(function(remoteNote, rIdx){
                 var found = false;
                 for(var j=0; j<(local.notes||[]).length; j++){
-                  if(String(local.notes[j].id) === String(remoteNote.id)){
+                  var idMatch = remoteNote.id && local.notes[j].id && String(local.notes[j].id) === String(remoteNote.id);
+                  var idxMatch = !remoteNote.id && j === rIdx;
+                  if(idMatch || idxMatch){
                     found = true;
                     var isCurrentNote = (_editorState && String(_editorState.noteIdx) !== 'null' &&
-                      local.notes[j] === local.notes[_editorState.noteIdx]);
-                    if(isCurrentNote){
-                      // Sirf non-editor fields update karo (name, addedAt, wordCount etc)
+                      j === Number(_editorState.noteIdx));
+                    // Prefer newer editorSavedAt — never clobber fresher local edits
+                    var localAt = local.notes[j].editorSavedAt || 0;
+                    var remoteAt = remoteNote.editorSavedAt || 0;
+                    if(isCurrentNote || localAt > remoteAt){
                       var savedRich = local.notes[j].editorRichHTML;
                       var savedHl   = local.notes[j].editorHighlights;
+                      var savedAt   = local.notes[j].editorSavedAt;
                       Object.assign(local.notes[j], remoteNote);
-                      local.notes[j].editorRichHTML    = savedRich;
-                      local.notes[j].editorHighlights  = savedHl;
+                      if(savedRich && localAt >= remoteAt){
+                        local.notes[j].editorRichHTML    = savedRich;
+                        local.notes[j].editorHighlights  = savedHl;
+                        local.notes[j].editorSavedAt     = savedAt;
+                      }
                     } else {
-                      // Alag note hai — fully replace
                       local.notes[j] = remoteNote;
                       if(!local.notes[j].editorHighlights) local.notes[j].editorHighlights = [];
                     }
@@ -43085,7 +43178,11 @@ async function _silentReloadFromFirebase(){
         };
       }
       (t.notes||[]).forEach(function(n){
-        if(n.editorRichHTML !== undefined) localEditorData['n_'+n.id] = { richHTML: n.editorRichHTML, highlights: n.editorHighlights||[], ts: n.editorSavedAt || 0 };
+        if(!n.id) n.id = 'n_'+(t.id||'t')+'_'+Math.random().toString(36).slice(2,8);
+        if(n.editorRichHTML !== undefined) {
+          localEditorData['n_'+n.id] = { richHTML: n.editorRichHTML, highlights: n.editorHighlights||[], ts: n.editorSavedAt || 0 };
+          localEditorData['n_idx_'+t.id+'_'+(t.notes||[]).indexOf(n)] = localEditorData['n_'+n.id];
+        }
       });
     }); });
 
