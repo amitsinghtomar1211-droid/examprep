@@ -24041,11 +24041,7 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   var _memAt = n.editorSavedAt || 0;
   var _bakRich = _bak ? (_bak.editorRichHTML || _bak.richHTML || '') : '';
   var _bakAt = _bak ? (_bak.editorSavedAt || 0) : 0;
-  // Once Firebase has supplied note content, cloud is authoritative.
-  // The local/IndexedDB copy is only a fallback for a genuinely empty
-  // in-memory note; timestamp-only comparison is unsafe across devices
-  // because device clocks can differ and stale backups can look newer.
-  if(!_memRich && _bakRich){
+  if(_bakRich && _bakAt > _memAt){
     console.info('[openNotesEditor] restoring from localStorage backup (newer) bakAt='+_bakAt+' memAt='+_memAt+' len='+_bakRich.length);
     n.editorRichHTML = _bakRich;
     n.richHTML = _bakRich;
@@ -24089,7 +24085,9 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   } else {
   neLoadContent(n.content, false);
   }
-  // Async: IndexedDB backup may be newer than cloud/memory — apply when ready
+  // Async IDB backup: ONLY apply when backup is STRICTLY newer than in-memory/cloud.
+  // Pehle bakAt >= memAt tha → equal timestamp pe bhi purana IDB cloud ko overwrite kar deta tha
+  // (dusri device pe stale content dikhne ka main reason).
   (function(_tid, _n, _idx){
     if(typeof _loadNoteBackupAsync !== 'function') return;
     _loadNoteBackupAsync(_tid, _n, _idx).then(function(bak){
@@ -24100,30 +24098,33 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
       var memAt = (_n && _n.editorSavedAt) || 0;
       var area = document.getElementById('noteEditableArea');
       if(!area) return;
-      // Apply backup only when the cloud/memory version has no rich content.
-      // Never replace a non-empty cloud note with an old local backup.
       var curLen = (area.innerHTML || '').length;
-      if(!(_n.editorRichHTML || _n.richHTML) && !curLen && bakRich){
-        console.info('[openNotesEditor] applying IDB/local backup len='+bakRich.length+' bakAt='+bakAt+' memAt='+memAt+' curLen='+curLen);
-        _n.editorRichHTML = bakRich;
-        _n.richHTML = bakRich;
-        _n.editorSavedAt = bakAt;
-        if(bak.editorHighlights) _n.editorHighlights = bak.editorHighlights;
-        if(bak.content) _n.content = bak.content;
-        _editorState.richHTML = bakRich;
-        if(typeof _setHTML === 'function'){
-          // neLoadContent internal not exported — set directly
+      // STRICT: only if backup newer. Empty editor + no mem timestamp → allow restore.
+      var shouldApply = (bakAt > memAt) || (memAt === 0 && curLen < 20 && bakRich.length > 20);
+      if(!shouldApply){
+        console.info('[openNotesEditor] skip IDB backup (cloud/mem newer or equal) bakAt='+bakAt+' memAt='+memAt+' bakLen='+bakRich.length+' curLen='+curLen);
+        // Agar cloud newer hai to IDB ko cloud se refresh kar do taaki next open pe stale na aaye
+        if(memAt > bakAt && _n && (_n.editorRichHTML || _n.richHTML) && typeof _saveNoteLocalBackup === 'function'){
+          try{ _saveNoteLocalBackup(_tid, _n, _idx); }catch(eR){}
         }
-        if(bakRich.indexOf('__imgRef__') >= 0 && typeof _restoreImagesFromIDB === 'function'){
-          _restoreImagesFromIDB(bakRich).then(function(restored){
-            area.innerHTML = restored;
-            if(typeof _doProgressiveImgRestore === 'function') setTimeout(function(){ _doProgressiveImgRestore(area); }, 30);
-            if(typeof updateNEWordCount === 'function') updateNEWordCount();
-          });
-        } else {
-          area.innerHTML = bakRich;
+        return;
+      }
+      console.info('[openNotesEditor] applying IDB/local backup (newer) len='+bakRich.length+' bakAt='+bakAt+' memAt='+memAt+' curLen='+curLen);
+      _n.editorRichHTML = bakRich;
+      _n.richHTML = bakRich;
+      _n.editorSavedAt = bakAt;
+      if(bak.editorHighlights) _n.editorHighlights = bak.editorHighlights;
+      if(bak.content) _n.content = bak.content;
+      _editorState.richHTML = bakRich;
+      if(bakRich.indexOf('__imgRef__') >= 0 && typeof _restoreImagesFromIDB === 'function'){
+        _restoreImagesFromIDB(bakRich).then(function(restored){
+          area.innerHTML = restored;
+          if(typeof _doProgressiveImgRestore === 'function') setTimeout(function(){ _doProgressiveImgRestore(area); }, 30);
           if(typeof updateNEWordCount === 'function') updateNEWordCount();
-        }
+        });
+      } else {
+        area.innerHTML = bakRich;
+        if(typeof updateNEWordCount === 'function') updateNEWordCount();
       }
     }).catch(function(e){ console.warn('[openNotesEditor] backup load', e); });
   })(tid, n, noteIdx);
@@ -24583,7 +24584,6 @@ function _doSaveNoteData() {
     n.editorRichHTML   = area ? area.innerHTML : (n.editorRichHTML || '');
     n.richHTML         = n.editorRichHTML; // backup field — load path checks both
     n.editorSavedAt    = Date.now(); // cloud-vs-local merge uses newer version
-    _topicLocalChangeAt[String(_editorState.tid)] = n.editorSavedAt;
     n.content          = plainText;
     if(canvasObjs)  n.canvasObjs  = canvasObjs;
     if(drawStrokes) n.drawStrokes = drawStrokes;
@@ -29879,23 +29879,61 @@ async function saveEditedNote() {
         if(_topicSyncTimers[_gKey]){ clearTimeout(_topicSyncTimers[_gKey]); delete _topicSyncTimers[_gKey]; }
       }
       console.info('[💾 saveEditedNote] ⚡ Granular topic save — tid:'+_gTid);
-       var _fbStartedAt = Date.now();
-       try{
+      try{
+        var _t0 = Date.now();
         var _sr = await saveTopicToFirebase(_gTid, _gSid, _gSecid);
+        var _ms = Date.now() - _t0;
         if(_sr && _sr.ok === false){
           setSyncStatus('error');
           _fbResult = { ok: false, error: _sr.error || 'topic save failed', code: 'TOPIC_SAVE_FAIL' };
           console.error('[💾 saveEditedNote] ❌ Topic Firebase update FAILED — '+(_sr.error||''));
         } else {
           setSyncStatus('synced');
-           _fbResult = { ok: true, ms: Date.now() - _fbStartedAt, source: 'topic' };
-          console.info('[💾 saveEditedNote] ✅ Topic Firebase update SUCCESS — tid:'+_gTid);
+          _fbResult = { ok: true, ms: _ms, path: 'topic', writeId: _sr && _sr.writeId };
+          console.info('[💾 saveEditedNote] ✅ Topic Firebase update SUCCESS — tid:'+_gTid+' ms:'+_ms+' writeId:'+(_sr && _sr.writeId));
+          try {
+            var _snapT = getTop(_gSid, _gSecid, _gTid);
+            if(_snapT && typeof _cleanTopic === 'function'){
+              _lastSavedSnapshot[String(_gTid)] = JSON.stringify(_cleanTopic(_snapT));
+            }
+          } catch(eSnap){}
+          // READ-BACK verify cloud has the note we just saved
+          try {
+            var _vDoc = await _db.collection('users').doc(_effectiveUID).collection('topics').doc(String(_gTid)).get();
+            if(_vDoc && _vDoc.exists){
+              var _vd = _vDoc.data();
+              var _vNotes = (_vd && _vd.topic && _vd.topic.notes) || [];
+              var _vnSave = getTop(_gSid, _gSecid, _gTid);
+              var _localN = _vnSave && _vnSave.notes && _vnSave.notes[_editorState.noteIdx];
+              var _match = null;
+              if(_localN){
+                for(var _vi=0; _vi<_vNotes.length; _vi++){
+                  if(_localN.id && _vNotes[_vi].id && String(_vNotes[_vi].id)===String(_localN.id)){ _match=_vNotes[_vi]; break; }
+                  if(!_localN.id && _vi===Number(_editorState.noteIdx)){ _match=_vNotes[_vi]; break; }
+                }
+              }
+              if(_match){
+                var _cloudLen = ((_match.editorRichHTML||_match.richHTML)||'').length;
+                var _localLen = ((_localN.editorRichHTML||_localN.richHTML)||'').length;
+                var _cloudAt = _match.editorSavedAt || 0;
+                var _localAt = _localN.editorSavedAt || 0;
+                console.info('[💾 saveEditedNote] READBACK cloudLen='+_cloudLen+' localLen='+_localLen+' cloudAt='+_cloudAt+' localAt='+_localAt);
+                if(_cloudAt + 50 < _localAt || (_localLen > 100 && _cloudLen < 10)){
+                  console.error('[💾 saveEditedNote] ❌ READBACK MISMATCH — re-saving topic...');
+                  await saveTopicToFirebase(_gTid, _gSid, _gSecid);
+                } else {
+                  console.info('[💾 saveEditedNote] ✅ READBACK OK — cloud has latest note');
+                }
+              } else {
+                console.warn('[💾 saveEditedNote] READBACK: note id not found in cloud notes[]');
+              }
+            }
+          } catch(eRb){ console.warn('[💾 saveEditedNote] readback error', eRb && eRb.message); }
         }
         try {
           var _vt = getTop(_gSid, _gSecid, _gTid);
           var _vn = _vt && _vt.notes && _vt.notes[_editorState.noteIdx];
           if(_vn) {
-            // Force IDB backup again after FB path (images may have been rewritten)
             await _saveNoteLocalBackup(_gTid, _vn, _editorState.noteIdx);
             console.info('[💾 saveEditedNote] verify editorRichHTML len=' + ((_vn.editorRichHTML||'').length) + ' editorSavedAt=' + (_vn.editorSavedAt||0));
           }
@@ -33737,11 +33775,6 @@ let _knownMetaWriteId = '';   // Last seen meta writeId
 let _knownTopicWriteIds = {}; // {tid: writeId} — last seen per topic
 let _syncInProgress = false;  // Full-reload guard
 let _activeEditTid = null;    // Currently editing topic (preserve its local data)
-// A topic may be touched by the editor, the debounce timer, and a live
-// listener at nearly the same time. Keep the local write timestamp so a
-// stale background write can never replace a newer cloud version.
-let _topicLocalChangeAt = {}; // {tid: client timestamp}
-let _topicSaveQueues = {};    // {tid: Promise} — one Firestore write at a time
 
 // Firebase config localStorage se load karo
 // ✅ Hardcoded Firebase config — naye users ko manually setup nahi karna
@@ -42080,7 +42113,7 @@ function _topicSizeColor(bytes) {
   return '#c62828';                         // red ≥ 768KB
 }
 
-async function _saveTopicToFirebaseOnce(tid, subjId, secId){
+async function saveTopicToFirebase(tid, subjId, secId){
   if(!_db || !_currentUser) return { ok: false, error: 'no db/user', code: 'NO_AUTH' };
   try{
     var uid = _effectiveUID;
@@ -42114,30 +42147,6 @@ async function _saveTopicToFirebaseOnce(tid, subjId, secId){
       });
     });
     if(!t) return { ok: false, error: 'topic not found tid='+tid, code: 'NOT_FOUND' };
-
-    // Do not let an old tab/device overwrite a newer topic that is already
-    // in Firestore. This is especially important after an admin logs in on
-    // a second device: its old debounce timer must not roll the note back.
-    var _topicDocRef = _db.collection('users').doc(uid).collection('topics').doc(String(tid));
-    var _localChangeAt = Number(_topicLocalChangeAt[String(tid)] || 0);
-    if(_localChangeAt){
-      try{
-        var _remoteTopicSnap = await _topicDocRef.get();
-        var _remoteTopicDoc = _remoteTopicSnap.exists ? _remoteTopicSnap.data() : null;
-        var _remoteChangeAt = Number((_remoteTopicDoc && _remoteTopicDoc.updatedAt) || 0);
-        if(_remoteChangeAt > _localChangeAt){
-          console.warn('[💾 topic save] STALE_LOCAL_WRITE blocked — tid='+tid+
-            ' local='+_localChangeAt+' remote='+_remoteChangeAt);
-          setSyncStatus('synced');
-          return {ok:false, error:'Cloud mein is topic ka newer version already saved hai', code:'STALE_LOCAL_WRITE'};
-        }
-      }catch(_guardErr){
-        // A failed guard read must not pretend that the write succeeded.
-        console.error('[💾 topic save] VERSION_GUARD_FAIL — tid='+tid+' | '+(_guardErr.message||_guardErr));
-        setSyncStatus('error');
-        return {ok:false, error:'Cloud version verify nahi ho saki', code:'VERSION_GUARD_FAIL'};
-      }
-    }
 
     var wid = _genWriteId();
     _myTopicWriteIds[String(tid)] = wid;
@@ -42201,7 +42210,7 @@ async function _saveTopicToFirebaseOnce(tid, subjId, secId){
       if(n && (n.editorRichHTML || n.richHTML) && !n.editorSavedAt) n.editorSavedAt = Date.now();
     });
 
-    await _topicDocRef.set({
+    await _db.collection('users').doc(uid).collection('topics').doc(String(tid)).set({
       topic:    topicData,
       subjId:   subjId || (foundSubj ? foundSubj.id : ''),
       secId:    secId  || (foundSec  ? foundSec.id  : ''),
@@ -42231,35 +42240,12 @@ async function _saveTopicToFirebaseOnce(tid, subjId, secId){
       else if(_sz >= 768*1024) _szmsg += ' — thoda bada hai, images compress karo';
       showToast(_szmsg, _sz >= 768*1024 ? 'warning' : 'success');
     } catch(e2){}
-    // Read-after-write verification: the green success popup is shown only
-    // when the exact writeId is really present in Firestore.
-    var _verifySnap = await _topicDocRef.get();
-    var _verifyData = _verifySnap.exists ? _verifySnap.data() : null;
-    if(!_verifyData || _verifyData.writeId !== wid ||
-       !_verifyData.topic || JSON.stringify(_verifyData.topic) !== JSON.stringify(topicData)){
-      console.error('[💾 topic save] VERIFY_FAIL — tid='+tid+' expected='+wid+
-        ' actual='+((_verifyData&&_verifyData.writeId)||'missing'));
-      setSyncStatus('error');
-      return {ok:false, error:'Save ke baad cloud verification fail hui', code:'VERIFY_FAIL'};
-    }
     return { ok: true, tid: String(tid), writeId: wid };
   }catch(e){
     console.warn('Topic sync error:', e.message);
     setSyncStatus('error');
     return { ok: false, error: e.message || String(e) };
   }
-}
-
-// Serialize writes per topic. Without this, a direct editor save and a
-// pending debounce/full-sync save could finish out of order and the older
-// snapshot could win in Firestore.
-function saveTopicToFirebase(tid, subjId, secId){
-  var key = String(tid);
-  var previous = _topicSaveQueues[key] || Promise.resolve();
-  var next = previous.catch(function(){})
-    .then(function(){ return _saveTopicToFirebaseOnce(tid, subjId, secId); });
-  _topicSaveQueues[key] = next.then(function(){ return null; }, function(){ return null; });
-  return next;
 }
 
 // ══════════════════════════════════════════
@@ -42847,9 +42833,8 @@ async function loadFromFirebase(){
     // ✅ FIX: Agar cloud mein data hai to HAMESHA cloud se lo, local count se compare mat karo
     console.info('[📥 loadFromFirebase] PATH: Cloud se load karega ('+cloudTopicCount+' topics) — cloud is source of truth');
 
-    // Cloud data load. Firebase is the source of truth after a successful
-    // load; local editor backups are only used as an empty-content fallback
-    // inside openNotesEditor, never merged over a non-empty cloud note.
+    // Cloud data load + local editor HTML merge
+    // ✅ FIX: sirf LOCAL editor data preserve karo jab local NEWER ho (timestamp compare)
     // ✅ FIX: RECURSIVE — pehle sirf sec.topics tak jaata tha, sub-section (kisi
     // bhi depth) ke topics ke local editor edits preserve hi nahi hote the.
     function _forEachTopicDeep(sub, fn){
@@ -42894,30 +42879,28 @@ async function loadFromFirebase(){
       if(!t.savedFacts) t.savedFacts=[];
       if(!t.notes) t.notes=[];
       delete t.finalNotesCanvasPNG; delete t.smartNotesCanvasPNG; delete t.masterNotesCanvasPNG;
-      // Cloud is authoritative here. Do not resurrect stale local HTML during
-      // relogin, hard refresh, or a second-device load.
+      // ✅ FIX: sirf tab local HTML lagao jab local NEWER ho cloud se
       var _fnLocal = localEditorData['fn_'+t.id];
-      if(false && _fnLocal && _fnLocal.html && (_fnLocal.ts || 0) > (t.finalNotesAt || 0)) t.finalNotesHTML = _fnLocal.html;
+      if(_fnLocal && _fnLocal.html && (_fnLocal.ts || 0) > (t.finalNotesAt || 0)) t.finalNotesHTML = _fnLocal.html;
       var _snLocal = localEditorData['sn_'+t.id];
-      if(false && _snLocal && _snLocal.html && (_snLocal.ts || 0) > (t.smartNotesAt || 0)) t.smartNotesHTML = _snLocal.html;
+      if(_snLocal && _snLocal.html && (_snLocal.ts || 0) > (t.smartNotesAt || 0)) t.smartNotesHTML = _snLocal.html;
       var _mnLocal = localEditorData['mn_'+t.id];
-      if(false && _mnLocal && _mnLocal.html && (_mnLocal.ts || 0) > (t.masterNotesAt || 0)) t.masterNotesHTML = _mnLocal.html;
+      if(_mnLocal && _mnLocal.html && (_mnLocal.ts || 0) > (t.masterNotesAt || 0)) t.masterNotesHTML = _mnLocal.html;
       t.notes.forEach(function(n, nIdx){
         if(!n.id) n.id = 'n_' + (t.id||'t') + '_' + nIdx + '_' + Date.now().toString(36);
         if(!n.editorHighlights) n.editorHighlights=[];
         if(n.editorRichHTML===undefined) n.editorRichHTML=null;
         delete n.canvasPNG;
         var ld = localEditorData['n_'+n.id] || localEditorData['n_idx_'+t.id+'_'+nIdx];
-        // Cloud is authoritative here; use local backup only when the
-        // in-memory note is empty (handled later by openNotesEditor).
-        if(false && ld && ld.richHTML && (ld.ts || 0) > (n.editorSavedAt || 0)){
+        // ✅ FIX: sirf tab local richHTML lagao jab local timestamp zyada ho (newer)
+        if(ld && ld.richHTML && (ld.ts || 0) > (n.editorSavedAt || 0)){
           n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[];
           n.editorSavedAt=ld.ts||n.editorSavedAt;
         }
         // Extra: dedicated localStorage backup
         try {
           var bak = (typeof _loadNoteLocalBackup === 'function') ? _loadNoteLocalBackup(t.id, n, nIdx) : null;
-          if(false && bak && (bak.editorRichHTML||bak.richHTML) && (bak.editorSavedAt||0) > (n.editorSavedAt||0)){
+          if(bak && (bak.editorRichHTML||bak.richHTML) && (bak.editorSavedAt||0) > (n.editorSavedAt||0)){
             n.editorRichHTML = bak.editorRichHTML || bak.richHTML;
             n.richHTML = n.editorRichHTML;
             n.editorSavedAt = bak.editorSavedAt;
@@ -42943,6 +42926,28 @@ async function loadFromFirebase(){
     renderExamsList(); updateQuizSelects(); renderStats(); updateModePill();
     updateHistBadge(); updateSavedBadge(); updateVaultBadge(); if(typeof updateGameVaultBadge==="function") updateGameVaultBadge(); checkPausedQuiz();
     console.info('[📥 loadFromFirebase] ✅ SUCCESS — '+cloudTopicCount+' topics loaded in '+(Date.now()-_loadStart)+'ms');
+
+    // Refresh IDB note backups from cloud so stale local IDB cannot overwrite fresher cloud on open
+    try {
+      (S.subjects||[]).forEach(function(sub){
+        function walkSec(sec){
+          (sec.topics||[]).forEach(function(t){
+            (t.notes||[]).forEach(function(n, nIdx){
+              if(n && (n.editorRichHTML || n.richHTML) && typeof _saveNoteLocalBackup === 'function'){
+                try{ _saveNoteLocalBackup(t.id, n, nIdx); }catch(e){}
+              }
+            });
+          });
+          (sec.subSections||[]).forEach(walkSec);
+        }
+        (sub.sections||[]).forEach(walkSec);
+        (sub.subSubjects||[]).forEach(function walkSS(ss){
+          (ss.sections||[]).forEach(walkSec);
+          (ss.subSubjects||[]).forEach(walkSS);
+        });
+      });
+      console.info('[📥 loadFromFirebase] IDB note backups refreshed from cloud');
+    } catch(eIdb){ console.warn('[📥 loadFromFirebase] IDB refresh', eIdb); }
     showToast('Cloud se data load ho gaya! ☁️ (' + cloudTopicCount + ' topics)', 'success');
     setSyncStatus('synced');
 
@@ -43385,10 +43390,8 @@ function _applyTopicUpdate(tid, newTopicData){
             if(idMatch2 || idxMatch2){
               var lat = on.editorSavedAt || 0;
               var rat = rn.editorSavedAt || 0;
-               // The topic listener already delivered the cloud version. Do
-               // not merge an old local note back into it based on timestamps;
-               // device clocks can be ahead and make stale HTML look newer.
-               if(false && lat > rat && (on.editorRichHTML || on.richHTML)){
+              // Prefer cloud when remote is newer OR equal with content (other device edit)
+              if(lat > rat && (on.editorRichHTML || on.richHTML)){
                 rn.editorRichHTML = on.editorRichHTML || on.richHTML;
                 rn.richHTML = rn.editorRichHTML;
                 rn.editorSavedAt = lat;
@@ -43669,15 +43672,13 @@ async function _silentReloadFromFirebase(){
       if(!t.highlights) t.highlights=[];
       if(!t.savedFacts) t.savedFacts=[];
       if(!t.notes) t.notes=[];
-        // Cloud is authoritative on background reload too. Preserve the
-        // active editor separately above, but never restore an old closed-note
-        // backup merely because its timestamp is larger.
+      // ✅ FIX: sirf tab local HTML lagao jab local NEWER ho
       var _fnL = localEditorData['fn_'+t.id];
-        if(false && _fnL && _fnL.html && (_fnL.ts || 0) > (t.finalNotesAt || 0)) t.finalNotesHTML = _fnL.html;
+      if(_fnL && _fnL.html && (_fnL.ts || 0) > (t.finalNotesAt || 0)) t.finalNotesHTML = _fnL.html;
       var _snL = localEditorData['sn_'+t.id];
-        if(false && _snL && _snL.html && (_snL.ts || 0) > (t.smartNotesAt || 0)) t.smartNotesHTML = _snL.html;
+      if(_snL && _snL.html && (_snL.ts || 0) > (t.smartNotesAt || 0)) t.smartNotesHTML = _snL.html;
       var _mnL = localEditorData['mn_'+t.id];
-        if(false && _mnL && _mnL.html && (_mnL.ts || 0) > (t.masterNotesAt || 0)) t.masterNotesHTML = _mnL.html;
+      if(_mnL && _mnL.html && (_mnL.ts || 0) > (t.masterNotesAt || 0)) t.masterNotesHTML = _mnL.html;
       // ── FIX: studyCanvas restore karo (live in-memory version ko priority do) ──
       var _liveSc = localEditorData['sc_live_'+t.id];
       var _savedSc = localEditorData['sc_'+t.id];
@@ -43696,8 +43697,8 @@ async function _silentReloadFromFirebase(){
       t.notes.forEach(function(n){
         if(!n.editorHighlights) n.editorHighlights=[];
         var ld = localEditorData['n_'+n.id];
-        // Do not let a stale local backup replace the cloud copy.
-        if(false && ld && ld.richHTML && (ld.ts || 0) > (n.editorSavedAt || 0)){
+        // ✅ FIX: sirf tab local richHTML lagao jab local NEWER ho cloud se
+        if(ld && ld.richHTML && (ld.ts || 0) > (n.editorSavedAt || 0)){
           n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[];
         }
       });
@@ -43757,29 +43758,35 @@ var _metaSyncTimer = null;
 
 function save(){
   // Step 1: Instant local save
-  try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
+  var _lsOk = false;
+  try { localStorage.setItem('epp5', JSON.stringify(S)); _lsOk = true; } catch(e) {
+    console.error('[save] localStorage FAIL', e && e.message);
+  }
 
   // 🔒 Non-admin users: sirf local save, Firestore sync nahi
-  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return; }
+  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return _lsOk; }
 
-  if(!_currentUser || !_db) return;
+  if(!_currentUser || !_db) return _lsOk;
   setSyncStatus('syncing');
 
-  // Step 2: Find which topics changed
+  // Step 2: Find which topics changed — RECURSIVE (nested subSections + subSubjects)
   var changedTopics = [];
-  (S.subjects||[]).forEach(function(sub){
-    sub.sections.forEach(function(sec){
-      sec.topics.forEach(function(t){
-        var td = _cleanTopic(t);
-        var json = JSON.stringify(td);
-        if(_lastSavedSnapshot[String(t.id)] !== json){
-          _lastSavedSnapshot[String(t.id)] = json;
-          _topicLocalChangeAt[String(t.id)] = Date.now();
-          changedTopics.push({ tid: t.id, subjId: sub.id, secId: sec.id });
-        }
-      });
+  function _walkSecForSave(sec, sub){
+    (sec.topics||[]).forEach(function(t){
+      var td = _cleanTopic(t);
+      var json = JSON.stringify(td);
+      if(_lastSavedSnapshot[String(t.id)] !== json){
+        _lastSavedSnapshot[String(t.id)] = json;
+        changedTopics.push({ tid: t.id, subjId: sub.id, secId: sec.id });
+      }
     });
-  });
+    (sec.subSections||[]).forEach(function(ss){ _walkSecForSave(ss, sub); });
+  }
+  function _walkSubForSave(sub){
+    (sub.sections||[]).forEach(function(sec){ _walkSecForSave(sec, sub); });
+    (sub.subSubjects||[]).forEach(function(ss){ _walkSubForSave(ss); });
+  }
+  (S.subjects||[]).forEach(function(sub){ _walkSubForSave(sub); });
 
   // Step 3: Per-topic debounced granular save (300ms)
   changedTopics.forEach(function(info){
@@ -43802,6 +43809,7 @@ function save(){
     _metaSyncTimer = null;
     saveMetaToFirebase();
   }, 500);
+  return _lsOk;
 }
 
 // ── Track active editing topic (for smart merge during live sync) ─��
