@@ -11089,7 +11089,7 @@ let _hideAnswers=false;
 let _vaultCurrentFilter='all';
 
 let _editorClosing = false; // Notes editor close prevention flag
-function save(){try{localStorage.setItem('epp5',JSON.stringify(S));return true;}catch(e){console.error('[save] localStorage FAIL',e&&e.message);try{showToast('⚠️ Local storage full — note IDB backup use hoga','warning');}catch(e2){}return false;}}
+function save(){/* overridden later by full save(); early stub uses slim writer if available */try{if(typeof _writeEpp5ToLocalStorage==='function')return!!_writeEpp5ToLocalStorage();localStorage.setItem('epp5',JSON.stringify(S));return true;}catch(e){console.error('[save] localStorage FAIL',e&&e.message);try{showToast('⚠️ Local storage full — note IDB backup use hoga','warning');}catch(e2){}return false;}}
 function load(){
   try{
     const d=JSON.parse(localStorage.getItem('epp5')||'{}');
@@ -29987,6 +29987,23 @@ async function saveEditedNote() {
   if(dot2) dot2.style.display = 'none';
 
   neUpdateStatusBar('✅ Save Ho Gaya! -- Ab aur edit kar sakte hain');
+
+  // Keep editor DOM in sync with what we just saved (prevents "purani file" look without refresh)
+  try {
+    var _areaKeep = document.getElementById('noteEditableArea');
+    var _tKeep = getTop(_editorState.sid, _editorState.secid, _editorState.tid);
+    var _nKeep = _tKeep && _tKeep.notes && (_editorState.noteIdx != null ? _tKeep.notes[_editorState.noteIdx] : null);
+    if(_areaKeep && _nKeep && (_nKeep.editorRichHTML || _nKeep.richHTML)){
+      var _savedHtml = _nKeep.editorRichHTML || _nKeep.richHTML;
+      // Only rewrite if DOM somehow drifted shorter/different length by a lot
+      var _domLen = (_areaKeep.innerHTML || '').length;
+      var _svLen = (_savedHtml || '').length;
+      if(_svLen > 0 && Math.abs(_domLen - _svLen) > 5){
+        console.info('[💾 saveEditedNote] re-sync editor DOM from saved note domLen='+_domLen+' savedLen='+_svLen);
+        _areaKeep.innerHTML = _savedHtml;
+      }
+    }
+  } catch(eKeep){}
   
   // Library tree update karo (agar topic view khula ho to)
   try { renderLibraryTree(); } catch(e) {}
@@ -43775,33 +43792,102 @@ async function _silentReloadFromFirebase(){
 var _lastSavedSnapshot = {}; // {tid: JSON string} — change detection ke liye
 var _metaSyncTimer = null;
 
-function save(){
-  // Step 1: Instant local save (quota-safe)
-  var _lsOk = false;
-  function _tryWriteEpp5(){
-    try { localStorage.setItem('epp5', JSON.stringify(S)); return true; }
-    catch(e){ return e; }
+
+// ── Slim localStorage payload: heavy HTML lives in IDB + Firebase only ──
+// epp5 full JSON (with all editorRichHTML) easily exceeds 5MB quota.
+function _slimSForLocalStorage(src){
+  var s;
+  try { s = JSON.parse(JSON.stringify(src)); } catch(e){ return src; }
+  var HEAVY = ['editorRichHTML','richHTML','finalNotesHTML','smartNotesHTML',
+    'masterNotesHTML','perfectNotesHTML','factsHTML','canvasPNG',
+    'finalNotesCanvasPNG','smartNotesCanvasPNG','masterNotesCanvasPNG',
+    'finalNotesDrawStrokes','smartNotesDrawStrokes','masterNotesDrawStrokes',
+    'finalNotesCanvasObjs','smartNotesCanvasObjs','masterNotesCanvasObjs',
+    'drawStrokes','canvasObjs','qmapData','studyCanvas'];
+  function stripNote(n){
+    if(!n || typeof n !== 'object') return;
+    HEAVY.forEach(function(k){ if(n[k] !== undefined) delete n[k]; });
+    // keep short plain content only (max ~2KB) for list previews
+    if(typeof n.content === 'string' && n.content.length > 2000)
+      n.content = n.content.slice(0, 2000);
   }
-  var _w = _tryWriteEpp5();
-  if(_w === true){ _lsOk = true; }
-  else {
-    console.error('[save] localStorage FAIL', _w && _w.message);
-    try {
-      if(typeof _pruneNoteBakLocalStorage === 'function') _pruneNoteBakLocalStorage();
-      var _extra = [];
-      for(var _i=0; _i<localStorage.length; _i++){
-        var _k = localStorage.key(_i);
-        if(!_k) continue;
-        if(_k.indexOf('epp_note_bak_')===0 || _k.indexOf('tqSess_')===0 || _k.indexOf('epp_img_')===0)
-          _extra.push(_k);
+  function stripTopic(t){
+    if(!t || typeof t !== 'object') return;
+    HEAVY.forEach(function(k){ if(t[k] !== undefined) delete t[k]; });
+    if(typeof t.finalNotes === 'string' && t.finalNotes.length > 2000)
+      t.finalNotes = t.finalNotes.slice(0, 2000);
+    (t.notes||[]).forEach(stripNote);
+  }
+  function walkSec(sec){
+    (sec.topics||[]).forEach(stripTopic);
+    (sec.subSections||[]).forEach(walkSec);
+    if(sec.factsHTML) delete sec.factsHTML;
+  }
+  function walkSub(sub){
+    (sub.sections||[]).forEach(walkSec);
+    (sub.subSubjects||[]).forEach(walkSub);
+    if(sub.factsHTML) delete sub.factsHTML;
+  }
+  (s.subjects||[]).forEach(walkSub);
+  // Extra facts / static GK / similar — strip large html
+  ['extraFactsTopics','similarCurrentTopics','staticGkTopics'].forEach(function(mapKey){
+    var map = s[mapKey];
+    if(!map || typeof map !== 'object') return;
+    Object.keys(map).forEach(function(id){
+      var t = map[id];
+      if(t && typeof t.html === 'string' && t.html.length > 500)
+        t.html = ''; // full html is in Firebase / IDB
+    });
+  });
+  return s;
+}
+function _writeEpp5ToLocalStorage(){
+  // Try slim payload first; fall back to full only if slim fails oddly
+  try {
+    if(typeof _pruneNoteBakLocalStorage === 'function') _pruneNoteBakLocalStorage();
+  } catch(e0){}
+  var payload;
+  try { payload = JSON.stringify(_slimSForLocalStorage(S)); }
+  catch(e){ payload = null; }
+  if(payload){
+    try { localStorage.setItem('epp5', payload); return true; }
+    catch(e1){
+      // still too big — aggressive prune of other keys then retry
+      try {
+        var drop = [];
+        for(var i=0;i<localStorage.length;i++){
+          var k = localStorage.key(i);
+          if(!k || k === 'epp5') continue;
+          if(k.indexOf('epp_note_bak_')===0 || k.indexOf('tqSess_')===0 ||
+             k.indexOf('epp_img_')===0 || k.indexOf('firebase:')===0 ||
+             k.indexOf('firebaseLocalStorageDb')>=0)
+            drop.push(k);
+        }
+        drop.forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
+        localStorage.setItem('epp5', payload);
+        console.info('[save] epp5 slim OK after dropping '+drop.length+' keys, size≈'+Math.round(payload.length/1024)+'KB');
+        return true;
+      } catch(e2){
+        console.error('[save] epp5 slim STILL FAIL', e2 && e2.message, 'size≈'+Math.round((payload||'').length/1024)+'KB');
+        return false;
       }
-      _extra.forEach(function(k){ try{ localStorage.removeItem(k); }catch(e2){} });
-      if(_extra.length) console.info('[save] freed '+_extra.length+' bulky keys, retrying epp5…');
-      _w = _tryWriteEpp5();
-      if(_w === true){ _lsOk = true; console.info('[save] epp5 OK after prune'); }
-      else console.error('[save] localStorage STILL FULL after prune — Firebase sync will still run', _w && _w.message);
-    } catch(e3){ console.error('[save] prune/retry error', e3); }
+    }
   }
+  // last resort: try full S (legacy)
+  try { localStorage.setItem('epp5', JSON.stringify(S)); return true; }
+  catch(e3){ console.error('[save] epp5 full FAIL', e3 && e3.message); return false; }
+}
+
+function save(){
+  // Step 1: Instant local save — SLIM payload (no heavy HTML → fits quota)
+  var _lsOk = false;
+  try {
+    _lsOk = (typeof _writeEpp5ToLocalStorage === 'function')
+      ? !!_writeEpp5ToLocalStorage()
+      : (function(){ try{ localStorage.setItem('epp5', JSON.stringify(S)); return true; }catch(e){ return false; } })();
+    if(_lsOk) console.info('[save] epp5 localStorage OK (slim)');
+    else console.error('[save] epp5 localStorage FAIL — Firebase sync will still run');
+  } catch(eS){ console.error('[save] epp5 error', eS); }
 
   // 🔒 Non-admin users: sirf local save, Firestore sync nahi
   if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return _lsOk; }
