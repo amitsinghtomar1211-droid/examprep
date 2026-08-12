@@ -11089,7 +11089,7 @@ let _hideAnswers=false;
 let _vaultCurrentFilter='all';
 
 let _editorClosing = false; // Notes editor close prevention flag
-function save(){/* overridden later by full save(); early stub uses slim writer if available */try{if(typeof _writeEpp5ToLocalStorage==='function')return!!_writeEpp5ToLocalStorage();localStorage.setItem('epp5',JSON.stringify(S));return true;}catch(e){console.error('[save] localStorage FAIL',e&&e.message);try{showToast('⚠️ Local storage full — note IDB backup use hoga','warning');}catch(e2){}return false;}}
+function save(){try{localStorage.setItem('epp5',JSON.stringify(S));return true;}catch(e){console.error('[save] localStorage FAIL',e&&e.message);try{showToast('⚠️ Local storage full — note IDB backup use hoga','warning');}catch(e2){}return false;}}
 function load(){
   try{
     const d=JSON.parse(localStorage.getItem('epp5')||'{}');
@@ -24041,17 +24041,21 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   var _memAt = n.editorSavedAt || 0;
   var _bakRich = _bak ? (_bak.editorRichHTML || _bak.richHTML || '') : '';
   var _bakAt = _bak ? (_bak.editorSavedAt || 0) : 0;
-  if(_bakRich && (_bakAt > _memAt || (!_memRich && _bakRich.length > 30))){
-    console.info('[openNotesEditor] restoring from localStorage backup bakAt='+_bakAt+' memAt='+_memAt+' len='+_bakRich.length+' memLen='+_memRich.length);
+  if(_bakRich && _bakAt > _memAt){
+    console.info('[openNotesEditor] restoring from localStorage backup (newer) bakAt='+_bakAt+' memAt='+_memAt+' len='+_bakRich.length);
     n.editorRichHTML = _bakRich;
     n.richHTML = _bakRich;
-    n.editorSavedAt = Math.max(_bakAt, _memAt) || _bakAt;
+    n.editorSavedAt = _bakAt;
     if(_bak.editorHighlights) n.editorHighlights = _bak.editorHighlights;
     if(_bak.content) n.content = _bak.content;
   }
   // Use richHTML if available (contains highlight markup or original formatting)
   _editorState.richHTML = n.editorRichHTML || n.richHTML || null;
-  console.info('[openNotesEditor] load richLen='+((_editorState.richHTML||'').length)+' noteId='+(n.id||'')+' savedAt='+(n.editorSavedAt||0));
+  console.info('[openNotesEditor] load richLen='+((_editorState.richHTML||'').length)+' noteId='+(n.id||'')+' savedAt='+(n.editorSavedAt||0)+' plainLen='+((n.content||'').length)+' name='+(n.name||''));
+  try {
+    var _snip = ((_editorState.richHTML || n.content || '') + '').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0, 80);
+    console.info('[openNotesEditor] content snippet: '+_snip);
+  } catch(_sE){}
   // 🔗 Hub Reference: live HTML from Current Affairs / Static GK (no copy stored)
   var _hubResolvedHtml = null;
   var _hubMetaLabel = '';
@@ -24085,9 +24089,7 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   } else {
   neLoadContent(n.content, false);
   }
-  // Async IDB backup: ONLY apply when backup is STRICTLY newer than in-memory/cloud.
-  // Pehle bakAt >= memAt tha → equal timestamp pe bhi purana IDB cloud ko overwrite kar deta tha
-  // (dusri device pe stale content dikhne ka main reason).
+  // Async: IndexedDB backup may be newer than cloud/memory — apply when ready
   (function(_tid, _n, _idx){
     if(typeof _loadNoteBackupAsync !== 'function') return;
     _loadNoteBackupAsync(_tid, _n, _idx).then(function(bak){
@@ -24098,39 +24100,29 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
       var memAt = (_n && _n.editorSavedAt) || 0;
       var area = document.getElementById('noteEditableArea');
       if(!area) return;
+      // Apply if backup is newer OR current area is empty/short while backup has content
       var curLen = (area.innerHTML || '').length;
-      var memRichLen = ((_n && (_n.editorRichHTML || _n.richHTML)) || '').length;
-      // Apply IDB when:
-      //  1) backup strictly newer, OR
-      //  2) memory/cloud richHTML EMPTY but IDB has real content (slim epp5 / bad cloud), OR
-      //  3) equal time but IDB is substantially longer than what's on screen
-      var shouldApply = (bakAt > memAt)
-        || (memRichLen < 30 && bakRich.length > 30)
-        || (bakAt >= memAt && bakRich.length > curLen + 80);
-      if(!shouldApply){
-        console.info('[openNotesEditor] skip IDB backup bakAt='+bakAt+' memAt='+memAt+' bakLen='+bakRich.length+' memRichLen='+memRichLen+' curLen='+curLen);
-        if(memAt > bakAt && memRichLen > 30 && typeof _saveNoteLocalBackup === 'function'){
-          try{ _saveNoteLocalBackup(_tid, _n, _idx); }catch(eR){}
+      if(bakAt >= memAt || (bakRich.length > curLen + 50)){
+        console.info('[openNotesEditor] applying IDB/local backup len='+bakRich.length+' bakAt='+bakAt+' memAt='+memAt+' curLen='+curLen);
+        _n.editorRichHTML = bakRich;
+        _n.richHTML = bakRich;
+        _n.editorSavedAt = bakAt;
+        if(bak.editorHighlights) _n.editorHighlights = bak.editorHighlights;
+        if(bak.content) _n.content = bak.content;
+        _editorState.richHTML = bakRich;
+        if(typeof _setHTML === 'function'){
+          // neLoadContent internal not exported — set directly
         }
-        return;
-      }
-      console.info('[openNotesEditor] will apply IDB bakAt='+bakAt+' memAt='+memAt+' bakLen='+bakRich.length+' memRichLen='+memRichLen+' curLen='+curLen);
-      console.info('[openNotesEditor] applying IDB/local backup (newer) len='+bakRich.length+' bakAt='+bakAt+' memAt='+memAt+' curLen='+curLen);
-      _n.editorRichHTML = bakRich;
-      _n.richHTML = bakRich;
-      _n.editorSavedAt = bakAt;
-      if(bak.editorHighlights) _n.editorHighlights = bak.editorHighlights;
-      if(bak.content) _n.content = bak.content;
-      _editorState.richHTML = bakRich;
-      if(bakRich.indexOf('__imgRef__') >= 0 && typeof _restoreImagesFromIDB === 'function'){
-        _restoreImagesFromIDB(bakRich).then(function(restored){
-          area.innerHTML = restored;
-          if(typeof _doProgressiveImgRestore === 'function') setTimeout(function(){ _doProgressiveImgRestore(area); }, 30);
+        if(bakRich.indexOf('__imgRef__') >= 0 && typeof _restoreImagesFromIDB === 'function'){
+          _restoreImagesFromIDB(bakRich).then(function(restored){
+            area.innerHTML = restored;
+            if(typeof _doProgressiveImgRestore === 'function') setTimeout(function(){ _doProgressiveImgRestore(area); }, 30);
+            if(typeof updateNEWordCount === 'function') updateNEWordCount();
+          });
+        } else {
+          area.innerHTML = bakRich;
           if(typeof updateNEWordCount === 'function') updateNEWordCount();
-        });
-      } else {
-        area.innerHTML = bakRich;
-        if(typeof updateNEWordCount === 'function') updateNEWordCount();
+        }
       }
     }).catch(function(e){ console.warn('[openNotesEditor] backup load', e); });
   })(tid, n, noteIdx);
@@ -24381,19 +24373,6 @@ function _openNotesContentDB(){
     } catch(e){ reject(e); }
   });
 }
-function _pruneNoteBakLocalStorage(){
-  // epp_note_bak_* keys localStorage quota khaa jaate hain — bulk purge
-  try {
-    var keys = [];
-    for(var i=0; i<localStorage.length; i++){
-      var k = localStorage.key(i);
-      if(k && k.indexOf('epp_note_bak_') === 0) keys.push(k);
-    }
-    keys.forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
-    if(keys.length) console.info('[note-bak] pruned '+keys.length+' epp_note_bak_* keys from localStorage');
-    return keys.length;
-  } catch(e){ return 0; }
-}
 function _saveNoteLocalBackup(tid, n, noteIdx){
   if(!n) return Promise.resolve(false);
   var payload = {
@@ -24408,14 +24387,11 @@ function _saveNoteLocalBackup(tid, n, noteIdx){
     editorSavedAt: n.editorSavedAt || Date.now(),
     name: n.name || ''
   };
-  // CRITICAL: note body KO localStorage mein MAT likho — quota exceed karta hai.
-  // Sirf IndexedDB. Pehli baar purane epp_note_bak_* purge.
+  // localStorage (small notes)
   try {
-    if(!_saveNoteLocalBackup._prunedOnce){
-      _saveNoteLocalBackup._prunedOnce = true;
-      _pruneNoteBakLocalStorage();
-    }
-  } catch(eP){}
+    localStorage.setItem(_noteLocalKey(tid, n.id, noteIdx), JSON.stringify(payload));
+  } catch(e){ console.warn('[note-bak] localStorage fail', e && e.message); }
+  // IndexedDB (large notes — primary)
   return _openNotesContentDB().then(function(db){
     return new Promise(function(resolve){
       try {
@@ -24613,6 +24589,10 @@ function _doSaveNoteData() {
     // Bulletproof local backup (survives cloud overwrite / missing note.id merge bugs)
     _saveNoteLocalBackup(_editorState.tid, n, _editorState.noteIdx);
     console.info('[💾 _doSaveNoteData] note saved idx='+_editorState.noteIdx+' id='+n.id+' richLen='+(n.editorRichHTML||'').length+' plainLen='+(plainText||'').length+' savedAt='+n.editorSavedAt);
+    try {
+      var _ss = ((n.editorRichHTML||plainText||'')+'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(-120);
+      console.info('[💾 _doSaveNoteData] tail snippet: '+_ss);
+    } catch(_se){}
   }
   
   return true;
@@ -29902,62 +29882,31 @@ async function saveEditedNote() {
       }
       console.info('[💾 saveEditedNote] ⚡ Granular topic save — tid:'+_gTid);
       try{
-        var _t0 = Date.now();
         var _sr = await saveTopicToFirebase(_gTid, _gSid, _gSecid);
-        var _ms = Date.now() - _t0;
         if(_sr && _sr.ok === false){
           setSyncStatus('error');
           _fbResult = { ok: false, error: _sr.error || 'topic save failed', code: 'TOPIC_SAVE_FAIL' };
           console.error('[💾 saveEditedNote] ❌ Topic Firebase update FAILED — '+(_sr.error||''));
         } else {
           setSyncStatus('synced');
-          _fbResult = { ok: true, ms: _ms, path: 'topic', writeId: _sr && _sr.writeId };
-          console.info('[💾 saveEditedNote] ✅ Topic Firebase update SUCCESS — tid:'+_gTid+' ms:'+_ms+' writeId:'+(_sr && _sr.writeId));
-          try {
-            var _snapT = getTop(_gSid, _gSecid, _gTid);
-            if(_snapT && typeof _cleanTopic === 'function'){
-              _lastSavedSnapshot[String(_gTid)] = JSON.stringify(_cleanTopic(_snapT));
-            }
-          } catch(eSnap){}
-          // READ-BACK verify cloud has the note we just saved
-          try {
-            var _vDoc = await _db.collection('users').doc(_effectiveUID).collection('topics').doc(String(_gTid)).get();
-            if(_vDoc && _vDoc.exists){
-              var _vd = _vDoc.data();
-              var _vNotes = (_vd && _vd.topic && _vd.topic.notes) || [];
-              var _vnSave = getTop(_gSid, _gSecid, _gTid);
-              var _localN = _vnSave && _vnSave.notes && _vnSave.notes[_editorState.noteIdx];
-              var _match = null;
-              if(_localN){
-                for(var _vi=0; _vi<_vNotes.length; _vi++){
-                  if(_localN.id && _vNotes[_vi].id && String(_vNotes[_vi].id)===String(_localN.id)){ _match=_vNotes[_vi]; break; }
-                  if(!_localN.id && _vi===Number(_editorState.noteIdx)){ _match=_vNotes[_vi]; break; }
-                }
-              }
-              if(_match){
-                var _cloudLen = ((_match.editorRichHTML||_match.richHTML)||'').length;
-                var _localLen = ((_localN.editorRichHTML||_localN.richHTML)||'').length;
-                var _cloudAt = _match.editorSavedAt || 0;
-                var _localAt = _localN.editorSavedAt || 0;
-                console.info('[💾 saveEditedNote] READBACK cloudLen='+_cloudLen+' localLen='+_localLen+' cloudAt='+_cloudAt+' localAt='+_localAt);
-                if(_cloudAt + 50 < _localAt || (_localLen > 100 && _cloudLen < 10)){
-                  console.error('[💾 saveEditedNote] ❌ READBACK MISMATCH — re-saving topic...');
-                  await saveTopicToFirebase(_gTid, _gSid, _gSecid);
-                } else {
-                  console.info('[💾 saveEditedNote] ✅ READBACK OK — cloud has latest note');
-                }
-              } else {
-                console.warn('[💾 saveEditedNote] READBACK: note id not found in cloud notes[]');
-              }
-            }
-          } catch(eRb){ console.warn('[💾 saveEditedNote] readback error', eRb && eRb.message); }
+          _fbResult = { ok: true, ms: 0, source: 'topic' };
+          console.info('[💾 saveEditedNote] ✅ Topic Firebase update SUCCESS — tid:'+_gTid);
         }
         try {
           var _vt = getTop(_gSid, _gSecid, _gTid);
           var _vn = _vt && _vt.notes && _vt.notes[_editorState.noteIdx];
           if(_vn) {
+            // Force IDB backup again after FB path (images may have been rewritten)
             await _saveNoteLocalBackup(_gTid, _vn, _editorState.noteIdx);
             console.info('[💾 saveEditedNote] verify editorRichHTML len=' + ((_vn.editorRichHTML||'').length) + ' editorSavedAt=' + (_vn.editorSavedAt||0));
+
+            // Refresh topic view list so plain-text preview matches saved content
+            try {
+              var _tv = document.getElementById('topicViewModal');
+              if(_tv && _tv.classList.contains('show') && typeof viewTopic === 'function'){
+                viewTopic(_gSid, _gSecid, _gTid);
+              }
+            } catch(_tvE){}
           }
         } catch(ve) {}
       }catch(e){
@@ -29993,23 +29942,6 @@ async function saveEditedNote() {
   if(dot2) dot2.style.display = 'none';
 
   neUpdateStatusBar('✅ Save Ho Gaya! -- Ab aur edit kar sakte hain');
-
-  // Keep editor DOM in sync with what we just saved (prevents "purani file" look without refresh)
-  try {
-    var _areaKeep = document.getElementById('noteEditableArea');
-    var _tKeep = getTop(_editorState.sid, _editorState.secid, _editorState.tid);
-    var _nKeep = _tKeep && _tKeep.notes && (_editorState.noteIdx != null ? _tKeep.notes[_editorState.noteIdx] : null);
-    if(_areaKeep && _nKeep && (_nKeep.editorRichHTML || _nKeep.richHTML)){
-      var _savedHtml = _nKeep.editorRichHTML || _nKeep.richHTML;
-      // Only rewrite if DOM somehow drifted shorter/different length by a lot
-      var _domLen = (_areaKeep.innerHTML || '').length;
-      var _svLen = (_savedHtml || '').length;
-      if(_svLen > 0 && Math.abs(_domLen - _svLen) > 5){
-        console.info('[💾 saveEditedNote] re-sync editor DOM from saved note domLen='+_domLen+' savedLen='+_svLen);
-        _areaKeep.innerHTML = _savedHtml;
-      }
-    }
-  } catch(eKeep){}
   
   // Library tree update karo (agar topic view khula ho to)
   try { renderLibraryTree(); } catch(e) {}
@@ -42733,9 +42665,6 @@ async function loadFromFirebase(){
     const localTopicCount = (S.subjects||[]).reduce((a,s)=>a+_countSubjTopicsDeep(s), 0);
     console.info('[📥 loadFromFirebase] START — uid:'+uid+' | isAdmin:'+_isAdmin+' | localTopics:'+localTopicCount);
 
-    // Free localStorage before load — epp_note_bak_* quota killers
-    try{ if(typeof _pruneNoteBakLocalStorage==='function') _pruneNoteBakLocalStorage(); }catch(_pe){}
-
     // Flashcards are stored outside the notes/topic collections. Restore them
     // independently so a refresh does not leave the in-memory deck empty.
     await _loadAllFlashcardsFromFirebase();
@@ -42968,67 +42897,6 @@ async function loadFromFirebase(){
     renderExamsList(); updateQuizSelects(); renderStats(); updateModePill();
     updateHistBadge(); updateSavedBadge(); updateVaultBadge(); if(typeof updateGameVaultBadge==="function") updateGameVaultBadge(); checkPausedQuiz();
     console.info('[📥 loadFromFirebase] ✅ SUCCESS — '+cloudTopicCount+' topics loaded in '+(Date.now()-_loadStart)+'ms');
-
-    // Refresh IDB note backups from cloud so stale local IDB cannot overwrite fresher cloud on open
-    try {
-      (S.subjects||[]).forEach(function(sub){
-        function walkSec(sec){
-          (sec.topics||[]).forEach(function(t){
-            (t.notes||[]).forEach(function(n, nIdx){
-              if(n && (n.editorRichHTML || n.richHTML) && typeof _saveNoteLocalBackup === 'function'){
-                try{ _saveNoteLocalBackup(t.id, n, nIdx); }catch(e){}
-              }
-            });
-          });
-          (sec.subSections||[]).forEach(walkSec);
-        }
-        (sub.sections||[]).forEach(walkSec);
-        (sub.subSubjects||[]).forEach(function walkSS(ss){
-          (ss.sections||[]).forEach(walkSec);
-          (ss.subSubjects||[]).forEach(walkSS);
-        });
-      });
-      console.info('[📥 loadFromFirebase] IDB note backups refreshed from cloud');
-
-    // Restore empty notes from IDB into memory (slim epp5 / missing cloud HTML)
-    try {
-      var _restoreJobs = [];
-      (S.subjects||[]).forEach(function(sub){
-        function walkSec(sec){
-          (sec.topics||[]).forEach(function(t){
-            (t.notes||[]).forEach(function(n, nIdx){
-              var has = (n.editorRichHTML || n.richHTML || '').length;
-              if(has > 30) return;
-              if(typeof _loadNoteBackupAsync !== 'function') return;
-              _restoreJobs.push(
-                _loadNoteBackupAsync(t.id, n, nIdx).then(function(bak){
-                  if(!bak) return;
-                  var br = bak.editorRichHTML || bak.richHTML || '';
-                  if(br.length > 30){
-                    n.editorRichHTML = br;
-                    n.richHTML = br;
-                    if((bak.editorSavedAt||0) > (n.editorSavedAt||0)) n.editorSavedAt = bak.editorSavedAt;
-                    if(bak.editorHighlights) n.editorHighlights = bak.editorHighlights;
-                  }
-                }).catch(function(){})
-              );
-            });
-          });
-          (sec.subSections||[]).forEach(walkSec);
-        }
-        (sub.sections||[]).forEach(walkSec);
-        (sub.subSubjects||[]).forEach(function walkSS(ss){
-          (ss.sections||[]).forEach(walkSec);
-          (ss.subSubjects||[]).forEach(walkSS);
-        });
-      });
-      if(_restoreJobs.length){
-        Promise.all(_restoreJobs).then(function(){
-          console.info('[📥 loadFromFirebase] restored empty notes from IDB: '+_restoreJobs.length+' checked');
-        });
-      }
-    } catch(eRest){ console.warn('[📥 loadFromFirebase] IDB→mem restore', eRest); }
-    } catch(eIdb){ console.warn('[📥 loadFromFirebase] IDB refresh', eIdb); }
     showToast('Cloud se data load ho gaya! ☁️ (' + cloudTopicCount + ' topics)', 'success');
     setSyncStatus('synced');
 
@@ -43837,127 +43705,30 @@ async function _silentReloadFromFirebase(){
 var _lastSavedSnapshot = {}; // {tid: JSON string} — change detection ke liye
 var _metaSyncTimer = null;
 
-
-// ── Slim localStorage payload: heavy HTML lives in IDB + Firebase only ──
-// epp5 full JSON (with all editorRichHTML) easily exceeds 5MB quota.
-function _slimSForLocalStorage(src){
-  var s;
-  try { s = JSON.parse(JSON.stringify(src)); } catch(e){ return src; }
-  var HEAVY = ['editorRichHTML','richHTML','finalNotesHTML','smartNotesHTML',
-    'masterNotesHTML','perfectNotesHTML','factsHTML','canvasPNG',
-    'finalNotesCanvasPNG','smartNotesCanvasPNG','masterNotesCanvasPNG',
-    'finalNotesDrawStrokes','smartNotesDrawStrokes','masterNotesDrawStrokes',
-    'finalNotesCanvasObjs','smartNotesCanvasObjs','masterNotesCanvasObjs',
-    'drawStrokes','canvasObjs','qmapData','studyCanvas'];
-  function stripNote(n){
-    if(!n || typeof n !== 'object') return;
-    HEAVY.forEach(function(k){ if(n[k] !== undefined) delete n[k]; });
-    // keep short plain content only (max ~2KB) for list previews
-    if(typeof n.content === 'string' && n.content.length > 2000)
-      n.content = n.content.slice(0, 2000);
-  }
-  function stripTopic(t){
-    if(!t || typeof t !== 'object') return;
-    HEAVY.forEach(function(k){ if(t[k] !== undefined) delete t[k]; });
-    if(typeof t.finalNotes === 'string' && t.finalNotes.length > 2000)
-      t.finalNotes = t.finalNotes.slice(0, 2000);
-    (t.notes||[]).forEach(stripNote);
-  }
-  function walkSec(sec){
-    (sec.topics||[]).forEach(stripTopic);
-    (sec.subSections||[]).forEach(walkSec);
-    if(sec.factsHTML) delete sec.factsHTML;
-  }
-  function walkSub(sub){
-    (sub.sections||[]).forEach(walkSec);
-    (sub.subSubjects||[]).forEach(walkSub);
-    if(sub.factsHTML) delete sub.factsHTML;
-  }
-  (s.subjects||[]).forEach(walkSub);
-  // Extra facts / static GK / similar — strip large html
-  ['extraFactsTopics','similarCurrentTopics','staticGkTopics'].forEach(function(mapKey){
-    var map = s[mapKey];
-    if(!map || typeof map !== 'object') return;
-    Object.keys(map).forEach(function(id){
-      var t = map[id];
-      if(t && typeof t.html === 'string' && t.html.length > 500)
-        t.html = ''; // full html is in Firebase / IDB
-    });
-  });
-  return s;
-}
-function _writeEpp5ToLocalStorage(){
-  // Try slim payload first; fall back to full only if slim fails oddly
-  try {
-    if(typeof _pruneNoteBakLocalStorage === 'function') _pruneNoteBakLocalStorage();
-  } catch(e0){}
-  var payload;
-  try { payload = JSON.stringify(_slimSForLocalStorage(S)); }
-  catch(e){ payload = null; }
-  if(payload){
-    try { localStorage.setItem('epp5', payload); return true; }
-    catch(e1){
-      // still too big — aggressive prune of other keys then retry
-      try {
-        var drop = [];
-        for(var i=0;i<localStorage.length;i++){
-          var k = localStorage.key(i);
-          if(!k || k === 'epp5') continue;
-          if(k.indexOf('epp_note_bak_')===0 || k.indexOf('tqSess_')===0 ||
-             k.indexOf('epp_img_')===0 || k.indexOf('firebase:')===0 ||
-             k.indexOf('firebaseLocalStorageDb')>=0)
-            drop.push(k);
-        }
-        drop.forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
-        localStorage.setItem('epp5', payload);
-        console.info('[save] epp5 slim OK after dropping '+drop.length+' keys, size≈'+Math.round(payload.length/1024)+'KB');
-        return true;
-      } catch(e2){
-        console.error('[save] epp5 slim STILL FAIL', e2 && e2.message, 'size≈'+Math.round((payload||'').length/1024)+'KB');
-        return false;
-      }
-    }
-  }
-  // last resort: try full S (legacy)
-  try { localStorage.setItem('epp5', JSON.stringify(S)); return true; }
-  catch(e3){ console.error('[save] epp5 full FAIL', e3 && e3.message); return false; }
-}
-
 function save(){
-  // Step 1: Instant local save — SLIM payload (no heavy HTML → fits quota)
-  var _lsOk = false;
-  try {
-    _lsOk = (typeof _writeEpp5ToLocalStorage === 'function')
-      ? !!_writeEpp5ToLocalStorage()
-      : (function(){ try{ localStorage.setItem('epp5', JSON.stringify(S)); return true; }catch(e){ return false; } })();
-    if(_lsOk) console.info('[save] epp5 localStorage OK (slim)');
-    else console.error('[save] epp5 localStorage FAIL — Firebase sync will still run');
-  } catch(eS){ console.error('[save] epp5 error', eS); }
+  // Step 1: Instant local save
+  try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
 
   // 🔒 Non-admin users: sirf local save, Firestore sync nahi
-  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return _lsOk; }
+  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return; }
 
-  if(!_currentUser || !_db) return _lsOk;
+  if(!_currentUser || !_db) return;
   setSyncStatus('syncing');
 
-  // Step 2: Find which topics changed — RECURSIVE (nested subSections + subSubjects)
+  // Step 2: Find which topics changed
   var changedTopics = [];
-  function _walkSecForSave(sec, sub){
-    (sec.topics||[]).forEach(function(t){
-      var td = _cleanTopic(t);
-      var json = JSON.stringify(td);
-      if(_lastSavedSnapshot[String(t.id)] !== json){
-        _lastSavedSnapshot[String(t.id)] = json;
-        changedTopics.push({ tid: t.id, subjId: sub.id, secId: sec.id });
-      }
+  (S.subjects||[]).forEach(function(sub){
+    sub.sections.forEach(function(sec){
+      sec.topics.forEach(function(t){
+        var td = _cleanTopic(t);
+        var json = JSON.stringify(td);
+        if(_lastSavedSnapshot[String(t.id)] !== json){
+          _lastSavedSnapshot[String(t.id)] = json;
+          changedTopics.push({ tid: t.id, subjId: sub.id, secId: sec.id });
+        }
+      });
     });
-    (sec.subSections||[]).forEach(function(ss){ _walkSecForSave(ss, sub); });
-  }
-  function _walkSubForSave(sub){
-    (sub.sections||[]).forEach(function(sec){ _walkSecForSave(sec, sub); });
-    (sub.subSubjects||[]).forEach(function(ss){ _walkSubForSave(ss); });
-  }
-  (S.subjects||[]).forEach(function(sub){ _walkSubForSave(sub); });
+  });
 
   // Step 3: Per-topic debounced granular save (300ms)
   changedTopics.forEach(function(info){
@@ -43980,7 +43751,6 @@ function save(){
     _metaSyncTimer = null;
     saveMetaToFirebase();
   }, 500);
-  return _lsOk;
 }
 
 // ── Track active editing topic (for smart merge during live sync) ─��
