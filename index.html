@@ -24375,6 +24375,19 @@ function _openNotesContentDB(){
     } catch(e){ reject(e); }
   });
 }
+function _pruneNoteBakLocalStorage(){
+  // epp_note_bak_* keys localStorage quota khaa jaate hain — bulk purge
+  try {
+    var keys = [];
+    for(var i=0; i<localStorage.length; i++){
+      var k = localStorage.key(i);
+      if(k && k.indexOf('epp_note_bak_') === 0) keys.push(k);
+    }
+    keys.forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
+    if(keys.length) console.info('[note-bak] pruned '+keys.length+' epp_note_bak_* keys from localStorage');
+    return keys.length;
+  } catch(e){ return 0; }
+}
 function _saveNoteLocalBackup(tid, n, noteIdx){
   if(!n) return Promise.resolve(false);
   var payload = {
@@ -24389,11 +24402,14 @@ function _saveNoteLocalBackup(tid, n, noteIdx){
     editorSavedAt: n.editorSavedAt || Date.now(),
     name: n.name || ''
   };
-  // localStorage (small notes)
+  // CRITICAL: note body KO localStorage mein MAT likho — quota exceed karta hai.
+  // Sirf IndexedDB. Pehli baar purane epp_note_bak_* purge.
   try {
-    localStorage.setItem(_noteLocalKey(tid, n.id, noteIdx), JSON.stringify(payload));
-  } catch(e){ console.warn('[note-bak] localStorage fail', e && e.message); }
-  // IndexedDB (large notes — primary)
+    if(!_saveNoteLocalBackup._prunedOnce){
+      _saveNoteLocalBackup._prunedOnce = true;
+      _pruneNoteBakLocalStorage();
+    }
+  } catch(eP){}
   return _openNotesContentDB().then(function(db){
     return new Promise(function(resolve){
       try {
@@ -42694,6 +42710,9 @@ async function loadFromFirebase(){
     const localTopicCount = (S.subjects||[]).reduce((a,s)=>a+_countSubjTopicsDeep(s), 0);
     console.info('[📥 loadFromFirebase] START — uid:'+uid+' | isAdmin:'+_isAdmin+' | localTopics:'+localTopicCount);
 
+    // Free localStorage before load — epp_note_bak_* quota killers
+    try{ if(typeof _pruneNoteBakLocalStorage==='function') _pruneNoteBakLocalStorage(); }catch(_pe){}
+
     // Flashcards are stored outside the notes/topic collections. Restore them
     // independently so a refresh does not leave the in-memory deck empty.
     await _loadAllFlashcardsFromFirebase();
@@ -43757,10 +43776,31 @@ var _lastSavedSnapshot = {}; // {tid: JSON string} — change detection ke liye
 var _metaSyncTimer = null;
 
 function save(){
-  // Step 1: Instant local save
+  // Step 1: Instant local save (quota-safe)
   var _lsOk = false;
-  try { localStorage.setItem('epp5', JSON.stringify(S)); _lsOk = true; } catch(e) {
-    console.error('[save] localStorage FAIL', e && e.message);
+  function _tryWriteEpp5(){
+    try { localStorage.setItem('epp5', JSON.stringify(S)); return true; }
+    catch(e){ return e; }
+  }
+  var _w = _tryWriteEpp5();
+  if(_w === true){ _lsOk = true; }
+  else {
+    console.error('[save] localStorage FAIL', _w && _w.message);
+    try {
+      if(typeof _pruneNoteBakLocalStorage === 'function') _pruneNoteBakLocalStorage();
+      var _extra = [];
+      for(var _i=0; _i<localStorage.length; _i++){
+        var _k = localStorage.key(_i);
+        if(!_k) continue;
+        if(_k.indexOf('epp_note_bak_')===0 || _k.indexOf('tqSess_')===0 || _k.indexOf('epp_img_')===0)
+          _extra.push(_k);
+      }
+      _extra.forEach(function(k){ try{ localStorage.removeItem(k); }catch(e2){} });
+      if(_extra.length) console.info('[save] freed '+_extra.length+' bulky keys, retrying epp5…');
+      _w = _tryWriteEpp5();
+      if(_w === true){ _lsOk = true; console.info('[save] epp5 OK after prune'); }
+      else console.error('[save] localStorage STILL FULL after prune — Firebase sync will still run', _w && _w.message);
+    } catch(e3){ console.error('[save] prune/retry error', e3); }
   }
 
   // 🔒 Non-admin users: sirf local save, Firestore sync nahi
