@@ -24041,11 +24041,11 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   var _memAt = n.editorSavedAt || 0;
   var _bakRich = _bak ? (_bak.editorRichHTML || _bak.richHTML || '') : '';
   var _bakAt = _bak ? (_bak.editorSavedAt || 0) : 0;
-  if(_bakRich && _bakAt > _memAt){
-    console.info('[openNotesEditor] restoring from localStorage backup (newer) bakAt='+_bakAt+' memAt='+_memAt+' len='+_bakRich.length);
+  if(_bakRich && (_bakAt > _memAt || (!_memRich && _bakRich.length > 30))){
+    console.info('[openNotesEditor] restoring from localStorage backup bakAt='+_bakAt+' memAt='+_memAt+' len='+_bakRich.length+' memLen='+_memRich.length);
     n.editorRichHTML = _bakRich;
     n.richHTML = _bakRich;
-    n.editorSavedAt = _bakAt;
+    n.editorSavedAt = Math.max(_bakAt, _memAt) || _bakAt;
     if(_bak.editorHighlights) n.editorHighlights = _bak.editorHighlights;
     if(_bak.content) n.content = _bak.content;
   }
@@ -24099,16 +24099,22 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
       var area = document.getElementById('noteEditableArea');
       if(!area) return;
       var curLen = (area.innerHTML || '').length;
-      // STRICT: only if backup newer. Empty editor + no mem timestamp → allow restore.
-      var shouldApply = (bakAt > memAt) || (memAt === 0 && curLen < 20 && bakRich.length > 20);
+      var memRichLen = ((_n && (_n.editorRichHTML || _n.richHTML)) || '').length;
+      // Apply IDB when:
+      //  1) backup strictly newer, OR
+      //  2) memory/cloud richHTML EMPTY but IDB has real content (slim epp5 / bad cloud), OR
+      //  3) equal time but IDB is substantially longer than what's on screen
+      var shouldApply = (bakAt > memAt)
+        || (memRichLen < 30 && bakRich.length > 30)
+        || (bakAt >= memAt && bakRich.length > curLen + 80);
       if(!shouldApply){
-        console.info('[openNotesEditor] skip IDB backup (cloud/mem newer or equal) bakAt='+bakAt+' memAt='+memAt+' bakLen='+bakRich.length+' curLen='+curLen);
-        // Agar cloud newer hai to IDB ko cloud se refresh kar do taaki next open pe stale na aaye
-        if(memAt > bakAt && _n && (_n.editorRichHTML || _n.richHTML) && typeof _saveNoteLocalBackup === 'function'){
+        console.info('[openNotesEditor] skip IDB backup bakAt='+bakAt+' memAt='+memAt+' bakLen='+bakRich.length+' memRichLen='+memRichLen+' curLen='+curLen);
+        if(memAt > bakAt && memRichLen > 30 && typeof _saveNoteLocalBackup === 'function'){
           try{ _saveNoteLocalBackup(_tid, _n, _idx); }catch(eR){}
         }
         return;
       }
+      console.info('[openNotesEditor] will apply IDB bakAt='+bakAt+' memAt='+memAt+' bakLen='+bakRich.length+' memRichLen='+memRichLen+' curLen='+curLen);
       console.info('[openNotesEditor] applying IDB/local backup (newer) len='+bakRich.length+' bakAt='+bakAt+' memAt='+memAt+' curLen='+curLen);
       _n.editorRichHTML = bakRich;
       _n.richHTML = bakRich;
@@ -42983,6 +42989,45 @@ async function loadFromFirebase(){
         });
       });
       console.info('[📥 loadFromFirebase] IDB note backups refreshed from cloud');
+
+    // Restore empty notes from IDB into memory (slim epp5 / missing cloud HTML)
+    try {
+      var _restoreJobs = [];
+      (S.subjects||[]).forEach(function(sub){
+        function walkSec(sec){
+          (sec.topics||[]).forEach(function(t){
+            (t.notes||[]).forEach(function(n, nIdx){
+              var has = (n.editorRichHTML || n.richHTML || '').length;
+              if(has > 30) return;
+              if(typeof _loadNoteBackupAsync !== 'function') return;
+              _restoreJobs.push(
+                _loadNoteBackupAsync(t.id, n, nIdx).then(function(bak){
+                  if(!bak) return;
+                  var br = bak.editorRichHTML || bak.richHTML || '';
+                  if(br.length > 30){
+                    n.editorRichHTML = br;
+                    n.richHTML = br;
+                    if((bak.editorSavedAt||0) > (n.editorSavedAt||0)) n.editorSavedAt = bak.editorSavedAt;
+                    if(bak.editorHighlights) n.editorHighlights = bak.editorHighlights;
+                  }
+                }).catch(function(){})
+              );
+            });
+          });
+          (sec.subSections||[]).forEach(walkSec);
+        }
+        (sub.sections||[]).forEach(walkSec);
+        (sub.subSubjects||[]).forEach(function walkSS(ss){
+          (ss.sections||[]).forEach(walkSec);
+          (ss.subSubjects||[]).forEach(walkSS);
+        });
+      });
+      if(_restoreJobs.length){
+        Promise.all(_restoreJobs).then(function(){
+          console.info('[📥 loadFromFirebase] restored empty notes from IDB: '+_restoreJobs.length+' checked');
+        });
+      }
+    } catch(eRest){ console.warn('[📥 loadFromFirebase] IDB→mem restore', eRest); }
     } catch(eIdb){ console.warn('[📥 loadFromFirebase] IDB refresh', eIdb); }
     showToast('Cloud se data load ho gaya! ☁️ (' + cloudTopicCount + ' topics)', 'success');
     setSyncStatus('synced');
