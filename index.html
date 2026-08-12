@@ -8743,6 +8743,12 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
           <div class="hl-dot hl-dot-red"         id="hlDotRed2"    onclick="selectHlColor('red')"    style="width:14px;height:14px;"></div>
         </div>
 
+        <!-- Date / NEW sticker mode (highlight pe 2s long-press) -->
+        <button type="button" id="neDateModeBtn" onclick="hlToggleDateMode(event)" title="📅 Date mode OFF — ON karke highlight pe 2s long-press"
+          style="width:30px;height:30px;border-radius:7px;border:1.5px solid var(--border);
+          background:var(--surface);cursor:pointer;display:flex;align-items:center;
+          justify-content:center;flex-shrink:0;font-size:0.85rem;-webkit-tap-highlight-color:transparent;">📅</button>
+
         <!-- Highlight marker -->
         <button id="hlHeaderBtn" onclick="toggleHlMode()" title="Highlight"
           style="width:30px;height:30px;border-radius:7px;border:1.5px solid var(--border);
@@ -17844,7 +17850,7 @@ function hlToggleDateMode(e){
     return;
   }
   _hlDateModeOn = !_hlDateModeOn;
-  ['fcfpDateModeBtn','rdDateModeBtn'].forEach(function(id){
+  ['fcfpDateModeBtn','rdDateModeBtn','neDateModeBtn'].forEach(function(id){
     var b = document.getElementById(id);
     if(!b) return;
     b.classList.toggle('active', _hlDateModeOn);
@@ -17860,7 +17866,7 @@ function hlToggleDateMode(e){
 function hlForceDateModeOff(){
   if(!_hlDateModeOn) return;
   _hlDateModeOn = false;
-  ['fcfpDateModeBtn','rdDateModeBtn'].forEach(function(id){
+  ['fcfpDateModeBtn','rdDateModeBtn','neDateModeBtn'].forEach(function(id){
     var b = document.getElementById(id);
     if(!b) return;
     b.classList.remove('active');
@@ -17868,6 +17874,54 @@ function hlForceDateModeOff(){
     b.style.background = '';
     b.title = '📅 Date mode OFF';
   });
+}
+
+
+/** Text-offset helpers: unwrap ke baad bhi range recover karne ke liye */
+function hlGetTextOffset(root, node, offset){
+  if(!root || !node) return 0;
+  var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  var count = 0, n;
+  while((n = walker.nextNode())){
+    if(n === node) return count + (offset||0);
+    count += (n.nodeValue || '').length;
+  }
+  // node might be element — walk to first text
+  if(node.nodeType === 1){
+    var w2 = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null);
+    var first = w2.nextNode();
+    if(first) return hlGetTextOffset(root, first, 0);
+  }
+  return count;
+}
+function hlRangeFromOffsets(root, start, end){
+  if(!root) return null;
+  start = Math.max(0, start||0);
+  end = Math.max(start, end||0);
+  var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  var count = 0, n, range = document.createRange(), gotStart = false;
+  while((n = walker.nextNode())){
+    var len = (n.nodeValue || '').length;
+    if(!gotStart && count + len >= start){
+      range.setStart(n, Math.min(len, Math.max(0, start - count)));
+      gotStart = true;
+    }
+    if(gotStart && count + len >= end){
+      range.setEnd(n, Math.min(len, Math.max(0, end - count)));
+      return range;
+    }
+    count += len;
+  }
+  if(gotStart){
+    try{
+      var last = root.lastChild;
+      while(last && last.lastChild) last = last.lastChild;
+      if(last && last.nodeType === 3) range.setEnd(last, last.nodeValue.length);
+      else range.setEnd(root, root.childNodes.length);
+    }catch(e){}
+    return range;
+  }
+  return null;
 }
 
 function hlUnwrapMarksIntersectingRange(range, root){
@@ -17975,6 +18029,8 @@ function hlPersistHighlightHost(mark){
       fcfpPersistExtra();
     else if(mark.closest && mark.closest('#rdContent') && typeof markModified === 'function')
       markModified();
+    else if(mark.closest && mark.closest('#noteEditableArea') && typeof markModified === 'function')
+      markModified();
   }catch(e){}
 }
 
@@ -18048,6 +18104,7 @@ function hlBindLongPressOnRoot(root){
 function hlInitDateLongPress(){
   hlBindLongPressOnRoot(document.getElementById('fcFactsPageContent'));
   hlBindLongPressOnRoot(document.getElementById('rdContent'));
+  hlBindLongPressOnRoot(document.getElementById('noteEditableArea'));
 }
 if(document.readyState === 'loading')
   document.addEventListener('DOMContentLoaded', function(){ setTimeout(hlInitDateLongPress, 600); });
@@ -18068,6 +18125,15 @@ else setTimeout(hlInitDateLongPress, 600);
     window.openReadingMode = function(){
       var r = _or.apply(this, arguments);
       setTimeout(function(){ hlBindLongPressOnRoot(document.getElementById('rdContent')); }, 200);
+      return r;
+    };
+  }
+  // Notes editor open/reload pe bhi bind
+  var _one = window.openNotesEditor;
+  if(typeof _one === 'function'){
+    window.openNotesEditor = function(){
+      var r = _one.apply(this, arguments);
+      setTimeout(function(){ hlBindLongPressOnRoot(document.getElementById('noteEditableArea')); }, 300);
       return r;
     };
   }
@@ -18392,8 +18458,14 @@ function fcfpApplyHighlightFromRange(range, text) {
 
   var madeAnyMark = false;
   try {
-    if(typeof hlUnwrapMarksIntersectingRange === 'function'){
-      try{ hlUnwrapMarksIntersectingRange(range, ct); }catch(e){}
+    if(typeof hlUnwrapMarksIntersectingRange === 'function' && typeof hlGetTextOffset === 'function'){
+      try{
+        var _sOff = hlGetTextOffset(ct, range.startContainer, range.startOffset);
+        var _eOff = hlGetTextOffset(ct, range.endContainer, range.endOffset);
+        hlUnwrapMarksIntersectingRange(range, ct);
+        var _rebuilt = hlRangeFromOffsets(ct, _sOff, _eOff);
+        if(_rebuilt && !_rebuilt.collapsed) range = _rebuilt;
+      }catch(e){ console.warn('[fcfp hl] unwrap/rebuild', e); }
     }
     // Collect every text node that actually intersects the selection range.
     // Using a TreeWalker + range.intersectsNode is robust across paragraph
@@ -28299,9 +28371,16 @@ function applyHighlightFromRange(range, text) {
   // Reading overlay: save to its own undo stack before modifying
   if(_inRdMode) { _rdHlSaveSnapshot(); }
 
-  if(typeof hlUnwrapMarksIntersectingRange === 'function'){
-    try{ hlUnwrapMarksIntersectingRange(range, area); }catch(e){}
-  }
+  // Re-highlight: offsets save → unwrap → range rebuild (ek pass mein naya colour)
+  try{
+    if(typeof hlUnwrapMarksIntersectingRange === 'function' && typeof hlGetTextOffset === 'function'){
+      var _sOff = hlGetTextOffset(area, range.startContainer, range.startOffset);
+      var _eOff = hlGetTextOffset(area, range.endContainer, range.endOffset);
+      hlUnwrapMarksIntersectingRange(range, area);
+      var _rebuilt = hlRangeFromOffsets(area, _sOff, _eOff);
+      if(_rebuilt && !_rebuilt.collapsed) range = _rebuilt;
+    }
+  }catch(e){ console.warn('[hl] unwrap/rebuild', e); }
 
   // ── STEP 1: Range ke andar ke saare text nodes collect karo ──
   function collectTextNodes(range) {
@@ -41849,7 +41928,7 @@ function _topicSizeColor(bytes) {
 }
 
 async function saveTopicToFirebase(tid, subjId, secId){
-  if(!_db || !_currentUser) return;
+  if(!_db || !_currentUser) return { ok: false, error: 'no db/user', code: 'NO_AUTH' };
   try{
     var uid = _effectiveUID;
     // Find topic
@@ -41881,7 +41960,7 @@ async function saveTopicToFirebase(tid, subjId, secId){
         (sss.sections||[]).forEach(function(sec){ _findTopicInSec(sec, sub); });
       });
     });
-    if(!t) return;
+    if(!t) return { ok: false, error: 'topic not found tid='+tid, code: 'NOT_FOUND' };
 
     var wid = _genWriteId();
     _myTopicWriteIds[String(tid)] = wid;
@@ -41944,6 +42023,11 @@ async function saveTopicToFirebase(tid, subjId, secId){
       }, {merge:true});
     }
 
+    // Listener echo ignore ke liye known writeId sync
+    try {
+      _knownTopicWriteIds[String(tid)] = wid;
+      _myTopicWriteIds[String(tid)] = wid;
+    } catch(eW){}
     setSyncStatus('synced');
     // Show size info
     try {
@@ -41953,7 +42037,7 @@ async function saveTopicToFirebase(tid, subjId, secId){
       else if(_sz >= 768*1024) _szmsg += ' — thoda bada hai, images compress karo';
       showToast(_szmsg, _sz >= 768*1024 ? 'warning' : 'success');
     } catch(e2){}
-    return { ok: true, tid: String(tid) };
+    return { ok: true, tid: String(tid), writeId: wid };
   }catch(e){
     console.warn('Topic sync error:', e.message);
     setSyncStatus('error');
@@ -43042,11 +43126,37 @@ function _applyTopicUpdate(tid, newTopicData){
             }
           } else {
             // ── Yeh topic IS DEVICE PE EDIT NAHI HO RAHA ──
-            // Fully replace karo — lekin live canvas data protect karo
+            // Fully replace — notes merge by editorSavedAt (purani local fresh edits na khao)
             var _liveCanvasForThis = window._sc && String(window._sc.tid) === String(tid) &&
                                      window._sc.slides && window._sc.slides.length;
             var _localScData = sec.topics[i].studyCanvas; // backup before replace
+            var _oldNotes = (sec.topics[i].notes || []).slice();
             sec.topics[i] = newTopicData;
+            // Merge notes: keep whichever has newer editorSavedAt
+            try {
+              if(_oldNotes.length && sec.topics[i].notes){
+                sec.topics[i].notes.forEach(function(rn, ri){
+                  for(var oi=0; oi<_oldNotes.length; oi++){
+                    var on = _oldNotes[oi];
+                    var idMatch = rn.id && on.id && String(rn.id)===String(on.id);
+                    var idxMatch = !rn.id && oi===ri;
+                    if(idMatch || idxMatch){
+                      var lat = on.editorSavedAt || 0;
+                      var rat = rn.editorSavedAt || 0;
+                      if(lat > rat && (on.editorRichHTML || on.richHTML)){
+                        rn.editorRichHTML = on.editorRichHTML || on.richHTML;
+                        rn.richHTML = rn.editorRichHTML;
+                        rn.editorSavedAt = lat;
+                        rn.editorHighlights = on.editorHighlights || rn.editorHighlights;
+                        rn.content = on.content || rn.content;
+                      }
+                      break;
+                    }
+                  }
+                });
+              }
+            } catch(_mn){}
+
             var tp = sec.topics[i];
             if(!tp.highlights) tp.highlights = [];
             if(!tp.savedFacts) tp.savedFacts = [];
