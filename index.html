@@ -10931,6 +10931,19 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
   </div>
 </div>
 
+<!-- Highlight Date Picker + NEW sticker modal -->
+<div id="hlDatePickerModal" onclick="if(event.target===this) hlCloseDatePicker();">
+  <div id="hlDatePickerBox" onclick="event.stopPropagation();">
+    <div style="font-weight:800;font-size:1rem;margin-bottom:12px;color:var(--text,#2c2416);">📅 Date + NEW Sticker</div>
+    <input type="date" id="hlDatePickerInput" style="width:100%;padding:10px 12px;font-size:1rem;border-radius:10px;border:1.5px solid var(--border,#e0d8c8);background:var(--surface2,#f4efe4);color:var(--text,#2c2416);box-sizing:border-box;margin-bottom:14px;">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button type="button" onclick="hlClearDateOnMark()" style="flex:1;min-width:80px;padding:10px 8px;border-radius:10px;border:1.5px solid rgba(198,40,40,0.4);background:rgba(198,40,40,0.08);color:#c62828;font-weight:700;font-size:0.86rem;cursor:pointer;-webkit-tap-highlight-color:transparent;">🗑 Clear</button>
+      <button type="button" onclick="hlCloseDatePicker()" style="flex:1;min-width:80px;padding:10px 8px;border-radius:10px;border:1.5px solid rgba(128,128,128,0.3);background:var(--surface2,#f4efe4);color:var(--text,#2c2416);font-weight:700;font-size:0.86rem;cursor:pointer;-webkit-tap-highlight-color:transparent;">Cancel</button>
+      <button type="button" onclick="hlApplyDateOnMark()" style="flex:1;min-width:80px;padding:10px 8px;border-radius:10px;border:none;background:#1976d2;color:#fff;font-weight:800;font-size:0.86rem;cursor:pointer;-webkit-tap-highlight-color:transparent;">✅ OK</button>
+    </div>
+  </div>
+</div>
+
 <!-- AUTO-SCROLL SETTINGS PANEL -->
 <div class="rd-as-settings-backdrop" id="rdAsSettingsBackdrop" onclick="if(event.target===this) rdAsCloseSettings();">
   <div class="rd-as-settings-panel" onclick="event.stopPropagation();">
@@ -18031,6 +18044,22 @@ function hlUnwrapMarksIntersectingRange(range, root){
 }
 
 
+/**
+ * Naya highlight lagate waqt PURANE highlight ko chhedo mat.
+ * Sirf un text-nodes ko TRUE return karo jo abhi kisi
+ * highlight <mark class*="user-hl"> ke andar NAHI hain —
+ * taaki naya highlight sirf "khaali" (non-highlighted) text par lage
+ * aur pehle se highlighted portion apne purane color ke saath intact rahe.
+ */
+function hlNodeIsInsideExistingMark(node, root){
+  var p = node && node.parentNode;
+  while(p && p !== root){
+    if(p.nodeType === 1 && p.tagName === 'MARK' && /user-hl/.test(p.className||'')) return true;
+    p = p.parentNode;
+  }
+  return false;
+}
+
 function hlEnsureNewSticker(mark){
   if(!mark || mark.querySelector('.hl-new-sticker')) return;
   var st = document.createElement('span');
@@ -18535,6 +18564,12 @@ function fcfpApplyHighlightFromRange(range, text) {
 
   var madeAnyMark = false;
   try {
+    // Purane highlight ko poora nahi hataate — sirf jo portion NAYA
+    // select kiya gaya hai wahi split-unwrap hota hai (before/after
+    // parts apne purane color ke saath intact rehte hain). Isse ek
+    // pehle-se-highlighted sentence ke andar ka single word alag
+    // color se re-highlight kiya ja sakta hai, baaki sentence same
+    // purane color mein bana rehta hai.
     if(typeof hlUnwrapMarksIntersectingRange === 'function' && typeof hlGetTextOffset === 'function'){
       try{
         var _sOff = hlGetTextOffset(ct, range.startContainer, range.startOffset);
@@ -18591,6 +18626,7 @@ function fcfpApplyHighlightFromRange(range, text) {
       fcfpPersistExtra();
       if(typeof showToast === 'function') showToast('Highlight ho gaya! ✅', 'success');
     } else {
+      // Kuch bhi naya highlight nahi bana — ya to selected text pehle se
       // Kuch bhi highlight nahi hua — snapshot revert karo aur user ko batao
       _fcfpUndoStack.pop();
       fcfpUpdateUndoRedoBtns();
@@ -28448,7 +28484,11 @@ function applyHighlightFromRange(range, text) {
   // Reading overlay: save to its own undo stack before modifying
   if(_inRdMode) { _rdHlSaveSnapshot(); }
 
-  // Re-highlight: offsets save → unwrap → range rebuild (ek pass mein naya colour)
+  // Re-highlight: offsets save → split-unwrap sirf overlap wale hisse ka →
+  // range rebuild (ek pass mein naya colour). Non-overlapping purana
+  // highlight apne color ke saath intact rehta hai (split before/after);
+  // ek pehle-se-highlighted sentence ke andar single word ko alag color
+  // dena isi split ki wajah se possible hai.
   try{
     if(typeof hlUnwrapMarksIntersectingRange === 'function' && typeof hlGetTextOffset === 'function'){
       var _sOff = hlGetTextOffset(area, range.startContainer, range.startOffset);
