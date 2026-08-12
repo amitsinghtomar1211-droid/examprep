@@ -8743,8 +8743,8 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
           <div class="hl-dot hl-dot-red"         id="hlDotRed2"    onclick="selectHlColor('red')"    style="width:14px;height:14px;"></div>
         </div>
 
-        <!-- Date / NEW sticker mode (highlight pe 2s long-press) -->
-        <button type="button" id="neDateModeBtn" onclick="hlToggleDateMode(event)" title="📅 Date mode OFF — ON karke highlight pe 2s long-press"
+        <!-- Date / NEW sticker mode (highlight pe TAP) -->
+        <button type="button" id="neDateModeBtn" onclick="hlToggleDateMode(event)" title="📅 Date mode OFF — ON karke highlight pe TAP"
           style="width:30px;height:30px;border-radius:7px;border:1.5px solid var(--border);
           background:var(--surface);cursor:pointer;display:flex;align-items:center;
           justify-content:center;flex-shrink:0;font-size:0.85rem;-webkit-tap-highlight-color:transparent;">📅</button>
@@ -10627,7 +10627,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <!-- Highlight & Eraser -->
     <button id="rdRmHlBtn" class="rd-btn" onclick="rdRmToggleHl();event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;" title="Highlight karo">🖊</button>
     <button id="rdRmEsBtn" class="rd-btn" onclick="rdRmToggleEraser();event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;" title="Highlight hatao">🧹</button>
-    <button id="rdDateModeBtn" class="rd-btn" onclick="hlToggleDateMode(event);event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;" title="📅 Date mode OFF — ON karke highlight pe 2s long-press se NEW sticker + date">📅</button>
+    <button id="rdDateModeBtn" class="rd-btn" onclick="hlToggleDateMode(event);event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;" title="📅 Date mode OFF — ON karke highlight pe TAP se NEW sticker + date">📅</button>
     <!-- Text Colour — koi bhi selected text (highlighted ya normal) ka colour badlo -->
     <button id="rdTextColorBtn" class="rd-btn" onclick="rdOpenTextColorPicker();event.stopPropagation();" style="padding:5px 10px;font-size:0.82rem;position:relative;" title="Text ka colour badlo">
       🎨<span id="rdTextColorDot" style="position:absolute;bottom:2px;right:4px;width:8px;height:8px;border-radius:50%;background:#000;border:1px solid rgba(255,255,255,0.7);"></span>
@@ -10701,7 +10701,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
     </button>
     <div class="fcfp-tools-sep"></div>
-    <button id="fcfpDateModeBtn" class="fcfp-tool-btn" onclick="hlToggleDateMode(event)" title="📅 Date mode OFF — ON karke highlight pe 2s long-press se NEW sticker + date">📅</button>
+    <button id="fcfpDateModeBtn" class="fcfp-tool-btn" onclick="hlToggleDateMode(event)" title="📅 Date mode OFF — ON karke highlight pe TAP se NEW sticker + date">📅</button>
   </div>
 
   <div id="fcfpEditLiveBanner">✎ Edit Mode ON — seedha type karo, off karte hi save ho jayega</div>
@@ -17856,10 +17856,10 @@ function hlToggleDateMode(e){
     b.classList.toggle('active', _hlDateModeOn);
     b.style.opacity = _hlDateModeOn ? '1' : '';
     b.style.background = _hlDateModeOn ? 'rgba(25,118,210,0.22)' : '';
-    b.title = _hlDateModeOn ? '📅 Date mode ON — highlight pe 2s long-press se NEW sticker + date' : '📅 Date mode OFF';
+    b.title = _hlDateModeOn ? '📅 Date mode ON — highlight pe TAP/CLICK se NEW sticker + date' : '📅 Date mode OFF';
   });
   if(typeof showToast==='function')
-    showToast(_hlDateModeOn ? '📅 Date mode ON — ab highlight pe 2s hold karo' : '📅 Date mode OFF', 'info');
+    showToast(_hlDateModeOn ? '📅 Date mode ON — ab highlight pe seedha TAP karo (hold nahi)' : '📅 Date mode OFF', 'info');
 }
 
 /* Editing modes start hone par Date mode auto-OFF */
@@ -17925,6 +17925,8 @@ function hlRangeFromOffsets(root, start, end){
 }
 
 function hlUnwrapMarksIntersectingRange(range, root){
+  // Only unwrap the SELECTED portion of intersecting marks.
+  // Non-overlapping parts of old highlights are preserved (split before/after).
   if(!range || !root) return;
   var marks = Array.prototype.slice.call(root.querySelectorAll('mark'));
   marks = marks.filter(function(m){
@@ -17939,9 +17941,91 @@ function hlUnwrapMarksIntersectingRange(range, root){
   marks.forEach(function(mark){
     var parent = mark.parentNode;
     if(!parent) return;
-    mark.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
-    while(mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-    parent.removeChild(mark);
+    try {
+      // Full containment of selection inside this mark? Split into 3 parts.
+      var markRange = document.createRange();
+      markRange.selectNodeContents(mark);
+      var startCmp = range.compareBoundaryPoints(Range.START_TO_START, markRange);
+      var endCmp = range.compareBoundaryPoints(Range.END_TO_END, markRange);
+      // If selection fully covers this mark → unwrap whole mark
+      if(startCmp <= 0 && endCmp >= 0){
+        mark.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
+        while(mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+        parent.removeChild(mark);
+        return;
+      }
+      // Partial overlap: extract only the intersecting text and unwrap that slice
+      var inter = range.cloneRange();
+      if(startCmp > 0) inter.setStart(range.startContainer, range.startOffset);
+      else inter.setStart(markRange.startContainer, markRange.startOffset);
+      if(endCmp < 0) inter.setEnd(range.endContainer, range.endOffset);
+      else inter.setEnd(markRange.endContainer, markRange.endOffset);
+      // Ensure intersection is inside mark
+      if(!mark.contains(inter.commonAncestorContainer) && inter.commonAncestorContainer !== mark){
+        // fallback: full unwrap
+        mark.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
+        while(mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+        parent.removeChild(mark);
+        return;
+      }
+      // Split mark at intersection boundaries so only middle is unwrapped
+      // Strategy: get text offsets relative to mark, rebuild three segments
+      var fullText = mark.textContent || '';
+      var mStart = 0;
+      var beforeLen = 0, midLen = 0;
+      try {
+        var preR = document.createRange();
+        preR.selectNodeContents(mark);
+        preR.setEnd(inter.startContainer, inter.startOffset);
+        beforeLen = preR.toString().length;
+        midLen = inter.toString().length;
+      } catch(e2){
+        mark.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
+        while(mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+        parent.removeChild(mark);
+        return;
+      }
+      var afterStart = beforeLen + midLen;
+      var beforeText = fullText.slice(0, beforeLen);
+      var midText = fullText.slice(beforeLen, afterStart);
+      var afterText = fullText.slice(afterStart);
+      // Preserve mark attrs for before/after parts
+      var cls = mark.className;
+      var style = mark.getAttribute('style') || '';
+      var hlid = mark.getAttribute('data-hlid') || '';
+      var hlDate = mark.getAttribute('data-hl-date') || '';
+      var frag = document.createDocumentFragment();
+      function makeMark(txt){
+        if(!txt) return null;
+        var m = document.createElement('mark');
+        m.className = cls;
+        if(style) m.style.cssText = style;
+        if(hlid) m.setAttribute('data-hlid', hlid);
+        if(hlDate) m.setAttribute('data-hl-date', hlDate);
+        m.style.cursor = 'pointer';
+        m.style.display = 'inline';
+        m.textContent = txt;
+        // restore NEW sticker / date label if date was set
+        if(hlDate && typeof hlSetDateLabel === 'function'){
+          try{ hlSetDateLabel(m, hlDate); }catch(e3){}
+        }
+        return m;
+      }
+      var bm = makeMark(beforeText);
+      if(bm) frag.appendChild(bm);
+      if(midText) frag.appendChild(document.createTextNode(midText));
+      var am = makeMark(afterText);
+      if(am) frag.appendChild(am);
+      parent.replaceChild(frag, mark);
+      if(bm && typeof neAttachUnhighlightToMark === 'function') try{ neAttachUnhighlightToMark(bm); }catch(e4){}
+      if(am && typeof neAttachUnhighlightToMark === 'function') try{ neAttachUnhighlightToMark(am); }catch(e5){}
+    } catch(e){
+      try {
+        mark.querySelectorAll('.hl-new-sticker, .hl-date-label').forEach(function(n){ n.remove(); });
+        while(mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+        parent.removeChild(mark);
+      } catch(e6){}
+    }
   });
   try{ root.normalize(); }catch(e){}
 }
@@ -18051,54 +18135,47 @@ function hlFindMarkFromEvent(e){
 }
 
 function hlBindLongPressOnRoot(root){
+  // Date mode ON → single TAP/CLICK on highlight opens NEW sticker + date picker
+  // (Android pe 2s hold text-select / search menu activate karta hai, isliye hold hata diya)
   if(!root || root._hlDateBound) return;
   root._hlDateBound = true;
-  var startX=0, startY=0;
-  function clearT(){
-    if(_hlLongPressTimer){ clearTimeout(_hlLongPressTimer); _hlLongPressTimer=null; }
-    _hlLongPressMark = null;
-  }
+  var startX=0, startY=0, moved=false, touchMark=null;
   root.addEventListener('touchstart', function(e){
     var mark = hlFindMarkFromEvent(e);
-    if(!mark) return;
+    if(!mark || !_hlDateModeOn) { touchMark=null; return; }
     var t = e.touches[0];
     startX = t.clientX; startY = t.clientY;
-    _hlLongPressMark = mark;
-    clearTimeout(_hlLongPressTimer);
-    _hlLongPressTimer = setTimeout(function(){
-      _hlLongPressTimer = null;
-      if(!_hlDateModeOn) return;
-      if(_hlLongPressMark){
-        try{ navigator.vibrate && navigator.vibrate(12); }catch(err){}
-        hlOpenDatePicker(_hlLongPressMark);
-      }
-    }, 2000);
+    moved = false;
+    touchMark = mark;
   }, {passive:true});
   root.addEventListener('touchmove', function(e){
-    if(!_hlLongPressTimer) return;
+    if(!touchMark) return;
     var t = e.touches[0];
-    if(Math.abs(t.clientX-startX)>12 || Math.abs(t.clientY-startY)>12) clearT();
+    if(Math.abs(t.clientX-startX)>10 || Math.abs(t.clientY-startY)>10) moved = true;
   }, {passive:true});
-  root.addEventListener('touchend', clearT, {passive:true});
-  root.addEventListener('touchcancel', clearT, {passive:true});
-  // desktop
-  root.addEventListener('mousedown', function(e){
-    if(e.button !== 0) return;
+  root.addEventListener('touchend', function(e){
+    if(!touchMark || !_hlDateModeOn || moved){ touchMark=null; return; }
+    // Direct tap → open date/NEW sticker UI (no 2s hold)
+    try{ e.preventDefault(); }catch(err){}
+    try{ navigator.vibrate && navigator.vibrate(10); }catch(err){}
+    hlOpenDatePicker(touchMark);
+    touchMark = null;
+  }, {passive:false});
+  root.addEventListener('touchcancel', function(){ touchMark=null; }, {passive:true});
+  // Desktop: click
+  root.addEventListener('click', function(e){
+    if(!_hlDateModeOn) return;
+    // Eraser / highlight-drag modes take priority
+    try {
+      if(typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode && _hlCurrentMode !== 'off') return;
+      if(typeof _eraserModeOn !== 'undefined' && _eraserModeOn) return;
+    } catch(err){}
     var mark = hlFindMarkFromEvent(e);
     if(!mark) return;
-    startX = e.clientX; startY = e.clientY;
-    _hlLongPressMark = mark;
-    _hlLongPressTimer = setTimeout(function(){
-      _hlLongPressTimer = null;
-      if(!_hlDateModeOn) return;
-      if(_hlLongPressMark) hlOpenDatePicker(_hlLongPressMark);
-    }, 2000);
+    e.preventDefault();
+    e.stopPropagation();
+    hlOpenDatePicker(mark);
   });
-  root.addEventListener('mousemove', function(e){
-    if(!_hlLongPressTimer) return;
-    if(Math.abs(e.clientX-startX)>12 || Math.abs(e.clientY-startY)>12) clearT();
-  });
-  root.addEventListener('mouseup', clearT);
 }
 
 function hlInitDateLongPress(){
@@ -41837,21 +41914,10 @@ function _cleanTopic(t){
   delete td.smartNotesCanvasPNG;
   delete td.masterNotesCanvasPNG;
   (td.notes||[]).forEach(function(n){ delete n.canvasPNG; });
-  // Strip base64 images from richHTML fields — replaced by __imgRef__ at save time
-  // (actual stripping happens async in saveTopicToFirebase — here we just ensure no raw base64 leaks)
-  (td.notes||[]).forEach(function(n){
-    if(n.editorRichHTML && n.editorRichHTML.includes('data:image')) {
-      n.editorRichHTML = n.editorRichHTML.replace(/src="data:image[^"]{0,2000000}"/g, 'src="__img_stripped__"');
-    }
-    if(n.richHTML && n.richHTML.includes('data:image')) {
-      n.richHTML = n.richHTML.replace(/src="data:image[^"]{0,2000000}"/g, 'src="__img_stripped__"');
-    }
-  });
-  ['finalNotesHTML','smartNotesHTML','masterNotesHTML','factsHTML'].forEach(function(k){
-    if(td[k] && td[k].includes('data:image')) {
-      td[k] = td[k].replace(/src="data:image[^"]{0,2000000}"/g, 'src="__img_stripped__"');
-    }
-  });
+  // IMPORTANT: base64 images yahan STRIP mat karo.
+  // saveTopicToFirebase pehle _extractImagesToIDB chalata hai — agar yahan pehle
+  // strip kar denge to extract kabhi nahi chalega aur dusri device pe edit/content
+  // toot / missing dikhega. Safety strip extract ke BAAD hota hai.
   return td;
 }
 
@@ -42005,7 +42071,24 @@ async function saveTopicToFirebase(tid, subjId, secId){
 
     await Promise.all(noteProcessPromises.concat(fieldPromises));
 
+    // Safety: extract ke baad bhi koi residual base64 bache to strip (1MB limit)
+    function _stripResidualB64(html){
+      if(!html || typeof html !== 'string' || html.indexOf('data:image') < 0) return html;
+      return html.replace(/src="data:image[^"]{0,2000000}"/g, 'src="__img_stripped__"');
+    }
+    (topicData.notes || []).forEach(function(n){
+      if(n.editorRichHTML) n.editorRichHTML = _stripResidualB64(n.editorRichHTML);
+      if(n.richHTML) n.richHTML = _stripResidualB64(n.richHTML);
+    });
+    ['finalNotesHTML','smartNotesHTML','masterNotesHTML','factsHTML','perfectNotesHTML'].forEach(function(k){
+      if(topicData[k]) topicData[k] = _stripResidualB64(topicData[k]);
+    });
+
     topicData.writeId = wid;
+    // Ensure notes always carry a fresh editorSavedAt so other devices prefer cloud edit
+    (topicData.notes || []).forEach(function(n){
+      if(n && (n.editorRichHTML || n.richHTML) && !n.editorSavedAt) n.editorSavedAt = Date.now();
+    });
 
     await _db.collection('users').doc(uid).collection('topics').doc(String(tid)).set({
       topic:    topicData,
@@ -43052,144 +43135,156 @@ function _applyTopicUpdate(tid, newTopicData){
 
   var isActiveEdit = (String(tid) === String(_activeEditTid));
 
-  // Find and update topic in S
-  var updated = false;
-  (S.subjects||[]).forEach(function(sub){
-    sub.sections.forEach(function(sec){
-      for(var i=0; i<sec.topics.length; i++){
-        if(String(sec.topics[i].id) === String(tid)){
-
-          if(isActiveEdit){
-            // ── Yeh topic ABHI IS DEVICE PE EDIT HO RAHA HAI ──
-            // Sirf woh fields update karo jo editor se bahar hain
-            var local = sec.topics[i];
-            var safeFields = ['highlights','savedFacts','flashcards','fcHash',
-              'finalNotesHTML','smartNotesHTML','masterNotesHTML',
-              'finalNotesAt','smartNotesAt','newPoints','wrongBank',
-              'factsHTML','finalNotesDrawStrokes','smartNotesDrawStrokes',
-              'masterNotesDrawStrokes','finalNotesCanvasObjs','smartNotesCanvasObjs',
-              'masterNotesCanvasObjs'];
-            safeFields.forEach(function(f){
-              if(newTopicData[f] !== undefined) local[f] = newTopicData[f];
-            });
-
-            // ── FIX: studyCanvas protect karo ──
-            // Agar local me newer canvas data hai (live _sc.slides se) to remote se mat overwrite karo
-            var _localScAt = (local.studyCanvas && local.studyCanvas.savedAt) || 0;
-            var _remoteScAt = (newTopicData.studyCanvas && newTopicData.studyCanvas.savedAt) || 0;
-            if(_remoteScAt > _localScAt) {
-              // Remote canvas zyada fresh hai — update karo (but live _sc.slides hain to skip)
-              var _liveCanvasOpen = window._sc && String(window._sc.tid) === String(tid) &&
-                                    window._sc.slides && window._sc.slides.length;
-              if(!_liveCanvasOpen) {
-                local.studyCanvas = newTopicData.studyCanvas;
-              }
-            }
-            // Agar local canvas newer hai ya live hai — remote se mat overwrite karo
-            // notes[] — remote ke changes merge karo lekin active note ka editorRichHTML protect karo
-            if(newTopicData.notes){
-              newTopicData.notes.forEach(function(remoteNote, rIdx){
-                var found = false;
-                for(var j=0; j<(local.notes||[]).length; j++){
-                  var idMatch = remoteNote.id && local.notes[j].id && String(local.notes[j].id) === String(remoteNote.id);
-                  var idxMatch = !remoteNote.id && j === rIdx;
-                  if(idMatch || idxMatch){
-                    found = true;
-                    var isCurrentNote = (_editorState && String(_editorState.noteIdx) !== 'null' &&
-                      j === Number(_editorState.noteIdx));
-                    // Prefer newer editorSavedAt — never clobber fresher local edits
-                    var localAt = local.notes[j].editorSavedAt || 0;
-                    var remoteAt = remoteNote.editorSavedAt || 0;
-                    if(isCurrentNote || localAt > remoteAt){
-                      var savedRich = local.notes[j].editorRichHTML;
-                      var savedHl   = local.notes[j].editorHighlights;
-                      var savedAt   = local.notes[j].editorSavedAt;
-                      Object.assign(local.notes[j], remoteNote);
-                      if(savedRich && localAt >= remoteAt){
-                        local.notes[j].editorRichHTML    = savedRich;
-                        local.notes[j].editorHighlights  = savedHl;
-                        local.notes[j].editorSavedAt     = savedAt;
-                      }
-                    } else {
-                      local.notes[j] = remoteNote;
-                      if(!local.notes[j].editorHighlights) local.notes[j].editorHighlights = [];
-                    }
-                    break;
-                  }
-                }
-                if(!found){
-                  local.notes.push(remoteNote);
-                  if(!local.notes[local.notes.length-1].editorHighlights)
-                    local.notes[local.notes.length-1].editorHighlights = [];
-                }
-              });
-            }
-          } else {
-            // ── Yeh topic IS DEVICE PE EDIT NAHI HO RAHA ──
-            // Fully replace — notes merge by editorSavedAt (purani local fresh edits na khao)
-            var _liveCanvasForThis = window._sc && String(window._sc.tid) === String(tid) &&
-                                     window._sc.slides && window._sc.slides.length;
-            var _localScData = sec.topics[i].studyCanvas; // backup before replace
-            var _oldNotes = (sec.topics[i].notes || []).slice();
-            sec.topics[i] = newTopicData;
-            // Merge notes: keep whichever has newer editorSavedAt
-            try {
-              if(_oldNotes.length && sec.topics[i].notes){
-                sec.topics[i].notes.forEach(function(rn, ri){
-                  for(var oi=0; oi<_oldNotes.length; oi++){
-                    var on = _oldNotes[oi];
-                    var idMatch = rn.id && on.id && String(rn.id)===String(on.id);
-                    var idxMatch = !rn.id && oi===ri;
-                    if(idMatch || idxMatch){
-                      var lat = on.editorSavedAt || 0;
-                      var rat = rn.editorSavedAt || 0;
-                      if(lat > rat && (on.editorRichHTML || on.richHTML)){
-                        rn.editorRichHTML = on.editorRichHTML || on.richHTML;
-                        rn.richHTML = rn.editorRichHTML;
-                        rn.editorSavedAt = lat;
-                        rn.editorHighlights = on.editorHighlights || rn.editorHighlights;
-                        rn.content = on.content || rn.content;
-                      }
-                      break;
-                    }
-                  }
-                });
-              }
-            } catch(_mn){}
-
-            var tp = sec.topics[i];
-            if(!tp.highlights) tp.highlights = [];
-            if(!tp.savedFacts) tp.savedFacts = [];
-            if(!tp.notes) tp.notes = [];
-            tp.notes.forEach(function(n){
-              if(!n.editorHighlights) n.editorHighlights = [];
-              if(n.editorRichHTML === undefined) n.editorRichHTML = null;
-            });
-            // ── FIX: Canvas data protect karo — agar canvas live open hai ya local data newer hai ──
-            if(_liveCanvasForThis) {
-              // Canvas abhi live open hai — _sc.slides se fresh data use karo, remote se nahi
-              var _liveSavedAt = (_localScData && _localScData.savedAt) || 0;
-              var _remoteSavedAt = (newTopicData.studyCanvas && newTopicData.studyCanvas.savedAt) || 0;
-              if(_liveSavedAt >= _remoteSavedAt) {
-                tp.studyCanvas = _localScData; // local/live canvas zyada fresh hai
-              }
-              // _sc.slides already in memory — koi re-init nahi chahiye
-            } else if(_localScData && _localScData.slides && _localScData.slides.length) {
-              // Canvas open nahi hai, lekin local mein data tha
-              var _locAt = _localScData.savedAt || 0;
-              var _remAt = (tp.studyCanvas && tp.studyCanvas.savedAt) || 0;
-              if(_locAt > _remAt) {
-                tp.studyCanvas = _localScData; // local newer hai
-              }
-            }
-          }
-
-          updated = true;
-          break;
+  // Find topic recursively (sections + nested subSections + subSubjects)
+  function _findTopicRef(tidStr){
+    var found = null;
+    function walkTopicsArr(arr, setAt){
+      if(!arr || found) return;
+      for(var i=0; i<arr.length; i++){
+        if(String(arr[i].id) === tidStr){
+          found = { arr: arr, index: i, topic: arr[i] };
+          return;
         }
       }
+    }
+    function walkSec(sec){
+      if(!sec || found) return;
+      walkTopicsArr(sec.topics);
+      (sec.subSections||[]).forEach(walkSec);
+    }
+    function walkSub(sub){
+      if(!sub || found) return;
+      (sub.sections||[]).forEach(walkSec);
+      (sub.subSubjects||[]).forEach(walkSub);
+    }
+    (S.subjects||[]).forEach(walkSub);
+    return found;
+  }
+
+  var ref = _findTopicRef(String(tid));
+  if(!ref){
+    console.warn('[⚡ _applyTopicUpdate] topic not found in local tree tid='+tid+' — skip (will appear on full reload)');
+    return;
+  }
+
+  var updated = true;
+  if(isActiveEdit){
+    // ── Yeh topic ABHI IS DEVICE PE EDIT HO RAHA HAI ──
+    // Sirf woh fields update karo jo editor se bahar hain
+    var local = ref.topic;
+    var safeFields = ['highlights','savedFacts','flashcards','fcHash',
+      'finalNotesHTML','smartNotesHTML','masterNotesHTML',
+      'finalNotesAt','smartNotesAt','newPoints','wrongBank',
+      'factsHTML','finalNotesDrawStrokes','smartNotesDrawStrokes',
+      'masterNotesDrawStrokes','finalNotesCanvasObjs','smartNotesCanvasObjs',
+      'masterNotesCanvasObjs','perfectNotesHTML'];
+    safeFields.forEach(function(f){
+      if(newTopicData[f] !== undefined) local[f] = newTopicData[f];
     });
-  });
+
+    // ── FIX: studyCanvas protect karo ──
+    var _localScAt = (local.studyCanvas && local.studyCanvas.savedAt) || 0;
+    var _remoteScAt = (newTopicData.studyCanvas && newTopicData.studyCanvas.savedAt) || 0;
+    if(_remoteScAt > _localScAt) {
+      var _liveCanvasOpen = window._sc && String(window._sc.tid) === String(tid) &&
+                            window._sc.slides && window._sc.slides.length;
+      if(!_liveCanvasOpen) {
+        local.studyCanvas = newTopicData.studyCanvas;
+      }
+    }
+    // notes[] — remote ke changes merge karo lekin active note ka editorRichHTML protect karo
+    if(newTopicData.notes){
+      newTopicData.notes.forEach(function(remoteNote, rIdx){
+        var foundN = false;
+        for(var j=0; j<(local.notes||[]).length; j++){
+          var idMatch = remoteNote.id && local.notes[j].id && String(local.notes[j].id) === String(remoteNote.id);
+          var idxMatch = !remoteNote.id && j === rIdx;
+          if(idMatch || idxMatch){
+            foundN = true;
+            var isCurrentNote = (_editorState && String(_editorState.noteIdx) !== 'null' &&
+              j === Number(_editorState.noteIdx));
+            var localAt = local.notes[j].editorSavedAt || 0;
+            var remoteAt = remoteNote.editorSavedAt || 0;
+            if(isCurrentNote || localAt > remoteAt){
+              var savedRich = local.notes[j].editorRichHTML;
+              var savedHl   = local.notes[j].editorHighlights;
+              var savedAt   = local.notes[j].editorSavedAt;
+              Object.assign(local.notes[j], remoteNote);
+              if(savedRich && localAt >= remoteAt){
+                local.notes[j].editorRichHTML    = savedRich;
+                local.notes[j].editorHighlights  = savedHl;
+                local.notes[j].editorSavedAt     = savedAt;
+              }
+            } else {
+              local.notes[j] = remoteNote;
+              if(!local.notes[j].editorHighlights) local.notes[j].editorHighlights = [];
+            }
+            break;
+          }
+        }
+        if(!foundN){
+          local.notes = local.notes || [];
+          local.notes.push(remoteNote);
+          if(!local.notes[local.notes.length-1].editorHighlights)
+            local.notes[local.notes.length-1].editorHighlights = [];
+        }
+      });
+    }
+  } else {
+    // ── Yeh topic IS DEVICE PE EDIT NAHI HO RAHA ──
+    // Fully replace — notes merge by editorSavedAt
+    var _liveCanvasForThis = window._sc && String(window._sc.tid) === String(tid) &&
+                             window._sc.slides && window._sc.slides.length;
+    var _localScData = ref.topic.studyCanvas;
+    var _oldNotes = (ref.topic.notes || []).slice();
+    ref.arr[ref.index] = newTopicData;
+    try {
+      if(_oldNotes.length && ref.arr[ref.index].notes){
+        ref.arr[ref.index].notes.forEach(function(rn, ri){
+          for(var oi=0; oi<_oldNotes.length; oi++){
+            var on = _oldNotes[oi];
+            var idMatch2 = rn.id && on.id && String(rn.id)===String(on.id);
+            var idxMatch2 = !rn.id && oi===ri;
+            if(idMatch2 || idxMatch2){
+              var lat = on.editorSavedAt || 0;
+              var rat = rn.editorSavedAt || 0;
+              // Prefer cloud when remote is newer OR equal with content (other device edit)
+              if(lat > rat && (on.editorRichHTML || on.richHTML)){
+                rn.editorRichHTML = on.editorRichHTML || on.richHTML;
+                rn.richHTML = rn.editorRichHTML;
+                rn.editorSavedAt = lat;
+                rn.editorHighlights = on.editorHighlights || rn.editorHighlights;
+                rn.content = on.content || rn.content;
+              }
+              break;
+            }
+          }
+        });
+      }
+    } catch(_mn){}
+
+    var tp = ref.arr[ref.index];
+    if(!tp.highlights) tp.highlights = [];
+    if(!tp.savedFacts) tp.savedFacts = [];
+    if(!tp.notes) tp.notes = [];
+    tp.notes.forEach(function(n){
+      if(!n.editorHighlights) n.editorHighlights = [];
+      if(n.editorRichHTML === undefined) n.editorRichHTML = null;
+    });
+    if(_liveCanvasForThis) {
+      var _liveSavedAt = (_localScData && _localScData.savedAt) || 0;
+      var _remoteSavedAt = (newTopicData.studyCanvas && newTopicData.studyCanvas.savedAt) || 0;
+      if(_liveSavedAt >= _remoteSavedAt) {
+        tp.studyCanvas = _localScData;
+      }
+    } else if(_localScData && _localScData.slides && _localScData.slides.length) {
+      var _locAt = _localScData.savedAt || 0;
+      var _remAt = (tp.studyCanvas && tp.studyCanvas.savedAt) || 0;
+      if(_locAt > _remAt) {
+        tp.studyCanvas = _localScData;
+      }
+    }
+  }
 
   if(!updated) return;
 
