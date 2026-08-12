@@ -24100,10 +24100,14 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
       var memAt = (_n && _n.editorSavedAt) || 0;
       var area = document.getElementById('noteEditableArea');
       if(!area) return;
-      // Apply if backup is newer OR current area is empty/short while backup has content
       var curLen = (area.innerHTML || '').length;
-      if(bakAt >= memAt || (bakRich.length > curLen + 50)){
-        console.info('[openNotesEditor] applying IDB/local backup len='+bakRich.length+' bakAt='+bakAt+' memAt='+memAt+' curLen='+curLen);
+      var memRichLen = ((_n && (_n.editorRichHTML || _n.richHTML)) || '').length;
+      // Apply when: newer backup, OR memory empty but IDB has content, OR IDB much longer
+      var shouldApply = (bakAt > memAt)
+        || (memRichLen < 30 && bakRich.length > 30)
+        || (bakAt >= memAt && bakRich.length > curLen + 80);
+      if(shouldApply){
+        console.info('[openNotesEditor] applying IDB bakLen='+bakRich.length+' bakAt='+bakAt+' memAt='+memAt+' memRichLen='+memRichLen+' curLen='+curLen);
         _n.editorRichHTML = bakRich;
         _n.richHTML = bakRich;
         _n.editorSavedAt = bakAt;
@@ -24387,11 +24391,9 @@ function _saveNoteLocalBackup(tid, n, noteIdx){
     editorSavedAt: n.editorSavedAt || Date.now(),
     name: n.name || ''
   };
-  // localStorage (small notes)
-  try {
-    localStorage.setItem(_noteLocalKey(tid, n.id, noteIdx), JSON.stringify(payload));
-  } catch(e){ console.warn('[note-bak] localStorage fail', e && e.message); }
-  // IndexedDB (large notes — primary)
+  // localStorage intentionally SKIPPED (quota). IDB only.
+  try { if(!_saveNoteLocalBackup._prunedOnce){ _saveNoteLocalBackup._prunedOnce=true; if(typeof _pruneNoteBakLocalStorage==='function') _pruneNoteBakLocalStorage(); } } catch(eP){}
+  // IndexedDB (primary)
   return _openNotesContentDB().then(function(db){
     return new Promise(function(resolve){
       try {
@@ -42871,12 +42873,18 @@ async function loadFromFirebase(){
         // Extra: dedicated localStorage backup
         try {
           var bak = (typeof _loadNoteLocalBackup === 'function') ? _loadNoteLocalBackup(t.id, n, nIdx) : null;
-          if(bak && (bak.editorRichHTML||bak.richHTML) && (bak.editorSavedAt||0) > (n.editorSavedAt||0)){
+          var _br = bak && (bak.editorRichHTML||bak.richHTML) || '';
+          var _bAt = bak ? (bak.editorSavedAt||0) : 0;
+          var _mAt = n.editorSavedAt||0;
+          var _mL = (n.editorRichHTML||n.richHTML||'').length;
+          // Apply backup if newer OR memory empty while backup has real content
+          if(_br.length > 30 && (_bAt > _mAt || (_mL < 30 && _br.length > 30))){
             n.editorRichHTML = bak.editorRichHTML || bak.richHTML;
             n.richHTML = n.editorRichHTML;
-            n.editorSavedAt = bak.editorSavedAt;
+            if(_bAt > _mAt) n.editorSavedAt = _bAt;
             if(bak.editorHighlights) n.editorHighlights = bak.editorHighlights;
-            console.info('[loadFromFirebase] note backup applied tid='+t.id+' idx='+nIdx+' len='+(n.editorRichHTML||'').length);
+            if(bak.content && (!n.content || n.content.length < 50)) n.content = bak.content;
+            console.info('[loadFromFirebase] note backup applied tid='+t.id+' idx='+nIdx+' len='+(n.editorRichHTML||'').length+' reason='+(_bAt>_mAt?'newer':'fill-empty'));
           }
         } catch(e){}
       });
@@ -42892,11 +42900,31 @@ async function loadFromFirebase(){
       }); });
     }catch(_e2){}
 
-    try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+    try{
+      if(typeof _writeEpp5ToLocalStorage === 'function') _writeEpp5ToLocalStorage();
+      else localStorage.setItem('epp5', JSON.stringify(S));
+    }catch(e){}
     renderExamSwitcher(); renderLibrarySelects(); renderLibraryTree();
     renderExamsList(); updateQuizSelects(); renderStats(); updateModePill();
     updateHistBadge(); updateSavedBadge(); updateVaultBadge(); if(typeof updateGameVaultBadge==="function") updateGameVaultBadge(); checkPausedQuiz();
-    console.info('[📥 loadFromFirebase] ✅ SUCCESS — '+cloudTopicCount+' topics loaded in '+(Date.now()-_loadStart)+'ms');
+    
+    try {
+      var _withRich=0, _emptyRich=0, _sample=[];
+      (S.subjects||[]).forEach(function(sub){
+        function ws(sec){
+          (sec.topics||[]).forEach(function(t){
+            (t.notes||[]).forEach(function(n){
+              var L = (n.editorRichHTML||n.richHTML||'').length;
+              if(L>30) _withRich++; else { _emptyRich++; if(_sample.length<5) _sample.push({id:n.id,name:n.name,plain:(n.content||'').length,at:n.editorSavedAt||0}); }
+            });
+          });
+          (sec.subSections||[]).forEach(ws);
+        }
+        (sub.sections||[]).forEach(ws);
+      });
+      console.info('[📥 loadFromFirebase] notes richHTML: with='+_withRich+' empty='+_emptyRich+' sampleEmpty='+JSON.stringify(_sample));
+    } catch(_dg){}
+console.info('[📥 loadFromFirebase] ✅ SUCCESS — '+cloudTopicCount+' topics loaded in '+(Date.now()-_loadStart)+'ms');
     showToast('Cloud se data load ho gaya! ☁️ (' + cloudTopicCount + ' topics)', 'success');
     setSyncStatus('synced');
 
@@ -43705,30 +43733,108 @@ async function _silentReloadFromFirebase(){
 var _lastSavedSnapshot = {}; // {tid: JSON string} — change detection ke liye
 var _metaSyncTimer = null;
 
+
+function _pruneNoteBakLocalStorage(){
+  try {
+    var keys = [];
+    for(var i=0; i<localStorage.length; i++){
+      var k = localStorage.key(i);
+      if(k && k.indexOf('epp_note_bak_') === 0) keys.push(k);
+    }
+    keys.forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
+    if(keys.length) console.info('[note-bak] pruned '+keys.length+' epp_note_bak_* keys');
+    return keys.length;
+  } catch(e){ return 0; }
+}
+function _slimSForLocalStorage(src){
+  var s;
+  try { s = JSON.parse(JSON.stringify(src)); } catch(e){ return src; }
+  var HEAVY = ['editorRichHTML','richHTML','finalNotesHTML','smartNotesHTML',
+    'masterNotesHTML','perfectNotesHTML','factsHTML','canvasPNG',
+    'finalNotesCanvasPNG','smartNotesCanvasPNG','masterNotesCanvasPNG',
+    'finalNotesDrawStrokes','smartNotesDrawStrokes','masterNotesDrawStrokes',
+    'finalNotesCanvasObjs','smartNotesCanvasObjs','masterNotesCanvasObjs',
+    'drawStrokes','canvasObjs','qmapData','studyCanvas'];
+  function stripNote(n){
+    if(!n || typeof n !== 'object') return;
+    HEAVY.forEach(function(k){ if(n[k] !== undefined) delete n[k]; });
+    if(typeof n.content === 'string' && n.content.length > 2000)
+      n.content = n.content.slice(0, 2000);
+  }
+  function stripTopic(t){
+    if(!t || typeof t !== 'object') return;
+    HEAVY.forEach(function(k){ if(t[k] !== undefined) delete t[k]; });
+    if(typeof t.finalNotes === 'string' && t.finalNotes.length > 2000)
+      t.finalNotes = t.finalNotes.slice(0, 2000);
+    (t.notes||[]).forEach(stripNote);
+  }
+  function walkSec(sec){
+    (sec.topics||[]).forEach(stripTopic);
+    (sec.subSections||[]).forEach(walkSec);
+    if(sec.factsHTML) delete sec.factsHTML;
+  }
+  function walkSub(sub){
+    (sub.sections||[]).forEach(walkSec);
+    (sub.subSubjects||[]).forEach(walkSub);
+    if(sub.factsHTML) delete sub.factsHTML;
+  }
+  (s.subjects||[]).forEach(walkSub);
+  return s;
+}
+function _writeEpp5ToLocalStorage(){
+  try { if(typeof _pruneNoteBakLocalStorage === 'function') _pruneNoteBakLocalStorage(); } catch(e0){}
+  var payload;
+  try { payload = JSON.stringify(_slimSForLocalStorage(S)); } catch(e){ payload = null; }
+  if(payload){
+    try { localStorage.setItem('epp5', payload); console.info('[save] epp5 OK (slim) ~'+Math.round(payload.length/1024)+'KB'); return true; }
+    catch(e1){
+      try {
+        var drop = [];
+        for(var i=0;i<localStorage.length;i++){
+          var k = localStorage.key(i);
+          if(!k || k==='epp5') continue;
+          if(k.indexOf('epp_note_bak_')===0 || k.indexOf('tqSess_')===0 || k.indexOf('epp_img_')===0) drop.push(k);
+        }
+        drop.forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
+        localStorage.setItem('epp5', payload);
+        console.info('[save] epp5 OK after drop '+drop.length+' keys');
+        return true;
+      } catch(e2){ console.error('[save] epp5 FAIL', e2&&e2.message); return false; }
+    }
+  }
+  try { localStorage.setItem('epp5', JSON.stringify(S)); return true; }
+  catch(e3){ console.error('[save] epp5 full FAIL', e3&&e3.message); return false; }
+}
+
 function save(){
-  // Step 1: Instant local save
-  try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
+  // Step 1: Instant local save (slim — no heavy HTML in localStorage)
+  var _lsOk = false;
+  try { _lsOk = !!_writeEpp5ToLocalStorage(); } catch(e){ console.error('[save]', e); }
 
   // 🔒 Non-admin users: sirf local save, Firestore sync nahi
-  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return; }
+  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return _lsOk; }
 
-  if(!_currentUser || !_db) return;
+  if(!_currentUser || !_db) return _lsOk;
   setSyncStatus('syncing');
 
-  // Step 2: Find which topics changed
+  // Step 2: Find which topics changed — RECURSIVE (nested sections)
   var changedTopics = [];
-  (S.subjects||[]).forEach(function(sub){
-    sub.sections.forEach(function(sec){
-      sec.topics.forEach(function(t){
-        var td = _cleanTopic(t);
-        var json = JSON.stringify(td);
-        if(_lastSavedSnapshot[String(t.id)] !== json){
-          _lastSavedSnapshot[String(t.id)] = json;
-          changedTopics.push({ tid: t.id, subjId: sub.id, secId: sec.id });
-        }
-      });
+  function _walkSecForSave(sec, sub){
+    (sec.topics||[]).forEach(function(t){
+      var td = _cleanTopic(t);
+      var json = JSON.stringify(td);
+      if(_lastSavedSnapshot[String(t.id)] !== json){
+        _lastSavedSnapshot[String(t.id)] = json;
+        changedTopics.push({ tid: t.id, subjId: sub.id, secId: sec.id });
+      }
     });
-  });
+    (sec.subSections||[]).forEach(function(ss){ _walkSecForSave(ss, sub); });
+  }
+  function _walkSubForSave(sub){
+    (sub.sections||[]).forEach(function(sec){ _walkSecForSave(sec, sub); });
+    (sub.subSubjects||[]).forEach(function(ss){ _walkSubForSave(ss); });
+  }
+  (S.subjects||[]).forEach(function(sub){ _walkSubForSave(sub); });
 
   // Step 3: Per-topic debounced granular save (300ms)
   changedTopics.forEach(function(info){
