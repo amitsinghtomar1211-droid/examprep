@@ -21840,6 +21840,41 @@ window.addEventListener('pageshow', function(){
   if(typeof _fcfpLastRange!=='undefined') _fcfpLastRange = null;
 });
 
+// ══════════════════════════════════════════════════════════════════════
+// ⚡ RESUME-SYNC FIX — app background se wapas foreground me aane par
+// Firestore ke realtime onSnapshot listeners mobile browsers/WebViews
+// pe silently disconnect ho jaate hain (OS network/timers suspend kar
+// deta hai). Isse pehle: dusri device pe kiya gaya edit successfully
+// Firestore me save ho jaata tha, lekin yeh (idle/backgrounded) device
+// kabhi wapas cloud se pull nahi karta tha jab tak poora login/refresh
+// na ho — isliye purani/stale note content dikhti rehti thi.
+// Fix: jab bhi tab/app wapas visible ho (ya focus/pageshow), agar
+// currently koi note editor KHULA NAHI hai (taaki live editing beech
+// me overwrite na ho), turant chhota silent background sync chala do.
+// Bahut baar-baar na chale iske liye min 8s cooldown gap rakha hai.
+// ══════════════════════════════════════════════════════════════════════
+var _lastResumeSyncAt = 0;
+function _resumeSyncIfNeeded(){
+  try{
+    if(!_currentUser || !_db) return;
+    // Note editor khula ho to abhi resync mat karo — user ka live kaam disturb ho sakta hai
+    var editorModal = document.getElementById('noteEditorModal');
+    if(editorModal && editorModal.classList.contains('show')) return;
+    var now = Date.now();
+    if(now - _lastResumeSyncAt < 8000) return; // 8s cooldown — spam se bachao
+    _lastResumeSyncAt = now;
+    if(typeof _silentReloadFromFirebase === 'function') _silentReloadFromFirebase();
+  }catch(e){ console.warn('[resume-sync] error', e); }
+}
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState === 'visible') _resumeSyncIfNeeded();
+});
+window.addEventListener('focus', _resumeSyncIfNeeded);
+window.addEventListener('pageshow', function(e){
+  // bfcache se restore hua ho (e.persisted) to bhi resync karo
+  _resumeSyncIfNeeded();
+});
+
 // Keyboard support while player modal is open
 document.addEventListener('keydown', function(e){
   var modal = document.getElementById('fcPlayerModal');
