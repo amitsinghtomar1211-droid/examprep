@@ -21858,8 +21858,17 @@ function _resumeSyncIfNeeded(){
   try{
     if(!_currentUser || !_db) return;
     // Note editor khula ho to abhi resync mat karo — user ka live kaam disturb ho sakta hai
-    var editorModal = document.getElementById('noteEditorModal');
-    if(editorModal && editorModal.classList.contains('show')) return;
+    // ✅ FIX: correct overlay id is notesEditorOverlay (not noteEditorModal)
+    var editorModal = document.getElementById('notesEditorOverlay');
+    if(editorModal && (editorModal.classList.contains('show') || editorModal.style.display === 'flex')) return;
+    // Also block if we just saved a note (grace window) — avoid overwriting with stale cloud
+    if(typeof _recentNoteSaves !== 'undefined' && _recentNoteSaves){
+      var _grace = false;
+      Object.keys(_recentNoteSaves).forEach(function(k){
+        if(_recentNoteSaves[k] && (Date.now() - (_recentNoteSaves[k].at||0)) < 15000) _grace = true;
+      });
+      if(_grace) return;
+    }
     var now = Date.now();
     if(now - _lastResumeSyncAt < 8000) return; // 8s cooldown — spam se bachao
     _lastResumeSyncAt = now;
@@ -24006,6 +24015,49 @@ let _editorState = {
   highlights: [],
   richHTML: null        // FIX: richHTML property properly initialized
 };
+// ✅ FIX: Same-device reopen after save must see latest content even if
+// Firebase listener / silent-reload races with a slightly older cloud snapshot.
+// Key = tid + '::' + (noteId || noteIdx)
+var _recentNoteSaves = {};
+function _noteSaveCacheKey(tid, n, noteIdx){
+  var nid = (n && n.id) ? String(n.id) : ('idx_'+String(noteIdx));
+  return String(tid) + '::' + nid;
+}
+function _rememberNoteSave(tid, n, noteIdx){
+  if(!n) return;
+  var key = _noteSaveCacheKey(tid, n, noteIdx);
+  _recentNoteSaves[key] = {
+    at: n.editorSavedAt || Date.now(),
+    editorRichHTML: n.editorRichHTML || n.richHTML || '',
+    richHTML: n.richHTML || n.editorRichHTML || '',
+    content: n.content || '',
+    editorHighlights: n.editorHighlights || [],
+    id: n.id || null,
+    noteIdx: noteIdx
+  };
+}
+function _applyRecentNoteSave(tid, n, noteIdx){
+  if(!n) return false;
+  var key = _noteSaveCacheKey(tid, n, noteIdx);
+  var rec = _recentNoteSaves[key];
+  // also try idx-only key if id key miss
+  if(!rec && n.id){
+    rec = _recentNoteSaves[String(tid)+'::idx_'+String(noteIdx)];
+  }
+  if(!rec) return false;
+  var memAt = n.editorSavedAt || 0;
+  var recAt = rec.at || 0;
+  var memLen = ((n.editorRichHTML || n.richHTML) || '').length;
+  var recLen = (rec.editorRichHTML || rec.richHTML || '').length;
+  if(recAt > memAt || (recAt >= memAt && recLen > memLen)){
+    if(rec.editorRichHTML) { n.editorRichHTML = rec.editorRichHTML; n.richHTML = rec.editorRichHTML; }
+    if(rec.content != null) n.content = rec.content;
+    if(rec.editorHighlights) n.editorHighlights = rec.editorHighlights;
+    n.editorSavedAt = Math.max(memAt, recAt);
+    return true;
+  }
+  return false;
+}
 // Undo/Redo stacks
 let _undoStack = [];
 let _redoStack = [];
@@ -24035,6 +24087,11 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   _editorState.highlights = (n.editorHighlights || []).map(h => ({...h})); // Deep copy
   // Ensure note id exists
   if(!n.id){ n.id = 'n_' + tid + '_' + noteIdx + '_' + Date.now().toString(36); }
+  // ✅ FIX: Prefer just-saved in-session cache first (same device, no refresh)
+  if(typeof _applyRecentNoteSave === 'function'){
+    var _fromCache = _applyRecentNoteSave(tid, n, noteIdx);
+    if(_fromCache) console.info('[openNotesEditor] restored from _recentNoteSaves cache savedAt='+(n.editorSavedAt||0)+' len='+((n.editorRichHTML||'').length));
+  }
   // Use richest/newest content: in-memory note vs localStorage backup
   var _bak = (typeof _loadNoteLocalBackup === 'function') ? _loadNoteLocalBackup(tid, n, noteIdx) : null;
   var _memRich = n.editorRichHTML || n.richHTML || '';
@@ -24087,7 +24144,17 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
     if(area){ area.innerHTML = _hubResolvedHtml; }
     // Skip neLoadContent for hub refs — content already set
   } else {
-  neLoadContent(n.content, false);
+  // ✅ FIX: Prefer rich HTML (saved editor content) over plain content.
+  // Previously always called neLoadContent(n.content,false) and relied on
+  // _editorState.richHTML side-channel — if that was cleared or stale, old
+  // plain text showed after save+reopen on same device.
+  var _loadRich = n.editorRichHTML || n.richHTML || _editorState.richHTML || '';
+  if(_loadRich && String(_loadRich).length > 0){
+    _editorState.richHTML = _loadRich;
+    neLoadContent(_loadRich, true);
+  } else {
+    neLoadContent(n.content || '', false);
+  }
   }
   // Async: IndexedDB backup may be newer than cloud/memory — apply when ready
   (function(_tid, _n, _idx){
@@ -24590,6 +24657,9 @@ function _doSaveNoteData() {
     if(qmapData)    n.qmapData    = qmapData;
     // Bulletproof local backup (survives cloud overwrite / missing note.id merge bugs)
     _saveNoteLocalBackup(_editorState.tid, n, _editorState.noteIdx);
+    // ✅ FIX: in-memory recent-save cache so reopen (same device, no refresh)
+    // always prefers the just-saved content even if Firebase race overwrites S
+    if(typeof _rememberNoteSave === 'function') _rememberNoteSave(_editorState.tid, n, _editorState.noteIdx);
     console.info('[💾 _doSaveNoteData] note saved idx='+_editorState.noteIdx+' id='+n.id+' richLen='+(n.editorRichHTML||'').length+' plainLen='+(plainText||'').length+' savedAt='+n.editorSavedAt);
     try {
       var _ss = ((n.editorRichHTML||plainText||'')+'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(-120);
@@ -29900,6 +29970,8 @@ async function saveEditedNote() {
           if(_vn) {
             // Force IDB backup again after FB path (images may have been rewritten)
             await _saveNoteLocalBackup(_gTid, _vn, _editorState.noteIdx);
+            // ✅ Re-cache after FB image rewrite so reopen still has latest
+            if(typeof _rememberNoteSave === 'function') _rememberNoteSave(_gTid, _vn, _editorState.noteIdx);
             console.info('[💾 saveEditedNote] verify editorRichHTML len=' + ((_vn.editorRichHTML||'').length) + ' editorSavedAt=' + (_vn.editorSavedAt||0));
 
             // Refresh topic view list so plain-text preview matches saved content
@@ -43324,15 +43396,32 @@ function _applyTopicUpdate(tid, newTopicData){
               j === Number(_editorState.noteIdx));
             var localAt = local.notes[j].editorSavedAt || 0;
             var remoteAt = remoteNote.editorSavedAt || 0;
+            // ✅ Prefer recent in-session save cache
+            try {
+              if(typeof _recentNoteSaves !== 'undefined'){
+                var _ck = String(tid)+'::'+(local.notes[j].id ? String(local.notes[j].id) : ('idx_'+j));
+                var _rc = _recentNoteSaves[_ck];
+                if(_rc && (_rc.at||0) >= localAt && (_rc.editorRichHTML||'').length){
+                  local.notes[j].editorRichHTML = _rc.editorRichHTML;
+                  local.notes[j].richHTML = _rc.editorRichHTML;
+                  local.notes[j].editorSavedAt = _rc.at;
+                  if(_rc.content != null) local.notes[j].content = _rc.content;
+                  localAt = _rc.at;
+                }
+              }
+            } catch(_ce){}
             if(isCurrentNote || localAt > remoteAt){
               var savedRich = local.notes[j].editorRichHTML;
               var savedHl   = local.notes[j].editorHighlights;
               var savedAt   = local.notes[j].editorSavedAt;
+              var savedContent = local.notes[j].content;
               Object.assign(local.notes[j], remoteNote);
               if(savedRich && localAt >= remoteAt){
                 local.notes[j].editorRichHTML    = savedRich;
+                local.notes[j].richHTML          = savedRich;
                 local.notes[j].editorHighlights  = savedHl;
                 local.notes[j].editorSavedAt     = savedAt;
+                if(savedContent != null) local.notes[j].content = savedContent;
               }
             } else {
               local.notes[j] = remoteNote;
@@ -43367,9 +43456,30 @@ function _applyTopicUpdate(tid, newTopicData){
             if(idMatch2 || idxMatch2){
               var lat = on.editorSavedAt || 0;
               var rat = rn.editorSavedAt || 0;
-              // Prefer cloud when remote is newer OR equal with content (other device edit)
-              if(lat > rat && (on.editorRichHTML || on.richHTML)){
-                rn.editorRichHTML = on.editorRichHTML || on.richHTML;
+              var lRich = on.editorRichHTML || on.richHTML || '';
+              var rRich = rn.editorRichHTML || rn.richHTML || '';
+              // ✅ FIX: Prefer local when local is newer OR equal with richer content
+              // (same-device save can race with slightly-stale cloud snapshot)
+              var preferLocal = false;
+              if(lat > rat && lRich) preferLocal = true;
+              else if(lat >= rat && lRich && lRich.length > (rRich||'').length + 20) preferLocal = true;
+              else if(typeof _recentNoteSaves !== 'undefined'){
+                try {
+                  var _rk = String(tid)+'::'+(on.id ? String(on.id) : ('idx_'+oi));
+                  var _rec = _recentNoteSaves[_rk];
+                  if(_rec && (_rec.at||0) >= rat && (_rec.editorRichHTML||'').length){
+                    on.editorRichHTML = _rec.editorRichHTML;
+                    on.richHTML = _rec.editorRichHTML;
+                    on.editorSavedAt = _rec.at;
+                    if(_rec.content != null) on.content = _rec.content;
+                    lRich = _rec.editorRichHTML;
+                    lat = _rec.at;
+                    preferLocal = true;
+                  }
+                } catch(_re){}
+              }
+              if(preferLocal && lRich){
+                rn.editorRichHTML = lRich;
                 rn.richHTML = rn.editorRichHTML;
                 rn.editorSavedAt = lat;
                 rn.editorHighlights = on.editorHighlights || rn.editorHighlights;
@@ -43677,6 +43787,34 @@ async function _silentReloadFromFirebase(){
         // ✅ FIX: sirf tab local richHTML lagao jab local NEWER ho cloud se
         if(ld && ld.richHTML && (ld.ts || 0) > (n.editorSavedAt || 0)){
           n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[];
+          n.editorSavedAt = ld.ts || n.editorSavedAt;
+        }
+        // ✅ Also prefer in-session recent saves (same device save race)
+        if(typeof _recentNoteSaves !== 'undefined' && _recentNoteSaves){
+          try {
+            var _keys = [];
+            if(n.id) _keys.push(String(t.id)+'::'+String(n.id));
+            // idx key unknown here — scan matching tid
+            Object.keys(_recentNoteSaves).forEach(function(k){
+              if(k.indexOf(String(t.id)+'::')===0) _keys.push(k);
+            });
+            _keys.forEach(function(k){
+              var rec = _recentNoteSaves[k];
+              if(!rec) return;
+              if(n.id && rec.id && String(rec.id)!==String(n.id)) return;
+              var recAt = rec.at||0;
+              var memAt = n.editorSavedAt||0;
+              var recLen = (rec.editorRichHTML||'').length;
+              var memLen = ((n.editorRichHTML||n.richHTML)||'').length;
+              if(recAt > memAt || (recAt >= memAt && recLen > memLen)){
+                n.editorRichHTML = rec.editorRichHTML;
+                n.richHTML = rec.editorRichHTML;
+                n.editorSavedAt = recAt;
+                if(rec.content != null) n.content = rec.content;
+                if(rec.editorHighlights) n.editorHighlights = rec.editorHighlights;
+              }
+            });
+          } catch(_rsE){}
         }
       });
     }); });
@@ -43864,7 +44002,17 @@ function _setActiveEditTid(tid){
   _activeEditTid = tid != null ? String(tid) : null;
 }
 function _clearActiveEditTid(){
+  // ✅ FIX: short grace so Firebase write echo / silent-reload right after
+  // close cannot overwrite the note we just saved with an older snapshot
+  var prev = _activeEditTid;
   _activeEditTid = null;
+  if(prev){
+    try {
+      setTimeout(function(){
+        // no-op marker; recent-save cache + merge rules handle protection
+      }, 0);
+    } catch(e){}
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
