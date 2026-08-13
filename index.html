@@ -43905,36 +43905,36 @@ function _pruneNoteBakLocalStorage(){
   } catch(e){ return 0; }
 }
 function _slimSForLocalStorage(src){
+  // ✅ FIX (notes save persistence): Do NOT strip editorRichHTML / richHTML /
+  // finalNotesHTML / content etc. Old app saved full note HTML in localStorage
+  // (epp5), so same-session reopen, refresh, and multi-device flows all saw
+  // the latest edit. The previous "slim" path deleted those fields and also
+  // truncated content to 2000 chars — after save, reopen showed old/empty
+  // notes and other devices never received updates (stale memory could be
+  // pushed to Firebase after a slim reload path).
+  // Only strip true binary/PNG bloat that blows the 5MB localStorage quota.
   var s;
   try { s = JSON.parse(JSON.stringify(src)); } catch(e){ return src; }
-  var HEAVY = ['editorRichHTML','richHTML','finalNotesHTML','smartNotesHTML',
-    'masterNotesHTML','perfectNotesHTML','factsHTML','canvasPNG',
-    'finalNotesCanvasPNG','smartNotesCanvasPNG','masterNotesCanvasPNG',
-    'finalNotesDrawStrokes','smartNotesDrawStrokes','masterNotesDrawStrokes',
-    'finalNotesCanvasObjs','smartNotesCanvasObjs','masterNotesCanvasObjs',
-    'drawStrokes','canvasObjs','qmapData','studyCanvas'];
+  var HEAVY = ['canvasPNG',
+    'finalNotesCanvasPNG','smartNotesCanvasPNG','masterNotesCanvasPNG'];
   function stripNote(n){
     if(!n || typeof n !== 'object') return;
     HEAVY.forEach(function(k){ if(n[k] !== undefined) delete n[k]; });
-    if(typeof n.content === 'string' && n.content.length > 2000)
-      n.content = n.content.slice(0, 2000);
+    // Keep full content + editorRichHTML + richHTML + editorSavedAt + highlights
   }
   function stripTopic(t){
     if(!t || typeof t !== 'object') return;
     HEAVY.forEach(function(k){ if(t[k] !== undefined) delete t[k]; });
-    if(typeof t.finalNotes === 'string' && t.finalNotes.length > 2000)
-      t.finalNotes = t.finalNotes.slice(0, 2000);
     (t.notes||[]).forEach(stripNote);
   }
   function walkSec(sec){
     (sec.topics||[]).forEach(stripTopic);
     (sec.subSections||[]).forEach(walkSec);
-    if(sec.factsHTML) delete sec.factsHTML;
+    // Keep factsHTML so section/subject facts also persist offline
   }
   function walkSub(sub){
     (sub.sections||[]).forEach(walkSec);
     (sub.subSubjects||[]).forEach(walkSub);
-    if(sub.factsHTML) delete sub.factsHTML;
   }
   (s.subjects||[]).forEach(walkSub);
   return s;
