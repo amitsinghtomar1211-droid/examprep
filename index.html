@@ -24085,118 +24085,27 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   _editorState.hlColor = 'yellow';
   _editorState.hlTextColor = null;
   _editorState.highlights = (n.editorHighlights || []).map(h => ({...h})); // Deep copy
-  // Ensure note id exists
+
+  // Ensure note id exists (helps Firebase merge match)
   if(!n.id){ n.id = 'n_' + tid + '_' + noteIdx + '_' + Date.now().toString(36); }
-  // ✅ FIX: Prefer just-saved in-session cache first (same device, no refresh)
-  if(typeof _applyRecentNoteSave === 'function'){
-    var _fromCache = _applyRecentNoteSave(tid, n, noteIdx);
-    if(_fromCache) console.info('[openNotesEditor] restored from _recentNoteSaves cache savedAt='+(n.editorSavedAt||0)+' len='+((n.editorRichHTML||'').length));
-  }
-  // Use richest/newest content: in-memory note vs localStorage backup
-  var _bak = (typeof _loadNoteLocalBackup === 'function') ? _loadNoteLocalBackup(tid, n, noteIdx) : null;
-  var _memRich = n.editorRichHTML || n.richHTML || '';
-  var _memAt = n.editorSavedAt || 0;
-  var _bakRich = _bak ? (_bak.editorRichHTML || _bak.richHTML || '') : '';
-  var _bakAt = _bak ? (_bak.editorSavedAt || 0) : 0;
-  if(_bakRich && _bakAt > _memAt){
-    console.info('[openNotesEditor] restoring from localStorage backup (newer) bakAt='+_bakAt+' memAt='+_memAt+' len='+_bakRich.length);
-    n.editorRichHTML = _bakRich;
-    n.richHTML = _bakRich;
-    n.editorSavedAt = _bakAt;
-    if(_bak.editorHighlights) n.editorHighlights = _bak.editorHighlights;
-    if(_bak.content) n.content = _bak.content;
-  }
-  // Use richHTML if available (contains highlight markup or original formatting)
+
+  // ✅ RELIABLE LOAD (old working path): in-memory S is source of truth after save.
+  // Prefer editorRichHTML / richHTML; neLoadContent will use _editorState.richHTML.
   _editorState.richHTML = n.editorRichHTML || n.richHTML || null;
   console.info('[openNotesEditor] load richLen='+((_editorState.richHTML||'').length)+' noteId='+(n.id||'')+' savedAt='+(n.editorSavedAt||0)+' plainLen='+((n.content||'').length)+' name='+(n.name||''));
-  try {
-    var _snip = ((_editorState.richHTML || n.content || '') + '').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0, 80);
-    console.info('[openNotesEditor] content snippet: '+_snip);
-  } catch(_sE){}
-  // 🔗 Hub Reference: live HTML from Current Affairs / Static GK (no copy stored)
-  var _hubResolvedHtml = null;
-  var _hubMetaLabel = '';
-  if(n.type === 'hubRef' && n.hubTopicId){
-    var _hubMap = (n.hubType === 'static') ? (S.staticGkTopics || {}) : (S.extraFactsTopics || {});
-    var _hubT = _hubMap[n.hubTopicId];
-    if(_hubT && _hubT.html){
-      _hubResolvedHtml = _hubT.html;
-      _editorState.richHTML = _hubResolvedHtml;
-      _hubMetaLabel = ' · 🔗 ' + (n.hubType === 'static' ? 'Static GK' : 'Current Affairs') + ' (live)';
-    } else {
-      _hubResolvedHtml = '<p style="color:var(--text2);"><em>⚠️ Hub topic nahi mila ya khaali hai. Havoc library check karo.</em></p>';
-      _editorState.richHTML = _hubResolvedHtml;
-      _hubMetaLabel = ' · 🔗 Hub reference (missing)';
-    }
-  }
+
   // ⚡ Track active edit topic for smart live-sync merge
   typeof _setActiveEditTid === 'function' && _setActiveEditTid(tid);
   _undoStack = [];
   _redoStack = [];
 
-  document.getElementById('notesEditorTitle').textContent = (n.type === 'hubRef' ? '🔗 ' : '📄 ') + n.name;
+  document.getElementById('notesEditorTitle').textContent = '📄 ' + n.name;
   document.getElementById('notesEditorMeta').textContent =
-    (n.wordCount || 0) + ' words · Added: ' + (n.addedAt || '') + ' · Topic: ' + t.name + _hubMetaLabel;
+    (n.wordCount||0) + ' words · Added: ' + (n.addedAt||'') + ' · Topic: ' + t.name;
 
-  if(_hubResolvedHtml){
-    // Load hub HTML into editor area
-    var area = document.getElementById('noteEditableArea');
-    if(area){ area.innerHTML = _hubResolvedHtml; }
-    // Skip neLoadContent for hub refs — content already set
-  } else {
-  // ✅ FIX: Use the proven old load path:
-  // 1) put full editor HTML on _editorState.richHTML
-  // 2) call neLoadContent(plain, false) so the isHtml=false branch prefers richHTML
-  //    (highlights re-scanned from DOM, same as the working old app).
-  // Fallback: if no rich HTML, load plain content (or HTML-looking content).
-  _editorState.richHTML = n.editorRichHTML || n.richHTML || _editorState.richHTML || null;
-  if(_editorState.richHTML && String(_editorState.richHTML).length > 0){
-    neLoadContent(n.content || '', false);
-  } else {
-    neLoadContent(n.content || '', false);
-  }
-  }
-  // Async: IndexedDB backup may be newer than cloud/memory — apply when ready
-  (function(_tid, _n, _idx){
-    if(typeof _loadNoteBackupAsync !== 'function') return;
-    _loadNoteBackupAsync(_tid, _n, _idx).then(function(bak){
-      if(!bak) return;
-      var bakRich = bak.editorRichHTML || bak.richHTML || '';
-      var bakAt = bak.editorSavedAt || 0;
-      if(!bakRich) return;
-      var memAt = (_n && _n.editorSavedAt) || 0;
-      var area = document.getElementById('noteEditableArea');
-      if(!area) return;
-      var curLen = (area.innerHTML || '').length;
-      var memRichLen = ((_n && (_n.editorRichHTML || _n.richHTML)) || '').length;
-      // Apply when: newer backup, OR memory empty but IDB has content, OR IDB much longer
-      var shouldApply = (bakAt > memAt)
-        || (memRichLen < 30 && bakRich.length > 30)
-        || (bakAt >= memAt && bakRich.length > curLen + 80);
-      if(shouldApply){
-        console.info('[openNotesEditor] applying IDB bakLen='+bakRich.length+' bakAt='+bakAt+' memAt='+memAt+' memRichLen='+memRichLen+' curLen='+curLen);
-        _n.editorRichHTML = bakRich;
-        _n.richHTML = bakRich;
-        _n.editorSavedAt = bakAt;
-        if(bak.editorHighlights) _n.editorHighlights = bak.editorHighlights;
-        if(bak.content) _n.content = bak.content;
-        _editorState.richHTML = bakRich;
-        if(typeof _setHTML === 'function'){
-          // neLoadContent internal not exported — set directly
-        }
-        if(bakRich.indexOf('__imgRef__') >= 0 && typeof _restoreImagesFromIDB === 'function'){
-          _restoreImagesFromIDB(bakRich).then(function(restored){
-            area.innerHTML = restored;
-            if(typeof _doProgressiveImgRestore === 'function') setTimeout(function(){ _doProgressiveImgRestore(area); }, 30);
-            if(typeof updateNEWordCount === 'function') updateNEWordCount();
-          });
-        } else {
-          area.innerHTML = bakRich;
-          if(typeof updateNEWordCount === 'function') updateNEWordCount();
-        }
-      }
-    }).catch(function(e){ console.warn('[openNotesEditor] backup load', e); });
-  })(tid, n, noteIdx);
+  // Old reliable path: pass plain content; neLoadContent prefers _editorState.richHTML
+  neLoadContent(n.content || '', false);
+
   neSetEditMode(false);
   setHlMode('off'); // Default: highlight OFF
   _eraserModeOn = false;
@@ -42268,25 +42177,6 @@ async function saveTopicToFirebase(tid, subjId, secId){
     (topicData.notes || []).forEach(function(n){
       if(n && (n.editorRichHTML || n.richHTML) && !n.editorSavedAt) n.editorSavedAt = Date.now();
     });
-    // ✅ Guard: never push a topic whose in-memory notes lost editorRichHTML while
-    // the live S still has it (defensive against accidental strip before write).
-    try {
-      (topicData.notes || []).forEach(function(n, i){
-        var live = (t.notes && t.notes[i]) || null;
-        var tLen = ((n.editorRichHTML||n.richHTML)||'').length;
-        var lLen = live ? (((live.editorRichHTML||live.richHTML)||'').length) : 0;
-        if(lLen > 30 && tLen < 30){
-          n.editorRichHTML = live.editorRichHTML || live.richHTML;
-          n.richHTML = n.editorRichHTML;
-          n.editorSavedAt = live.editorSavedAt || Date.now();
-          if(live.content) n.content = live.content;
-          console.warn('[saveTopicToFirebase] restored stripped richHTML for note idx='+i+' len='+lLen);
-        }
-      });
-      var _pw=0,_pe=0;
-      (topicData.notes||[]).forEach(function(n){ if(((n.editorRichHTML||n.richHTML)||'').length>30) _pw++; else _pe++; });
-      console.info('[saveTopicToFirebase] pre-write notes richHTML with='+_pw+' empty='+_pe+' tid='+tid);
-    } catch(_g){}
 
     await _db.collection('users').doc(uid).collection('topics').doc(String(tid)).set({
       topic:    topicData,
@@ -42310,18 +42200,6 @@ async function saveTopicToFirebase(tid, subjId, secId){
       _myTopicWriteIds[String(tid)] = wid;
     } catch(eW){}
     setSyncStatus('synced');
-    // ✅ Ensure localStorage has the same richHTML we just pushed to cloud
-    try {
-      if(typeof _writeEpp5ToLocalStorage === 'function') _writeEpp5ToLocalStorage();
-    } catch(_lsE){}
-    // Debug: confirm notes still carry editorRichHTML after write
-    try {
-      var _nr = 0, _ne = 0;
-      (t.notes||[]).forEach(function(nn){
-        if(((nn.editorRichHTML||nn.richHTML)||'').length > 30) _nr++; else _ne++;
-      });
-      console.info('[saveTopicToFirebase] post-write notes richHTML with='+_nr+' empty='+_ne+' tid='+tid);
-    } catch(_dg){}
     // Show size info
     try {
       var _sz = _calcTopicSize(t);
@@ -42982,39 +42860,26 @@ async function loadFromFirebase(){
         if(n.editorRichHTML===undefined) n.editorRichHTML=null;
         delete n.canvasPNG;
         var ld = localEditorData['n_'+n.id] || localEditorData['n_idx_'+t.id+'_'+nIdx];
-        var cloudLen = (n.editorRichHTML||n.richHTML||'').length;
-        var cloudAt = n.editorSavedAt || 0;
-        // ✅ FIX: Prefer local when newer OR when cloud has empty/short richHTML
-        // (after the slim-localStorage bug many cloud notes have empty editorRichHTML
-        // while local/IDB still holds the full edited HTML).
-        if(ld && ld.richHTML && ld.richHTML.length > 30){
-          var localNewer = (ld.ts || 0) > cloudAt;
-          var cloudEmpty = cloudLen < 30;
-          var localRicher = ld.richHTML.length > cloudLen + 50;
-          if(localNewer || cloudEmpty || (localRicher && (ld.ts || 0) >= cloudAt)){
-            n.editorRichHTML = ld.richHTML;
-            n.richHTML = ld.richHTML;
-            n.editorHighlights = ld.highlights || n.editorHighlights || [];
-            n.editorSavedAt = Math.max(cloudAt, ld.ts || 0);
-            if(ld.content && (!n.content || n.content.length < (ld.content.length||0))) n.content = ld.content;
-          }
+        // ✅ FIX: sirf tab local richHTML lagao jab local timestamp zyada ho (newer)
+        if(ld && ld.richHTML && (ld.ts || 0) > (n.editorSavedAt || 0)){
+          n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[];
+          n.editorSavedAt=ld.ts||n.editorSavedAt;
         }
-        // Extra: dedicated localStorage / IDB backup
+        // Extra: dedicated localStorage backup
         try {
           var bak = (typeof _loadNoteLocalBackup === 'function') ? _loadNoteLocalBackup(t.id, n, nIdx) : null;
           var _br = bak && (bak.editorRichHTML||bak.richHTML) || '';
           var _bAt = bak ? (bak.editorSavedAt||0) : 0;
           var _mAt = n.editorSavedAt||0;
           var _mL = (n.editorRichHTML||n.richHTML||'').length;
-          // Apply backup if newer OR memory/cloud empty while backup has real content
-          // OR backup is substantially richer
-          if(_br.length > 30 && (_bAt > _mAt || (_mL < 30 && _br.length > 30) || (_br.length > _mL + 50 && _bAt >= _mAt))){
+          // Apply backup if newer OR memory empty while backup has real content
+          if(_br.length > 30 && (_bAt > _mAt || (_mL < 30 && _br.length > 30))){
             n.editorRichHTML = bak.editorRichHTML || bak.richHTML;
             n.richHTML = n.editorRichHTML;
             if(_bAt > _mAt) n.editorSavedAt = _bAt;
             if(bak.editorHighlights) n.editorHighlights = bak.editorHighlights;
-            if(bak.content && (!n.content || n.content.length < 50 || bak.content.length > n.content.length)) n.content = bak.content;
-            console.info('[loadFromFirebase] note backup applied tid='+t.id+' idx='+nIdx+' len='+(n.editorRichHTML||'').length+' reason='+(_bAt>_mAt?'newer':(_mL<30?'fill-empty':'richer')));
+            if(bak.content && (!n.content || n.content.length < 50)) n.content = bak.content;
+            console.info('[loadFromFirebase] note backup applied tid='+t.id+' idx='+nIdx+' len='+(n.editorRichHTML||'').length+' reason='+(_bAt>_mAt?'newer':'fill-empty'));
           }
         } catch(e){}
       });
@@ -43468,20 +43333,17 @@ function _applyTopicUpdate(tid, newTopicData){
                 }
               }
             } catch(_ce){}
-            var remoteLen = ((remoteNote.editorRichHTML||remoteNote.richHTML)||'').length;
-            var localLen  = ((local.notes[j].editorRichHTML||local.notes[j].richHTML)||'').length;
-            // Prefer local when: current note, local newer, OR remote empty/short while local has content
-            if(isCurrentNote || localAt > remoteAt || (remoteLen < 30 && localLen > 30)){
-              var savedRich = local.notes[j].editorRichHTML || local.notes[j].richHTML;
+            if(isCurrentNote || localAt > remoteAt){
+              var savedRich = local.notes[j].editorRichHTML;
               var savedHl   = local.notes[j].editorHighlights;
               var savedAt   = local.notes[j].editorSavedAt;
               var savedContent = local.notes[j].content;
               Object.assign(local.notes[j], remoteNote);
-              if(savedRich && (localAt >= remoteAt || remoteLen < 30)){
+              if(savedRich && localAt >= remoteAt){
                 local.notes[j].editorRichHTML    = savedRich;
                 local.notes[j].richHTML          = savedRich;
                 local.notes[j].editorHighlights  = savedHl;
-                local.notes[j].editorSavedAt     = Math.max(savedAt||0, remoteAt||0);
+                local.notes[j].editorSavedAt     = savedAt;
                 if(savedContent != null) local.notes[j].content = savedContent;
               }
             } else {
@@ -43519,11 +43381,11 @@ function _applyTopicUpdate(tid, newTopicData){
               var rat = rn.editorSavedAt || 0;
               var lRich = on.editorRichHTML || on.richHTML || '';
               var rRich = rn.editorRichHTML || rn.richHTML || '';
-              // ✅ FIX: Prefer local when newer, richer, OR remote empty while local has content
+              // ✅ FIX: Prefer local when local is newer OR equal with richer content
+              // (same-device save can race with slightly-stale cloud snapshot)
               var preferLocal = false;
               if(lat > rat && lRich) preferLocal = true;
               else if(lat >= rat && lRich && lRich.length > (rRich||'').length + 20) preferLocal = true;
-              else if((!rRich || rRich.length < 30) && lRich && lRich.length > 30) preferLocal = true;
               else if(typeof _recentNoteSaves !== 'undefined'){
                 try {
                   var _rk = String(tid)+'::'+(on.id ? String(on.id) : ('idx_'+oi));
@@ -43952,36 +43814,36 @@ function _pruneNoteBakLocalStorage(){
   } catch(e){ return 0; }
 }
 function _slimSForLocalStorage(src){
-  // ✅ FIX (notes save persistence): Do NOT strip editorRichHTML / richHTML /
-  // finalNotesHTML / content etc. Old app saved full note HTML in localStorage
-  // (epp5), so same-session reopen, refresh, and multi-device flows all saw
-  // the latest edit. The previous "slim" path deleted those fields and also
-  // truncated content to 2000 chars — after save, reopen showed old/empty
-  // notes and other devices never received updates (stale memory could be
-  // pushed to Firebase after a slim reload path).
-  // Only strip true binary/PNG bloat that blows the 5MB localStorage quota.
   var s;
   try { s = JSON.parse(JSON.stringify(src)); } catch(e){ return src; }
-  var HEAVY = ['canvasPNG',
-    'finalNotesCanvasPNG','smartNotesCanvasPNG','masterNotesCanvasPNG'];
+  var HEAVY = ['editorRichHTML','richHTML','finalNotesHTML','smartNotesHTML',
+    'masterNotesHTML','perfectNotesHTML','factsHTML','canvasPNG',
+    'finalNotesCanvasPNG','smartNotesCanvasPNG','masterNotesCanvasPNG',
+    'finalNotesDrawStrokes','smartNotesDrawStrokes','masterNotesDrawStrokes',
+    'finalNotesCanvasObjs','smartNotesCanvasObjs','masterNotesCanvasObjs',
+    'drawStrokes','canvasObjs','qmapData','studyCanvas'];
   function stripNote(n){
     if(!n || typeof n !== 'object') return;
     HEAVY.forEach(function(k){ if(n[k] !== undefined) delete n[k]; });
-    // Keep full content + editorRichHTML + richHTML + editorSavedAt + highlights
+    if(typeof n.content === 'string' && n.content.length > 2000)
+      n.content = n.content.slice(0, 2000);
   }
   function stripTopic(t){
     if(!t || typeof t !== 'object') return;
     HEAVY.forEach(function(k){ if(t[k] !== undefined) delete t[k]; });
+    if(typeof t.finalNotes === 'string' && t.finalNotes.length > 2000)
+      t.finalNotes = t.finalNotes.slice(0, 2000);
     (t.notes||[]).forEach(stripNote);
   }
   function walkSec(sec){
     (sec.topics||[]).forEach(stripTopic);
     (sec.subSections||[]).forEach(walkSec);
-    // Keep factsHTML so section/subject facts also persist offline
+    if(sec.factsHTML) delete sec.factsHTML;
   }
   function walkSub(sub){
     (sub.sections||[]).forEach(walkSec);
     (sub.subSubjects||[]).forEach(walkSub);
+    if(sub.factsHTML) delete sub.factsHTML;
   }
   (s.subjects||[]).forEach(walkSub);
   return s;
@@ -44064,7 +43926,6 @@ function save(){
     _metaSyncTimer = null;
     saveMetaToFirebase();
   }, 500);
-  return _lsOk;
 }
 
 // ── Track active editing topic (for smart merge during live sync) ─��
