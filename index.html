@@ -24458,9 +24458,23 @@ function _saveNoteLocalBackup(tid, n, noteIdx){
     editorSavedAt: n.editorSavedAt || Date.now(),
     name: n.name || ''
   };
-  // localStorage intentionally SKIPPED (quota). IDB only.
-  try { if(!_saveNoteLocalBackup._prunedOnce){ _saveNoteLocalBackup._prunedOnce=true; if(typeof _pruneNoteBakLocalStorage==='function') _pruneNoteBakLocalStorage(); } } catch(eP){}
-  // IndexedDB (primary)
+  // ✅ FIX: SYNC single-note localStorage backup so same-device reopen (even
+  // right after a fresh page refresh, before IndexedDB/cloud resolve) can
+  // read it back INSTANTLY and synchronously. Only ONE key is kept (the
+  // most-recently-saved note) so this can never grow unbounded or hit quota.
+  try {
+    var _key = _noteLocalKey(tid, n.id, noteIdx);
+    // Drop any previous "last saved note" key before writing the new one.
+    if(_saveNoteLocalBackup._lastKey && _saveNoteLocalBackup._lastKey !== _key){
+      try { localStorage.removeItem(_saveNoteLocalBackup._lastKey); } catch(eR){}
+    }
+    localStorage.setItem(_key, JSON.stringify(payload));
+    _saveNoteLocalBackup._lastKey = _key;
+  } catch(eLS){
+    // Quota or other failure — IDB backup below still covers us.
+    console.warn('[_saveNoteLocalBackup] localStorage backup failed', eLS && eLS.message);
+  }
+  // IndexedDB (secondary / richer history, async)
   return _openNotesContentDB().then(function(db){
     return new Promise(function(resolve){
       try {
@@ -43873,14 +43887,20 @@ var _metaSyncTimer = null;
 
 
 function _pruneNoteBakLocalStorage(){
+  // ✅ FIX: previously this wiped EVERY 'epp_note_bak_*' key on every save(),
+  // including the just-written "last saved note" sync backup — which made
+  // that backup permanently dead (write-then-immediately-delete). Now it
+  // keeps whichever single key is the current last-saved-note backup and
+  // only prunes older/stale ones.
   try {
+    var keep = (typeof _saveNoteLocalBackup !== 'undefined' && _saveNoteLocalBackup._lastKey) || null;
     var keys = [];
     for(var i=0; i<localStorage.length; i++){
       var k = localStorage.key(i);
-      if(k && k.indexOf('epp_note_bak_') === 0) keys.push(k);
+      if(k && k.indexOf('epp_note_bak_') === 0 && k !== keep) keys.push(k);
     }
     keys.forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
-    if(keys.length) console.info('[note-bak] pruned '+keys.length+' epp_note_bak_* keys');
+    if(keys.length) console.info('[note-bak] pruned '+keys.length+' stale epp_note_bak_* keys (kept: '+(keep||'none')+')');
     return keys.length;
   } catch(e){ return 0; }
 }
@@ -43927,10 +43947,12 @@ function _writeEpp5ToLocalStorage(){
     try { localStorage.setItem('epp5', payload); console.info('[save] epp5 OK (slim) ~'+Math.round(payload.length/1024)+'KB'); return true; }
     catch(e1){
       try {
+        var _keepBak = (typeof _saveNoteLocalBackup !== 'undefined' && _saveNoteLocalBackup._lastKey) || null;
         var drop = [];
         for(var i=0;i<localStorage.length;i++){
           var k = localStorage.key(i);
           if(!k || k==='epp5') continue;
+          if(k === _keepBak) continue; // ✅ FIX: don't drop the current last-saved-note backup
           if(k.indexOf('epp_note_bak_')===0 || k.indexOf('tqSess_')===0 || k.indexOf('epp_img_')===0) drop.push(k);
         }
         drop.forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
