@@ -1579,20 +1579,25 @@ html, body {
   overscroll-behavior: none;
   overscroll-behavior-y: none;
   -webkit-overflow-scrolling: auto; /* iOS Safari PTR disable */
+  height: 100%;
+  max-height: 100dvh;
 }
 body{
   background:var(--bg);color:var(--text);
   font-family:'Noto Sans Devanagari','Baloo 2',sans-serif;
   min-height:100vh;min-height:100dvh;
+  height:100%;
+  max-height:100dvh;
   display:flex;flex-direction:column;
   -webkit-font-smoothing:antialiased;
   -webkit-text-size-adjust:100%;
   overscroll-behavior: none;
   overscroll-behavior-y: none;
+  overflow: hidden; /* main scroll = .page-area */
 }
 
 /* ===== LAYOUT ===== */
-.app-shell{display:flex;flex:1;min-height:100vh;min-height:100dvh;}
+.app-shell{display:flex;flex:1;min-height:0;height:100%;max-height:100dvh;overflow:hidden;}
 
 /* SIDEBAR */
 /* ===== SIDEBAR -- Professional v2 ===== */
@@ -1737,7 +1742,7 @@ body{
 }
 
 /* MAIN CONTENT */
-.main-content{margin-left:var(--sidebar-w);flex:1;display:flex;flex-direction:column;overflow:hidden;height:100vh;height:100dvh;}
+.main-content{margin-left:var(--sidebar-w);flex:1;display:flex;flex-direction:column;overflow:hidden;height:100vh;height:100dvh;min-height:0;max-height:100dvh;}
 
 /* TOP BAR */
 .topbar{background:var(--surface);border-bottom:1.5px solid var(--border);padding:10px 14px;padding-top:max(10px,env(safe-area-inset-top,10px));display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;box-shadow:0 2px 10px rgba(21,101,192,0.08);}
@@ -1753,9 +1758,17 @@ body{
 .api-dot.ok{background:var(--green);}
 
 /* PAGE AREA */
-.page-area{padding:16px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;}
+.page-area{padding:16px;flex:1;min-height:0;height:auto;overflow-y:auto !important;overflow-x:hidden;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;}
 .page{display:none;}
 .page.active{display:block;animation:fadeIn 0.25s ease;}
+/* Settings page is long — ensure it never clips scroll and has bottom padding */
+#page-settings.active{
+  display:block;
+  overflow:visible;
+  min-height:min-content;
+  padding-bottom:calc(48px + env(safe-area-inset-bottom, 0px));
+}
+#page-settings .card:last-child{margin-bottom:24px;}
 @keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
 
 /* PAGE HEADER */
@@ -4330,9 +4343,10 @@ body.night-mode .sc-color-dot:hover { border-color: rgba(255,255,255,0.7); }
   .app-shell { justify-content: center; }
 }
 
-/* Prevent horizontal scroll globally */
+/* Prevent horizontal scroll globally (vertical scroll stays on .page-area) */
 html, body {
   overflow-x: hidden;
+  overflow-y: hidden;
   scroll-behavior: smooth;
 }
 
@@ -24089,22 +24103,45 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   // Ensure note id exists (helps Firebase merge match)
   if(!n.id){ n.id = 'n_' + tid + '_' + noteIdx + '_' + Date.now().toString(36); }
 
-  // ✅ RELIABLE LOAD (old working path): in-memory S is source of truth after save.
-  // Prefer editorRichHTML / richHTML; neLoadContent will use _editorState.richHTML.
-  _editorState.richHTML = n.editorRichHTML || n.richHTML || null;
-  console.info('[openNotesEditor] load richLen='+((_editorState.richHTML||'').length)+' noteId='+(n.id||'')+' savedAt='+(n.editorSavedAt||0)+' plainLen='+((n.content||'').length)+' name='+(n.name||''));
+  // 🔗 Hub Reference: live HTML from Current Affairs / Static GK (sirf ID store — size nahi badhta)
+  var _hubResolvedHtml = null;
+  var _hubMetaLabel = '';
+  if(n.type === 'hubRef' && n.hubTopicId){
+    var _hubMap = (n.hubType === 'static') ? (S.staticGkTopics || {}) : (S.extraFactsTopics || {});
+    var _hubT = _hubMap[n.hubTopicId];
+    if(_hubT && _hubT.html){
+      _hubResolvedHtml = (typeof _fcfpCleanStoredHtml === 'function') ? _fcfpCleanStoredHtml(_hubT.html) : _hubT.html;
+      _editorState.richHTML = _hubResolvedHtml;
+      _hubMetaLabel = ' · 🔗 ' + (n.hubType === 'static' ? 'Static GK' : 'Current Affairs') + ' (live)';
+      console.info('[openNotesEditor] hubRef live load id='+n.hubTopicId+' len='+(_hubResolvedHtml||'').length);
+    } else {
+      _hubResolvedHtml = '<p style="color:var(--text2);"><em>⚠️ Hub topic nahi mila ya khaali hai. Havoc → ' + (n.hubType === 'static' ? 'Static GK' : 'Current Affairs') + ' library check karo (id: ' + String(n.hubTopicId).replace(/</g,'&lt;') + ').</em></p>';
+      _editorState.richHTML = _hubResolvedHtml;
+      _hubMetaLabel = ' · 🔗 Hub reference (missing)';
+      console.warn('[openNotesEditor] hubRef missing hubTopicId='+n.hubTopicId+' type='+n.hubType);
+    }
+  } else {
+    // ✅ RELIABLE LOAD: in-memory S is source of truth after save
+    _editorState.richHTML = n.editorRichHTML || n.richHTML || null;
+    console.info('[openNotesEditor] load richLen='+((_editorState.richHTML||'').length)+' noteId='+(n.id||'')+' savedAt='+(n.editorSavedAt||0)+' plainLen='+((n.content||'').length)+' name='+(n.name||''));
+  }
 
   // ⚡ Track active edit topic for smart live-sync merge
   typeof _setActiveEditTid === 'function' && _setActiveEditTid(tid);
   _undoStack = [];
   _redoStack = [];
 
-  document.getElementById('notesEditorTitle').textContent = '📄 ' + n.name;
+  document.getElementById('notesEditorTitle').textContent = (n.type === 'hubRef' ? '🔗 ' : '📄 ') + n.name;
   document.getElementById('notesEditorMeta').textContent =
-    (n.wordCount||0) + ' words · Added: ' + (n.addedAt||'') + ' · Topic: ' + t.name;
+    (n.wordCount||0) + ' words · Added: ' + (n.addedAt||'') + ' · Topic: ' + t.name + _hubMetaLabel;
 
-  // Old reliable path: pass plain content; neLoadContent prefers _editorState.richHTML
-  neLoadContent(n.content || '', false);
+  if(_hubResolvedHtml){
+    // Hub content: load HTML directly (neLoadContent with isHtml true)
+    neLoadContent(_hubResolvedHtml, true);
+  } else {
+    // Old reliable path: pass plain content; neLoadContent prefers _editorState.richHTML
+    neLoadContent(n.content || '', false);
+  }
 
   neSetEditMode(false);
   setHlMode('off'); // Default: highlight OFF
@@ -24118,7 +24155,9 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   var _dot2ne = document.getElementById('unsavedDot2');
   if(_dot2ne) _dot2ne.style.display = 'none';
   var _snb=document.getElementById('saveNoteBtn'); if(_snb) _snb.style.display='none';
-  neUpdateStatusBar('👁️ Read Mode -- Highlight ya Edit button dabao');
+  neUpdateStatusBar(n.type === 'hubRef'
+    ? '🔗 Live Hub Reference — edit + save se hub library update hogi'
+    : '👁️ Read Mode -- Highlight ya Edit button dabao');
   var _neOv = document.getElementById('notesEditorOverlay');
   _neOv.removeAttribute('data-viewer');
   _neOv.style.display = '';
@@ -24129,16 +24168,18 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   setTimeout(function(){
     showQmapFab && showQmapFab();
     neUpdateHlCanvasBtn && neUpdateHlCanvasBtn();
-    // Restore canvas drawings if saved
-    _neRestoreCanvas(n.canvasObjs || null);
-    // Restore draw strokes from JSON (new system)
-    _ned.strokes   = JSON.parse(JSON.stringify(n.drawStrokes || []));
+    // Restore canvas drawings if saved (not for hub refs — live content)
+    if(n.type !== 'hubRef'){
+      _neRestoreCanvas(n.canvasObjs || null);
+      _ned.strokes   = JSON.parse(JSON.stringify(n.drawStrokes || []));
+    } else {
+      _neRestoreCanvas(null);
+      _ned.strokes = [];
+    }
     _ned.redoStack = [];
-    _ned.tool      = 'none'; // No tool active by default
-    _ned.active    = false;  // Draw mode OFF by default
-    // Deselect all tool buttons
+    _ned.tool      = 'none';
+    _ned.active    = false;
     document.querySelectorAll('.ndt-btn[id^="ndt"]').forEach(function(b){ b.classList.remove('sel'); });
-    // Ensure draw UI is reset to OFF state
     var _neDrawCanvas = document.getElementById('neDrawCanvas');
     var _neBodyEl     = document.getElementById('neBody');
     var _neDrawTb     = document.getElementById('neDrawToolbar');
@@ -24148,7 +24189,6 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
     if(_neBodyEl)     _neBodyEl.classList.remove('ne-body-docx-mode');
     if(_neDrawTb)     _neDrawTb.classList.remove('visible');
     if(_neDrawBtn)    { _neDrawBtn.classList.remove('draw-on'); }
-    // Show Study Canvas pull tab
     scOnEditorOpen(sid, secid, tid);
   }, 200);
 }
@@ -24555,6 +24595,34 @@ function _doSaveNoteData() {
   else {
     var n = t.notes[_editorState.noteIdx];
     if(!n) return false;
+
+    // 🔗 Hub Reference: edits hub library mein save — note mein sirf ID rehti hai (size control)
+    if(n.type === 'hubRef' && n.hubTopicId){
+      var _hubMap2 = (n.hubType === 'static') ? (S.staticGkTopics = S.staticGkTopics || {}) : (S.extraFactsTopics = S.extraFactsTopics || {});
+      var _hubT2 = _hubMap2[n.hubTopicId];
+      if(!_hubT2){
+        _hubT2 = { name: n.name || 'Hub Topic', html: '', updatedAt: Date.now() };
+        _hubMap2[n.hubTopicId] = _hubT2;
+      }
+      _hubT2.html = area ? area.innerHTML : (_hubT2.html || '');
+      _hubT2.updatedAt = Date.now();
+      // Note lightweight hi rahe — placeholder content, no full HTML embed
+      n.content = '(🔗 ' + (n.hubType === 'static' ? 'Static GK' : 'Current Affairs') + ' reference — live hub se load hota hai)';
+      n.editorRichHTML = null;
+      n.richHTML = '';
+      n.wordCount = 0;
+      n.lastEditedAt = new Date().toLocaleDateString('hi-IN');
+      save();
+      try {
+        if(n.hubType === 'static' && typeof _fcSyncGenericTopicToFirebase === 'function'){
+          _fcSyncGenericTopicToFirebase('staticGkTopics', n.hubTopicId, _hubT2);
+        } else if(typeof _fcSyncTopicToFirebase === 'function'){
+          _fcSyncTopicToFirebase(n.hubTopicId, _hubT2);
+        }
+      } catch(_hsE){ console.warn('[hubRef save] firebase', _hsE); }
+      console.info('[💾 _doSaveNoteData] hubRef saved to hub id='+n.hubTopicId+' len='+(_hubT2.html||'').length);
+      return true;
+    }
     
     n.content    = plainText;
     n.wordCount  = plainText.trim() ? plainText.trim().split(/\s+/).length : 0;
