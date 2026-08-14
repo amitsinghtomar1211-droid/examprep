@@ -29409,12 +29409,19 @@ async function _folderBuildTopicContent(it, isFirst) {
   heading.style.cssText = 'font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;';
   topicWrap.appendChild(heading);
 
-  const notes = t.notes || [];
+  // Agar picker se noteIndices aaye to sirf wahi notes export
+  const allNotes = t.notes || [];
+  let notes;
+  if(it.noteIndices && it.noteIndices.length){
+    notes = it.noteIndices.map(function(ni){ return allNotes[ni]; }).filter(Boolean);
+  } else {
+    notes = allNotes;
+  }
   let anyNoteContent = false;
   if(!notes.length) {
     const empty = document.createElement('div');
     empty.style.cssText = 'color:#999;font-style:italic;font-size:0.85rem;padding:8px 0;';
-    empty.textContent = 'Is topic mein koi note nahi hai.';
+    empty.textContent = 'Is topic mein koi note select nahi / khaali hai.';
     topicWrap.appendChild(empty);
   }
 
@@ -29525,9 +29532,16 @@ function _folderShowTopicPicker(folderLabel, items){
   ov.style.cssText = 'position:fixed;inset:0;z-index:1000100;background:rgba(13,27,42,0.72);display:flex;align-items:flex-end;justify-content:center;padding:12px;';
   ov.onclick = function(ev){ if(ev.target === ov) ov.remove(); };
 
-  // Group topics by parent folder path (last folder = leaf container of topics)
-  // path is array of folder names leading TO the topic (topic name not included)
-  var groups = []; // { key, label, indices: [i,...] }
+  function noteHasContent(n){
+    if(!n) return false;
+    return !!(((n.editorRichHTML || n.richHTML || n.content || '') + '').trim());
+  }
+  function topicNoteCount(t){
+    return (t.notes || []).filter(noteHasContent).length;
+  }
+
+  // Group by path
+  var groups = [];
   var groupMap = {};
   items.forEach(function(it, i){
     var path = (it.path || []).slice();
@@ -29539,24 +29553,40 @@ function _folderShowTopicPicker(folderLabel, items){
     groupMap[key].indices.push(i);
   });
 
-  function topicNoteCount(t){
-    return (t.notes || []).filter(function(n2){
-      return ((n2.editorRichHTML || n2.richHTML || n2.content || '') + '').trim();
-    }).length;
-  }
+  var totalNotes = 0;
+  items.forEach(function(it){ totalNotes += (it.topic && it.topic.notes ? it.topic.notes.length : 0); });
 
   var bodyHtml = groups.map(function(g, gi){
-    var topicRows = g.indices.map(function(i){
-      var it = items[i];
+    var topicBlocks = g.indices.map(function(ti){
+      var it = items[ti];
       var t = it.topic || {};
+      var notes = t.notes || [];
       var noteN = topicNoteCount(t);
-      var empty = noteN === 0;
-      return '<label class="_fppTopicRow" style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px 8px 28px;border-bottom:1px solid rgba(0,0,0,0.05);cursor:pointer;background:' + (empty ? 'rgba(198,40,40,0.04)' : 'transparent') + ';">' +
-        '<input type="checkbox" class="_fppChk" data-i="' + i + '" data-g="' + gi + '" ' + (empty ? '' : 'checked') + ' style="margin-top:3px;width:18px;height:18px;flex-shrink:0;accent-color:#1565c0;">' +
-        '<span style="flex:1;min-width:0;">' +
-          '<div style="font-weight:800;font-size:0.86rem;color:var(--text,#0d1b2a);">📙 ' + _folderEsc(t.name || ('Topic '+(i+1))) + (empty ? ' <span style="font-size:0.66rem;font-weight:700;color:#c62828;">(khaali)</span>' : '') + '</div>' +
-          '<div style="font-size:0.68rem;color:var(--text2,#37526d);margin-top:1px;">' + (noteN ? noteN + ' note(s) with content' : 'No note content') + '</div>' +
-        '</span></label>';
+
+      var noteRows = notes.map(function(n, ni){
+        var has = noteHasContent(n);
+        var nm = (n && n.name) ? n.name : ('Note ' + (ni + 1));
+        var isHub = n && n.type === 'hubRef';
+        return '<label class="_fppNoteRow" style="display:flex;align-items:flex-start;gap:8px;padding:6px 12px 6px 44px;border-bottom:1px solid rgba(0,0,0,0.04);cursor:pointer;background:' + (has ? 'transparent' : 'rgba(198,40,40,0.03)') + ';">' +
+          '<input type="checkbox" class="_fppNoteChk" data-ti="' + ti + '" data-ni="' + ni + '" data-g="' + gi + '" ' + (has ? 'checked' : '') + ' style="margin-top:2px;width:16px;height:16px;flex-shrink:0;accent-color:#00695c;">' +
+          '<span style="flex:1;min-width:0;">' +
+            '<div style="font-weight:700;font-size:0.8rem;color:var(--text,#0d1b2a);">📝 ' + _folderEsc(nm) + (isHub ? ' <span style="font-size:0.62rem;color:#e65100;font-weight:800;">🔗 hub</span>' : '') + (has ? '' : ' <span style="font-size:0.62rem;color:#c62828;">(khaali)</span>') + '</div>' +
+          '</span></label>';
+      }).join('');
+
+      if(!notes.length){
+        noteRows = '<div style="padding:6px 12px 8px 44px;font-size:0.72rem;color:var(--text2,#37526d);font-style:italic;">Is topic mein koi note nahi</div>';
+      }
+
+      return '<div class="_fppTopicBlock" data-ti="' + ti + '" data-g="' + gi + '">' +
+        '<label style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px 8px 28px;cursor:pointer;background:rgba(21,101,192,0.04);border-bottom:1px solid rgba(0,0,0,0.05);">' +
+          '<input type="checkbox" class="_fppTopicChk" data-ti="' + ti + '" data-g="' + gi + '" ' + (noteN ? 'checked' : '') + ' style="margin-top:3px;width:17px;height:17px;flex-shrink:0;accent-color:#1565c0;">' +
+          '<span style="flex:1;min-width:0;">' +
+            '<div style="font-weight:800;font-size:0.86rem;color:var(--text,#0d1b2a);">📙 ' + _folderEsc(t.name || ('Topic '+(ti+1))) + ' <span style="font-weight:700;font-size:0.7rem;color:var(--text2,#37526d);">(' + notes.length + ' notes' + (noteN ? ', ' + noteN + ' content' : '') + ')</span></div>' +
+          '</span>' +
+        '</label>' +
+        noteRows +
+      '</div>';
     }).join('');
 
     var leafName = g.label;
@@ -29564,22 +29594,22 @@ function _folderShowTopicPicker(folderLabel, items){
     if(parts.length > 1) leafName = parts[parts.length - 1];
 
     return '<div class="_fppGroup" data-g="' + gi + '" style="border-bottom:1.5px solid var(--border,#e0e0e0);">' +
-      '<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;background:var(--surface2,#f0f5fa);position:sticky;top:0;z-index:1;">' +
+      '<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;background:var(--surface2,#f0f5fa);position:sticky;top:0;z-index:2;">' +
         '<input type="checkbox" class="_fppGrpChk" data-g="' + gi + '" checked style="width:18px;height:18px;flex-shrink:0;accent-color:#e65100;">' +
         '<span style="flex:1;min-width:0;">' +
           '<div style="font-weight:900;font-size:0.82rem;color:#e65100;">📂 ' + _folderEsc(leafName) + ' <span style="font-weight:700;color:var(--text2,#37526d);font-size:0.72rem;">(' + g.indices.length + ' topics)</span></div>' +
           (parts.length > 1 ? '<div style="font-size:0.66rem;color:var(--text2,#37526d);margin-top:2px;line-height:1.35;">' + _folderEsc(g.label) + '</div>' : '') +
         '</span>' +
       '</label>' +
-      topicRows +
+      topicBlocks +
     '</div>';
   }).join('');
 
   ov.innerHTML =
-    '<div style="width:100%;max-width:540px;max-height:90vh;background:var(--surface,#fff);border-radius:18px 18px 0 0;display:flex;flex-direction:column;box-shadow:0 -8px 40px rgba(0,0,0,0.35);" onclick="event.stopPropagation();">' +
+    '<div style="width:100%;max-width:560px;max-height:92vh;background:var(--surface,#fff);border-radius:18px 18px 0 0;display:flex;flex-direction:column;box-shadow:0 -8px 40px rgba(0,0,0,0.35);" onclick="event.stopPropagation();">' +
       '<div style="padding:14px 16px 10px;border-bottom:1.5px solid var(--border,#e0e0e0);flex-shrink:0;">' +
-        '<div style="font-weight:900;font-size:1.05rem;color:var(--text,#0d1b2a);">📥 PDF Download — folders & topics</div>' +
-        '<div style="font-size:0.78rem;color:var(--text2,#37526d);margin-top:4px;line-height:1.45;">Folder: <b>' + _folderEsc(folderLabel) + '</b> · ' + items.length + ' topics · ' + groups.length + ' nested folder(s). Folder tick = uske saare topics; neeche har topic alag select/deselect.</div>' +
+        '<div style="font-weight:900;font-size:1.05rem;color:var(--text,#0d1b2a);">📥 PDF Download — folders, topics & notes</div>' +
+        '<div style="font-size:0.76rem;color:var(--text2,#37526d);margin-top:4px;line-height:1.45;">Folder: <b>' + _folderEsc(folderLabel) + '</b> · ' + items.length + ' topics · ' + totalNotes + ' notes. Hierarchy: Folder → Topic → Note. Sirf ticked notes PDF mein jayenge.</div>' +
       '</div>' +
       '<div style="padding:8px 12px;display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--border,#eee);flex-shrink:0;">' +
         '<button type="button" id="_fppAll" style="padding:6px 12px;border-radius:8px;border:1.5px solid #1565c0;background:#1565c0;color:#fff;font-weight:800;font-size:0.75rem;cursor:pointer;">✓ Sab select</button>' +
@@ -29596,61 +29626,104 @@ function _folderShowTopicPicker(folderLabel, items){
 
   document.body.appendChild(ov);
 
+  function syncTopicCheckbox(ti){
+    var tChk = ov.querySelector('._fppTopicChk[data-ti="'+ti+'"]');
+    var nChks = ov.querySelectorAll('._fppNoteChk[data-ti="'+ti+'"]');
+    if(!tChk) return;
+    if(!nChks.length){ tChk.checked = false; tChk.indeterminate = false; return; }
+    var n = 0;
+    nChks.forEach(function(c){ if(c.checked) n++; });
+    tChk.checked = n === nChks.length;
+    tChk.indeterminate = n > 0 && n < nChks.length;
+  }
   function syncGroupCheckbox(gi){
     var gChk = ov.querySelector('._fppGrpChk[data-g="'+gi+'"]');
-    var chks = ov.querySelectorAll('._fppChk[data-g="'+gi+'"]');
-    if(!gChk || !chks.length) return;
+    var nChks = ov.querySelectorAll('._fppNoteChk[data-g="'+gi+'"]');
+    if(!gChk) return;
+    if(!nChks.length){
+      var tChks = ov.querySelectorAll('._fppTopicChk[data-g="'+gi+'"]');
+      var tn = 0;
+      tChks.forEach(function(c){ if(c.checked) tn++; });
+      gChk.checked = tChks.length && tn === tChks.length;
+      gChk.indeterminate = tn > 0 && tn < tChks.length;
+      return;
+    }
     var n = 0;
-    chks.forEach(function(c){ if(c.checked) n++; });
-    gChk.checked = n === chks.length;
-    gChk.indeterminate = n > 0 && n < chks.length;
+    nChks.forEach(function(c){ if(c.checked) n++; });
+    gChk.checked = n === nChks.length;
+    gChk.indeterminate = n > 0 && n < nChks.length;
   }
   function updateCount(){
-    var n = ov.querySelectorAll('._fppChk:checked').length;
+    var n = ov.querySelectorAll('._fppNoteChk:checked').length;
+    var total = ov.querySelectorAll('._fppNoteChk').length;
     var el = document.getElementById('_fppCount');
-    if(el) el.textContent = n + ' / ' + items.length + ' topics selected';
+    if(el) el.textContent = n + ' / ' + total + ' notes selected';
     var go = document.getElementById('_fppGo');
     if(go){ go.disabled = n === 0; go.style.opacity = n ? '1' : '0.5'; }
+    items.forEach(function(it, ti){ syncTopicCheckbox(ti); });
     groups.forEach(function(g, gi){ syncGroupCheckbox(gi); });
   }
   updateCount();
 
-  ov.querySelectorAll('._fppChk').forEach(function(c){
+  ov.querySelectorAll('._fppNoteChk').forEach(function(c){
     c.onchange = function(){ updateCount(); };
+  });
+  ov.querySelectorAll('._fppTopicChk').forEach(function(tChk){
+    tChk.onchange = function(){
+      var ti = tChk.getAttribute('data-ti');
+      var on = tChk.checked;
+      ov.querySelectorAll('._fppNoteChk[data-ti="'+ti+'"]').forEach(function(c){ c.checked = on; });
+      updateCount();
+    };
   });
   ov.querySelectorAll('._fppGrpChk').forEach(function(gChk){
     gChk.onchange = function(){
       var gi = gChk.getAttribute('data-g');
       var on = gChk.checked;
-      ov.querySelectorAll('._fppChk[data-g="'+gi+'"]').forEach(function(c){ c.checked = on; });
+      ov.querySelectorAll('._fppNoteChk[data-g="'+gi+'"]').forEach(function(c){ c.checked = on; });
+      ov.querySelectorAll('._fppTopicChk[data-g="'+gi+'"]').forEach(function(c){ c.checked = on; c.indeterminate = false; });
       updateCount();
     };
   });
 
   document.getElementById('_fppAll').onclick = function(){
-    ov.querySelectorAll('._fppChk').forEach(function(c){ c.checked = true; });
+    ov.querySelectorAll('._fppNoteChk').forEach(function(c){ c.checked = true; });
     updateCount();
   };
   document.getElementById('_fppNone').onclick = function(){
-    ov.querySelectorAll('._fppChk').forEach(function(c){ c.checked = false; });
+    ov.querySelectorAll('._fppNoteChk').forEach(function(c){ c.checked = false; });
     updateCount();
   };
   document.getElementById('_fppOnlyFilled').onclick = function(){
-    ov.querySelectorAll('._fppChk').forEach(function(c){
-      var i = Number(c.getAttribute('data-i'));
-      var t = items[i] && items[i].topic;
-      c.checked = !!(t && topicNoteCount(t) > 0);
+    ov.querySelectorAll('._fppNoteChk').forEach(function(c){
+      var ti = Number(c.getAttribute('data-ti'));
+      var ni = Number(c.getAttribute('data-ni'));
+      var n = items[ti] && items[ti].topic && items[ti].topic.notes && items[ti].topic.notes[ni];
+      c.checked = noteHasContent(n);
     });
     updateCount();
   };
   document.getElementById('_fppCancel').onclick = function(){ ov.remove(); };
   document.getElementById('_fppGo').onclick = function(){
-    var selected = [];
-    ov.querySelectorAll('._fppChk:checked').forEach(function(c){
-      var i = Number(c.getAttribute('data-i'));
-      if(items[i]) selected.push(items[i]);
+    // Build selected items with noteIndices
+    var byTopic = {};
+    ov.querySelectorAll('._fppNoteChk:checked').forEach(function(c){
+      var ti = Number(c.getAttribute('data-ti'));
+      var ni = Number(c.getAttribute('data-ni'));
+      if(!byTopic[ti]) byTopic[ti] = [];
+      byTopic[ti].push(ni);
     });
-    if(!selected.length){ showToast('Kam se kam 1 topic select karo', 'error'); return; }
+    var selected = [];
+    Object.keys(byTopic).forEach(function(tiStr){
+      var ti = Number(tiStr);
+      if(!items[ti]) return;
+      selected.push({
+        topic: items[ti].topic,
+        path: items[ti].path,
+        noteIndices: byTopic[ti].sort(function(a,b){ return a-b; })
+      });
+    });
+    if(!selected.length){ showToast('Kam se kam 1 note select karo', 'error'); return; }
     ov.remove();
     _downloadFolderPDFExecute(folderLabel, selected);
   };
@@ -29663,7 +29736,13 @@ function _folderEsc(s){
 async function _downloadFolderPDFExecute(folderLabel, items){
   if(!items || !items.length){ showToast('Koi topic select nahi', 'error'); return; }
 
-  const notesWithContentCount = items.reduce((n, it) => n + (it.topic.notes || []).filter(n2 => (n2.editorRichHTML || n2.richHTML || n2.content || '').trim()).length, 0);
+  const notesWithContentCount = items.reduce((n, it) => {
+    var all = it.topic.notes || [];
+    var list = (it.noteIndices && it.noteIndices.length)
+      ? it.noteIndices.map(function(i){ return all[i]; }).filter(Boolean)
+      : all;
+    return n + list.filter(function(n2){ return (n2.editorRichHTML || n2.richHTML || n2.content || '').trim(); }).length;
+  }, 0);
   console.log('[downloadFolderPDF] Notes with actual content found: ' + notesWithContentCount);
   const hasAnyContent = notesWithContentCount > 0;
   if(!hasAnyContent) { console.warn('[downloadFolderPDF] No selected topic has note content.'); showToast('⚠️ Selected topics mein koi note content nahi hai', 'error'); return; }
