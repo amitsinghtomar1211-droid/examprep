@@ -29392,10 +29392,9 @@ function _folderCollectTopics(node, kind, pathSoFar) {
 // a 40,000-50,000px wrapper if built as one giant div, so instead we now
 // build + capture + add-to-pdf ONE topic at a time, each safely under
 // that height ceiling, and merge the results into a single PDF file.
-/** Get best available HTML/text from a note object (many legacy fields) */
+/** Sync: best HTML/text currently on note object */
 function _folderNoteRawHtml(n){
   if(!n) return '';
-  // hubRef — live content from hub libraries
   if(n.type === 'hubRef' && n.hubTopicId){
     try {
       var hubTopics = (n.hubType === 'static') ? (S.staticGkTopics || {}) : (S.extraFactsTopics || S.similarCurrentTopics || {});
@@ -29406,20 +29405,12 @@ function _folderNoteRawHtml(n){
       }
     } catch(e){}
   }
-  var candidates = [
-    n.editorRichHTML,
-    n.richHTML,
-    n.html,
-    n.body,
-    n.finalNotes,
-    n.content
-  ];
+  var candidates = [n.editorRichHTML, n.richHTML, n.html, n.body, n.finalNotes, n.content];
   for(var i = 0; i < candidates.length; i++){
     var v = candidates[i];
     if(v == null) continue;
     var s = String(v).trim();
     if(!s) continue;
-    // plain text (no tags) → wrap
     if(s.indexOf('<') === -1){
       var esc = (typeof _escHtml === 'function') ? _escHtml(s) : s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       return '<div style="white-space:pre-wrap;">' + esc + '</div>';
@@ -29427,6 +29418,88 @@ function _folderNoteRawHtml(n){
     return s;
   }
   return '';
+}
+
+/** Async: memory → recentSave → localStorage → IndexedDB → (optional) cloud topic doc */
+async function _folderResolveNoteContentFull(topic, note, noteIdx){
+  if(!note) return '';
+  var html = _folderNoteRawHtml(note);
+  if(html && html.trim().length > 5) return html;
+
+  var tid = topic && topic.id;
+  // 1) in-memory recent saves
+  try {
+    if(typeof _recentNoteSaves !== 'undefined' && _recentNoteSaves && tid != null){
+      var keys = [];
+      if(note.id) keys.push(String(tid) + '::' + String(note.id));
+      keys.push(String(tid) + '::idx_' + String(noteIdx));
+      for(var ki = 0; ki < keys.length; ki++){
+        var rec = _recentNoteSaves[keys[ki]];
+        if(rec && (rec.editorRichHTML || rec.richHTML || rec.content)){
+          var r = rec.editorRichHTML || rec.richHTML || '';
+          if(r && String(r).trim()) return String(r);
+          if(rec.content && String(rec.content).trim()){
+            var esc1 = (typeof _escHtml === 'function') ? _escHtml(rec.content) : String(rec.content);
+            return '<div style="white-space:pre-wrap;">' + esc1 + '</div>';
+          }
+        }
+      }
+    }
+  } catch(e){}
+
+  // 2) localStorage backup (sync)
+  try {
+    if(typeof _loadNoteLocalBackup === 'function' && tid != null){
+      var bak = _loadNoteLocalBackup(tid, note, noteIdx);
+      if(bak){
+        var b = (bak.editorRichHTML || bak.richHTML || '') + '';
+        if(b.trim()) return b;
+        if(bak.content && String(bak.content).trim()){
+          var esc2 = (typeof _escHtml === 'function') ? _escHtml(bak.content) : String(bak.content);
+          return '<div style="white-space:pre-wrap;">' + esc2 + '</div>';
+        }
+      }
+    }
+  } catch(e){}
+
+  // 3) IndexedDB backup
+  try {
+    if(typeof _loadNoteBackupAsync === 'function' && tid != null){
+      var idb = await _loadNoteBackupAsync(tid, note, noteIdx);
+      if(idb){
+        var ib = (idb.editorRichHTML || idb.richHTML || '') + '';
+        if(ib.trim()) return ib;
+        if(idb.content && String(idb.content).trim()){
+          var esc3 = (typeof _escHtml === 'function') ? _escHtml(idb.content) : String(idb.content);
+          return '<div style="white-space:pre-wrap;">' + esc3 + '</div>';
+        }
+      }
+    }
+  } catch(e){}
+
+  // 4) Firebase topic doc (last resort, when online)
+  try {
+    if(_db && _currentUser && tid != null){
+      var snap = await _db.collection('users').doc(_effectiveUID || _currentUser.uid).collection('topics').doc(String(tid)).get();
+      if(snap && snap.exists){
+        var data = snap.data() || {};
+        var notes = data.notes || [];
+        var remote = null;
+        if(note.id) remote = notes.find(function(x){ return x && String(x.id) === String(note.id); });
+        if(!remote && noteIdx >= 0 && notes[noteIdx]) remote = notes[noteIdx];
+        if(remote){
+          var rh = (remote.editorRichHTML || remote.richHTML || '') + '';
+          if(rh.trim()) return rh;
+          if(remote.content && String(remote.content).trim()){
+            var esc4 = (typeof _escHtml === 'function') ? _escHtml(remote.content) : String(remote.content);
+            return '<div style="white-space:pre-wrap;">' + esc4 + '</div>';
+          }
+        }
+      }
+    }
+  } catch(e){ console.warn('[folder export] cloud note load fail', e); }
+
+  return html || '';
 }
 
 async function _folderBuildTopicContent(it, isFirst) {
@@ -29464,8 +29537,19 @@ async function _folderBuildTopicContent(it, isFirst) {
 
   for(let ni = 0; ni < notes.length; ni++) {
     const n = notes[ni];
-    let rawHtml = _folderNoteRawHtml(n);
-    if(!rawHtml.trim()) { console.warn('[downloadFolder] Topic "'+(t.name||'?')+'" note "'+(n && n.name||ni)+'" has no content — skipped.'); continue; }
+    // Full resolve: memory → backup → IDB → cloud (same as Word/HTML path)
+    let rawHtml = '';
+    try {
+      if(typeof _folderResolveNoteContentFull === 'function'){
+        // noteIndices may map; find original index in topic.notes
+        var origIdx = ni;
+        if(it.noteIndices && it.noteIndices.length) origIdx = it.noteIndices[ni];
+        rawHtml = await _folderResolveNoteContentFull(t, n, origIdx);
+      } else {
+        rawHtml = _folderNoteRawHtml(n);
+      }
+    } catch(e){ rawHtml = _folderNoteRawHtml(n); }
+    if(!rawHtml || !String(rawHtml).trim()) { console.warn('[downloadFolder] Topic "'+(t.name||'?')+'" note "'+(n && n.name||ni)+'" has no content — skipped.'); continue; }
     anyNoteContent = true;
     const resolvedHtml = await _folderResolveNoteHtml(rawHtml);
 
@@ -29824,11 +29908,14 @@ function _folderEsc(s){
 async function _downloadFolderWordExecute(folderLabel, items){
   if(!items || !items.length){ showToast('Koi topic/note select nahi', 'error'); return; }
 
-  showToast('⬇️ Word file taiyar ho rahi hai...', 'success');
+  var wantHtml = !!window._folderPreferHtml;
+  window._folderPreferHtml = false;
+
+  showToast('⬇️ Content collect ho raha hai (memory + backup + cloud)...', 'success');
 
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#0d1b2aee;display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Noto Sans",Arial,sans-serif;font-size:0.95rem;font-weight:600;text-align:center;padding:20px;';
-  overlay.textContent = '📄 Content collect ho raha hai...';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#0d1b2aee;display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Noto Sans",Arial,sans-serif;font-size:0.9rem;font-weight:600;text-align:center;padding:20px;';
+  overlay.innerHTML = '📄 Notes content load ho raha hai...<br><span style="font-size:0.75rem;opacity:0.8;font-weight:500;">Memory → Backup → Cloud</span>';
   document.body.appendChild(overlay);
 
   function _u8(str){
@@ -29909,154 +29996,146 @@ async function _downloadFolderWordExecute(folderLabel, items){
     return out;
   }
 
+  function _downloadBlob(blob, filename){
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){ try{ a.remove(); URL.revokeObjectURL(url); }catch(e){} }, 10000);
+  }
+
   try {
     var parts = [];
     var totalChars = 0;
     var notesExported = 0;
+    var notesTried = 0;
+    var emptyNames = [];
 
     for(var i = 0; i < items.length; i++){
       var it = items[i];
-      overlay.textContent = '📄 Content — ' + (i+1) + '/' + items.length + ' topics...';
+      overlay.innerHTML = '📄 Topic ' + (i+1) + '/' + items.length + ' load ho raha hai...<br><span style="font-size:0.75rem;opacity:0.85;font-weight:500;">' + _folderEsc((it.topic && it.topic.name) || '') + '</span>';
       var t = it.topic || {};
       var allNotes = t.notes || [];
-      var notes = (it.noteIndices && it.noteIndices.length)
-        ? it.noteIndices.map(function(ni){ return allNotes[ni]; }).filter(Boolean)
-        : allNotes;
+      var indexList = (it.noteIndices && it.noteIndices.length) ? it.noteIndices.slice() : allNotes.map(function(_, idx){ return idx; });
 
       var topicParts = [];
       topicParts.push('<div style="font-size:0.72rem;color:#888;font-weight:700;margin:8px 0 4px;">📂 ' + _folderEsc((it.path||[]).join(' › ')) + '</div>');
       topicParts.push('<h1 style="font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;">📙 ' + _folderEsc(t.name || 'Topic') + '</h1>');
 
       var topicHas = false;
-      for(var ni = 0; ni < notes.length; ni++){
-        var n = notes[ni];
-        var raw = (typeof _folderNoteRawHtml === 'function') ? _folderNoteRawHtml(n) : '';
+      for(var j = 0; j < indexList.length; j++){
+        var ni = indexList[j];
+        var n = allNotes[ni];
+        notesTried++;
+        if(!n){ emptyNames.push((t.name||'?')+'#'+ni); continue; }
+
+        var raw = await _folderResolveNoteContentFull(t, n, ni);
         if(!raw || !String(raw).trim()){
-          console.warn('[Word] empty note', t.name, n && n.name);
+          console.warn('[Word/HTML] empty after full resolve', t.name, n.name, 'idx', ni);
+          emptyNames.push((n.name || ('Note '+ni)));
           continue;
         }
-        // Resolve IDB images if any
-        if(typeof _folderResolveNoteHtml === 'function' && raw.indexOf('data-idbref=') !== -1){
+        // Resolve IDB images in HTML if present
+        if(typeof _folderResolveNoteHtml === 'function' && String(raw).indexOf('data-idbref=') !== -1){
           try { raw = await _folderResolveNoteHtml(raw); } catch(e){}
         }
         topicHas = true;
         notesExported++;
-        totalChars += raw.length;
-        if(notes.length > 1){
-          topicParts.push('<div style="font-size:0.85rem;font-weight:800;color:#00695c;margin:14px 0 6px;padding-left:8px;border-left:3px solid #00695c;">📝 ' + _folderEsc((n && n.name) || ('Note '+(ni+1))) + '</div>');
+        totalChars += String(raw).length;
+        if(indexList.length > 1){
+          topicParts.push('<div style="font-size:0.85rem;font-weight:800;color:#00695c;margin:14px 0 6px;padding-left:8px;border-left:3px solid #00695c;">📝 ' + _folderEsc(n.name || ('Note '+(ni+1))) + '</div>');
         }
-        topicParts.push('<div style="margin-bottom:16px;">' + raw + '</div>');
+        topicParts.push('<div class="note-body" style="margin-bottom:18px;">' + raw + '</div>');
       }
 
       if(!topicHas){
-        topicParts.push('<p style="color:#999;font-style:italic;">(Is topic ke selected notes mein content nahi mila)</p>');
+        topicParts.push('<p style="color:#c62828;font-style:italic;">⚠️ Is topic ke selected notes mein content nahi mila (memory/backup/cloud empty).</p>');
       }
-      if(parts.length) parts.push('<div style="page-break-before:always;height:8px;"></div>');
+      if(parts.length) parts.push('<hr style="border:none;border-top:2px solid #ddd;margin:24px 0;page-break-before:always;">');
       parts.push(topicParts.join('\n'));
     }
 
-    console.log('[Word export] notesExported=', notesExported, 'totalChars=', totalChars);
+    console.log('[Word/HTML export] tried=', notesTried, 'exported=', notesExported, 'chars=', totalChars, 'empty=', emptyNames);
 
-    if(!notesExported || totalChars < 5){
+    if(!notesExported || totalChars < 3){
       if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
-      showToast('⚠️ Selected notes mein content nahi mila (data empty). Pehle notes editor mein open karke save karke try karo.', 'error');
+      showToast('⚠️ Content nahi mila (' + notesTried + ' notes try). Notes editor mein open→save karke phir try karo.', 'error');
       return;
     }
 
     var title = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g,'').trim() || 'folder';
-    var bodyInner = '<div style="font-size:0.85rem;color:#666;margin-bottom:12px;">📂 ' + _folderEsc(title) + ' — combined export (' + notesExported + ' notes)</div>'
+    var bodyInner = '<div style="font-size:0.85rem;color:#666;margin-bottom:12px;">📂 ' + _folderEsc(title)
+      + ' — ' + notesExported + ' notes · ' + totalChars + ' chars</div>'
       + parts.join('\n');
 
-    // Build real DOCX
-    var contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-      + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-      + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-      + '<Default Extension="xml" ContentType="application/xml"/>'
-      + '<Default Extension="html" ContentType="text/html"/>'
-      + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
-      + '</Types>';
-    var rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-      + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-      + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
-      + '</Relationships>';
-    var docRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-      + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-      + '<Relationship Id="htmlChunk" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="afchunk.html"/>'
-      + '</Relationships>';
-    var documentXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-      + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
-      + 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-      + '<w:body><w:altChunk r:id="htmlChunk"/>'
-      + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr>'
-      + '</w:body></w:document>';
-
-    var afHtml = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + _folderEsc(title) + '</title>'
-      + '<style>body{font-family:"Noto Sans Devanagari","Noto Sans",Arial,sans-serif;font-size:15px;line-height:1.85;color:#111;}'
+    var afHtml = '<!DOCTYPE html><html><head><meta charset="utf-8">'
+      + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+      + '<title>' + _folderEsc(title) + '</title>'
+      + '<style>'
+      + 'body{font-family:"Noto Sans Devanagari","Noto Sans",Arial,sans-serif;font-size:15px;line-height:1.85;color:#111;max-width:800px;margin:24px auto;padding:0 16px;}'
       + 'h1{font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;}'
       + 'img{max-width:100%;height:auto;}table{border-collapse:collapse;width:100%;}'
       + 'td,th{border:1px solid #999;padding:6px 8px;}'
       + 'mark.user-hl{background:#fff176;}mark.user-hl-pink{background:#fce4ec;}'
       + 'mark.user-hl-green{background:#CCFF90;}mark.user-hl-blue{background:#F3E5F5;}'
       + 'mark.user-hl-red{background:#F6D9D9;}'
-      + 'b,strong{font-weight:800;}ul,ol{padding-left:20px;}</style></head><body>'
-      + bodyInner + '</body></html>';
+      + 'b,strong{font-weight:800;}ul,ol{padding-left:20px;}'
+      + 'pre,div[style*="pre-wrap"]{white-space:pre-wrap;word-wrap:break-word;}'
+      + '</style></head><body>' + bodyInner + '</body></html>';
 
-    var zipBytes = _zipStore([
-      { name: '[Content_Types].xml', data: _u8(contentTypes) },
-      { name: '_rels/.rels', data: _u8(rels) },
-      { name: 'word/document.xml', data: _u8(documentXml) },
-      { name: 'word/_rels/document.xml.rels', data: _u8(docRels) },
-      { name: 'word/afchunk.html', data: _u8(afHtml) }
-    ]);
+    // 1) ALWAYS download HTML first — guaranteed readable, has full content
+    overlay.innerHTML = '⬇️ HTML file save ho rahi hai...<br><span style="font-size:0.75rem;opacity:0.85;">' + notesExported + ' notes · ' + totalChars + ' chars</span>';
+    var htmlBlob = new Blob([afHtml], { type: 'text/html;charset=utf-8' });
+    console.log('[Word/HTML] html blob size', htmlBlob.size);
+    _downloadBlob(htmlBlob, title + '.html');
 
-    console.log('[Word export] docx bytes=', zipBytes.length, 'html chars=', afHtml.length);
+    // 2) If user asked Word (or both), also build DOCX with same HTML payload
+    if(!wantHtml){
+      overlay.innerHTML = '⬇️ Word (.docx) bhi ban raha hai...';
+      var contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        + '<Default Extension="xml" ContentType="application/xml"/>'
+        + '<Default Extension="html" ContentType="text/html"/>'
+        + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        + '</Types>';
+      var rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+        + '</Relationships>';
+      var docRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + '<Relationship Id="htmlChunk" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="afchunk.html"/>'
+        + '</Relationships>';
+      var documentXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        + 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        + '<w:body><w:altChunk r:id="htmlChunk"/>'
+        + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr>'
+        + '</w:body></w:document>';
 
-    // Download DOCX
-    var docxBlob = new Blob([zipBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-    var url = URL.createObjectURL(docxBlob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = title + '.docx';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 8000);
-
-    // Also offer HTML mirror if docx seems too small (mobile apps sometimes choke on altChunk)
-    if(zipBytes.length < 2500){
-      console.warn('[Word export] docx unexpectedly small — also downloading HTML');
-      var htmlBlob = new Blob([afHtml], { type: 'text/html;charset=utf-8' });
-      var url2 = URL.createObjectURL(htmlBlob);
-      var a2 = document.createElement('a');
-      a2.href = url2;
-      a2.download = title + '.html';
-      document.body.appendChild(a2);
-      a2.click();
-      a2.remove();
-      setTimeout(function(){ URL.revokeObjectURL(url2); }, 8000);
+      var zipBytes = _zipStore([
+        { name: '[Content_Types].xml', data: _u8(contentTypes) },
+        { name: '_rels/.rels', data: _u8(rels) },
+        { name: 'word/document.xml', data: _u8(documentXml) },
+        { name: 'word/_rels/document.xml.rels', data: _u8(docRels) },
+        { name: 'word/afchunk.html', data: _u8(afHtml) }
+      ]);
+      console.log('[Word/HTML] docx bytes', zipBytes.length);
+      var docxBlob = new Blob([zipBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+      _downloadBlob(docxBlob, title + '.docx');
     }
-
-    // Always also download .html when user chose HTML, or as safety if docx tiny
-    if(window._folderPreferHtml || zipBytes.length < 3000){
-      var htmlBlob = new Blob([afHtml], { type: 'text/html;charset=utf-8' });
-      var urlH = URL.createObjectURL(htmlBlob);
-      var aH = document.createElement('a');
-      aH.href = urlH;
-      aH.download = title + '.html';
-      document.body.appendChild(aH);
-      aH.click();
-      aH.remove();
-      setTimeout(function(){ URL.revokeObjectURL(urlH); }, 8000);
-    }
-    window._folderPreferHtml = false;
 
     if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
-    var kb = Math.round(zipBytes.length / 1024);
-    showToast('✅ Download: ' + notesExported + ' notes, ~' + kb + ' KB (content ' + totalChars + ' chars)', 'success');
+    var kb = Math.round((totalChars + 500) / 1024);
+    showToast('✅ ' + notesExported + ' notes export · ~' + kb + ' KB content · HTML' + (wantHtml ? '' : '+Word') + ' download', 'success');
   } catch(err) {
     console.error('[downloadFolderWord]', err);
     if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
-    showToast('❌ Word fail: ' + (err && err.message ? err.message : 'error'), 'error');
+    showToast('❌ Export fail: ' + (err && err.message ? err.message : 'error'), 'error');
   }
 }
 
