@@ -29618,9 +29618,21 @@ function _folderShowTopicPicker(folderLabel, items){
         '<span id="_fppCount" style="margin-left:auto;font-size:0.72rem;font-weight:700;color:var(--text2,#37526d);align-self:center;"></span>' +
       '</div>' +
       '<div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:140px;">' + bodyHtml + '</div>' +
-      '<div style="padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px));display:flex;gap:10px;border-top:1.5px solid var(--border,#e0e0e0);flex-shrink:0;">' +
+      '<div style="padding:10px 14px 0;border-top:1.5px solid var(--border,#e0e0e0);flex-shrink:0;">' +
+        '<div style="font-size:0.72rem;font-weight:800;color:var(--text2,#37526d);margin-bottom:6px;">Download format (content format same rahe):</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">' +
+          '<label style="flex:1;min-width:120px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:2px solid #2e7d32;background:rgba(46,125,50,0.08);cursor:pointer;font-weight:800;font-size:0.82rem;">' +
+            '<input type="radio" name="_fppFmt" value="word" checked style="accent-color:#2e7d32;width:16px;height:16px;">📄 Word (.doc)' +
+          '</label>' +
+          '<label style="flex:1;min-width:120px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:2px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);cursor:pointer;font-weight:800;font-size:0.82rem;">' +
+            '<input type="radio" name="_fppFmt" value="pdf" style="accent-color:#1565c0;width:16px;height:16px;">📕 PDF' +
+          '</label>' +
+        '</div>' +
+        '<div style="font-size:0.68rem;color:var(--text2,#37526d);margin-bottom:8px;line-height:1.4;">💡 <b>Word</b> recommended — notes jaisa format (tables, highlights, images) better rehta hai, edit bhi ho sakta hai. PDF print-ready hota hai lekin layout kabhi bigad sakta hai.</div>' +
+      '</div>' +
+      '<div style="padding:0 14px calc(12px + env(safe-area-inset-bottom,0px)) 14px;display:flex;gap:10px;flex-shrink:0;">' +
         '<button type="button" id="_fppCancel" style="flex:1;padding:12px;border-radius:12px;border:1.5px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);font-weight:800;color:var(--text,#0d1b2a);cursor:pointer;">Cancel</button>' +
-        '<button type="button" id="_fppGo" style="flex:1.4;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#0d47a1);color:#fff;font-weight:900;cursor:pointer;">⬇️ Download PDF</button>' +
+        '<button type="button" id="_fppGo" style="flex:1.4;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#2e7d32,#1b5e20);color:#fff;font-weight:900;cursor:pointer;">⬇️ Download</button>' +
       '</div>' +
     '</div>';
 
@@ -29704,6 +29716,33 @@ function _folderShowTopicPicker(folderLabel, items){
     updateCount();
   };
   document.getElementById('_fppCancel').onclick = function(){ ov.remove(); };
+  // Format radio visual highlight
+  ov.querySelectorAll('input[name="_fppFmt"]').forEach(function(r){
+    r.onchange = function(){
+      ov.querySelectorAll('input[name="_fppFmt"]').forEach(function(rr){
+        var lab = rr.closest('label');
+        if(!lab) return;
+        if(rr.checked){
+          lab.style.borderColor = rr.value === 'word' ? '#2e7d32' : '#1565c0';
+          lab.style.background = rr.value === 'word' ? 'rgba(46,125,50,0.08)' : 'rgba(21,101,192,0.08)';
+        } else {
+          lab.style.borderColor = 'var(--border,#bdd5ea)';
+          lab.style.background = 'var(--surface2,#f4f9fe)';
+        }
+      });
+      var go = document.getElementById('_fppGo');
+      if(go){
+        if(r.value === 'word' && r.checked){
+          go.style.background = 'linear-gradient(135deg,#2e7d32,#1b5e20)';
+          go.textContent = '⬇️ Download Word';
+        } else if(r.value === 'pdf' && r.checked){
+          go.style.background = 'linear-gradient(135deg,#1565c0,#0d47a1)';
+          go.textContent = '⬇️ Download PDF';
+        }
+      }
+    };
+  });
+
   document.getElementById('_fppGo').onclick = function(){
     // Build selected items with noteIndices
     var byTopic = {};
@@ -29724,13 +29763,105 @@ function _folderShowTopicPicker(folderLabel, items){
       });
     });
     if(!selected.length){ showToast('Kam se kam 1 note select karo', 'error'); return; }
+    var fmtEl = ov.querySelector('input[name="_fppFmt"]:checked');
+    var fmt = (fmtEl && fmtEl.value) || 'word';
     ov.remove();
-    _downloadFolderPDFExecute(folderLabel, selected);
+    if(fmt === 'word'){
+      _downloadFolderWordExecute(folderLabel, selected);
+    } else {
+      _downloadFolderPDFExecute(folderLabel, selected);
+    }
   };
 }
 
 function _folderEsc(s){
   return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function _downloadFolderWordExecute(folderLabel, items){
+  if(!items || !items.length){ showToast('Koi topic/note select nahi', 'error'); return; }
+
+  showToast('⬇️ Word file taiyar ho rahi hai (format preserve)...', 'success');
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#0d1b2aee;display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Noto Sans",Arial,sans-serif;font-size:0.95rem;font-weight:600;text-align:center;padding:20px;';
+  overlay.textContent = '📄 Word file ban rahi hai...';
+  document.body.appendChild(overlay);
+
+  try {
+    var parts = [];
+    var styleCollected = false;
+    var sharedStyle = '';
+
+    for(var i = 0; i < items.length; i++){
+      var it = items[i];
+      overlay.textContent = '📄 Word — ' + (i+1) + '/' + items.length + ' topics...';
+      var built = await _folderBuildTopicContent(it, i === 0);
+      if(!built || !built.wrapper) continue;
+      if(!built.hasContent) continue;
+
+      // Collect style once from first wrapper
+      var styleTag = built.wrapper.querySelector('style');
+      if(styleTag && !styleCollected){
+        sharedStyle = styleTag.innerHTML;
+        styleCollected = true;
+      }
+      // Remove style from each part to avoid duplicates
+      if(styleTag && styleTag.parentNode) styleTag.parentNode.removeChild(styleTag);
+
+      // Page break between topics (Word recognizes this)
+      if(parts.length){
+        parts.push('<br clear="all" style="page-break-before:always;mso-special-character:line-break;">');
+      }
+      parts.push(built.wrapper.innerHTML);
+    }
+
+    if(!parts.length){
+      if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      showToast('⚠️ Selected notes mein exportable content nahi mila', 'error');
+      return;
+    }
+
+    var title = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g,'').trim() || 'folder';
+    var bodyInner = parts.join('\n');
+
+    // Same Word-HTML trick as single-note downloadEditorContentAsWord —
+    // preserves tables, marks/highlights, lists, images (as data-URLs already resolved)
+    var fullHTML = '<html xmlns:o="urn:schemas-microsoft-com:office:office" '
+      + 'xmlns:w="urn:schemas-microsoft-com:office:word" '
+      + 'xmlns="http://www.w3.org/TR/REC-html40">'
+      + '<head><meta charset="utf-8"><title>' + title.replace(/</g,'') + '</title>'
+      + '<style>'
+      + '@page{size:A4;margin:1.5cm;}'
+      + 'body{font-family:"Noto Sans Devanagari","Noto Sans",Arial,sans-serif;font-size:15px;line-height:1.85;color:#111;}'
+      + 'h1{font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;}'
+      + 'img{max-width:100%;height:auto;}'
+      + 'table{border-collapse:collapse;width:100%;}'
+      + 'td,th{border:1px solid #999;padding:6px 8px;}'
+      + 'mark,span[style*="background"]{padding:0 2px;}'
+      + (sharedStyle || '')
+      + '</style></head><body>'
+      + '<div style="font-size:0.85rem;color:#666;margin-bottom:12px;">📂 ' + title.replace(/</g,'') + ' — combined notes export</div>'
+      + bodyInner
+      + '</body></html>';
+
+    var blob = new Blob(['\ufeff', fullHTML], { type: 'application/msword' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = title + '.doc';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    showToast('✅ Word file download ho gayi! Format notes jaisa rahega, edit bhi kar sakte ho.', 'success');
+  } catch(err) {
+    console.error('[downloadFolderWord]', err);
+    if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    showToast('❌ Word file nahi ban payi: ' + (err && err.message ? err.message : 'error'), 'error');
+  }
 }
 
 async function _downloadFolderPDFExecute(folderLabel, items){
