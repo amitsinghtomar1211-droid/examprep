@@ -9660,8 +9660,102 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       -webkit-tap-highlight-color:transparent;
       box-shadow:0 2px 8px rgba(21,101,192,0.18);
     ">‹</button>
+    <!-- 🐞 TEMP DEBUG BUTTON — shows raw saved note data, no devtools needed.
+         Safe to remove later, does not modify any data. -->
+    <button id="neDebugBtn" onclick="_neDebugShowRaw()" title="Debug: raw data dikhao" style="
+      position:fixed;bottom:56px;right:14px;z-index:9820;
+      padding:6px 10px;border-radius:16px;
+      background:#c62828;border:1.5px solid #fff;
+      color:#fff;font-size:0.7rem;font-weight:800;
+      cursor:pointer;-webkit-tap-highlight-color:transparent;
+      box-shadow:0 2px 8px rgba(0,0,0,0.35);
+    ">🐞 Debug</button>
   </div>
 </div>
+
+<script>
+// 🐞 TEMP DEBUG HELPER — read-only, does not change any saved data.
+// Shows: content length, richHTML/editorRichHTML length + first/last 300
+// chars, and what is currently loaded in the editor's in-memory state.
+// Remove this whole <script> block once the truncation bug is diagnosed.
+function _neDebugShowRaw(){
+  try{
+    var sid = _editorState.sid, secid = _editorState.secid, tid = _editorState.tid, noteIdx = _editorState.noteIdx;
+    var lines = [];
+    lines.push('=== EDITOR STATE (in-memory, right now) ===');
+    lines.push('sid=' + sid + ' secid=' + secid + ' tid=' + tid + ' noteIdx=' + noteIdx);
+
+    var domArea = document.getElementById('noteEditableArea');
+    var domHtml = domArea ? domArea.innerHTML : '';
+    lines.push('DOM (what you see) length = ' + domHtml.length);
+    lines.push('DOM first 300 = ' + domHtml.slice(0,300));
+    lines.push('DOM last 300 = ' + domHtml.slice(-300));
+
+    if(typeof getTop === 'function' && tid){
+      var t = getTop(sid, secid, tid);
+      var n = t && t.notes ? t.notes[noteIdx] : null;
+      if(n){
+        lines.push('');
+        lines.push('=== SAVED NOTE OBJECT (in S, i.e. what would be written to cloud) ===');
+        lines.push('n.content length = ' + ((n.content||'').length));
+        lines.push('n.richHTML length = ' + ((n.richHTML||'').length));
+        lines.push('n.editorRichHTML length = ' + ((n.editorRichHTML||'').length));
+        var rh = n.editorRichHTML || n.richHTML || '';
+        if(rh){
+          lines.push('richHTML first 300 = ' + rh.slice(0,300));
+          lines.push('richHTML last 300 = ' + rh.slice(-300));
+        }
+        lines.push('n.editorSavedAt = ' + n.editorSavedAt);
+      } else {
+        lines.push('');
+        lines.push('⚠️ Could not find note object for this sid/secid/tid/noteIdx.');
+      }
+    } else {
+      lines.push('');
+      lines.push('⚠️ No tid in _editorState — open a note first, then tap Debug again.');
+    }
+
+    var out = lines.join('\n');
+    console.log(out);
+
+    // Show in an on-screen textarea (scrollable, copyable) instead of alert
+    // since alert() truncates/mangles very long text on some mobile browsers.
+    var existing = document.getElementById('neDebugOverlay');
+    if(existing) existing.remove();
+    var ov = document.createElement('div');
+    ov.id = 'neDebugOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.85);display:flex;flex-direction:column;padding:12px;';
+    var ta = document.createElement('textarea');
+    ta.value = out;
+    ta.style.cssText = 'flex:1;width:100%;font-family:monospace;font-size:11px;padding:8px;border-radius:8px;border:none;';
+    ta.readOnly = true;
+    var btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:8px;';
+    var closeBtn = document.createElement('button');
+    closeBtn.textContent = 'Close';
+    closeBtn.style.cssText = 'flex:1;padding:12px;border-radius:8px;border:none;background:#c62828;color:#fff;font-weight:700;';
+    closeBtn.onclick = function(){ ov.remove(); };
+    var copyBtn = document.createElement('button');
+    copyBtn.textContent = 'Copy All';
+    copyBtn.style.cssText = 'flex:1;padding:12px;border-radius:8px;border:none;background:#1565c0;color:#fff;font-weight:700;';
+    copyBtn.onclick = function(){
+      ta.select();
+      try{ document.execCommand('copy'); }catch(e){}
+      try{ navigator.clipboard && navigator.clipboard.writeText(out); }catch(e){}
+      copyBtn.textContent = 'Copied ✓';
+      setTimeout(function(){ copyBtn.textContent = 'Copy All'; }, 1500);
+    };
+    btnRow.appendChild(copyBtn);
+    btnRow.appendChild(closeBtn);
+    ov.appendChild(ta);
+    ov.appendChild(btnRow);
+    document.body.appendChild(ov);
+  }catch(e){
+    alert('Debug error: ' + e.message);
+    console.error(e);
+  }
+}
+</script>
 
 <!-- ═══════════════════════��═══════════════════════════════
      📋 STUDY CANVAS — Pull Tab
