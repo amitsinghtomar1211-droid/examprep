@@ -7315,13 +7315,6 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
           </select>
           <input type="text" id="eftSearchInput" class="inp" placeholder="🔎 Topic dhoondo..." style="flex:1;min-width:160px;" oninput="eftRenderTopicSelect()">
         </div>
-        <div id="eftLinkFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;">
-          <span style="font-size:0.72rem;font-weight:800;color:var(--text2);">Master Library link:</span>
-          <button type="button" class="org-tab eft-link-f active" data-f="all" onclick="hubSetLinkFilter('extraFactsTopics','all',this)">Sab</button>
-          <button type="button" class="org-tab eft-link-f" data-f="linked" onclick="hubSetLinkFilter('extraFactsTopics','linked',this)">🔗 Linked</button>
-          <button type="button" class="org-tab eft-link-f" data-f="unlinked" onclick="hubSetLinkFilter('extraFactsTopics','unlinked',this)">Unlinked</button>
-          <span id="eftLinkFilterStats" style="font-size:0.68rem;color:var(--text2);margin-left:auto;"></span>
-        </div>
         <button class="btn btn-primary" style="width:100%;margin-top:10px;" onclick="eftOpenNewTopicModal()">➕ Naya Current Affairs Topic Banao</button>
       </div>
 
@@ -7362,13 +7355,6 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
             <option value="">-- Topic chuno --</option>
           </select>
           <input type="text" id="sgkSearchInput" class="inp" placeholder="🔎 Topic dhoondo..." style="flex:1;min-width:160px;" oninput="sgkRenderTopicSelect()">
-        </div>
-        <div id="sgkLinkFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;">
-          <span style="font-size:0.72rem;font-weight:800;color:var(--text2);">Master Library link:</span>
-          <button type="button" class="org-tab sgk-link-f active" data-f="all" onclick="hubSetLinkFilter('staticGkTopics','all',this)">Sab</button>
-          <button type="button" class="org-tab sgk-link-f" data-f="linked" onclick="hubSetLinkFilter('staticGkTopics','linked',this)">🔗 Linked</button>
-          <button type="button" class="org-tab sgk-link-f" data-f="unlinked" onclick="hubSetLinkFilter('staticGkTopics','unlinked',this)">Unlinked</button>
-          <span id="sgkLinkFilterStats" style="font-size:0.68rem;color:var(--text2);margin-left:auto;"></span>
         </div>
         <button class="btn btn-primary" style="width:100%;margin-top:10px;" onclick="sgkOpenNewTopicModal()">➕ Naya Static GK Topic Banao</button>
       </div>
@@ -10669,7 +10655,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <button class="rd-btn" onclick="rdDownloadAsPDF();event.stopPropagation();" style="padding:5px 10px;font-size:0.72rem;display:flex;align-items:center;gap:3px;" title="PDF Download karo (same as Notes Editor)">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>PDF
     </button>
-    <!-- ⬇️ Download Word — Reading Mode -->
+    <!-- Download Word — Reading Mode -->
     <button class="rd-btn" onclick="rdDownloadAsWord();event.stopPropagation();" style="padding:5px 10px;font-size:0.72rem;display:flex;align-items:center;gap:3px;" title="Word (.doc) Download karo — editable">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13l1.5 5 1.5-4 1.5 4L14 13"/></svg>Doc
     </button>
@@ -20105,92 +20091,6 @@ function fcfpUpdateTopicLinkBadge(){
 // ── Sidebar "Havoc" page: browse the full global Extra Facts Topic
 // Library via a dropdown (same data source as the 📂 icon inside the
 // flashcard facts page), with a light preview + edit + delete. ──
-
-// ═══════════════════════════════════════════════════════════
-// Hub link filter — Master Library mein hubRef se linked topics
-// Current Affairs (extraFactsTopics) + Static GK (staticGkTopics)
-// ═══════════════════════════════════════════════════════════
-var _hubLinkFilter = { extraFactsTopics: 'all', staticGkTopics: 'all', similarCurrentTopics: 'all' };
-var _hubLinkCache = { at: 0, map: null }; // map: hubTopicId -> [{path, noteName, hubType}]
-
-function _hubWalkAllLibraryTopics(cb){
-  function walkSec(sec, pathParts, subj){
-    (sec.topics || []).forEach(function(tp){
-      cb(tp, pathParts.concat([tp.name || '']), subj, sec);
-    });
-    (sec.subSections || []).forEach(function(ss){
-      walkSec(ss, pathParts.concat([ss.name || '']), subj);
-    });
-  }
-  (S.subjects || []).forEach(function(subj){
-    (subj.sections || []).forEach(function(sec){
-      walkSec(sec, [subj.name || '', sec.name || ''], subj);
-    });
-    (subj.subSubjects || []).forEach(function(sss){
-      (sss.sections || []).forEach(function(sec){
-        walkSec(sec, [subj.name || '', sss.name || '', sec.name || ''], subj);
-      });
-    });
-  });
-}
-
-/** Scan master library notes for type=hubRef. Returns { [hubTopicId]: [ {path, noteName, hubType, tid} ] } */
-function hubBuildMasterLinkMap(force){
-  var now = Date.now();
-  if(!force && _hubLinkCache.map && (now - _hubLinkCache.at) < 4000) return _hubLinkCache.map;
-  var map = {};
-  try {
-    _hubWalkAllLibraryTopics(function(tp, pathParts){
-      (tp.notes || []).forEach(function(n){
-        if(!n || n.type !== 'hubRef' || !n.hubTopicId) return;
-        var hid = String(n.hubTopicId);
-        if(!map[hid]) map[hid] = [];
-        map[hid].push({
-          path: pathParts.join(' › '),
-          noteName: n.name || 'Hub Ref',
-          hubType: n.hubType === 'static' ? 'static' : 'current',
-          tid: tp.id
-        });
-      });
-    });
-  } catch(e){ console.warn('[hub link map]', e); }
-  _hubLinkCache = { at: now, map: map };
-  return map;
-}
-
-function hubIsLinkedInMaster(hubTopicId, hubType){
-  var map = hubBuildMasterLinkMap();
-  var list = map[String(hubTopicId)] || [];
-  if(!list.length) return false;
-  if(!hubType) return true;
-  var want = hubType === 'static' ? 'static' : 'current';
-  return list.some(function(x){ return x.hubType === want; });
-}
-
-function hubGetLinkPaths(hubTopicId, hubType){
-  var map = hubBuildMasterLinkMap();
-  var list = map[String(hubTopicId)] || [];
-  var want = hubType === 'static' ? 'static' : 'current';
-  return list.filter(function(x){ return x.hubType === want; });
-}
-
-function hubSetLinkFilter(libKey, mode, btn){
-  _hubLinkFilter[libKey] = mode || 'all';
-  // active class on sibling buttons
-  if(btn && btn.parentNode){
-    var cls = libKey === 'staticGkTopics' ? 'sgk-link-f' : 'eft-link-f';
-    btn.parentNode.querySelectorAll('.' + cls).forEach(function(b){
-      b.classList.toggle('active', b.getAttribute('data-f') === mode);
-    });
-  }
-  if(libKey === 'staticGkTopics'){
-    if(typeof sgkRenderTopicSelect === 'function') sgkRenderTopicSelect();
-  } else {
-    if(typeof eftRenderTopicSelect === 'function') eftRenderTopicSelect();
-  }
-}
-
-
 function renderExtraFactsTopicsPage(){
   eftRenderTopicSelect();
   eftRenderSelected();
@@ -20203,42 +20103,23 @@ function eftRenderTopicSelect(){
   q = q.trim().toLowerCase();
   var cv = sel.value;
   var topics = S.extraFactsTopics || {};
-  var mode = (_hubLinkFilter && _hubLinkFilter.extraFactsTopics) || 'all';
-  hubBuildMasterLinkMap(true); // fresh scan
-  var allIds = Object.keys(topics);
-  var linkedN = 0, unlinkedN = 0;
-  allIds.forEach(function(id){
-    if(hubIsLinkedInMaster(id, 'current')) linkedN++; else unlinkedN++;
-  });
-  var ids = allIds.filter(function(id){
+  var ids = Object.keys(topics).filter(function(id){
     var t = topics[id];
-    if(!t || !t.name) return false;
-    if(q && t.name.toLowerCase().indexOf(q) === -1) return false;
-    var linked = hubIsLinkedInMaster(id, 'current');
-    if(mode === 'linked' && !linked) return false;
-    if(mode === 'unlinked' && linked) return false;
-    return true;
+    return t && t.name && (!q || t.name.toLowerCase().indexOf(q) !== -1);
   }).sort(function(a,b){
     return (topics[a].name||'').localeCompare(topics[b].name||'');
   });
 
   var badge = document.getElementById('extraTopicsBadge');
-  var totalCount = allIds.length;
+  var totalCount = Object.keys(topics).length;
   if(badge){
     if(totalCount > 0){ badge.style.display='inline-block'; badge.textContent = totalCount; }
     else { badge.style.display='none'; }
   }
-  var stats = document.getElementById('eftLinkFilterStats');
-  if(stats) stats.textContent = '🔗 ' + linkedN + ' linked · ' + unlinkedN + ' unlinked · dikh: ' + ids.length;
 
   sel.innerHTML = '<option value="">-- Topic chuno (' + ids.length + ') --</option>' +
-    ids.map(function(id){
-      var linked = hubIsLinkedInMaster(id, 'current');
-      var mark = linked ? '🔗 ' : '';
-      return '<option value="'+id+'">'+mark+_fcEsc(topics[id].name)+(linked?' (linked)':'')+'</option>';
-    }).join('');
-  if(cv && topics[cv] && ids.indexOf(cv) >= 0) sel.value = cv;
-  else if(cv && ids.indexOf(cv) < 0){ sel.value = ''; if(typeof eftRenderSelected==='function') eftRenderSelected(); }
+    ids.map(function(id){ return '<option value="'+id+'">'+_fcEsc(topics[id].name)+'</option>'; }).join('');
+  if(cv && topics[cv]) sel.value = cv;
 }
 
 function eftRenderSelected(){
@@ -20264,27 +20145,15 @@ function eftRenderSelected(){
     Object.keys(S.flashcardSets || {}).forEach(function(key){
       var set = S.flashcardSets[key];
       (set.cards || []).forEach(function(c){
-        if(c && (c.extraTopicId === id || c.similarCurrentTopicId === id)){
+        if(c && c.extraTopicId === id){
           linkedCards.push({ q: c.q || '(bina prashna)', a: c.a || '' });
         }
       });
     });
   }catch(e){}
 
-  var masterLinks = (typeof hubGetLinkPaths === 'function') ? hubGetLinkPaths(id, 'current') : [];
-  var masterLinkHtml = '';
-  if(masterLinks.length){
-    masterLinkHtml = '<div style="margin:0 0 10px;padding:10px 12px;border-radius:10px;background:rgba(230,81,0,0.08);border:1.5px solid rgba(230,81,0,0.28);font-size:0.78rem;line-height:1.55;">' +
-      '<div style="font-weight:800;color:#e65100;margin-bottom:4px;">🔗 Master Library mein linked (' + masterLinks.length + ')</div>' +
-      masterLinks.map(function(x){ return '<div style="color:var(--text2);">• ' + _fcEsc(x.path) + ' <span style="opacity:0.75;">(' + _fcEsc(x.noteName) + ')</span></div>'; }).join('') +
-    '</div>';
-  } else {
-    masterLinkHtml = '<div style="margin:0 0 10px;padding:8px 12px;border-radius:10px;background:var(--surface2);border:1px dashed var(--border);font-size:0.75rem;color:var(--text2);">Unlinked — Master Library mein koi hubRef note nahi mila</div>';
-  }
-
   var dateStr = t.updatedAt ? new Date(t.updatedAt).toLocaleString('hi-IN') : '';
   area.innerHTML =
-    masterLinkHtml +
     '<div class="card" style="margin-bottom:12px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">' +
         '<div><div class="card-title" style="margin-bottom:2px;">📄 ' + _fcEsc(t.name) + '</div>' +
@@ -21236,43 +21105,16 @@ function _libRenderSelect(selId, searchId, badgeId, libKey){
   var q = ((document.getElementById(searchId)||{}).value||'').trim().toLowerCase();
   var cv = sel.value;
   var topics = S[libKey] || {};
-  var hubType = (libKey === 'staticGkTopics') ? 'static' : 'current';
-  var mode = (_hubLinkFilter && _hubLinkFilter[libKey]) || 'all';
-  var useLinkFilter = (libKey === 'staticGkTopics' || libKey === 'extraFactsTopics');
-  if(useLinkFilter) hubBuildMasterLinkMap(true);
-  var allIds = Object.keys(topics);
-  var linkedN = 0, unlinkedN = 0;
-  if(useLinkFilter){
-    allIds.forEach(function(id){
-      if(hubIsLinkedInMaster(id, hubType)) linkedN++; else unlinkedN++;
-    });
-  }
-  var ids = allIds.filter(function(id){
+  var ids = Object.keys(topics).filter(function(id){
     var t = topics[id];
-    if(!t || !t.name) return false;
-    if(q && t.name.toLowerCase().indexOf(q) === -1) return false;
-    if(useLinkFilter){
-      var linked = hubIsLinkedInMaster(id, hubType);
-      if(mode === 'linked' && !linked) return false;
-      if(mode === 'unlinked' && linked) return false;
-    }
-    return true;
+    return t && t.name && (!q || t.name.toLowerCase().indexOf(q) !== -1);
   }).sort(function(a,b){ return (topics[a].name||'').localeCompare(topics[b].name||''); });
   var badge = document.getElementById(badgeId);
-  var total = allIds.length;
+  var total = Object.keys(topics).length;
   if(badge){ if(total>0){ badge.style.display='inline-block'; badge.textContent=total; } else badge.style.display='none'; }
-  if(libKey === 'staticGkTopics'){
-    var stats = document.getElementById('sgkLinkFilterStats');
-    if(stats) stats.textContent = '🔗 ' + linkedN + ' linked · ' + unlinkedN + ' unlinked · dikh: ' + ids.length;
-  }
   sel.innerHTML = '<option value="">-- Topic chuno ('+ids.length+') --</option>' +
-    ids.map(function(id){
-      var linked = useLinkFilter && hubIsLinkedInMaster(id, hubType);
-      var mark = linked ? '🔗 ' : '';
-      return '<option value="'+id+'">'+mark+_fcEsc(topics[id].name)+(linked?' (linked)':'')+'</option>';
-    }).join('');
-  if(cv && topics[cv] && ids.indexOf(cv) >= 0) sel.value = cv;
-  else if(cv && ids.indexOf(cv) < 0){ sel.value = ''; }
+    ids.map(function(id){ return '<option value="'+id+'">'+_fcEsc(topics[id].name)+'</option>'; }).join('');
+  if(cv && topics[cv]) sel.value = cv;
 }
 
 function sctRenderTopicSelect(){ _libRenderSelect('sctSelect','sctSearchInput','similarCurrentBadge','similarCurrentTopics'); }
@@ -21326,25 +21168,13 @@ function sgkRenderSelected(){
     });
   }catch(e){}
 
-  var masterLinks = (typeof hubGetLinkPaths === 'function') ? hubGetLinkPaths(id, 'static') : [];
-  var masterLinkHtml = '';
-  if(masterLinks.length){
-    masterLinkHtml = '<div style="margin:0 0 10px;padding:10px 12px;border-radius:10px;background:rgba(46,125,50,0.08);border:1.5px solid rgba(46,125,50,0.28);font-size:0.78rem;line-height:1.55;">' +
-      '<div style="font-weight:800;color:#2e7d32;margin-bottom:4px;">🔗 Master Library mein linked (' + masterLinks.length + ')</div>' +
-      masterLinks.map(function(x){ return '<div style="color:var(--text2);">• ' + _fcEsc(x.path) + ' <span style="opacity:0.75;">(' + _fcEsc(x.noteName) + ')</span></div>'; }).join('') +
-    '</div>';
-  } else {
-    masterLinkHtml = '<div style="margin:0 0 10px;padding:8px 12px;border-radius:10px;background:var(--surface2);border:1px dashed var(--border);font-size:0.75rem;color:var(--text2);">Unlinked — Master Library mein koi hubRef note nahi mila</div>';
-  }
-
   var dateStr = t.updatedAt ? new Date(t.updatedAt).toLocaleString('hi-IN') : '';
   var cleanHtml = (typeof _fcfpCleanStoredHtml === 'function') ? _fcfpCleanStoredHtml(t.html || '') : (t.html || '');
   area.innerHTML =
-    masterLinkHtml +
     '<div class="card" style="margin-bottom:12px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">' +
-        '<div><div class="card-title" style="margin-bottom:2px;">📚 ' + _fcEsc(t.name) + (masterLinks.length ? ' 🔗' : '') + '</div>' +
-        '<div style="font-size:0.7rem;color:var(--text2);">Last update: ' + dateStr + (linkedCards.length ? ' • ' + linkedCards.length + ' card(s) se linked' : '') + (masterLinks.length ? ' • ML: ' + masterLinks.length : '') + '</div></div>' +
+        '<div><div class="card-title" style="margin-bottom:2px;">📚 ' + _fcEsc(t.name) + '</div>' +
+        '<div style="font-size:0.7rem;color:var(--text2);">Last update: ' + dateStr + (linkedCards.length ? ' • ' + linkedCards.length + ' card(s) se linked' : '') + '</div></div>' +
         '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
           '<button class="btn btn-sm" style="background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;" onclick="sgkOpenFullReading(\''+id+'\')">📖 Full Reading Mode</button>' +
           '<button class="btn btn-sm" onclick="sgkRenameTopic(\''+id+'\')">✏️ Rename</button>' +
@@ -29335,42 +29165,33 @@ function _folderCollectTopics(node, kind, pathSoFar) {
   function addTopic(t, path) {
     if(!t) return;
     if(t.hidden && !_isAdmin) return;
-    out.push({ topic: t, path: path.slice() });
-    // Sub-topics — kitni bhi depth (recursive)
-    function walkSubTops(list, pfx) {
-      (list || []).forEach(function(st) {
-        if(!st || (st.hidden && !_isAdmin)) return;
-        out.push({ topic: st, path: pfx.concat([st.name || 'Sub-Topic']) });
-        if(st.subTopics && st.subTopics.length) walkSubTops(st.subTopics, pfx.concat([st.name || 'Sub-Topic']));
-      });
-    }
-    if(t.subTopics && t.subTopics.length) walkSubTops(t.subTopics, path.concat([t.name + ' ↳']));
+    out.push({ topic: t, path: path });
+    (t.subTopics || []).forEach(function(st) {
+      if(st.hidden && !_isAdmin) return;
+      out.push({ topic: st, path: path.concat([t.name + ' ↳ Sub-Topic']) });
+    });
   }
 
   function walkSection(sec, path) {
     if(!sec) return;
     if(sec.hidden && !_isAdmin) return;
-    var secPath = path.concat([sec.name || 'Section']);
+    var secPath = path.concat([sec.name]);
     (sec.topics || []).forEach(function(t) { addTopic(t, secPath); });
     (sec.subSections || []).forEach(function(ss) { walkSubSection(ss, secPath); });
   }
   function walkSubSection(ss, path) {
     if(!ss) return;
     if(ss.hidden && !_isAdmin) return;
-    var ssPath = path.concat([ss.name || 'Sub-Section']);
+    var ssPath = path.concat([ss.name]);
     (ss.topics || []).forEach(function(t) { addTopic(t, ssPath); });
     (ss.subSections || []).forEach(function(ss2) { walkSubSection(ss2, ssPath); });
   }
   function walkSubject(subjOrSub, path) {
     if(!subjOrSub) return;
-    // Rare: topics directly on subject/sub-subject node
-    if(subjOrSub.topics && subjOrSub.topics.length) {
-      (subjOrSub.topics || []).forEach(function(t) { addTopic(t, path); });
-    }
     (subjOrSub.sections || []).forEach(function(sec) { walkSection(sec, path); });
     (subjOrSub.subSubjects || []).forEach(function(ss) {
       if(ss.hidden && !_isAdmin) return;
-      walkSubject(ss, path.concat([ss.name || 'Sub-Subject']));
+      walkSubject(ss, path.concat([ss.name]));
     });
   }
 
@@ -29378,8 +29199,6 @@ function _folderCollectTopics(node, kind, pathSoFar) {
   else if(kind === 'subsubject') walkSubject(node, pathSoFar);
   else if(kind === 'section') walkSection(node, pathSoFar);
   else if(kind === 'subsection') walkSubSection(node, pathSoFar);
-  // Fallback: if somehow nothing collected but node itself is a topic-like object
-  else if(node.notes || node.name) addTopic(node, pathSoFar);
 
   return out;
 }
@@ -29392,126 +29211,16 @@ function _folderCollectTopics(node, kind, pathSoFar) {
 // a 40,000-50,000px wrapper if built as one giant div, so instead we now
 // build + capture + add-to-pdf ONE topic at a time, each safely under
 // that height ceiling, and merge the results into a single PDF file.
-/** Sync: best HTML/text currently on note object */
-function _folderNoteRawHtml(n){
-  if(!n) return '';
-  if(n.type === 'hubRef' && n.hubTopicId){
-    try {
-      var hubTopics = (n.hubType === 'static') ? (S.staticGkTopics || {}) : (S.extraFactsTopics || S.similarCurrentTopics || {});
-      var hub = hubTopics[n.hubTopicId] || hubTopics[String(n.hubTopicId)];
-      if(hub){
-        var h = (hub.html || hub.editorRichHTML || hub.richHTML || hub.content || '') + '';
-        if(h.trim()) return h;
-      }
-    } catch(e){}
-  }
-  var candidates = [n.editorRichHTML, n.richHTML, n.html, n.body, n.finalNotes, n.content];
-  for(var i = 0; i < candidates.length; i++){
-    var v = candidates[i];
-    if(v == null) continue;
-    var s = String(v).trim();
-    if(!s) continue;
-    if(s.indexOf('<') === -1){
-      var esc = (typeof _escHtml === 'function') ? _escHtml(s) : s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      return '<div style="white-space:pre-wrap;">' + esc + '</div>';
-    }
-    return s;
-  }
-  return '';
-}
-
-/** Async: memory → recentSave → localStorage → IndexedDB → (optional) cloud topic doc */
-async function _folderResolveNoteContentFull(topic, note, noteIdx){
-  if(!note) return '';
-  var html = _folderNoteRawHtml(note);
-  if(html && html.trim().length > 5) return html;
-
-  var tid = topic && topic.id;
-  // 1) in-memory recent saves
-  try {
-    if(typeof _recentNoteSaves !== 'undefined' && _recentNoteSaves && tid != null){
-      var keys = [];
-      if(note.id) keys.push(String(tid) + '::' + String(note.id));
-      keys.push(String(tid) + '::idx_' + String(noteIdx));
-      for(var ki = 0; ki < keys.length; ki++){
-        var rec = _recentNoteSaves[keys[ki]];
-        if(rec && (rec.editorRichHTML || rec.richHTML || rec.content)){
-          var r = rec.editorRichHTML || rec.richHTML || '';
-          if(r && String(r).trim()) return String(r);
-          if(rec.content && String(rec.content).trim()){
-            var esc1 = (typeof _escHtml === 'function') ? _escHtml(rec.content) : String(rec.content);
-            return '<div style="white-space:pre-wrap;">' + esc1 + '</div>';
-          }
-        }
-      }
-    }
-  } catch(e){}
-
-  // 2) localStorage backup (sync)
-  try {
-    if(typeof _loadNoteLocalBackup === 'function' && tid != null){
-      var bak = _loadNoteLocalBackup(tid, note, noteIdx);
-      if(bak){
-        var b = (bak.editorRichHTML || bak.richHTML || '') + '';
-        if(b.trim()) return b;
-        if(bak.content && String(bak.content).trim()){
-          var esc2 = (typeof _escHtml === 'function') ? _escHtml(bak.content) : String(bak.content);
-          return '<div style="white-space:pre-wrap;">' + esc2 + '</div>';
-        }
-      }
-    }
-  } catch(e){}
-
-  // 3) IndexedDB backup
-  try {
-    if(typeof _loadNoteBackupAsync === 'function' && tid != null){
-      var idb = await _loadNoteBackupAsync(tid, note, noteIdx);
-      if(idb){
-        var ib = (idb.editorRichHTML || idb.richHTML || '') + '';
-        if(ib.trim()) return ib;
-        if(idb.content && String(idb.content).trim()){
-          var esc3 = (typeof _escHtml === 'function') ? _escHtml(idb.content) : String(idb.content);
-          return '<div style="white-space:pre-wrap;">' + esc3 + '</div>';
-        }
-      }
-    }
-  } catch(e){}
-
-  // 4) Firebase topic doc (last resort, when online)
-  try {
-    if(_db && _currentUser && tid != null){
-      var snap = await _db.collection('users').doc(_effectiveUID || _currentUser.uid).collection('topics').doc(String(tid)).get();
-      if(snap && snap.exists){
-        var data = snap.data() || {};
-        var notes = data.notes || [];
-        var remote = null;
-        if(note.id) remote = notes.find(function(x){ return x && String(x.id) === String(note.id); });
-        if(!remote && noteIdx >= 0 && notes[noteIdx]) remote = notes[noteIdx];
-        if(remote){
-          var rh = (remote.editorRichHTML || remote.richHTML || '') + '';
-          if(rh.trim()) return rh;
-          if(remote.content && String(remote.content).trim()){
-            var esc4 = (typeof _escHtml === 'function') ? _escHtml(remote.content) : String(remote.content);
-            return '<div style="white-space:pre-wrap;">' + esc4 + '</div>';
-          }
-        }
-      }
-    }
-  } catch(e){ console.warn('[folder export] cloud note load fail', e); }
-
-  return html || '';
-}
-
 async function _folderBuildTopicContent(it, isFirst) {
   const t = it.topic;
-  const exportWidth = (typeof NE_PRINT_WIDTH !== 'undefined' ? NE_PRINT_WIDTH : 700);
+  const exportWidth = NE_PRINT_WIDTH;
 
   const topicWrap = document.createElement('div');
   topicWrap.style.cssText = 'font-family:"Noto Sans",Arial,sans-serif;padding:6px;color:#111;line-height:1.85;font-size:15px;width:' + exportWidth + 'px;';
 
   const crumb = document.createElement('div');
   crumb.style.cssText = 'font-size:0.72rem;color:#888;font-weight:700;margin-bottom:4px;letter-spacing:0.2px;';
-  crumb.textContent = '📂 ' + (it.path || []).join(' › ');
+  crumb.textContent = '📂 ' + it.path.join(' › ');
   topicWrap.appendChild(crumb);
 
   const heading = document.createElement('h1');
@@ -29519,37 +29228,23 @@ async function _folderBuildTopicContent(it, isFirst) {
   heading.style.cssText = 'font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;';
   topicWrap.appendChild(heading);
 
-  // Agar picker se noteIndices aaye to sirf wahi notes export
-  const allNotes = t.notes || [];
-  let notes;
-  if(it.noteIndices && it.noteIndices.length){
-    notes = it.noteIndices.map(function(ni){ return allNotes[ni]; }).filter(Boolean);
-  } else {
-    notes = allNotes;
-  }
+  const notes = t.notes || [];
   let anyNoteContent = false;
   if(!notes.length) {
     const empty = document.createElement('div');
     empty.style.cssText = 'color:#999;font-style:italic;font-size:0.85rem;padding:8px 0;';
-    empty.textContent = 'Is topic mein koi note select nahi / khaali hai.';
+    empty.textContent = 'Is topic mein koi note nahi hai.';
     topicWrap.appendChild(empty);
   }
 
   for(let ni = 0; ni < notes.length; ni++) {
     const n = notes[ni];
-    // Full resolve: memory → backup → IDB → cloud (same as Word/HTML path)
-    let rawHtml = '';
-    try {
-      if(typeof _folderResolveNoteContentFull === 'function'){
-        // noteIndices may map; find original index in topic.notes
-        var origIdx = ni;
-        if(it.noteIndices && it.noteIndices.length) origIdx = it.noteIndices[ni];
-        rawHtml = await _folderResolveNoteContentFull(t, n, origIdx);
-      } else {
-        rawHtml = _folderNoteRawHtml(n);
-      }
-    } catch(e){ rawHtml = _folderNoteRawHtml(n); }
-    if(!rawHtml || !String(rawHtml).trim()) { console.warn('[downloadFolder] Topic "'+(t.name||'?')+'" note "'+(n && n.name||ni)+'" has no content — skipped.'); continue; }
+    const richSrc = n.editorRichHTML || n.richHTML || '';
+    let rawHtml = richSrc;
+    if(!rawHtml.trim() && (n.content || '').trim()) {
+      rawHtml = '<div style="white-space:pre-wrap;">' + _escHtml(n.content) + '</div>';
+    }
+    if(!rawHtml.trim()) { console.warn('[downloadFolderPDF] Topic "'+(t.name||'?')+'" note "'+(n.name||ni)+'" has no content — skipped.'); continue; }
     anyNoteContent = true;
     const resolvedHtml = await _folderResolveNoteHtml(rawHtml);
 
@@ -29635,530 +29330,14 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
   console.log('[downloadFolderPDF] "'+folderLabel+'" — '+items.length+' topic(s) collected across all nested folders.');
   if(!items.length) { showToast('⚠️ Is folder mein koi topic/notes nahi hai', 'error'); return; }
 
-  // Pehle topic-select UI — user choose kare kaunse topics download hon
-  _folderShowTopicPicker(folderLabel, items);
-}
-
-/** Topic picker modal — folder PDF se pehle nested topics choose karo */
-function _folderShowTopicPicker(folderLabel, items){
-  var old = document.getElementById('_folderPdfPicker');
-  if(old) old.remove();
-
-  var ov = document.createElement('div');
-  ov.id = '_folderPdfPicker';
-  ov.style.cssText = 'position:fixed;inset:0;z-index:1000100;background:rgba(13,27,42,0.72);display:flex;align-items:flex-end;justify-content:center;padding:12px;';
-  ov.onclick = function(ev){ if(ev.target === ov) ov.remove(); };
-
-  function noteHasContent(n){
-    if(!n) return false;
-    return !!(((n.editorRichHTML || n.richHTML || n.content || '') + '').trim());
-  }
-  function topicNoteCount(t){
-    return (t.notes || []).filter(noteHasContent).length;
-  }
-
-  // Group by path
-  var groups = [];
-  var groupMap = {};
-  items.forEach(function(it, i){
-    var path = (it.path || []).slice();
-    var key = path.join(' › ') || '(root)';
-    if(!groupMap[key]){
-      groupMap[key] = { key: key, label: key, indices: [] };
-      groups.push(groupMap[key]);
-    }
-    groupMap[key].indices.push(i);
-  });
-
-  var totalNotes = 0;
-  items.forEach(function(it){ totalNotes += (it.topic && it.topic.notes ? it.topic.notes.length : 0); });
-
-  var bodyHtml = groups.map(function(g, gi){
-    var topicBlocks = g.indices.map(function(ti){
-      var it = items[ti];
-      var t = it.topic || {};
-      var notes = t.notes || [];
-      var noteN = topicNoteCount(t);
-
-      var noteRows = notes.map(function(n, ni){
-        var has = noteHasContent(n);
-        var nm = (n && n.name) ? n.name : ('Note ' + (ni + 1));
-        var isHub = n && n.type === 'hubRef';
-        return '<label class="_fppNoteRow" style="display:flex;align-items:flex-start;gap:8px;padding:6px 12px 6px 44px;border-bottom:1px solid rgba(0,0,0,0.04);cursor:pointer;background:' + (has ? 'transparent' : 'rgba(198,40,40,0.03)') + ';">' +
-          '<input type="checkbox" class="_fppNoteChk" data-ti="' + ti + '" data-ni="' + ni + '" data-g="' + gi + '" ' + (has ? 'checked' : '') + ' style="margin-top:2px;width:16px;height:16px;flex-shrink:0;accent-color:#00695c;">' +
-          '<span style="flex:1;min-width:0;">' +
-            '<div style="font-weight:700;font-size:0.8rem;color:var(--text,#0d1b2a);">📝 ' + _folderEsc(nm) + (isHub ? ' <span style="font-size:0.62rem;color:#e65100;font-weight:800;">🔗 hub</span>' : '') + (has ? '' : ' <span style="font-size:0.62rem;color:#c62828;">(khaali)</span>') + '</div>' +
-          '</span></label>';
-      }).join('');
-
-      if(!notes.length){
-        noteRows = '<div style="padding:6px 12px 8px 44px;font-size:0.72rem;color:var(--text2,#37526d);font-style:italic;">Is topic mein koi note nahi</div>';
-      }
-
-      return '<div class="_fppTopicBlock" data-ti="' + ti + '" data-g="' + gi + '">' +
-        '<label style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px 8px 28px;cursor:pointer;background:rgba(21,101,192,0.04);border-bottom:1px solid rgba(0,0,0,0.05);">' +
-          '<input type="checkbox" class="_fppTopicChk" data-ti="' + ti + '" data-g="' + gi + '" ' + (noteN ? 'checked' : '') + ' style="margin-top:3px;width:17px;height:17px;flex-shrink:0;accent-color:#1565c0;">' +
-          '<span style="flex:1;min-width:0;">' +
-            '<div style="font-weight:800;font-size:0.86rem;color:var(--text,#0d1b2a);">📙 ' + _folderEsc(t.name || ('Topic '+(ti+1))) + ' <span style="font-weight:700;font-size:0.7rem;color:var(--text2,#37526d);">(' + notes.length + ' notes' + (noteN ? ', ' + noteN + ' content' : '') + ')</span></div>' +
-          '</span>' +
-        '</label>' +
-        noteRows +
-      '</div>';
-    }).join('');
-
-    var leafName = g.label;
-    var parts = g.label.split(' › ');
-    if(parts.length > 1) leafName = parts[parts.length - 1];
-
-    return '<div class="_fppGroup" data-g="' + gi + '" style="border-bottom:1.5px solid var(--border,#e0e0e0);">' +
-      '<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;background:var(--surface2,#f0f5fa);position:sticky;top:0;z-index:2;">' +
-        '<input type="checkbox" class="_fppGrpChk" data-g="' + gi + '" checked style="width:18px;height:18px;flex-shrink:0;accent-color:#e65100;">' +
-        '<span style="flex:1;min-width:0;">' +
-          '<div style="font-weight:900;font-size:0.82rem;color:#e65100;">📂 ' + _folderEsc(leafName) + ' <span style="font-weight:700;color:var(--text2,#37526d);font-size:0.72rem;">(' + g.indices.length + ' topics)</span></div>' +
-          (parts.length > 1 ? '<div style="font-size:0.66rem;color:var(--text2,#37526d);margin-top:2px;line-height:1.35;">' + _folderEsc(g.label) + '</div>' : '') +
-        '</span>' +
-      '</label>' +
-      topicBlocks +
-    '</div>';
-  }).join('');
-
-  ov.innerHTML =
-    '<div style="width:100%;max-width:560px;max-height:92vh;background:var(--surface,#fff);border-radius:18px 18px 0 0;display:flex;flex-direction:column;box-shadow:0 -8px 40px rgba(0,0,0,0.35);" onclick="event.stopPropagation();">' +
-      '<div style="padding:14px 16px 10px;border-bottom:1.5px solid var(--border,#e0e0e0);flex-shrink:0;">' +
-        '<div style="font-weight:900;font-size:1.05rem;color:var(--text,#0d1b2a);">📥 PDF Download — folders, topics & notes</div>' +
-        '<div style="font-size:0.76rem;color:var(--text2,#37526d);margin-top:4px;line-height:1.45;">Folder: <b>' + _folderEsc(folderLabel) + '</b> · ' + items.length + ' topics · ' + totalNotes + ' notes. Hierarchy: Folder → Topic → Note. Sirf ticked notes PDF mein jayenge.</div>' +
-      '</div>' +
-      '<div style="padding:8px 12px;display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--border,#eee);flex-shrink:0;">' +
-        '<button type="button" id="_fppAll" style="padding:6px 12px;border-radius:8px;border:1.5px solid #1565c0;background:#1565c0;color:#fff;font-weight:800;font-size:0.75rem;cursor:pointer;">✓ Sab select</button>' +
-        '<button type="button" id="_fppNone" style="padding:6px 12px;border-radius:8px;border:1.5px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);color:var(--text2,#37526d);font-weight:800;font-size:0.75rem;cursor:pointer;">Sab hatao</button>' +
-        '<button type="button" id="_fppOnlyFilled" style="padding:6px 12px;border-radius:8px;border:1.5px solid #2e7d32;background:rgba(46,125,50,0.1);color:#2e7d32;font-weight:800;font-size:0.75rem;cursor:pointer;">Sirf content wale</button>' +
-        '<span id="_fppCount" style="margin-left:auto;font-size:0.72rem;font-weight:700;color:var(--text2,#37526d);align-self:center;"></span>' +
-      '</div>' +
-      '<div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:140px;">' + bodyHtml + '</div>' +
-      '<div style="padding:10px 14px 0;border-top:1.5px solid var(--border,#e0e0e0);flex-shrink:0;">' +
-        '<div style="font-size:0.72rem;font-weight:800;color:var(--text2,#37526d);margin-bottom:6px;">Download format (content format same rahe):</div>' +
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">' +
-          '<label style="flex:1;min-width:100px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:2px solid #1565c0;background:rgba(21,101,192,0.08);cursor:pointer;font-weight:800;font-size:0.8rem;">' +
-            '<input type="radio" name="_fppFmt" value="pdf" checked style="accent-color:#1565c0;width:16px;height:16px;">📕 PDF' +
-          '</label>' +
-          '<label style="flex:1;min-width:100px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:2px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);cursor:pointer;font-weight:800;font-size:0.8rem;">' +
-            '<input type="radio" name="_fppFmt" value="word" style="accent-color:#2e7d32;width:16px;height:16px;">📄 Word' +
-          '</label>' +
-          '<label style="flex:1;min-width:100px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:2px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);cursor:pointer;font-weight:800;font-size:0.8rem;">' +
-            '<input type="radio" name="_fppFmt" value="html" style="accent-color:#e65100;width:16px;height:16px;">🌐 HTML' +
-          '</label>' +
-        '</div>' +
-        '<div style="font-size:0.68rem;color:var(--text2,#37526d);margin-bottom:8px;line-height:1.4;">💡 <b>PDF</b> = pehle jaisa (screen render → PDF). <b>HTML</b> = saved content jaisa text/format. <b>Word</b> = experimental.</div>' +
-      '</div>' +
-      '<div style="padding:0 14px calc(12px + env(safe-area-inset-bottom,0px)) 14px;display:flex;gap:10px;flex-shrink:0;">' +
-        '<button type="button" id="_fppCancel" style="flex:1;padding:12px;border-radius:12px;border:1.5px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);font-weight:800;color:var(--text,#0d1b2a);cursor:pointer;">Cancel</button>' +
-        '<button type="button" id="_fppGo" style="flex:1.4;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#0d47a1);color:#fff;font-weight:900;cursor:pointer;">⬇️ Download PDF</button>' +
-      '</div>' +
-    '</div>';
-
-  document.body.appendChild(ov);
-
-  function syncTopicCheckbox(ti){
-    var tChk = ov.querySelector('._fppTopicChk[data-ti="'+ti+'"]');
-    var nChks = ov.querySelectorAll('._fppNoteChk[data-ti="'+ti+'"]');
-    if(!tChk) return;
-    if(!nChks.length){ tChk.checked = false; tChk.indeterminate = false; return; }
-    var n = 0;
-    nChks.forEach(function(c){ if(c.checked) n++; });
-    tChk.checked = n === nChks.length;
-    tChk.indeterminate = n > 0 && n < nChks.length;
-  }
-  function syncGroupCheckbox(gi){
-    var gChk = ov.querySelector('._fppGrpChk[data-g="'+gi+'"]');
-    var nChks = ov.querySelectorAll('._fppNoteChk[data-g="'+gi+'"]');
-    if(!gChk) return;
-    if(!nChks.length){
-      var tChks = ov.querySelectorAll('._fppTopicChk[data-g="'+gi+'"]');
-      var tn = 0;
-      tChks.forEach(function(c){ if(c.checked) tn++; });
-      gChk.checked = tChks.length && tn === tChks.length;
-      gChk.indeterminate = tn > 0 && tn < tChks.length;
-      return;
-    }
-    var n = 0;
-    nChks.forEach(function(c){ if(c.checked) n++; });
-    gChk.checked = n === nChks.length;
-    gChk.indeterminate = n > 0 && n < nChks.length;
-  }
-  function updateCount(){
-    var n = ov.querySelectorAll('._fppNoteChk:checked').length;
-    var total = ov.querySelectorAll('._fppNoteChk').length;
-    var el = document.getElementById('_fppCount');
-    if(el) el.textContent = n + ' / ' + total + ' notes selected';
-    var go = document.getElementById('_fppGo');
-    if(go){ go.disabled = n === 0; go.style.opacity = n ? '1' : '0.5'; }
-    items.forEach(function(it, ti){ syncTopicCheckbox(ti); });
-    groups.forEach(function(g, gi){ syncGroupCheckbox(gi); });
-  }
-  updateCount();
-
-  ov.querySelectorAll('._fppNoteChk').forEach(function(c){
-    c.onchange = function(){ updateCount(); };
-  });
-  ov.querySelectorAll('._fppTopicChk').forEach(function(tChk){
-    tChk.onchange = function(){
-      var ti = tChk.getAttribute('data-ti');
-      var on = tChk.checked;
-      ov.querySelectorAll('._fppNoteChk[data-ti="'+ti+'"]').forEach(function(c){ c.checked = on; });
-      updateCount();
-    };
-  });
-  ov.querySelectorAll('._fppGrpChk').forEach(function(gChk){
-    gChk.onchange = function(){
-      var gi = gChk.getAttribute('data-g');
-      var on = gChk.checked;
-      ov.querySelectorAll('._fppNoteChk[data-g="'+gi+'"]').forEach(function(c){ c.checked = on; });
-      ov.querySelectorAll('._fppTopicChk[data-g="'+gi+'"]').forEach(function(c){ c.checked = on; c.indeterminate = false; });
-      updateCount();
-    };
-  });
-
-  document.getElementById('_fppAll').onclick = function(){
-    ov.querySelectorAll('._fppNoteChk').forEach(function(c){ c.checked = true; });
-    updateCount();
-  };
-  document.getElementById('_fppNone').onclick = function(){
-    ov.querySelectorAll('._fppNoteChk').forEach(function(c){ c.checked = false; });
-    updateCount();
-  };
-  document.getElementById('_fppOnlyFilled').onclick = function(){
-    ov.querySelectorAll('._fppNoteChk').forEach(function(c){
-      var ti = Number(c.getAttribute('data-ti'));
-      var ni = Number(c.getAttribute('data-ni'));
-      var n = items[ti] && items[ti].topic && items[ti].topic.notes && items[ti].topic.notes[ni];
-      c.checked = noteHasContent(n);
-    });
-    updateCount();
-  };
-  document.getElementById('_fppCancel').onclick = function(){ ov.remove(); };
-  // Format radio visual highlight
-  ov.querySelectorAll('input[name="_fppFmt"]').forEach(function(r){
-    r.onchange = function(){
-      ov.querySelectorAll('input[name="_fppFmt"]').forEach(function(rr){
-        var lab = rr.closest('label');
-        if(!lab) return;
-        if(rr.checked){
-          var col = rr.value === 'word' ? '#2e7d32' : (rr.value === 'html' ? '#e65100' : '#1565c0');
-          var bg = rr.value === 'word' ? 'rgba(46,125,50,0.08)' : (rr.value === 'html' ? 'rgba(230,81,0,0.08)' : 'rgba(21,101,192,0.08)');
-          lab.style.borderColor = col;
-          lab.style.background = bg;
-        } else {
-          lab.style.borderColor = 'var(--border,#bdd5ea)';
-          lab.style.background = 'var(--surface2,#f4f9fe)';
-        }
-      });
-      var go = document.getElementById('_fppGo');
-      if(go){
-        if(r.value === 'word' && r.checked){
-          go.style.background = 'linear-gradient(135deg,#2e7d32,#1b5e20)';
-          go.textContent = '⬇️ Download Word';
-        } else if(r.value === 'html' && r.checked){
-          go.style.background = 'linear-gradient(135deg,#e65100,#bf360c)';
-          go.textContent = '⬇️ Download HTML';
-        } else if(r.value === 'pdf' && r.checked){
-          go.style.background = 'linear-gradient(135deg,#1565c0,#0d47a1)';
-          go.textContent = '⬇️ Download PDF';
-        }
-      }
-    };
-  });
-
-  document.getElementById('_fppGo').onclick = function(){
-    // Build selected items with noteIndices
-    var byTopic = {};
-    ov.querySelectorAll('._fppNoteChk:checked').forEach(function(c){
-      var ti = Number(c.getAttribute('data-ti'));
-      var ni = Number(c.getAttribute('data-ni'));
-      if(!byTopic[ti]) byTopic[ti] = [];
-      byTopic[ti].push(ni);
-    });
-    var selected = [];
-    Object.keys(byTopic).forEach(function(tiStr){
-      var ti = Number(tiStr);
-      if(!items[ti]) return;
-      selected.push({
-        topic: items[ti].topic,
-        path: items[ti].path,
-        noteIndices: byTopic[ti].sort(function(a,b){ return a-b; })
-      });
-    });
-    if(!selected.length){ showToast('Kam se kam 1 note select karo', 'error'); return; }
-    var fmtEl = ov.querySelector('input[name="_fppFmt"]:checked');
-    var fmt = (fmtEl && fmtEl.value) || 'pdf';
-    ov.remove();
-    if(fmt === 'pdf'){
-      _downloadFolderPDFExecute(folderLabel, selected);
-    } else {
-      // word + html both use word pipeline; html forces extra HTML file
-      window._folderPreferHtml = (fmt === 'html');
-      _downloadFolderWordExecute(folderLabel, selected);
-    }
-  };
-}
-
-function _folderEsc(s){
-  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-async function _downloadFolderWordExecute(folderLabel, items){
-  if(!items || !items.length){ showToast('Koi topic/note select nahi', 'error'); return; }
-
-  var wantHtml = !!window._folderPreferHtml;
-  window._folderPreferHtml = false;
-
-  showToast('⬇️ Content collect ho raha hai (memory + backup + cloud)...', 'success');
-
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#0d1b2aee;display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Noto Sans",Arial,sans-serif;font-size:0.9rem;font-weight:600;text-align:center;padding:20px;';
-  overlay.innerHTML = '📄 Notes content load ho raha hai...<br><span style="font-size:0.75rem;opacity:0.8;font-weight:500;">Memory → Backup → Cloud</span>';
-  document.body.appendChild(overlay);
-
-  function _u8(str){
-    if(typeof TextEncoder !== 'undefined') return new TextEncoder().encode(str);
-    var arr = [];
-    for(var i = 0; i < str.length; i++){
-      var c = str.charCodeAt(i);
-      if(c < 0x80) arr.push(c);
-      else if(c < 0x800){ arr.push(0xC0 | (c >> 6), 0x80 | (c & 0x3F)); }
-      else if(c < 0xD800 || c >= 0xE000){ arr.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 0x3F), 0x80 | (c & 0x3F)); }
-      else {
-        i++; var c2 = str.charCodeAt(i);
-        var cp = 0x10000 + (((c & 0x3FF) << 10) | (c2 & 0x3FF));
-        arr.push(0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3F), 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F));
-      }
-    }
-    return new Uint8Array(arr);
-  }
-  function _crc32(buf){
-    var table = _crc32.table;
-    if(!table){
-      table = new Uint32Array(256);
-      for(var n = 0; n < 256; n++){
-        var c = n;
-        for(var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-        table[n] = c >>> 0;
-      }
-      _crc32.table = table;
-    }
-    var crc = 0xFFFFFFFF;
-    for(var i = 0; i < buf.length; i++) crc = table[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
-    return (crc ^ 0xFFFFFFFF) >>> 0;
-  }
-  function _zipStore(files){
-    var localParts = [], centralParts = [], offset = 0;
-    function pushU16(arr, v){ arr.push(v & 0xFF, (v >> 8) & 0xFF); }
-    function pushU32(arr, v){ arr.push(v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF); }
-    files.forEach(function(f){
-      var nameBytes = _u8(f.name);
-      var data = f.data;
-      var crc = _crc32(data);
-      var local = [];
-      pushU32(local, 0x04034b50);
-      pushU16(local, 20); pushU16(local, 0x0800); pushU16(local, 0);
-      pushU16(local, 0); pushU16(local, 0);
-      pushU32(local, crc); pushU32(local, data.length); pushU32(local, data.length);
-      pushU16(local, nameBytes.length); pushU16(local, 0);
-      var localArr = new Uint8Array(local.length + nameBytes.length + data.length);
-      localArr.set(new Uint8Array(local), 0);
-      localArr.set(nameBytes, local.length);
-      localArr.set(data, local.length + nameBytes.length);
-      localParts.push(localArr);
-      var central = [];
-      pushU32(central, 0x02014b50);
-      pushU16(central, 20); pushU16(central, 20); pushU16(central, 0x0800); pushU16(central, 0);
-      pushU16(central, 0); pushU16(central, 0);
-      pushU32(central, crc); pushU32(central, data.length); pushU32(central, data.length);
-      pushU16(central, nameBytes.length); pushU16(central, 0); pushU16(central, 0);
-      pushU16(central, 0); pushU16(central, 0); pushU32(central, 0); pushU32(central, offset);
-      var centArr = new Uint8Array(central.length + nameBytes.length);
-      centArr.set(new Uint8Array(central), 0);
-      centArr.set(nameBytes, central.length);
-      centralParts.push(centArr);
-      offset += localArr.length;
-    });
-    var centralOffset = offset, centralSize = 0;
-    centralParts.forEach(function(p){ centralSize += p.length; });
-    var end = [];
-    pushU32(end, 0x06054b50);
-    pushU16(end, 0); pushU16(end, 0);
-    pushU16(end, files.length); pushU16(end, files.length);
-    pushU32(end, centralSize); pushU32(end, centralOffset); pushU16(end, 0);
-    var total = offset + centralSize + end.length;
-    var out = new Uint8Array(total), pos = 0;
-    localParts.forEach(function(p){ out.set(p, pos); pos += p.length; });
-    centralParts.forEach(function(p){ out.set(p, pos); pos += p.length; });
-    out.set(new Uint8Array(end), pos);
-    return out;
-  }
-
-  function _downloadBlob(blob, filename){
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(function(){ try{ a.remove(); URL.revokeObjectURL(url); }catch(e){} }, 10000);
-  }
-
-  try {
-    var parts = [];
-    var totalChars = 0;
-    var notesExported = 0;
-    var notesTried = 0;
-    var emptyNames = [];
-
-    for(var i = 0; i < items.length; i++){
-      var it = items[i];
-      overlay.innerHTML = '📄 Topic ' + (i+1) + '/' + items.length + ' load ho raha hai...<br><span style="font-size:0.75rem;opacity:0.85;font-weight:500;">' + _folderEsc((it.topic && it.topic.name) || '') + '</span>';
-      var t = it.topic || {};
-      var allNotes = t.notes || [];
-      var indexList = (it.noteIndices && it.noteIndices.length) ? it.noteIndices.slice() : allNotes.map(function(_, idx){ return idx; });
-
-      var topicParts = [];
-      topicParts.push('<div style="font-size:0.72rem;color:#888;font-weight:700;margin:8px 0 4px;">📂 ' + _folderEsc((it.path||[]).join(' › ')) + '</div>');
-      topicParts.push('<h1 style="font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;">📙 ' + _folderEsc(t.name || 'Topic') + '</h1>');
-
-      var topicHas = false;
-      for(var j = 0; j < indexList.length; j++){
-        var ni = indexList[j];
-        var n = allNotes[ni];
-        notesTried++;
-        if(!n){ emptyNames.push((t.name||'?')+'#'+ni); continue; }
-
-        var raw = await _folderResolveNoteContentFull(t, n, ni);
-        if(!raw || !String(raw).trim()){
-          console.warn('[Word/HTML] empty after full resolve', t.name, n.name, 'idx', ni);
-          emptyNames.push((n.name || ('Note '+ni)));
-          continue;
-        }
-        // Resolve IDB images in HTML if present
-        if(typeof _folderResolveNoteHtml === 'function' && String(raw).indexOf('data-idbref=') !== -1){
-          try { raw = await _folderResolveNoteHtml(raw); } catch(e){}
-        }
-        topicHas = true;
-        notesExported++;
-        totalChars += String(raw).length;
-        if(indexList.length > 1){
-          topicParts.push('<div style="font-size:0.85rem;font-weight:800;color:#00695c;margin:14px 0 6px;padding-left:8px;border-left:3px solid #00695c;">📝 ' + _folderEsc(n.name || ('Note '+(ni+1))) + '</div>');
-        }
-        topicParts.push('<div class="note-body" style="margin-bottom:18px;">' + raw + '</div>');
-      }
-
-      if(!topicHas){
-        topicParts.push('<p style="color:#c62828;font-style:italic;">⚠️ Is topic ke selected notes mein content nahi mila (memory/backup/cloud empty).</p>');
-      }
-      if(parts.length) parts.push('<hr style="border:none;border-top:2px solid #ddd;margin:24px 0;page-break-before:always;">');
-      parts.push(topicParts.join('\n'));
-    }
-
-    console.log('[Word/HTML export] tried=', notesTried, 'exported=', notesExported, 'chars=', totalChars, 'empty=', emptyNames);
-
-    if(!notesExported || totalChars < 3){
-      if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
-      showToast('⚠️ Content nahi mila (' + notesTried + ' notes try). Notes editor mein open→save karke phir try karo.', 'error');
-      return;
-    }
-
-    var title = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g,'').trim() || 'folder';
-    var bodyInner = '<div style="font-size:0.85rem;color:#666;margin-bottom:12px;">📂 ' + _folderEsc(title)
-      + ' — ' + notesExported + ' notes · ' + totalChars + ' chars</div>'
-      + parts.join('\n');
-
-    var afHtml = '<!DOCTYPE html><html><head><meta charset="utf-8">'
-      + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-      + '<title>' + _folderEsc(title) + '</title>'
-      + '<style>'
-      + 'body{font-family:"Noto Sans Devanagari","Noto Sans",Arial,sans-serif;font-size:15px;line-height:1.85;color:#111;max-width:800px;margin:24px auto;padding:0 16px;}'
-      + 'h1{font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;}'
-      + 'img{max-width:100%;height:auto;}table{border-collapse:collapse;width:100%;}'
-      + 'td,th{border:1px solid #999;padding:6px 8px;}'
-      + 'mark.user-hl{background:#fff176;}mark.user-hl-pink{background:#fce4ec;}'
-      + 'mark.user-hl-green{background:#CCFF90;}mark.user-hl-blue{background:#F3E5F5;}'
-      + 'mark.user-hl-red{background:#F6D9D9;}'
-      + 'b,strong{font-weight:800;}ul,ol{padding-left:20px;}'
-      + 'pre,div[style*="pre-wrap"]{white-space:pre-wrap;word-wrap:break-word;}'
-      + '</style></head><body>' + bodyInner + '</body></html>';
-
-    // 1) ALWAYS download HTML first — guaranteed readable, has full content
-    overlay.innerHTML = '⬇️ HTML file save ho rahi hai...<br><span style="font-size:0.75rem;opacity:0.85;">' + notesExported + ' notes · ' + totalChars + ' chars</span>';
-    var htmlBlob = new Blob([afHtml], { type: 'text/html;charset=utf-8' });
-    console.log('[Word/HTML] html blob size', htmlBlob.size);
-    _downloadBlob(htmlBlob, title + '.html');
-
-    // 2) If user asked Word (or both), also build DOCX with same HTML payload
-    if(!wantHtml){
-      overlay.innerHTML = '⬇️ Word (.docx) bhi ban raha hai...';
-      var contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-        + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-        + '<Default Extension="xml" ContentType="application/xml"/>'
-        + '<Default Extension="html" ContentType="text/html"/>'
-        + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
-        + '</Types>';
-      var rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
-        + '</Relationships>';
-      var docRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        + '<Relationship Id="htmlChunk" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="afchunk.html"/>'
-        + '</Relationships>';
-      var documentXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
-        + 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        + '<w:body><w:altChunk r:id="htmlChunk"/>'
-        + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr>'
-        + '</w:body></w:document>';
-
-      var zipBytes = _zipStore([
-        { name: '[Content_Types].xml', data: _u8(contentTypes) },
-        { name: '_rels/.rels', data: _u8(rels) },
-        { name: 'word/document.xml', data: _u8(documentXml) },
-        { name: 'word/_rels/document.xml.rels', data: _u8(docRels) },
-        { name: 'word/afchunk.html', data: _u8(afHtml) }
-      ]);
-      console.log('[Word/HTML] docx bytes', zipBytes.length);
-      var docxBlob = new Blob([zipBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-      _downloadBlob(docxBlob, title + '.docx');
-    }
-
-    if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
-    var kb = Math.round((totalChars + 500) / 1024);
-    showToast('✅ ' + notesExported + ' notes export · ~' + kb + ' KB content · HTML' + (wantHtml ? '' : '+Word') + ' download', 'success');
-  } catch(err) {
-    console.error('[downloadFolderWord]', err);
-    if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
-    showToast('❌ Export fail: ' + (err && err.message ? err.message : 'error'), 'error');
-  }
-}
-
-async function _downloadFolderPDFExecute(folderLabel, items){
-  if(!items || !items.length){ showToast('Koi topic select nahi', 'error'); return; }
-
-  const notesWithContentCount = items.reduce((n, it) => {
-    var all = (it.topic && it.topic.notes) || [];
-    var list = (it.noteIndices && it.noteIndices.length)
-      ? it.noteIndices.map(function(i){ return all[i]; }).filter(Boolean)
-      : all;
-    return n + list.filter(function(n2){
-      if(typeof _folderNoteRawHtml === 'function') return !!String(_folderNoteRawHtml(n2) || '').trim();
-      return !!(n2.editorRichHTML || n2.richHTML || n2.content || '').trim();
-    }).length;
-  }, 0);
+  const notesWithContentCount = items.reduce((n, it) => n + (it.topic.notes || []).filter(n2 => (n2.editorRichHTML || n2.richHTML || n2.content || '').trim()).length, 0);
   console.log('[downloadFolderPDF] Notes with actual content found: ' + notesWithContentCount);
   const hasAnyContent = notesWithContentCount > 0;
-  if(!hasAnyContent) { console.warn('[downloadFolderPDF] No selected topic has note content.'); showToast('⚠️ Selected topics mein koi note content nahi hai', 'error'); return; }
+  if(!hasAnyContent) { console.warn('[downloadFolderPDF] No topic under "'+folderLabel+'" has any note content (editorRichHTML/richHTML/content all empty).'); showToast('⚠️ Is folder ke topics mein koi note content nahi hai', 'error'); return; }
 
   if(typeof html2pdf === 'undefined') { console.error('[downloadFolderPDF] html2pdf library not loaded.'); showToast('❌ PDF library load nahi hui — internet check karo', 'error'); return; }
 
-  showToast('⬇️ "' + folderLabel + '" ka PDF taiyar ho raha hai (' + items.length + ' topics)...', 'success');
+  showToast('⬇️ "' + folderLabel + '" ka poora PDF taiyar ho raha hai (' + items.length + ' topics)...', 'success');
 
   // Show the overlay FIRST (position:fixed covers the viewport immediately) so
   // the brief layout shift caused by inserting each topic's wrapper is hidden.
