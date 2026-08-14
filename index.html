@@ -29335,33 +29335,42 @@ function _folderCollectTopics(node, kind, pathSoFar) {
   function addTopic(t, path) {
     if(!t) return;
     if(t.hidden && !_isAdmin) return;
-    out.push({ topic: t, path: path });
-    (t.subTopics || []).forEach(function(st) {
-      if(st.hidden && !_isAdmin) return;
-      out.push({ topic: st, path: path.concat([t.name + ' ↳ Sub-Topic']) });
-    });
+    out.push({ topic: t, path: path.slice() });
+    // Sub-topics — kitni bhi depth (recursive)
+    function walkSubTops(list, pfx) {
+      (list || []).forEach(function(st) {
+        if(!st || (st.hidden && !_isAdmin)) return;
+        out.push({ topic: st, path: pfx.concat([st.name || 'Sub-Topic']) });
+        if(st.subTopics && st.subTopics.length) walkSubTops(st.subTopics, pfx.concat([st.name || 'Sub-Topic']));
+      });
+    }
+    if(t.subTopics && t.subTopics.length) walkSubTops(t.subTopics, path.concat([t.name + ' ↳']));
   }
 
   function walkSection(sec, path) {
     if(!sec) return;
     if(sec.hidden && !_isAdmin) return;
-    var secPath = path.concat([sec.name]);
+    var secPath = path.concat([sec.name || 'Section']);
     (sec.topics || []).forEach(function(t) { addTopic(t, secPath); });
     (sec.subSections || []).forEach(function(ss) { walkSubSection(ss, secPath); });
   }
   function walkSubSection(ss, path) {
     if(!ss) return;
     if(ss.hidden && !_isAdmin) return;
-    var ssPath = path.concat([ss.name]);
+    var ssPath = path.concat([ss.name || 'Sub-Section']);
     (ss.topics || []).forEach(function(t) { addTopic(t, ssPath); });
     (ss.subSections || []).forEach(function(ss2) { walkSubSection(ss2, ssPath); });
   }
   function walkSubject(subjOrSub, path) {
     if(!subjOrSub) return;
+    // Rare: topics directly on subject/sub-subject node
+    if(subjOrSub.topics && subjOrSub.topics.length) {
+      (subjOrSub.topics || []).forEach(function(t) { addTopic(t, path); });
+    }
     (subjOrSub.sections || []).forEach(function(sec) { walkSection(sec, path); });
     (subjOrSub.subSubjects || []).forEach(function(ss) {
       if(ss.hidden && !_isAdmin) return;
-      walkSubject(ss, path.concat([ss.name]));
+      walkSubject(ss, path.concat([ss.name || 'Sub-Subject']));
     });
   }
 
@@ -29369,6 +29378,8 @@ function _folderCollectTopics(node, kind, pathSoFar) {
   else if(kind === 'subsubject') walkSubject(node, pathSoFar);
   else if(kind === 'section') walkSection(node, pathSoFar);
   else if(kind === 'subsection') walkSubSection(node, pathSoFar);
+  // Fallback: if somehow nothing collected but node itself is a topic-like object
+  else if(node.notes || node.name) addTopic(node, pathSoFar);
 
   return out;
 }
@@ -29514,26 +29525,61 @@ function _folderShowTopicPicker(folderLabel, items){
   ov.style.cssText = 'position:fixed;inset:0;z-index:1000100;background:rgba(13,27,42,0.72);display:flex;align-items:flex-end;justify-content:center;padding:12px;';
   ov.onclick = function(ev){ if(ev.target === ov) ov.remove(); };
 
-  var rows = items.map(function(it, i){
-    var t = it.topic || {};
-    var noteN = (t.notes || []).filter(function(n2){
+  // Group topics by parent folder path (last folder = leaf container of topics)
+  // path is array of folder names leading TO the topic (topic name not included)
+  var groups = []; // { key, label, indices: [i,...] }
+  var groupMap = {};
+  items.forEach(function(it, i){
+    var path = (it.path || []).slice();
+    var key = path.join(' › ') || '(root)';
+    if(!groupMap[key]){
+      groupMap[key] = { key: key, label: key, indices: [] };
+      groups.push(groupMap[key]);
+    }
+    groupMap[key].indices.push(i);
+  });
+
+  function topicNoteCount(t){
+    return (t.notes || []).filter(function(n2){
       return ((n2.editorRichHTML || n2.richHTML || n2.content || '') + '').trim();
     }).length;
-    var pathStr = (it.path || []).join(' › ');
-    var empty = noteN === 0;
-    return '<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border,#e0e0e0);cursor:pointer;background:' + (empty ? 'rgba(198,40,40,0.04)' : 'transparent') + ';">' +
-      '<input type="checkbox" class="_fppChk" data-i="' + i + '" ' + (empty ? '' : 'checked') + ' style="margin-top:4px;width:18px;height:18px;flex-shrink:0;accent-color:#1565c0;">' +
-      '<span style="flex:1;min-width:0;">' +
-        '<div style="font-weight:800;font-size:0.88rem;color:var(--text,#0d1b2a);">' + _folderEsc(t.name || ('Topic '+(i+1))) + (empty ? ' <span style="font-size:0.68rem;font-weight:700;color:#c62828;">(khaali)</span>' : '') + '</div>' +
-        '<div style="font-size:0.7rem;color:var(--text2,#37526d);margin-top:2px;line-height:1.4;">📂 ' + _folderEsc(pathStr) + (noteN ? ' · ' + noteN + ' note(s)' : '') + '</div>' +
-      '</span></label>';
+  }
+
+  var bodyHtml = groups.map(function(g, gi){
+    var topicRows = g.indices.map(function(i){
+      var it = items[i];
+      var t = it.topic || {};
+      var noteN = topicNoteCount(t);
+      var empty = noteN === 0;
+      return '<label class="_fppTopicRow" style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px 8px 28px;border-bottom:1px solid rgba(0,0,0,0.05);cursor:pointer;background:' + (empty ? 'rgba(198,40,40,0.04)' : 'transparent') + ';">' +
+        '<input type="checkbox" class="_fppChk" data-i="' + i + '" data-g="' + gi + '" ' + (empty ? '' : 'checked') + ' style="margin-top:3px;width:18px;height:18px;flex-shrink:0;accent-color:#1565c0;">' +
+        '<span style="flex:1;min-width:0;">' +
+          '<div style="font-weight:800;font-size:0.86rem;color:var(--text,#0d1b2a);">📙 ' + _folderEsc(t.name || ('Topic '+(i+1))) + (empty ? ' <span style="font-size:0.66rem;font-weight:700;color:#c62828;">(khaali)</span>' : '') + '</div>' +
+          '<div style="font-size:0.68rem;color:var(--text2,#37526d);margin-top:1px;">' + (noteN ? noteN + ' note(s) with content' : 'No note content') + '</div>' +
+        '</span></label>';
+    }).join('');
+
+    var leafName = g.label;
+    var parts = g.label.split(' › ');
+    if(parts.length > 1) leafName = parts[parts.length - 1];
+
+    return '<div class="_fppGroup" data-g="' + gi + '" style="border-bottom:1.5px solid var(--border,#e0e0e0);">' +
+      '<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;background:var(--surface2,#f0f5fa);position:sticky;top:0;z-index:1;">' +
+        '<input type="checkbox" class="_fppGrpChk" data-g="' + gi + '" checked style="width:18px;height:18px;flex-shrink:0;accent-color:#e65100;">' +
+        '<span style="flex:1;min-width:0;">' +
+          '<div style="font-weight:900;font-size:0.82rem;color:#e65100;">📂 ' + _folderEsc(leafName) + ' <span style="font-weight:700;color:var(--text2,#37526d);font-size:0.72rem;">(' + g.indices.length + ' topics)</span></div>' +
+          (parts.length > 1 ? '<div style="font-size:0.66rem;color:var(--text2,#37526d);margin-top:2px;line-height:1.35;">' + _folderEsc(g.label) + '</div>' : '') +
+        '</span>' +
+      '</label>' +
+      topicRows +
+    '</div>';
   }).join('');
 
   ov.innerHTML =
-    '<div style="width:100%;max-width:520px;max-height:88vh;background:var(--surface,#fff);border-radius:18px 18px 0 0;display:flex;flex-direction:column;box-shadow:0 -8px 40px rgba(0,0,0,0.35);" onclick="event.stopPropagation();">' +
+    '<div style="width:100%;max-width:540px;max-height:90vh;background:var(--surface,#fff);border-radius:18px 18px 0 0;display:flex;flex-direction:column;box-shadow:0 -8px 40px rgba(0,0,0,0.35);" onclick="event.stopPropagation();">' +
       '<div style="padding:14px 16px 10px;border-bottom:1.5px solid var(--border,#e0e0e0);flex-shrink:0;">' +
-        '<div style="font-weight:900;font-size:1.05rem;color:var(--text,#0d1b2a);">📥 PDF Download — topics choose karo</div>' +
-        '<div style="font-size:0.78rem;color:var(--text2,#37526d);margin-top:4px;line-height:1.45;">Folder: <b>' + _folderEsc(folderLabel) + '</b> · ' + items.length + ' nested topics. Sirf selected download honge.</div>' +
+        '<div style="font-weight:900;font-size:1.05rem;color:var(--text,#0d1b2a);">📥 PDF Download — folders & topics</div>' +
+        '<div style="font-size:0.78rem;color:var(--text2,#37526d);margin-top:4px;line-height:1.45;">Folder: <b>' + _folderEsc(folderLabel) + '</b> · ' + items.length + ' topics · ' + groups.length + ' nested folder(s). Folder tick = uske saare topics; neeche har topic alag select/deselect.</div>' +
       '</div>' +
       '<div style="padding:8px 12px;display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--border,#eee);flex-shrink:0;">' +
         '<button type="button" id="_fppAll" style="padding:6px 12px;border-radius:8px;border:1.5px solid #1565c0;background:#1565c0;color:#fff;font-weight:800;font-size:0.75rem;cursor:pointer;">✓ Sab select</button>' +
@@ -29541,7 +29587,7 @@ function _folderShowTopicPicker(folderLabel, items){
         '<button type="button" id="_fppOnlyFilled" style="padding:6px 12px;border-radius:8px;border:1.5px solid #2e7d32;background:rgba(46,125,50,0.1);color:#2e7d32;font-weight:800;font-size:0.75rem;cursor:pointer;">Sirf content wale</button>' +
         '<span id="_fppCount" style="margin-left:auto;font-size:0.72rem;font-weight:700;color:var(--text2,#37526d);align-self:center;"></span>' +
       '</div>' +
-      '<div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:120px;">' + rows + '</div>' +
+      '<div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:140px;">' + bodyHtml + '</div>' +
       '<div style="padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px));display:flex;gap:10px;border-top:1.5px solid var(--border,#e0e0e0);flex-shrink:0;">' +
         '<button type="button" id="_fppCancel" style="flex:1;padding:12px;border-radius:12px;border:1.5px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);font-weight:800;color:var(--text,#0d1b2a);cursor:pointer;">Cancel</button>' +
         '<button type="button" id="_fppGo" style="flex:1.4;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#0d47a1);color:#fff;font-weight:900;cursor:pointer;">⬇️ Download PDF</button>' +
@@ -29550,15 +29596,37 @@ function _folderShowTopicPicker(folderLabel, items){
 
   document.body.appendChild(ov);
 
+  function syncGroupCheckbox(gi){
+    var gChk = ov.querySelector('._fppGrpChk[data-g="'+gi+'"]');
+    var chks = ov.querySelectorAll('._fppChk[data-g="'+gi+'"]');
+    if(!gChk || !chks.length) return;
+    var n = 0;
+    chks.forEach(function(c){ if(c.checked) n++; });
+    gChk.checked = n === chks.length;
+    gChk.indeterminate = n > 0 && n < chks.length;
+  }
   function updateCount(){
     var n = ov.querySelectorAll('._fppChk:checked').length;
     var el = document.getElementById('_fppCount');
-    if(el) el.textContent = n + ' / ' + items.length + ' selected';
+    if(el) el.textContent = n + ' / ' + items.length + ' topics selected';
     var go = document.getElementById('_fppGo');
     if(go){ go.disabled = n === 0; go.style.opacity = n ? '1' : '0.5'; }
+    groups.forEach(function(g, gi){ syncGroupCheckbox(gi); });
   }
   updateCount();
-  ov.querySelectorAll('._fppChk').forEach(function(c){ c.onchange = updateCount; });
+
+  ov.querySelectorAll('._fppChk').forEach(function(c){
+    c.onchange = function(){ updateCount(); };
+  });
+  ov.querySelectorAll('._fppGrpChk').forEach(function(gChk){
+    gChk.onchange = function(){
+      var gi = gChk.getAttribute('data-g');
+      var on = gChk.checked;
+      ov.querySelectorAll('._fppChk[data-g="'+gi+'"]').forEach(function(c){ c.checked = on; });
+      updateCount();
+    };
+  });
+
   document.getElementById('_fppAll').onclick = function(){
     ov.querySelectorAll('._fppChk').forEach(function(c){ c.checked = true; });
     updateCount();
@@ -29571,8 +29639,7 @@ function _folderShowTopicPicker(folderLabel, items){
     ov.querySelectorAll('._fppChk').forEach(function(c){
       var i = Number(c.getAttribute('data-i'));
       var t = items[i] && items[i].topic;
-      var has = t && (t.notes || []).some(function(n2){ return ((n2.editorRichHTML || n2.richHTML || n2.content || '') + '').trim(); });
-      c.checked = !!has;
+      c.checked = !!(t && topicNoteCount(t) > 0);
     });
     updateCount();
   };
