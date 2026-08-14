@@ -9660,102 +9660,8 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       -webkit-tap-highlight-color:transparent;
       box-shadow:0 2px 8px rgba(21,101,192,0.18);
     ">‹</button>
-    <!-- 🐞 TEMP DEBUG BUTTON — shows raw saved note data, no devtools needed.
-         Safe to remove later, does not modify any data. -->
-    <button id="neDebugBtn" onclick="_neDebugShowRaw()" title="Debug: raw data dikhao" style="
-      position:fixed;bottom:56px;right:14px;z-index:9820;
-      padding:6px 10px;border-radius:16px;
-      background:#c62828;border:1.5px solid #fff;
-      color:#fff;font-size:0.7rem;font-weight:800;
-      cursor:pointer;-webkit-tap-highlight-color:transparent;
-      box-shadow:0 2px 8px rgba(0,0,0,0.35);
-    ">🐞 Debug</button>
   </div>
 </div>
-
-<script>
-// 🐞 TEMP DEBUG HELPER — read-only, does not change any saved data.
-// Shows: content length, richHTML/editorRichHTML length + first/last 300
-// chars, and what is currently loaded in the editor's in-memory state.
-// Remove this whole <script> block once the truncation bug is diagnosed.
-function _neDebugShowRaw(){
-  try{
-    var sid = _editorState.sid, secid = _editorState.secid, tid = _editorState.tid, noteIdx = _editorState.noteIdx;
-    var lines = [];
-    lines.push('=== EDITOR STATE (in-memory, right now) ===');
-    lines.push('sid=' + sid + ' secid=' + secid + ' tid=' + tid + ' noteIdx=' + noteIdx);
-
-    var domArea = document.getElementById('noteEditableArea');
-    var domHtml = domArea ? domArea.innerHTML : '';
-    lines.push('DOM (what you see) length = ' + domHtml.length);
-    lines.push('DOM first 300 = ' + domHtml.slice(0,300));
-    lines.push('DOM last 300 = ' + domHtml.slice(-300));
-
-    if(typeof getTop === 'function' && tid){
-      var t = getTop(sid, secid, tid);
-      var n = t && t.notes ? t.notes[noteIdx] : null;
-      if(n){
-        lines.push('');
-        lines.push('=== SAVED NOTE OBJECT (in S, i.e. what would be written to cloud) ===');
-        lines.push('n.content length = ' + ((n.content||'').length));
-        lines.push('n.richHTML length = ' + ((n.richHTML||'').length));
-        lines.push('n.editorRichHTML length = ' + ((n.editorRichHTML||'').length));
-        var rh = n.editorRichHTML || n.richHTML || '';
-        if(rh){
-          lines.push('richHTML first 300 = ' + rh.slice(0,300));
-          lines.push('richHTML last 300 = ' + rh.slice(-300));
-        }
-        lines.push('n.editorSavedAt = ' + n.editorSavedAt);
-      } else {
-        lines.push('');
-        lines.push('⚠️ Could not find note object for this sid/secid/tid/noteIdx.');
-      }
-    } else {
-      lines.push('');
-      lines.push('⚠️ No tid in _editorState — open a note first, then tap Debug again.');
-    }
-
-    var out = lines.join('\n');
-    console.log(out);
-
-    // Show in an on-screen textarea (scrollable, copyable) instead of alert
-    // since alert() truncates/mangles very long text on some mobile browsers.
-    var existing = document.getElementById('neDebugOverlay');
-    if(existing) existing.remove();
-    var ov = document.createElement('div');
-    ov.id = 'neDebugOverlay';
-    ov.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.85);display:flex;flex-direction:column;padding:12px;';
-    var ta = document.createElement('textarea');
-    ta.value = out;
-    ta.style.cssText = 'flex:1;width:100%;font-family:monospace;font-size:11px;padding:8px;border-radius:8px;border:none;';
-    ta.readOnly = true;
-    var btnRow = document.createElement('div');
-    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:8px;';
-    var closeBtn = document.createElement('button');
-    closeBtn.textContent = 'Close';
-    closeBtn.style.cssText = 'flex:1;padding:12px;border-radius:8px;border:none;background:#c62828;color:#fff;font-weight:700;';
-    closeBtn.onclick = function(){ ov.remove(); };
-    var copyBtn = document.createElement('button');
-    copyBtn.textContent = 'Copy All';
-    copyBtn.style.cssText = 'flex:1;padding:12px;border-radius:8px;border:none;background:#1565c0;color:#fff;font-weight:700;';
-    copyBtn.onclick = function(){
-      ta.select();
-      try{ document.execCommand('copy'); }catch(e){}
-      try{ navigator.clipboard && navigator.clipboard.writeText(out); }catch(e){}
-      copyBtn.textContent = 'Copied ✓';
-      setTimeout(function(){ copyBtn.textContent = 'Copy All'; }, 1500);
-    };
-    btnRow.appendChild(copyBtn);
-    btnRow.appendChild(closeBtn);
-    ov.appendChild(ta);
-    ov.appendChild(btnRow);
-    document.body.appendChild(ov);
-  }catch(e){
-    alert('Debug error: ' + e.message);
-    console.error(e);
-  }
-}
-</script>
 
 <!-- ═══════════════════════��═══════════════════════════════
      📋 STUDY CANVAS — Pull Tab
@@ -22873,6 +22779,13 @@ Restore karna hai?`)) {
 
       // Flag set karo - Firebase load se bachao
       _justRestored = true;
+      // 🛡️ FIX: _justRestored was only an in-memory JS variable — if the
+      // page reloaded/relogged-in before the upload below finished, the
+      // flag reset to false on the fresh page load and loadFromFirebase()
+      // could pull (possibly older/incomplete) cloud data back over this
+      // freshly-restored local data. Persisting it means a reload can
+      // recover the pending-upload intent instead of silently losing it.
+      try { localStorage.setItem('epp5_justRestored', '1'); } catch(e) {}
       
       // Close login screen if open
       const ls = document.getElementById('loginScreen');
@@ -22907,6 +22820,12 @@ Restore karna hai?`)) {
         if(_currentUser && _db) {
           _justRestored = false; // Already uploading
           saveToFirebase().then(()=>{
+            // 🛡️ FIX: only clear the persisted flag once the upload has
+            // actually confirmed on the server — if the page reloads before
+            // this .then() runs, the flag in localStorage stays set, and
+            // loadFromFirebase() on the next load will see it and safely
+            // re-upload instead of pulling possibly-stale cloud data down.
+            try { localStorage.removeItem('epp5_justRestored'); } catch(e) {}
             showToast('✅ Restore + Cloud Sync! ' + subjectCount + ' subjects, ' + topicCount + ' topics', 'success');
           }).catch(()=>{
             showToast('✅ Restore ho gaya! ' + subjectCount + ' subjects, ' + topicCount + ' topics', 'success');
@@ -42597,6 +42516,57 @@ async function saveToFirebase(){
   var _saveStartTime = Date.now();
   var _topicCount = (S.subjects||[]).reduce(function(a,s){ return a+s.sections.reduce(function(b,sec){ return b+sec.topics.length; },0); },0);
   console.info('[🔥 saveToFirebase] START — uid:'+_effectiveUID+' | subjects:'+((S.subjects||[]).length)+' | topics:'+_topicCount+' | isAdmin:'+_isAdmin);
+
+  // 🛡️ SAFETY GUARD: total note-content size ko track karo (localStorage
+  // mein last-known-good size). Agar is save mein content drastically
+  // (50%+) shrink ho raha hai — jaisa localStorage-slim data ya kisi
+  // partial/failed load ke baad galti se ho sakta hai — to save ko rok
+  // ke user ko batao, taaki accidentally poora cloud data truncated
+  // version se overwrite na ho jaaye. User confirm kare to hi aage badhe.
+  function _totalNoteContentSize(){
+    var total = 0;
+    function noteLen(n){ return (n.editorRichHTML||'').length + (n.richHTML||'').length + (n.content||'').length; }
+    function walkSec(sec){
+      (sec.topics||[]).forEach(function(t){ (t.notes||[]).forEach(function(n){ total += noteLen(n); }); });
+      (sec.subSections||[]).forEach(walkSec);
+    }
+    function walkSub(sub){
+      (sub.sections||[]).forEach(walkSec);
+      (sub.subSubjects||[]).forEach(walkSub);
+    }
+    (S.subjects||[]).forEach(walkSub);
+    return total;
+  }
+  try{
+    var _curSize = _totalNoteContentSize();
+    var _lastGoodSize = 0;
+    try { _lastGoodSize = parseInt(localStorage.getItem('epp5_lastGoodContentSize')||'0', 10) || 0; } catch(e){}
+    if(_lastGoodSize > 50000 && _curSize < _lastGoodSize * 0.5){
+      var _pct = Math.round((_curSize/_lastGoodSize)*100);
+      console.error('[🔥 saveToFirebase] BLOCKED: content shrink guard — was '+_lastGoodSize+' chars, now '+_curSize+' chars ('+_pct+'%)');
+      var _proceed = confirm(
+        '⚠️ CHETAVNI: Notes ka data pehle se bahut kam (' + _pct + '%) dikh raha hai!\n\n' +
+        'Pehle: ~' + Math.round(_lastGoodSize/1000) + 'K characters\n' +
+        'Ab: ~' + Math.round(_curSize/1000) + 'K characters\n\n' +
+        'Agar aap save karte hain to cloud ka poora/sahi data is chhote data se REPLACE ho jayega — ho sakta hai data kho jaaye.\n\n' +
+        'Agar aapko lagta hai yeh galti se ho raha hai (jaise abhi restore/reload kiya hai), to CANCEL dabao aur pehle app dobara refresh karke check karo.\n\n' +
+        'Kya aap sach mein is chhote data ko save karna chahte hain?'
+      );
+      if(!_proceed){
+        _fbSaveInProgress = false;
+        setSyncStatus('error');
+        showToast('⚠️ Save rok diya gaya — data shrink detect hua', 'error');
+        return {ok:false, error:'User cancelled — content shrink guard triggered', code:'SHRINK_GUARD_CANCELLED'};
+      }
+      console.warn('[🔥 saveToFirebase] User confirmed shrink — proceeding anyway');
+    }
+    // Update last-known-good size AFTER the guard check (so this save's
+    // own size becomes the new baseline once it goes through)
+    if(_curSize > 0){
+      try { localStorage.setItem('epp5_lastGoodContentSize', String(Math.max(_curSize, _lastGoodSize))); } catch(e){}
+    }
+  }catch(e){ console.warn('[🔥 saveToFirebase] shrink guard error (non-fatal):', e && e.message); }
+
   setSyncStatus('syncing');
   try{
     var uid = _effectiveUID;
@@ -42778,11 +42748,22 @@ async function saveToFirebase(){
 async function loadFromFirebase(){
   if(!_db || !_currentUser){ console.warn('[📥 loadFromFirebase] SKIP: db='+!!_db+' user='+!!_currentUser); return; }
 
-  if(_justRestored){
+  // 🛡️ FIX: also check the PERSISTED flag (localStorage), not just the
+  // in-memory _justRestored variable. If a restore just happened and the
+  // page reloaded/relogged-in before the upload finished, the in-memory
+  // flag would have reset to false — this persisted flag survives that
+  // reload and still forces a safe re-upload of the local (correct,
+  // just-restored) data instead of pulling the cloud's stale data down
+  // over it.
+  var _persistedJustRestored = false;
+  try { _persistedJustRestored = localStorage.getItem('epp5_justRestored') === '1'; } catch(e){}
+
+  if(_justRestored || _persistedJustRestored){
     _justRestored = false;
-    console.info('[📥 loadFromFirebase] _justRestored=true → uploading local data to Firebase');
+    console.info('[📥 loadFromFirebase] justRestored (mem='+_justRestored+', persisted='+_persistedJustRestored+') → uploading local data to Firebase');
     setSyncStatus('syncing');
     await saveToFirebase();
+    try { localStorage.removeItem('epp5_justRestored'); } catch(e){}
     setSyncStatus('synced');
     showToast('Restore data cloud pe upload ho gaya! ✅☁️', 'success');
     return;
