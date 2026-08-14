@@ -7315,6 +7315,13 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
           </select>
           <input type="text" id="eftSearchInput" class="inp" placeholder="🔎 Topic dhoondo..." style="flex:1;min-width:160px;" oninput="eftRenderTopicSelect()">
         </div>
+        <div id="eftLinkFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;">
+          <span style="font-size:0.72rem;font-weight:800;color:var(--text2);">Master Library link:</span>
+          <button type="button" class="org-tab eft-link-f active" data-f="all" onclick="hubSetLinkFilter('extraFactsTopics','all',this)">Sab</button>
+          <button type="button" class="org-tab eft-link-f" data-f="linked" onclick="hubSetLinkFilter('extraFactsTopics','linked',this)">🔗 Linked</button>
+          <button type="button" class="org-tab eft-link-f" data-f="unlinked" onclick="hubSetLinkFilter('extraFactsTopics','unlinked',this)">Unlinked</button>
+          <span id="eftLinkFilterStats" style="font-size:0.68rem;color:var(--text2);margin-left:auto;"></span>
+        </div>
         <button class="btn btn-primary" style="width:100%;margin-top:10px;" onclick="eftOpenNewTopicModal()">➕ Naya Current Affairs Topic Banao</button>
       </div>
 
@@ -7355,6 +7362,13 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
             <option value="">-- Topic chuno --</option>
           </select>
           <input type="text" id="sgkSearchInput" class="inp" placeholder="🔎 Topic dhoondo..." style="flex:1;min-width:160px;" oninput="sgkRenderTopicSelect()">
+        </div>
+        <div id="sgkLinkFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;">
+          <span style="font-size:0.72rem;font-weight:800;color:var(--text2);">Master Library link:</span>
+          <button type="button" class="org-tab sgk-link-f active" data-f="all" onclick="hubSetLinkFilter('staticGkTopics','all',this)">Sab</button>
+          <button type="button" class="org-tab sgk-link-f" data-f="linked" onclick="hubSetLinkFilter('staticGkTopics','linked',this)">🔗 Linked</button>
+          <button type="button" class="org-tab sgk-link-f" data-f="unlinked" onclick="hubSetLinkFilter('staticGkTopics','unlinked',this)">Unlinked</button>
+          <span id="sgkLinkFilterStats" style="font-size:0.68rem;color:var(--text2);margin-left:auto;"></span>
         </div>
         <button class="btn btn-primary" style="width:100%;margin-top:10px;" onclick="sgkOpenNewTopicModal()">➕ Naya Static GK Topic Banao</button>
       </div>
@@ -20091,6 +20105,92 @@ function fcfpUpdateTopicLinkBadge(){
 // ── Sidebar "Havoc" page: browse the full global Extra Facts Topic
 // Library via a dropdown (same data source as the 📂 icon inside the
 // flashcard facts page), with a light preview + edit + delete. ──
+
+// ═══════════════════════════════════════════════════════════
+// Hub link filter — Master Library mein hubRef se linked topics
+// Current Affairs (extraFactsTopics) + Static GK (staticGkTopics)
+// ═══════════════════════════════════════════════════════════
+var _hubLinkFilter = { extraFactsTopics: 'all', staticGkTopics: 'all', similarCurrentTopics: 'all' };
+var _hubLinkCache = { at: 0, map: null }; // map: hubTopicId -> [{path, noteName, hubType}]
+
+function _hubWalkAllLibraryTopics(cb){
+  function walkSec(sec, pathParts, subj){
+    (sec.topics || []).forEach(function(tp){
+      cb(tp, pathParts.concat([tp.name || '']), subj, sec);
+    });
+    (sec.subSections || []).forEach(function(ss){
+      walkSec(ss, pathParts.concat([ss.name || '']), subj);
+    });
+  }
+  (S.subjects || []).forEach(function(subj){
+    (subj.sections || []).forEach(function(sec){
+      walkSec(sec, [subj.name || '', sec.name || ''], subj);
+    });
+    (subj.subSubjects || []).forEach(function(sss){
+      (sss.sections || []).forEach(function(sec){
+        walkSec(sec, [subj.name || '', sss.name || '', sec.name || ''], subj);
+      });
+    });
+  });
+}
+
+/** Scan master library notes for type=hubRef. Returns { [hubTopicId]: [ {path, noteName, hubType, tid} ] } */
+function hubBuildMasterLinkMap(force){
+  var now = Date.now();
+  if(!force && _hubLinkCache.map && (now - _hubLinkCache.at) < 4000) return _hubLinkCache.map;
+  var map = {};
+  try {
+    _hubWalkAllLibraryTopics(function(tp, pathParts){
+      (tp.notes || []).forEach(function(n){
+        if(!n || n.type !== 'hubRef' || !n.hubTopicId) return;
+        var hid = String(n.hubTopicId);
+        if(!map[hid]) map[hid] = [];
+        map[hid].push({
+          path: pathParts.join(' › '),
+          noteName: n.name || 'Hub Ref',
+          hubType: n.hubType === 'static' ? 'static' : 'current',
+          tid: tp.id
+        });
+      });
+    });
+  } catch(e){ console.warn('[hub link map]', e); }
+  _hubLinkCache = { at: now, map: map };
+  return map;
+}
+
+function hubIsLinkedInMaster(hubTopicId, hubType){
+  var map = hubBuildMasterLinkMap();
+  var list = map[String(hubTopicId)] || [];
+  if(!list.length) return false;
+  if(!hubType) return true;
+  var want = hubType === 'static' ? 'static' : 'current';
+  return list.some(function(x){ return x.hubType === want; });
+}
+
+function hubGetLinkPaths(hubTopicId, hubType){
+  var map = hubBuildMasterLinkMap();
+  var list = map[String(hubTopicId)] || [];
+  var want = hubType === 'static' ? 'static' : 'current';
+  return list.filter(function(x){ return x.hubType === want; });
+}
+
+function hubSetLinkFilter(libKey, mode, btn){
+  _hubLinkFilter[libKey] = mode || 'all';
+  // active class on sibling buttons
+  if(btn && btn.parentNode){
+    var cls = libKey === 'staticGkTopics' ? 'sgk-link-f' : 'eft-link-f';
+    btn.parentNode.querySelectorAll('.' + cls).forEach(function(b){
+      b.classList.toggle('active', b.getAttribute('data-f') === mode);
+    });
+  }
+  if(libKey === 'staticGkTopics'){
+    if(typeof sgkRenderTopicSelect === 'function') sgkRenderTopicSelect();
+  } else {
+    if(typeof eftRenderTopicSelect === 'function') eftRenderTopicSelect();
+  }
+}
+
+
 function renderExtraFactsTopicsPage(){
   eftRenderTopicSelect();
   eftRenderSelected();
@@ -20103,23 +20203,42 @@ function eftRenderTopicSelect(){
   q = q.trim().toLowerCase();
   var cv = sel.value;
   var topics = S.extraFactsTopics || {};
-  var ids = Object.keys(topics).filter(function(id){
+  var mode = (_hubLinkFilter && _hubLinkFilter.extraFactsTopics) || 'all';
+  hubBuildMasterLinkMap(true); // fresh scan
+  var allIds = Object.keys(topics);
+  var linkedN = 0, unlinkedN = 0;
+  allIds.forEach(function(id){
+    if(hubIsLinkedInMaster(id, 'current')) linkedN++; else unlinkedN++;
+  });
+  var ids = allIds.filter(function(id){
     var t = topics[id];
-    return t && t.name && (!q || t.name.toLowerCase().indexOf(q) !== -1);
+    if(!t || !t.name) return false;
+    if(q && t.name.toLowerCase().indexOf(q) === -1) return false;
+    var linked = hubIsLinkedInMaster(id, 'current');
+    if(mode === 'linked' && !linked) return false;
+    if(mode === 'unlinked' && linked) return false;
+    return true;
   }).sort(function(a,b){
     return (topics[a].name||'').localeCompare(topics[b].name||'');
   });
 
   var badge = document.getElementById('extraTopicsBadge');
-  var totalCount = Object.keys(topics).length;
+  var totalCount = allIds.length;
   if(badge){
     if(totalCount > 0){ badge.style.display='inline-block'; badge.textContent = totalCount; }
     else { badge.style.display='none'; }
   }
+  var stats = document.getElementById('eftLinkFilterStats');
+  if(stats) stats.textContent = '🔗 ' + linkedN + ' linked · ' + unlinkedN + ' unlinked · dikh: ' + ids.length;
 
   sel.innerHTML = '<option value="">-- Topic chuno (' + ids.length + ') --</option>' +
-    ids.map(function(id){ return '<option value="'+id+'">'+_fcEsc(topics[id].name)+'</option>'; }).join('');
-  if(cv && topics[cv]) sel.value = cv;
+    ids.map(function(id){
+      var linked = hubIsLinkedInMaster(id, 'current');
+      var mark = linked ? '🔗 ' : '';
+      return '<option value="'+id+'">'+mark+_fcEsc(topics[id].name)+(linked?' (linked)':'')+'</option>';
+    }).join('');
+  if(cv && topics[cv] && ids.indexOf(cv) >= 0) sel.value = cv;
+  else if(cv && ids.indexOf(cv) < 0){ sel.value = ''; if(typeof eftRenderSelected==='function') eftRenderSelected(); }
 }
 
 function eftRenderSelected(){
@@ -20145,15 +20264,27 @@ function eftRenderSelected(){
     Object.keys(S.flashcardSets || {}).forEach(function(key){
       var set = S.flashcardSets[key];
       (set.cards || []).forEach(function(c){
-        if(c && c.extraTopicId === id){
+        if(c && (c.extraTopicId === id || c.similarCurrentTopicId === id)){
           linkedCards.push({ q: c.q || '(bina prashna)', a: c.a || '' });
         }
       });
     });
   }catch(e){}
 
+  var masterLinks = (typeof hubGetLinkPaths === 'function') ? hubGetLinkPaths(id, 'current') : [];
+  var masterLinkHtml = '';
+  if(masterLinks.length){
+    masterLinkHtml = '<div style="margin:0 0 10px;padding:10px 12px;border-radius:10px;background:rgba(230,81,0,0.08);border:1.5px solid rgba(230,81,0,0.28);font-size:0.78rem;line-height:1.55;">' +
+      '<div style="font-weight:800;color:#e65100;margin-bottom:4px;">🔗 Master Library mein linked (' + masterLinks.length + ')</div>' +
+      masterLinks.map(function(x){ return '<div style="color:var(--text2);">• ' + _fcEsc(x.path) + ' <span style="opacity:0.75;">(' + _fcEsc(x.noteName) + ')</span></div>'; }).join('') +
+    '</div>';
+  } else {
+    masterLinkHtml = '<div style="margin:0 0 10px;padding:8px 12px;border-radius:10px;background:var(--surface2);border:1px dashed var(--border);font-size:0.75rem;color:var(--text2);">Unlinked — Master Library mein koi hubRef note nahi mila</div>';
+  }
+
   var dateStr = t.updatedAt ? new Date(t.updatedAt).toLocaleString('hi-IN') : '';
   area.innerHTML =
+    masterLinkHtml +
     '<div class="card" style="margin-bottom:12px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">' +
         '<div><div class="card-title" style="margin-bottom:2px;">📄 ' + _fcEsc(t.name) + '</div>' +
@@ -21105,16 +21236,43 @@ function _libRenderSelect(selId, searchId, badgeId, libKey){
   var q = ((document.getElementById(searchId)||{}).value||'').trim().toLowerCase();
   var cv = sel.value;
   var topics = S[libKey] || {};
-  var ids = Object.keys(topics).filter(function(id){
+  var hubType = (libKey === 'staticGkTopics') ? 'static' : 'current';
+  var mode = (_hubLinkFilter && _hubLinkFilter[libKey]) || 'all';
+  var useLinkFilter = (libKey === 'staticGkTopics' || libKey === 'extraFactsTopics');
+  if(useLinkFilter) hubBuildMasterLinkMap(true);
+  var allIds = Object.keys(topics);
+  var linkedN = 0, unlinkedN = 0;
+  if(useLinkFilter){
+    allIds.forEach(function(id){
+      if(hubIsLinkedInMaster(id, hubType)) linkedN++; else unlinkedN++;
+    });
+  }
+  var ids = allIds.filter(function(id){
     var t = topics[id];
-    return t && t.name && (!q || t.name.toLowerCase().indexOf(q) !== -1);
+    if(!t || !t.name) return false;
+    if(q && t.name.toLowerCase().indexOf(q) === -1) return false;
+    if(useLinkFilter){
+      var linked = hubIsLinkedInMaster(id, hubType);
+      if(mode === 'linked' && !linked) return false;
+      if(mode === 'unlinked' && linked) return false;
+    }
+    return true;
   }).sort(function(a,b){ return (topics[a].name||'').localeCompare(topics[b].name||''); });
   var badge = document.getElementById(badgeId);
-  var total = Object.keys(topics).length;
+  var total = allIds.length;
   if(badge){ if(total>0){ badge.style.display='inline-block'; badge.textContent=total; } else badge.style.display='none'; }
+  if(libKey === 'staticGkTopics'){
+    var stats = document.getElementById('sgkLinkFilterStats');
+    if(stats) stats.textContent = '🔗 ' + linkedN + ' linked · ' + unlinkedN + ' unlinked · dikh: ' + ids.length;
+  }
   sel.innerHTML = '<option value="">-- Topic chuno ('+ids.length+') --</option>' +
-    ids.map(function(id){ return '<option value="'+id+'">'+_fcEsc(topics[id].name)+'</option>'; }).join('');
-  if(cv && topics[cv]) sel.value = cv;
+    ids.map(function(id){
+      var linked = useLinkFilter && hubIsLinkedInMaster(id, hubType);
+      var mark = linked ? '🔗 ' : '';
+      return '<option value="'+id+'">'+mark+_fcEsc(topics[id].name)+(linked?' (linked)':'')+'</option>';
+    }).join('');
+  if(cv && topics[cv] && ids.indexOf(cv) >= 0) sel.value = cv;
+  else if(cv && ids.indexOf(cv) < 0){ sel.value = ''; }
 }
 
 function sctRenderTopicSelect(){ _libRenderSelect('sctSelect','sctSearchInput','similarCurrentBadge','similarCurrentTopics'); }
@@ -21168,13 +21326,25 @@ function sgkRenderSelected(){
     });
   }catch(e){}
 
+  var masterLinks = (typeof hubGetLinkPaths === 'function') ? hubGetLinkPaths(id, 'static') : [];
+  var masterLinkHtml = '';
+  if(masterLinks.length){
+    masterLinkHtml = '<div style="margin:0 0 10px;padding:10px 12px;border-radius:10px;background:rgba(46,125,50,0.08);border:1.5px solid rgba(46,125,50,0.28);font-size:0.78rem;line-height:1.55;">' +
+      '<div style="font-weight:800;color:#2e7d32;margin-bottom:4px;">🔗 Master Library mein linked (' + masterLinks.length + ')</div>' +
+      masterLinks.map(function(x){ return '<div style="color:var(--text2);">• ' + _fcEsc(x.path) + ' <span style="opacity:0.75;">(' + _fcEsc(x.noteName) + ')</span></div>'; }).join('') +
+    '</div>';
+  } else {
+    masterLinkHtml = '<div style="margin:0 0 10px;padding:8px 12px;border-radius:10px;background:var(--surface2);border:1px dashed var(--border);font-size:0.75rem;color:var(--text2);">Unlinked — Master Library mein koi hubRef note nahi mila</div>';
+  }
+
   var dateStr = t.updatedAt ? new Date(t.updatedAt).toLocaleString('hi-IN') : '';
   var cleanHtml = (typeof _fcfpCleanStoredHtml === 'function') ? _fcfpCleanStoredHtml(t.html || '') : (t.html || '');
   area.innerHTML =
+    masterLinkHtml +
     '<div class="card" style="margin-bottom:12px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">' +
-        '<div><div class="card-title" style="margin-bottom:2px;">📚 ' + _fcEsc(t.name) + '</div>' +
-        '<div style="font-size:0.7rem;color:var(--text2);">Last update: ' + dateStr + (linkedCards.length ? ' • ' + linkedCards.length + ' card(s) se linked' : '') + '</div></div>' +
+        '<div><div class="card-title" style="margin-bottom:2px;">📚 ' + _fcEsc(t.name) + (masterLinks.length ? ' 🔗' : '') + '</div>' +
+        '<div style="font-size:0.7rem;color:var(--text2);">Last update: ' + dateStr + (linkedCards.length ? ' • ' + linkedCards.length + ' card(s) se linked' : '') + (masterLinks.length ? ' • ML: ' + masterLinks.length : '') + '</div></div>' +
         '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
           '<button class="btn btn-sm" style="background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;" onclick="sgkOpenFullReading(\''+id+'\')">📖 Full Reading Mode</button>' +
           '<button class="btn btn-sm" onclick="sgkRenameTopic(\''+id+'\')">✏️ Rename</button>' +
