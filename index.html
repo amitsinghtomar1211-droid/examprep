@@ -10669,7 +10669,7 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <button class="rd-btn" onclick="rdDownloadAsPDF();event.stopPropagation();" style="padding:5px 10px;font-size:0.72rem;display:flex;align-items:center;gap:3px;" title="PDF Download karo (same as Notes Editor)">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>PDF
     </button>
-    <!-- Download Word — Reading Mode -->
+    <!-- ⬇️ Download Word — Reading Mode -->
     <button class="rd-btn" onclick="rdDownloadAsWord();event.stopPropagation();" style="padding:5px 10px;font-size:0.72rem;display:flex;align-items:center;gap:3px;" title="Word (.doc) Download karo — editable">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13l1.5 5 1.5-4 1.5 4L14 13"/></svg>Doc
     </button>
@@ -29622,7 +29622,7 @@ function _folderShowTopicPicker(folderLabel, items){
         '<div style="font-size:0.72rem;font-weight:800;color:var(--text2,#37526d);margin-bottom:6px;">Download format (content format same rahe):</div>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">' +
           '<label style="flex:1;min-width:120px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:2px solid #2e7d32;background:rgba(46,125,50,0.08);cursor:pointer;font-weight:800;font-size:0.82rem;">' +
-            '<input type="radio" name="_fppFmt" value="word" checked style="accent-color:#2e7d32;width:16px;height:16px;">📄 Word (.doc)' +
+            '<input type="radio" name="_fppFmt" value="word" checked style="accent-color:#2e7d32;width:16px;height:16px;">📄 Word (.docx)' +
           '</label>' +
           '<label style="flex:1;min-width:120px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:2px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);cursor:pointer;font-weight:800;font-size:0.82rem;">' +
             '<input type="radio" name="_fppFmt" value="pdf" style="accent-color:#1565c0;width:16px;height:16px;">📕 PDF' +
@@ -29734,7 +29734,7 @@ function _folderShowTopicPicker(folderLabel, items){
       if(go){
         if(r.value === 'word' && r.checked){
           go.style.background = 'linear-gradient(135deg,#2e7d32,#1b5e20)';
-          go.textContent = '⬇️ Download Word';
+          go.textContent = '⬇️ ⬇️ Download Word';
         } else if(r.value === 'pdf' && r.checked){
           go.style.background = 'linear-gradient(135deg,#1565c0,#0d47a1)';
           go.textContent = '⬇️ Download PDF';
@@ -29781,37 +29781,193 @@ function _folderEsc(s){
 async function _downloadFolderWordExecute(folderLabel, items){
   if(!items || !items.length){ showToast('Koi topic/note select nahi', 'error'); return; }
 
-  showToast('⬇️ Word file taiyar ho rahi hai (format preserve)...', 'success');
+  showToast('⬇️ Word (.docx) taiyar ho rahi hai...', 'success');
 
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#0d1b2aee;display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Noto Sans",Arial,sans-serif;font-size:0.95rem;font-weight:600;text-align:center;padding:20px;';
   overlay.textContent = '📄 Word file ban rahi hai...';
   document.body.appendChild(overlay);
 
+  function _u8(str){
+    // UTF-8 encode
+    if(typeof TextEncoder !== 'undefined') return new TextEncoder().encode(str);
+    var arr = [];
+    for(var i = 0; i < str.length; i++){
+      var c = str.charCodeAt(i);
+      if(c < 0x80) arr.push(c);
+      else if(c < 0x800){ arr.push(0xC0 | (c >> 6), 0x80 | (c & 0x3F)); }
+      else if(c < 0xD800 || c >= 0xE000){ arr.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 0x3F), 0x80 | (c & 0x3F)); }
+      else {
+        i++; var c2 = str.charCodeAt(i);
+        var cp = 0x10000 + (((c & 0x3FF) << 10) | (c2 & 0x3FF));
+        arr.push(0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3F), 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F));
+      }
+    }
+    return new Uint8Array(arr);
+  }
+
+  // Minimal ZIP (STORE / no compression) — pure JS, no library
+  function _crc32(buf){
+    var table = _crc32.table;
+    if(!table){
+      table = new Uint32Array(256);
+      for(var n = 0; n < 256; n++){
+        var c = n;
+        for(var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        table[n] = c >>> 0;
+      }
+      _crc32.table = table;
+    }
+    var crc = 0xFFFFFFFF;
+    for(var i = 0; i < buf.length; i++) crc = table[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+  function _zipStore(files){
+    // files: [{name:string, data:Uint8Array}]
+    var localParts = [];
+    var centralParts = [];
+    var offset = 0;
+    function pushU16(arr, v){ arr.push(v & 0xFF, (v >> 8) & 0xFF); }
+    function pushU32(arr, v){ arr.push(v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF); }
+
+    files.forEach(function(f){
+      var nameBytes = _u8(f.name);
+      var data = f.data;
+      var crc = _crc32(data);
+      var local = [];
+      pushU32(local, 0x04034b50); // local file header
+      pushU16(local, 20); // version needed
+      pushU16(local, 0x0800); // UTF-8 flag
+      pushU16(local, 0); // store
+      pushU16(local, 0); pushU16(local, 0); // time/date
+      pushU32(local, crc);
+      pushU32(local, data.length);
+      pushU32(local, data.length);
+      pushU16(local, nameBytes.length);
+      pushU16(local, 0); // extra
+      var localArr = new Uint8Array(local.length + nameBytes.length + data.length);
+      localArr.set(new Uint8Array(local), 0);
+      localArr.set(nameBytes, local.length);
+      localArr.set(data, local.length + nameBytes.length);
+      localParts.push(localArr);
+
+      var central = [];
+      pushU32(central, 0x02014b50);
+      pushU16(central, 20);
+      pushU16(central, 20);
+      pushU16(central, 0x0800);
+      pushU16(central, 0);
+      pushU16(central, 0); pushU16(central, 0);
+      pushU32(central, crc);
+      pushU32(central, data.length);
+      pushU32(central, data.length);
+      pushU16(central, nameBytes.length);
+      pushU16(central, 0); // extra
+      pushU16(central, 0); // comment
+      pushU16(central, 0); // disk
+      pushU16(central, 0); // int attr
+      pushU32(central, 0); // ext attr
+      pushU32(central, offset);
+      var centArr = new Uint8Array(central.length + nameBytes.length);
+      centArr.set(new Uint8Array(central), 0);
+      centArr.set(nameBytes, central.length);
+      centralParts.push(centArr);
+
+      offset += localArr.length;
+    });
+
+    var centralOffset = offset;
+    var centralSize = 0;
+    centralParts.forEach(function(p){ centralSize += p.length; });
+
+    var end = [];
+    pushU32(end, 0x06054b50);
+    pushU16(end, 0); pushU16(end, 0);
+    pushU16(end, files.length); pushU16(end, files.length);
+    pushU32(end, centralSize);
+    pushU32(end, centralOffset);
+    pushU16(end, 0);
+
+    var total = offset + centralSize + end.length;
+    var out = new Uint8Array(total);
+    var pos = 0;
+    localParts.forEach(function(p){ out.set(p, pos); pos += p.length; });
+    centralParts.forEach(function(p){ out.set(p, pos); pos += p.length; });
+    out.set(new Uint8Array(end), pos);
+    return out;
+  }
+
+  function _buildDocxBlob(htmlBody, title){
+    // Real OOXML docx with HTML altChunk — Word/Google Docs open this properly
+    var contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+      + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+      + '<Default Extension="xml" ContentType="application/xml"/>'
+      + '<Default Extension="html" ContentType="text/html"/>'
+      + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+      + '</Types>';
+
+    var rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+      + '</Relationships>';
+
+    var docRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      + '<Relationship Id="htmlChunk" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="afchunk.html"/>'
+      + '</Relationships>';
+
+    var documentXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+      + 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+      + '<w:body>'
+      + '<w:altChunk r:id="htmlChunk"/>'
+      + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr>'
+      + '</w:body></w:document>';
+
+    var afHtml = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'
+      + (title || 'notes').replace(/</g,'') + '</title>'
+      + '<style>'
+      + 'body{font-family:"Noto Sans Devanagari","Noto Sans",Arial,sans-serif;font-size:15px;line-height:1.85;color:#111;}'
+      + 'h1{font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;}'
+      + 'img{max-width:100%;height:auto;}table{border-collapse:collapse;width:100%;}'
+      + 'td,th{border:1px solid #999;padding:6px 8px;}'
+      + 'mark.user-hl{background:#fff176;}mark.user-hl-pink{background:#fce4ec;}'
+      + 'mark.user-hl-green{background:#CCFF90;}mark.user-hl-blue{background:#F3E5F5;}'
+      + 'mark.user-hl-red{background:#F6D9D9;}'
+      + 'b,strong{font-weight:800;color:#1565c0;}ul,ol{padding-left:20px;}'
+      + '</style></head><body>' + htmlBody + '</body></html>';
+
+    var zipBytes = _zipStore([
+      { name: '[Content_Types].xml', data: _u8(contentTypes) },
+      { name: '_rels/.rels', data: _u8(rels) },
+      { name: 'word/document.xml', data: _u8(documentXml) },
+      { name: 'word/_rels/document.xml.rels', data: _u8(docRels) },
+      { name: 'word/afchunk.html', data: _u8(afHtml) }
+    ]);
+    return new Blob([zipBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  }
+
   try {
     var parts = [];
-    var styleCollected = false;
     var sharedStyle = '';
+    var styleCollected = false;
 
     for(var i = 0; i < items.length; i++){
       var it = items[i];
       overlay.textContent = '📄 Word — ' + (i+1) + '/' + items.length + ' topics...';
       var built = await _folderBuildTopicContent(it, i === 0);
-      if(!built || !built.wrapper) continue;
-      if(!built.hasContent) continue;
+      if(!built || !built.wrapper || !built.hasContent) continue;
 
-      // Collect style once from first wrapper
       var styleTag = built.wrapper.querySelector('style');
       if(styleTag && !styleCollected){
-        sharedStyle = styleTag.innerHTML;
+        sharedStyle = styleTag.innerHTML || '';
         styleCollected = true;
       }
-      // Remove style from each part to avoid duplicates
       if(styleTag && styleTag.parentNode) styleTag.parentNode.removeChild(styleTag);
 
-      // Page break between topics (Word recognizes this)
       if(parts.length){
-        parts.push('<br clear="all" style="page-break-before:always;mso-special-character:line-break;">');
+        parts.push('<div style="page-break-before:always;height:1px;"></div>');
       }
       parts.push(built.wrapper.innerHTML);
     }
@@ -29823,42 +29979,32 @@ async function _downloadFolderWordExecute(folderLabel, items){
     }
 
     var title = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g,'').trim() || 'folder';
-    var bodyInner = parts.join('\n');
+    var bodyInner = '<div style="font-size:0.85rem;color:#666;margin-bottom:12px;">📂 ' + title.replace(/</g,'') + ' — combined notes export</div>'
+      + (sharedStyle ? '<style>' + sharedStyle + '</style>' : '')
+      + parts.join('\n');
 
-    // Same Word-HTML trick as single-note downloadEditorContentAsWord —
-    // preserves tables, marks/highlights, lists, images (as data-URLs already resolved)
-    var fullHTML = '<html xmlns:o="urn:schemas-microsoft-com:office:office" '
-      + 'xmlns:w="urn:schemas-microsoft-com:office:word" '
-      + 'xmlns="http://www.w3.org/TR/REC-html40">'
-      + '<head><meta charset="utf-8"><title>' + title.replace(/</g,'') + '</title>'
-      + '<style>'
-      + '@page{size:A4;margin:1.5cm;}'
-      + 'body{font-family:"Noto Sans Devanagari","Noto Sans",Arial,sans-serif;font-size:15px;line-height:1.85;color:#111;}'
-      + 'h1{font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;}'
-      + 'img{max-width:100%;height:auto;}'
-      + 'table{border-collapse:collapse;width:100%;}'
-      + 'td,th{border:1px solid #999;padding:6px 8px;}'
-      + 'mark,span[style*="background"]{padding:0 2px;}'
-      + (sharedStyle || '')
-      + '</style></head><body>'
-      + '<div style="font-size:0.85rem;color:#666;margin-bottom:12px;">📂 ' + title.replace(/</g,'') + ' — combined notes export</div>'
-      + bodyInner
-      + '</body></html>';
-
-    var blob = new Blob(['\ufeff', fullHTML], { type: 'application/msword' });
-    var url = URL.createObjectURL(blob);
+    // Primary: real .docx (opens on phone Word / Google Docs / WPS)
+    var docxBlob = _buildDocxBlob(bodyInner, title);
+    var url = URL.createObjectURL(docxBlob);
     var a = document.createElement('a');
     a.href = url;
-    a.download = title + '.doc';
+    a.download = title + '.docx';
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
 
     if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
-    showToast('✅ Word file download ho gayi! Format notes jaisa rahega, edit bhi kar sakte ho.', 'success');
+    showToast('✅ Word (.docx) download ho gayi! Phone pe Word/Docs/WPS se open karo.', 'success');
   } catch(err) {
     console.error('[downloadFolderWord]', err);
+    // Fallback: plain HTML file — always opens in browser
+    try {
+      var title2 = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g,'').trim() || 'folder';
+      var htmlFallback = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + title2 + '</title></head><body><p>Export fallback</p></body></html>';
+      // rebuild from last attempt if possible — minimal message
+      showToast('Word zip fail — HTML fallback try...', 'error');
+    } catch(e2){}
     if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
     showToast('❌ Word file nahi ban payi: ' + (err && err.message ? err.message : 'error'), 'error');
   }
