@@ -29392,16 +29392,53 @@ function _folderCollectTopics(node, kind, pathSoFar) {
 // a 40,000-50,000px wrapper if built as one giant div, so instead we now
 // build + capture + add-to-pdf ONE topic at a time, each safely under
 // that height ceiling, and merge the results into a single PDF file.
+/** Get best available HTML/text from a note object (many legacy fields) */
+function _folderNoteRawHtml(n){
+  if(!n) return '';
+  // hubRef — live content from hub libraries
+  if(n.type === 'hubRef' && n.hubTopicId){
+    try {
+      var hubTopics = (n.hubType === 'static') ? (S.staticGkTopics || {}) : (S.extraFactsTopics || S.similarCurrentTopics || {});
+      var hub = hubTopics[n.hubTopicId] || hubTopics[String(n.hubTopicId)];
+      if(hub){
+        var h = (hub.html || hub.editorRichHTML || hub.richHTML || hub.content || '') + '';
+        if(h.trim()) return h;
+      }
+    } catch(e){}
+  }
+  var candidates = [
+    n.editorRichHTML,
+    n.richHTML,
+    n.html,
+    n.body,
+    n.finalNotes,
+    n.content
+  ];
+  for(var i = 0; i < candidates.length; i++){
+    var v = candidates[i];
+    if(v == null) continue;
+    var s = String(v).trim();
+    if(!s) continue;
+    // plain text (no tags) → wrap
+    if(s.indexOf('<') === -1){
+      var esc = (typeof _escHtml === 'function') ? _escHtml(s) : s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return '<div style="white-space:pre-wrap;">' + esc + '</div>';
+    }
+    return s;
+  }
+  return '';
+}
+
 async function _folderBuildTopicContent(it, isFirst) {
   const t = it.topic;
-  const exportWidth = NE_PRINT_WIDTH;
+  const exportWidth = (typeof NE_PRINT_WIDTH !== 'undefined' ? NE_PRINT_WIDTH : 700);
 
   const topicWrap = document.createElement('div');
   topicWrap.style.cssText = 'font-family:"Noto Sans",Arial,sans-serif;padding:6px;color:#111;line-height:1.85;font-size:15px;width:' + exportWidth + 'px;';
 
   const crumb = document.createElement('div');
   crumb.style.cssText = 'font-size:0.72rem;color:#888;font-weight:700;margin-bottom:4px;letter-spacing:0.2px;';
-  crumb.textContent = '📂 ' + it.path.join(' › ');
+  crumb.textContent = '📂 ' + (it.path || []).join(' › ');
   topicWrap.appendChild(crumb);
 
   const heading = document.createElement('h1');
@@ -29427,12 +29464,8 @@ async function _folderBuildTopicContent(it, isFirst) {
 
   for(let ni = 0; ni < notes.length; ni++) {
     const n = notes[ni];
-    const richSrc = n.editorRichHTML || n.richHTML || '';
-    let rawHtml = richSrc;
-    if(!rawHtml.trim() && (n.content || '').trim()) {
-      rawHtml = '<div style="white-space:pre-wrap;">' + _escHtml(n.content) + '</div>';
-    }
-    if(!rawHtml.trim()) { console.warn('[downloadFolderPDF] Topic "'+(t.name||'?')+'" note "'+(n.name||ni)+'" has no content — skipped.'); continue; }
+    let rawHtml = _folderNoteRawHtml(n);
+    if(!rawHtml.trim()) { console.warn('[downloadFolder] Topic "'+(t.name||'?')+'" note "'+(n && n.name||ni)+'" has no content — skipped.'); continue; }
     anyNoteContent = true;
     const resolvedHtml = await _folderResolveNoteHtml(rawHtml);
 
@@ -29621,10 +29654,13 @@ function _folderShowTopicPicker(folderLabel, items){
       '<div style="padding:10px 14px 0;border-top:1.5px solid var(--border,#e0e0e0);flex-shrink:0;">' +
         '<div style="font-size:0.72rem;font-weight:800;color:var(--text2,#37526d);margin-bottom:6px;">Download format (content format same rahe):</div>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">' +
-          '<label style="flex:1;min-width:120px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:2px solid #2e7d32;background:rgba(46,125,50,0.08);cursor:pointer;font-weight:800;font-size:0.82rem;">' +
-            '<input type="radio" name="_fppFmt" value="word" checked style="accent-color:#2e7d32;width:16px;height:16px;">📄 Word (.docx)' +
+          '<label style="flex:1;min-width:100px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:2px solid #2e7d32;background:rgba(46,125,50,0.08);cursor:pointer;font-weight:800;font-size:0.8rem;">' +
+            '<input type="radio" name="_fppFmt" value="word" checked style="accent-color:#2e7d32;width:16px;height:16px;">📄 Word' +
           '</label>' +
-          '<label style="flex:1;min-width:120px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:2px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);cursor:pointer;font-weight:800;font-size:0.82rem;">' +
+          '<label style="flex:1;min-width:100px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:2px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);cursor:pointer;font-weight:800;font-size:0.8rem;">' +
+            '<input type="radio" name="_fppFmt" value="html" style="accent-color:#e65100;width:16px;height:16px;">🌐 HTML' +
+          '</label>' +
+          '<label style="flex:1;min-width:100px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;border:2px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);cursor:pointer;font-weight:800;font-size:0.8rem;">' +
             '<input type="radio" name="_fppFmt" value="pdf" style="accent-color:#1565c0;width:16px;height:16px;">📕 PDF' +
           '</label>' +
         '</div>' +
@@ -29766,10 +29802,12 @@ function _folderShowTopicPicker(folderLabel, items){
     var fmtEl = ov.querySelector('input[name="_fppFmt"]:checked');
     var fmt = (fmtEl && fmtEl.value) || 'word';
     ov.remove();
-    if(fmt === 'word'){
-      _downloadFolderWordExecute(folderLabel, selected);
-    } else {
+    if(fmt === 'pdf'){
       _downloadFolderPDFExecute(folderLabel, selected);
+    } else {
+      // word + html both use word pipeline; html forces extra HTML file
+      window._folderPreferHtml = (fmt === 'html');
+      _downloadFolderWordExecute(folderLabel, selected);
     }
   };
 }
@@ -29781,15 +29819,14 @@ function _folderEsc(s){
 async function _downloadFolderWordExecute(folderLabel, items){
   if(!items || !items.length){ showToast('Koi topic/note select nahi', 'error'); return; }
 
-  showToast('⬇️ Word (.docx) taiyar ho rahi hai...', 'success');
+  showToast('⬇️ Word file taiyar ho rahi hai...', 'success');
 
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#0d1b2aee;display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Noto Sans",Arial,sans-serif;font-size:0.95rem;font-weight:600;text-align:center;padding:20px;';
-  overlay.textContent = '📄 Word file ban rahi hai...';
+  overlay.textContent = '📄 Content collect ho raha hai...';
   document.body.appendChild(overlay);
 
   function _u8(str){
-    // UTF-8 encode
     if(typeof TextEncoder !== 'undefined') return new TextEncoder().encode(str);
     var arr = [];
     for(var i = 0; i < str.length; i++){
@@ -29805,8 +29842,6 @@ async function _downloadFolderWordExecute(folderLabel, items){
     }
     return new Uint8Array(arr);
   }
-
-  // Minimal ZIP (STORE / no compression) — pure JS, no library
   function _crc32(buf){
     var table = _crc32.table;
     if(!table){
@@ -29823,82 +29858,111 @@ async function _downloadFolderWordExecute(folderLabel, items){
     return (crc ^ 0xFFFFFFFF) >>> 0;
   }
   function _zipStore(files){
-    // files: [{name:string, data:Uint8Array}]
-    var localParts = [];
-    var centralParts = [];
-    var offset = 0;
+    var localParts = [], centralParts = [], offset = 0;
     function pushU16(arr, v){ arr.push(v & 0xFF, (v >> 8) & 0xFF); }
     function pushU32(arr, v){ arr.push(v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF); }
-
     files.forEach(function(f){
       var nameBytes = _u8(f.name);
       var data = f.data;
       var crc = _crc32(data);
       var local = [];
-      pushU32(local, 0x04034b50); // local file header
-      pushU16(local, 20); // version needed
-      pushU16(local, 0x0800); // UTF-8 flag
-      pushU16(local, 0); // store
-      pushU16(local, 0); pushU16(local, 0); // time/date
-      pushU32(local, crc);
-      pushU32(local, data.length);
-      pushU32(local, data.length);
-      pushU16(local, nameBytes.length);
-      pushU16(local, 0); // extra
+      pushU32(local, 0x04034b50);
+      pushU16(local, 20); pushU16(local, 0x0800); pushU16(local, 0);
+      pushU16(local, 0); pushU16(local, 0);
+      pushU32(local, crc); pushU32(local, data.length); pushU32(local, data.length);
+      pushU16(local, nameBytes.length); pushU16(local, 0);
       var localArr = new Uint8Array(local.length + nameBytes.length + data.length);
       localArr.set(new Uint8Array(local), 0);
       localArr.set(nameBytes, local.length);
       localArr.set(data, local.length + nameBytes.length);
       localParts.push(localArr);
-
       var central = [];
       pushU32(central, 0x02014b50);
-      pushU16(central, 20);
-      pushU16(central, 20);
-      pushU16(central, 0x0800);
-      pushU16(central, 0);
+      pushU16(central, 20); pushU16(central, 20); pushU16(central, 0x0800); pushU16(central, 0);
       pushU16(central, 0); pushU16(central, 0);
-      pushU32(central, crc);
-      pushU32(central, data.length);
-      pushU32(central, data.length);
-      pushU16(central, nameBytes.length);
-      pushU16(central, 0); // extra
-      pushU16(central, 0); // comment
-      pushU16(central, 0); // disk
-      pushU16(central, 0); // int attr
-      pushU32(central, 0); // ext attr
-      pushU32(central, offset);
+      pushU32(central, crc); pushU32(central, data.length); pushU32(central, data.length);
+      pushU16(central, nameBytes.length); pushU16(central, 0); pushU16(central, 0);
+      pushU16(central, 0); pushU16(central, 0); pushU32(central, 0); pushU32(central, offset);
       var centArr = new Uint8Array(central.length + nameBytes.length);
       centArr.set(new Uint8Array(central), 0);
       centArr.set(nameBytes, central.length);
       centralParts.push(centArr);
-
       offset += localArr.length;
     });
-
-    var centralOffset = offset;
-    var centralSize = 0;
+    var centralOffset = offset, centralSize = 0;
     centralParts.forEach(function(p){ centralSize += p.length; });
-
     var end = [];
     pushU32(end, 0x06054b50);
     pushU16(end, 0); pushU16(end, 0);
     pushU16(end, files.length); pushU16(end, files.length);
-    pushU32(end, centralSize);
-    pushU32(end, centralOffset);
-    pushU16(end, 0);
-
+    pushU32(end, centralSize); pushU32(end, centralOffset); pushU16(end, 0);
     var total = offset + centralSize + end.length;
-    var out = new Uint8Array(total);
-    var pos = 0;
+    var out = new Uint8Array(total), pos = 0;
     localParts.forEach(function(p){ out.set(p, pos); pos += p.length; });
     centralParts.forEach(function(p){ out.set(p, pos); pos += p.length; });
     out.set(new Uint8Array(end), pos);
     return out;
   }
 
-  function _buildDocxBlob(htmlBody, title){
-    // Real OOXML docx with HTML altChunk — Word/Google Docs open this properly
+  try {
+    var parts = [];
+    var totalChars = 0;
+    var notesExported = 0;
+
+    for(var i = 0; i < items.length; i++){
+      var it = items[i];
+      overlay.textContent = '📄 Content — ' + (i+1) + '/' + items.length + ' topics...';
+      var t = it.topic || {};
+      var allNotes = t.notes || [];
+      var notes = (it.noteIndices && it.noteIndices.length)
+        ? it.noteIndices.map(function(ni){ return allNotes[ni]; }).filter(Boolean)
+        : allNotes;
+
+      var topicParts = [];
+      topicParts.push('<div style="font-size:0.72rem;color:#888;font-weight:700;margin:8px 0 4px;">📂 ' + _folderEsc((it.path||[]).join(' › ')) + '</div>');
+      topicParts.push('<h1 style="font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;">📙 ' + _folderEsc(t.name || 'Topic') + '</h1>');
+
+      var topicHas = false;
+      for(var ni = 0; ni < notes.length; ni++){
+        var n = notes[ni];
+        var raw = (typeof _folderNoteRawHtml === 'function') ? _folderNoteRawHtml(n) : '';
+        if(!raw || !String(raw).trim()){
+          console.warn('[Word] empty note', t.name, n && n.name);
+          continue;
+        }
+        // Resolve IDB images if any
+        if(typeof _folderResolveNoteHtml === 'function' && raw.indexOf('data-idbref=') !== -1){
+          try { raw = await _folderResolveNoteHtml(raw); } catch(e){}
+        }
+        topicHas = true;
+        notesExported++;
+        totalChars += raw.length;
+        if(notes.length > 1){
+          topicParts.push('<div style="font-size:0.85rem;font-weight:800;color:#00695c;margin:14px 0 6px;padding-left:8px;border-left:3px solid #00695c;">📝 ' + _folderEsc((n && n.name) || ('Note '+(ni+1))) + '</div>');
+        }
+        topicParts.push('<div style="margin-bottom:16px;">' + raw + '</div>');
+      }
+
+      if(!topicHas){
+        topicParts.push('<p style="color:#999;font-style:italic;">(Is topic ke selected notes mein content nahi mila)</p>');
+      }
+      if(parts.length) parts.push('<div style="page-break-before:always;height:8px;"></div>');
+      parts.push(topicParts.join('\n'));
+    }
+
+    console.log('[Word export] notesExported=', notesExported, 'totalChars=', totalChars);
+
+    if(!notesExported || totalChars < 5){
+      if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      showToast('⚠️ Selected notes mein content nahi mila (data empty). Pehle notes editor mein open karke save karke try karo.', 'error');
+      return;
+    }
+
+    var title = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g,'').trim() || 'folder';
+    var bodyInner = '<div style="font-size:0.85rem;color:#666;margin-bottom:12px;">📂 ' + _folderEsc(title) + ' — combined export (' + notesExported + ' notes)</div>'
+      + parts.join('\n');
+
+    // Build real DOCX
     var contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
       + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
       + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
@@ -29906,37 +29970,31 @@ async function _downloadFolderWordExecute(folderLabel, items){
       + '<Default Extension="html" ContentType="text/html"/>'
       + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
       + '</Types>';
-
     var rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
       + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
       + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
       + '</Relationships>';
-
     var docRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
       + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
       + '<Relationship Id="htmlChunk" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="afchunk.html"/>'
       + '</Relationships>';
-
     var documentXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
       + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
       + 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-      + '<w:body>'
-      + '<w:altChunk r:id="htmlChunk"/>'
+      + '<w:body><w:altChunk r:id="htmlChunk"/>'
       + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr>'
       + '</w:body></w:document>';
 
-    var afHtml = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'
-      + (title || 'notes').replace(/</g,'') + '</title>'
-      + '<style>'
-      + 'body{font-family:"Noto Sans Devanagari","Noto Sans",Arial,sans-serif;font-size:15px;line-height:1.85;color:#111;}'
+    var afHtml = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + _folderEsc(title) + '</title>'
+      + '<style>body{font-family:"Noto Sans Devanagari","Noto Sans",Arial,sans-serif;font-size:15px;line-height:1.85;color:#111;}'
       + 'h1{font-size:1.25rem;border-bottom:2px solid #1565c0;padding-bottom:6px;margin:0 0 14px;color:#1565c0;}'
       + 'img{max-width:100%;height:auto;}table{border-collapse:collapse;width:100%;}'
       + 'td,th{border:1px solid #999;padding:6px 8px;}'
       + 'mark.user-hl{background:#fff176;}mark.user-hl-pink{background:#fce4ec;}'
       + 'mark.user-hl-green{background:#CCFF90;}mark.user-hl-blue{background:#F3E5F5;}'
       + 'mark.user-hl-red{background:#F6D9D9;}'
-      + 'b,strong{font-weight:800;color:#1565c0;}ul,ol{padding-left:20px;}'
-      + '</style></head><body>' + htmlBody + '</body></html>';
+      + 'b,strong{font-weight:800;}ul,ol{padding-left:20px;}</style></head><body>'
+      + bodyInner + '</body></html>';
 
     var zipBytes = _zipStore([
       { name: '[Content_Types].xml', data: _u8(contentTypes) },
@@ -29945,46 +30003,11 @@ async function _downloadFolderWordExecute(folderLabel, items){
       { name: 'word/_rels/document.xml.rels', data: _u8(docRels) },
       { name: 'word/afchunk.html', data: _u8(afHtml) }
     ]);
-    return new Blob([zipBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-  }
 
-  try {
-    var parts = [];
-    var sharedStyle = '';
-    var styleCollected = false;
+    console.log('[Word export] docx bytes=', zipBytes.length, 'html chars=', afHtml.length);
 
-    for(var i = 0; i < items.length; i++){
-      var it = items[i];
-      overlay.textContent = '📄 Word — ' + (i+1) + '/' + items.length + ' topics...';
-      var built = await _folderBuildTopicContent(it, i === 0);
-      if(!built || !built.wrapper || !built.hasContent) continue;
-
-      var styleTag = built.wrapper.querySelector('style');
-      if(styleTag && !styleCollected){
-        sharedStyle = styleTag.innerHTML || '';
-        styleCollected = true;
-      }
-      if(styleTag && styleTag.parentNode) styleTag.parentNode.removeChild(styleTag);
-
-      if(parts.length){
-        parts.push('<div style="page-break-before:always;height:1px;"></div>');
-      }
-      parts.push(built.wrapper.innerHTML);
-    }
-
-    if(!parts.length){
-      if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
-      showToast('⚠️ Selected notes mein exportable content nahi mila', 'error');
-      return;
-    }
-
-    var title = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g,'').trim() || 'folder';
-    var bodyInner = '<div style="font-size:0.85rem;color:#666;margin-bottom:12px;">📂 ' + title.replace(/</g,'') + ' — combined notes export</div>'
-      + (sharedStyle ? '<style>' + sharedStyle + '</style>' : '')
-      + parts.join('\n');
-
-    // Primary: real .docx (opens on phone Word / Google Docs / WPS)
-    var docxBlob = _buildDocxBlob(bodyInner, title);
+    // Download DOCX
+    var docxBlob = new Blob([zipBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
     var url = URL.createObjectURL(docxBlob);
     var a = document.createElement('a');
     a.href = url;
@@ -29992,21 +30015,43 @@ async function _downloadFolderWordExecute(folderLabel, items){
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 8000);
+
+    // Also offer HTML mirror if docx seems too small (mobile apps sometimes choke on altChunk)
+    if(zipBytes.length < 2500){
+      console.warn('[Word export] docx unexpectedly small — also downloading HTML');
+      var htmlBlob = new Blob([afHtml], { type: 'text/html;charset=utf-8' });
+      var url2 = URL.createObjectURL(htmlBlob);
+      var a2 = document.createElement('a');
+      a2.href = url2;
+      a2.download = title + '.html';
+      document.body.appendChild(a2);
+      a2.click();
+      a2.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url2); }, 8000);
+    }
+
+    // Always also download .html when user chose HTML, or as safety if docx tiny
+    if(window._folderPreferHtml || zipBytes.length < 3000){
+      var htmlBlob = new Blob([afHtml], { type: 'text/html;charset=utf-8' });
+      var urlH = URL.createObjectURL(htmlBlob);
+      var aH = document.createElement('a');
+      aH.href = urlH;
+      aH.download = title + '.html';
+      document.body.appendChild(aH);
+      aH.click();
+      aH.remove();
+      setTimeout(function(){ URL.revokeObjectURL(urlH); }, 8000);
+    }
+    window._folderPreferHtml = false;
 
     if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
-    showToast('✅ Word (.docx) download ho gayi! Phone pe Word/Docs/WPS se open karo.', 'success');
+    var kb = Math.round(zipBytes.length / 1024);
+    showToast('✅ Download: ' + notesExported + ' notes, ~' + kb + ' KB (content ' + totalChars + ' chars)', 'success');
   } catch(err) {
     console.error('[downloadFolderWord]', err);
-    // Fallback: plain HTML file — always opens in browser
-    try {
-      var title2 = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g,'').trim() || 'folder';
-      var htmlFallback = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + title2 + '</title></head><body><p>Export fallback</p></body></html>';
-      // rebuild from last attempt if possible — minimal message
-      showToast('Word zip fail — HTML fallback try...', 'error');
-    } catch(e2){}
     if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
-    showToast('❌ Word file nahi ban payi: ' + (err && err.message ? err.message : 'error'), 'error');
+    showToast('❌ Word fail: ' + (err && err.message ? err.message : 'error'), 'error');
   }
 }
 
