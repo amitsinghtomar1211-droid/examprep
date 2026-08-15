@@ -7315,6 +7315,13 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
           </select>
           <input type="text" id="eftSearchInput" class="inp" placeholder="🔎 Topic dhoondo..." style="flex:1;min-width:160px;" oninput="eftRenderTopicSelect()">
         </div>
+        <div id="eftLinkFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;">
+          <span style="font-size:0.72rem;font-weight:800;color:var(--text2);">Master Library link:</span>
+          <button type="button" class="org-tab eft-link-f active" data-f="all" onclick="hubSetLinkFilter('extraFactsTopics','all',this)">Sab</button>
+          <button type="button" class="org-tab eft-link-f" data-f="linked" onclick="hubSetLinkFilter('extraFactsTopics','linked',this)">🔗 Linked</button>
+          <button type="button" class="org-tab eft-link-f" data-f="unlinked" onclick="hubSetLinkFilter('extraFactsTopics','unlinked',this)">Unlinked</button>
+          <span id="eftLinkFilterStats" style="font-size:0.68rem;color:var(--text2);margin-left:auto;"></span>
+        </div>
         <button class="btn btn-primary" style="width:100%;margin-top:10px;" onclick="eftOpenNewTopicModal()">➕ Naya Current Affairs Topic Banao</button>
       </div>
 
@@ -7355,6 +7362,13 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
             <option value="">-- Topic chuno --</option>
           </select>
           <input type="text" id="sgkSearchInput" class="inp" placeholder="🔎 Topic dhoondo..." style="flex:1;min-width:160px;" oninput="sgkRenderTopicSelect()">
+        </div>
+        <div id="sgkLinkFilterBar" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;">
+          <span style="font-size:0.72rem;font-weight:800;color:var(--text2);">Master Library link:</span>
+          <button type="button" class="org-tab sgk-link-f active" data-f="all" onclick="hubSetLinkFilter('staticGkTopics','all',this)">Sab</button>
+          <button type="button" class="org-tab sgk-link-f" data-f="linked" onclick="hubSetLinkFilter('staticGkTopics','linked',this)">🔗 Linked</button>
+          <button type="button" class="org-tab sgk-link-f" data-f="unlinked" onclick="hubSetLinkFilter('staticGkTopics','unlinked',this)">Unlinked</button>
+          <span id="sgkLinkFilterStats" style="font-size:0.68rem;color:var(--text2);margin-left:auto;"></span>
         </div>
         <button class="btn btn-primary" style="width:100%;margin-top:10px;" onclick="sgkOpenNewTopicModal()">➕ Naya Static GK Topic Banao</button>
       </div>
@@ -20091,6 +20105,92 @@ function fcfpUpdateTopicLinkBadge(){
 // ── Sidebar "Havoc" page: browse the full global Extra Facts Topic
 // Library via a dropdown (same data source as the 📂 icon inside the
 // flashcard facts page), with a light preview + edit + delete. ──
+
+// ═══════════════════════════════════════════════════════════
+// Hub link filter — Master Library mein hubRef se linked topics
+// Current Affairs (extraFactsTopics) + Static GK (staticGkTopics)
+// ═══════════════════════════════════════════════════════════
+var _hubLinkFilter = { extraFactsTopics: 'all', staticGkTopics: 'all', similarCurrentTopics: 'all' };
+var _hubLinkCache = { at: 0, map: null }; // map: hubTopicId -> [{path, noteName, hubType}]
+
+function _hubWalkAllLibraryTopics(cb){
+  function walkSec(sec, pathParts, subj){
+    (sec.topics || []).forEach(function(tp){
+      cb(tp, pathParts.concat([tp.name || '']), subj, sec);
+    });
+    (sec.subSections || []).forEach(function(ss){
+      walkSec(ss, pathParts.concat([ss.name || '']), subj);
+    });
+  }
+  (S.subjects || []).forEach(function(subj){
+    (subj.sections || []).forEach(function(sec){
+      walkSec(sec, [subj.name || '', sec.name || ''], subj);
+    });
+    (subj.subSubjects || []).forEach(function(sss){
+      (sss.sections || []).forEach(function(sec){
+        walkSec(sec, [subj.name || '', sss.name || '', sec.name || ''], subj);
+      });
+    });
+  });
+}
+
+/** Scan master library notes for type=hubRef. Returns { [hubTopicId]: [ {path, noteName, hubType, tid} ] } */
+function hubBuildMasterLinkMap(force){
+  var now = Date.now();
+  if(!force && _hubLinkCache.map && (now - _hubLinkCache.at) < 4000) return _hubLinkCache.map;
+  var map = {};
+  try {
+    _hubWalkAllLibraryTopics(function(tp, pathParts){
+      (tp.notes || []).forEach(function(n){
+        if(!n || n.type !== 'hubRef' || !n.hubTopicId) return;
+        var hid = String(n.hubTopicId);
+        if(!map[hid]) map[hid] = [];
+        map[hid].push({
+          path: pathParts.join(' › '),
+          noteName: n.name || 'Hub Ref',
+          hubType: n.hubType === 'static' ? 'static' : 'current',
+          tid: tp.id
+        });
+      });
+    });
+  } catch(e){ console.warn('[hub link map]', e); }
+  _hubLinkCache = { at: now, map: map };
+  return map;
+}
+
+function hubIsLinkedInMaster(hubTopicId, hubType){
+  var map = hubBuildMasterLinkMap();
+  var list = map[String(hubTopicId)] || [];
+  if(!list.length) return false;
+  if(!hubType) return true;
+  var want = hubType === 'static' ? 'static' : 'current';
+  return list.some(function(x){ return x.hubType === want; });
+}
+
+function hubGetLinkPaths(hubTopicId, hubType){
+  var map = hubBuildMasterLinkMap();
+  var list = map[String(hubTopicId)] || [];
+  var want = hubType === 'static' ? 'static' : 'current';
+  return list.filter(function(x){ return x.hubType === want; });
+}
+
+function hubSetLinkFilter(libKey, mode, btn){
+  _hubLinkFilter[libKey] = mode || 'all';
+  // active class on sibling buttons
+  if(btn && btn.parentNode){
+    var cls = libKey === 'staticGkTopics' ? 'sgk-link-f' : 'eft-link-f';
+    btn.parentNode.querySelectorAll('.' + cls).forEach(function(b){
+      b.classList.toggle('active', b.getAttribute('data-f') === mode);
+    });
+  }
+  if(libKey === 'staticGkTopics'){
+    if(typeof sgkRenderTopicSelect === 'function') sgkRenderTopicSelect();
+  } else {
+    if(typeof eftRenderTopicSelect === 'function') eftRenderTopicSelect();
+  }
+}
+
+
 function renderExtraFactsTopicsPage(){
   eftRenderTopicSelect();
   eftRenderSelected();
@@ -20103,23 +20203,42 @@ function eftRenderTopicSelect(){
   q = q.trim().toLowerCase();
   var cv = sel.value;
   var topics = S.extraFactsTopics || {};
-  var ids = Object.keys(topics).filter(function(id){
+  var mode = (_hubLinkFilter && _hubLinkFilter.extraFactsTopics) || 'all';
+  hubBuildMasterLinkMap(true); // fresh scan
+  var allIds = Object.keys(topics);
+  var linkedN = 0, unlinkedN = 0;
+  allIds.forEach(function(id){
+    if(hubIsLinkedInMaster(id, 'current')) linkedN++; else unlinkedN++;
+  });
+  var ids = allIds.filter(function(id){
     var t = topics[id];
-    return t && t.name && (!q || t.name.toLowerCase().indexOf(q) !== -1);
+    if(!t || !t.name) return false;
+    if(q && t.name.toLowerCase().indexOf(q) === -1) return false;
+    var linked = hubIsLinkedInMaster(id, 'current');
+    if(mode === 'linked' && !linked) return false;
+    if(mode === 'unlinked' && linked) return false;
+    return true;
   }).sort(function(a,b){
     return (topics[a].name||'').localeCompare(topics[b].name||'');
   });
 
   var badge = document.getElementById('extraTopicsBadge');
-  var totalCount = Object.keys(topics).length;
+  var totalCount = allIds.length;
   if(badge){
     if(totalCount > 0){ badge.style.display='inline-block'; badge.textContent = totalCount; }
     else { badge.style.display='none'; }
   }
+  var stats = document.getElementById('eftLinkFilterStats');
+  if(stats) stats.textContent = '🔗 ' + linkedN + ' linked · ' + unlinkedN + ' unlinked · dikh: ' + ids.length;
 
   sel.innerHTML = '<option value="">-- Topic chuno (' + ids.length + ') --</option>' +
-    ids.map(function(id){ return '<option value="'+id+'">'+_fcEsc(topics[id].name)+'</option>'; }).join('');
-  if(cv && topics[cv]) sel.value = cv;
+    ids.map(function(id){
+      var linked = hubIsLinkedInMaster(id, 'current');
+      var mark = linked ? '🔗 ' : '';
+      return '<option value="'+id+'">'+mark+_fcEsc(topics[id].name)+(linked?' (linked)':'')+'</option>';
+    }).join('');
+  if(cv && topics[cv] && ids.indexOf(cv) >= 0) sel.value = cv;
+  else if(cv && ids.indexOf(cv) < 0){ sel.value = ''; if(typeof eftRenderSelected==='function') eftRenderSelected(); }
 }
 
 function eftRenderSelected(){
@@ -20145,15 +20264,27 @@ function eftRenderSelected(){
     Object.keys(S.flashcardSets || {}).forEach(function(key){
       var set = S.flashcardSets[key];
       (set.cards || []).forEach(function(c){
-        if(c && c.extraTopicId === id){
+        if(c && (c.extraTopicId === id || c.similarCurrentTopicId === id)){
           linkedCards.push({ q: c.q || '(bina prashna)', a: c.a || '' });
         }
       });
     });
   }catch(e){}
 
+  var masterLinks = (typeof hubGetLinkPaths === 'function') ? hubGetLinkPaths(id, 'current') : [];
+  var masterLinkHtml = '';
+  if(masterLinks.length){
+    masterLinkHtml = '<div style="margin:0 0 10px;padding:10px 12px;border-radius:10px;background:rgba(230,81,0,0.08);border:1.5px solid rgba(230,81,0,0.28);font-size:0.78rem;line-height:1.55;">' +
+      '<div style="font-weight:800;color:#e65100;margin-bottom:4px;">🔗 Master Library mein linked (' + masterLinks.length + ')</div>' +
+      masterLinks.map(function(x){ return '<div style="color:var(--text2);">• ' + _fcEsc(x.path) + ' <span style="opacity:0.75;">(' + _fcEsc(x.noteName) + ')</span></div>'; }).join('') +
+    '</div>';
+  } else {
+    masterLinkHtml = '<div style="margin:0 0 10px;padding:8px 12px;border-radius:10px;background:var(--surface2);border:1px dashed var(--border);font-size:0.75rem;color:var(--text2);">Unlinked — Master Library mein koi hubRef note nahi mila</div>';
+  }
+
   var dateStr = t.updatedAt ? new Date(t.updatedAt).toLocaleString('hi-IN') : '';
   area.innerHTML =
+    masterLinkHtml +
     '<div class="card" style="margin-bottom:12px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">' +
         '<div><div class="card-title" style="margin-bottom:2px;">📄 ' + _fcEsc(t.name) + '</div>' +
@@ -21105,16 +21236,43 @@ function _libRenderSelect(selId, searchId, badgeId, libKey){
   var q = ((document.getElementById(searchId)||{}).value||'').trim().toLowerCase();
   var cv = sel.value;
   var topics = S[libKey] || {};
-  var ids = Object.keys(topics).filter(function(id){
+  var hubType = (libKey === 'staticGkTopics') ? 'static' : 'current';
+  var mode = (_hubLinkFilter && _hubLinkFilter[libKey]) || 'all';
+  var useLinkFilter = (libKey === 'staticGkTopics' || libKey === 'extraFactsTopics');
+  if(useLinkFilter) hubBuildMasterLinkMap(true);
+  var allIds = Object.keys(topics);
+  var linkedN = 0, unlinkedN = 0;
+  if(useLinkFilter){
+    allIds.forEach(function(id){
+      if(hubIsLinkedInMaster(id, hubType)) linkedN++; else unlinkedN++;
+    });
+  }
+  var ids = allIds.filter(function(id){
     var t = topics[id];
-    return t && t.name && (!q || t.name.toLowerCase().indexOf(q) !== -1);
+    if(!t || !t.name) return false;
+    if(q && t.name.toLowerCase().indexOf(q) === -1) return false;
+    if(useLinkFilter){
+      var linked = hubIsLinkedInMaster(id, hubType);
+      if(mode === 'linked' && !linked) return false;
+      if(mode === 'unlinked' && linked) return false;
+    }
+    return true;
   }).sort(function(a,b){ return (topics[a].name||'').localeCompare(topics[b].name||''); });
   var badge = document.getElementById(badgeId);
-  var total = Object.keys(topics).length;
+  var total = allIds.length;
   if(badge){ if(total>0){ badge.style.display='inline-block'; badge.textContent=total; } else badge.style.display='none'; }
+  if(libKey === 'staticGkTopics'){
+    var stats = document.getElementById('sgkLinkFilterStats');
+    if(stats) stats.textContent = '🔗 ' + linkedN + ' linked · ' + unlinkedN + ' unlinked · dikh: ' + ids.length;
+  }
   sel.innerHTML = '<option value="">-- Topic chuno ('+ids.length+') --</option>' +
-    ids.map(function(id){ return '<option value="'+id+'">'+_fcEsc(topics[id].name)+'</option>'; }).join('');
-  if(cv && topics[cv]) sel.value = cv;
+    ids.map(function(id){
+      var linked = useLinkFilter && hubIsLinkedInMaster(id, hubType);
+      var mark = linked ? '🔗 ' : '';
+      return '<option value="'+id+'">'+mark+_fcEsc(topics[id].name)+(linked?' (linked)':'')+'</option>';
+    }).join('');
+  if(cv && topics[cv] && ids.indexOf(cv) >= 0) sel.value = cv;
+  else if(cv && ids.indexOf(cv) < 0){ sel.value = ''; }
 }
 
 function sctRenderTopicSelect(){ _libRenderSelect('sctSelect','sctSearchInput','similarCurrentBadge','similarCurrentTopics'); }
@@ -21168,13 +21326,25 @@ function sgkRenderSelected(){
     });
   }catch(e){}
 
+  var masterLinks = (typeof hubGetLinkPaths === 'function') ? hubGetLinkPaths(id, 'static') : [];
+  var masterLinkHtml = '';
+  if(masterLinks.length){
+    masterLinkHtml = '<div style="margin:0 0 10px;padding:10px 12px;border-radius:10px;background:rgba(46,125,50,0.08);border:1.5px solid rgba(46,125,50,0.28);font-size:0.78rem;line-height:1.55;">' +
+      '<div style="font-weight:800;color:#2e7d32;margin-bottom:4px;">🔗 Master Library mein linked (' + masterLinks.length + ')</div>' +
+      masterLinks.map(function(x){ return '<div style="color:var(--text2);">• ' + _fcEsc(x.path) + ' <span style="opacity:0.75;">(' + _fcEsc(x.noteName) + ')</span></div>'; }).join('') +
+    '</div>';
+  } else {
+    masterLinkHtml = '<div style="margin:0 0 10px;padding:8px 12px;border-radius:10px;background:var(--surface2);border:1px dashed var(--border);font-size:0.75rem;color:var(--text2);">Unlinked — Master Library mein koi hubRef note nahi mila</div>';
+  }
+
   var dateStr = t.updatedAt ? new Date(t.updatedAt).toLocaleString('hi-IN') : '';
   var cleanHtml = (typeof _fcfpCleanStoredHtml === 'function') ? _fcfpCleanStoredHtml(t.html || '') : (t.html || '');
   area.innerHTML =
+    masterLinkHtml +
     '<div class="card" style="margin-bottom:12px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">' +
-        '<div><div class="card-title" style="margin-bottom:2px;">📚 ' + _fcEsc(t.name) + '</div>' +
-        '<div style="font-size:0.7rem;color:var(--text2);">Last update: ' + dateStr + (linkedCards.length ? ' • ' + linkedCards.length + ' card(s) se linked' : '') + '</div></div>' +
+        '<div><div class="card-title" style="margin-bottom:2px;">📚 ' + _fcEsc(t.name) + (masterLinks.length ? ' 🔗' : '') + '</div>' +
+        '<div style="font-size:0.7rem;color:var(--text2);">Last update: ' + dateStr + (linkedCards.length ? ' • ' + linkedCards.length + ' card(s) se linked' : '') + (masterLinks.length ? ' • ML: ' + masterLinks.length : '') + '</div></div>' +
         '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
           '<button class="btn btn-sm" style="background:linear-gradient(135deg,#2e7d32,#43a047);color:#fff;" onclick="sgkOpenFullReading(\''+id+'\')">📖 Full Reading Mode</button>' +
           '<button class="btn btn-sm" onclick="sgkRenameTopic(\''+id+'\')">✏️ Rename</button>' +
@@ -22779,13 +22949,6 @@ Restore karna hai?`)) {
 
       // Flag set karo - Firebase load se bachao
       _justRestored = true;
-      // 🛡️ FIX: _justRestored was only an in-memory JS variable — if the
-      // page reloaded/relogged-in before the upload below finished, the
-      // flag reset to false on the fresh page load and loadFromFirebase()
-      // could pull (possibly older/incomplete) cloud data back over this
-      // freshly-restored local data. Persisting it means a reload can
-      // recover the pending-upload intent instead of silently losing it.
-      try { localStorage.setItem('epp5_justRestored', '1'); } catch(e) {}
       
       // Close login screen if open
       const ls = document.getElementById('loginScreen');
@@ -22820,12 +22983,6 @@ Restore karna hai?`)) {
         if(_currentUser && _db) {
           _justRestored = false; // Already uploading
           saveToFirebase().then(()=>{
-            // 🛡️ FIX: only clear the persisted flag once the upload has
-            // actually confirmed on the server — if the page reloads before
-            // this .then() runs, the flag in localStorage stays set, and
-            // loadFromFirebase() on the next load will see it and safely
-            // re-upload instead of pulling possibly-stale cloud data down.
-            try { localStorage.removeItem('epp5_justRestored'); } catch(e) {}
             showToast('✅ Restore + Cloud Sync! ' + subjectCount + ' subjects, ' + topicCount + ' topics', 'success');
           }).catch(()=>{
             showToast('✅ Restore ho gaya! ' + subjectCount + ' subjects, ' + topicCount + ' topics', 'success');
@@ -29343,14 +29500,110 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
   console.log('[downloadFolderPDF] "'+folderLabel+'" — '+items.length+' topic(s) collected across all nested folders.');
   if(!items.length) { showToast('⚠️ Is folder mein koi topic/notes nahi hai', 'error'); return; }
 
+  // Pehle topic-select UI — user choose kare kaunse topics download hon
+  _folderShowTopicPicker(folderLabel, items);
+}
+
+/** Topic picker modal — folder PDF se pehle nested topics choose karo */
+function _folderShowTopicPicker(folderLabel, items){
+  var old = document.getElementById('_folderPdfPicker');
+  if(old) old.remove();
+
+  var ov = document.createElement('div');
+  ov.id = '_folderPdfPicker';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:1000100;background:rgba(13,27,42,0.72);display:flex;align-items:flex-end;justify-content:center;padding:12px;';
+  ov.onclick = function(ev){ if(ev.target === ov) ov.remove(); };
+
+  var rows = items.map(function(it, i){
+    var t = it.topic || {};
+    var noteN = (t.notes || []).filter(function(n2){
+      return ((n2.editorRichHTML || n2.richHTML || n2.content || '') + '').trim();
+    }).length;
+    var pathStr = (it.path || []).join(' › ');
+    var empty = noteN === 0;
+    return '<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border,#e0e0e0);cursor:pointer;background:' + (empty ? 'rgba(198,40,40,0.04)' : 'transparent') + ';">' +
+      '<input type="checkbox" class="_fppChk" data-i="' + i + '" ' + (empty ? '' : 'checked') + ' style="margin-top:4px;width:18px;height:18px;flex-shrink:0;accent-color:#1565c0;">' +
+      '<span style="flex:1;min-width:0;">' +
+        '<div style="font-weight:800;font-size:0.88rem;color:var(--text,#0d1b2a);">' + _folderEsc(t.name || ('Topic '+(i+1))) + (empty ? ' <span style="font-size:0.68rem;font-weight:700;color:#c62828;">(khaali)</span>' : '') + '</div>' +
+        '<div style="font-size:0.7rem;color:var(--text2,#37526d);margin-top:2px;line-height:1.4;">📂 ' + _folderEsc(pathStr) + (noteN ? ' · ' + noteN + ' note(s)' : '') + '</div>' +
+      '</span></label>';
+  }).join('');
+
+  ov.innerHTML =
+    '<div style="width:100%;max-width:520px;max-height:88vh;background:var(--surface,#fff);border-radius:18px 18px 0 0;display:flex;flex-direction:column;box-shadow:0 -8px 40px rgba(0,0,0,0.35);" onclick="event.stopPropagation();">' +
+      '<div style="padding:14px 16px 10px;border-bottom:1.5px solid var(--border,#e0e0e0);flex-shrink:0;">' +
+        '<div style="font-weight:900;font-size:1.05rem;color:var(--text,#0d1b2a);">📥 PDF Download — topics choose karo</div>' +
+        '<div style="font-size:0.78rem;color:var(--text2,#37526d);margin-top:4px;line-height:1.45;">Folder: <b>' + _folderEsc(folderLabel) + '</b> · ' + items.length + ' nested topics. Sirf selected download honge.</div>' +
+      '</div>' +
+      '<div style="padding:8px 12px;display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--border,#eee);flex-shrink:0;">' +
+        '<button type="button" id="_fppAll" style="padding:6px 12px;border-radius:8px;border:1.5px solid #1565c0;background:#1565c0;color:#fff;font-weight:800;font-size:0.75rem;cursor:pointer;">✓ Sab select</button>' +
+        '<button type="button" id="_fppNone" style="padding:6px 12px;border-radius:8px;border:1.5px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);color:var(--text2,#37526d);font-weight:800;font-size:0.75rem;cursor:pointer;">Sab hatao</button>' +
+        '<button type="button" id="_fppOnlyFilled" style="padding:6px 12px;border-radius:8px;border:1.5px solid #2e7d32;background:rgba(46,125,50,0.1);color:#2e7d32;font-weight:800;font-size:0.75rem;cursor:pointer;">Sirf content wale</button>' +
+        '<span id="_fppCount" style="margin-left:auto;font-size:0.72rem;font-weight:700;color:var(--text2,#37526d);align-self:center;"></span>' +
+      '</div>' +
+      '<div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:120px;">' + rows + '</div>' +
+      '<div style="padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px));display:flex;gap:10px;border-top:1.5px solid var(--border,#e0e0e0);flex-shrink:0;">' +
+        '<button type="button" id="_fppCancel" style="flex:1;padding:12px;border-radius:12px;border:1.5px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);font-weight:800;color:var(--text,#0d1b2a);cursor:pointer;">Cancel</button>' +
+        '<button type="button" id="_fppGo" style="flex:1.4;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#0d47a1);color:#fff;font-weight:900;cursor:pointer;">⬇️ Download PDF</button>' +
+      '</div>' +
+    '</div>';
+
+  document.body.appendChild(ov);
+
+  function updateCount(){
+    var n = ov.querySelectorAll('._fppChk:checked').length;
+    var el = document.getElementById('_fppCount');
+    if(el) el.textContent = n + ' / ' + items.length + ' selected';
+    var go = document.getElementById('_fppGo');
+    if(go){ go.disabled = n === 0; go.style.opacity = n ? '1' : '0.5'; }
+  }
+  updateCount();
+  ov.querySelectorAll('._fppChk').forEach(function(c){ c.onchange = updateCount; });
+  document.getElementById('_fppAll').onclick = function(){
+    ov.querySelectorAll('._fppChk').forEach(function(c){ c.checked = true; });
+    updateCount();
+  };
+  document.getElementById('_fppNone').onclick = function(){
+    ov.querySelectorAll('._fppChk').forEach(function(c){ c.checked = false; });
+    updateCount();
+  };
+  document.getElementById('_fppOnlyFilled').onclick = function(){
+    ov.querySelectorAll('._fppChk').forEach(function(c){
+      var i = Number(c.getAttribute('data-i'));
+      var t = items[i] && items[i].topic;
+      var has = t && (t.notes || []).some(function(n2){ return ((n2.editorRichHTML || n2.richHTML || n2.content || '') + '').trim(); });
+      c.checked = !!has;
+    });
+    updateCount();
+  };
+  document.getElementById('_fppCancel').onclick = function(){ ov.remove(); };
+  document.getElementById('_fppGo').onclick = function(){
+    var selected = [];
+    ov.querySelectorAll('._fppChk:checked').forEach(function(c){
+      var i = Number(c.getAttribute('data-i'));
+      if(items[i]) selected.push(items[i]);
+    });
+    if(!selected.length){ showToast('Kam se kam 1 topic select karo', 'error'); return; }
+    ov.remove();
+    _downloadFolderPDFExecute(folderLabel, selected);
+  };
+}
+
+function _folderEsc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function _downloadFolderPDFExecute(folderLabel, items){
+  if(!items || !items.length){ showToast('Koi topic select nahi', 'error'); return; }
+
   const notesWithContentCount = items.reduce((n, it) => n + (it.topic.notes || []).filter(n2 => (n2.editorRichHTML || n2.richHTML || n2.content || '').trim()).length, 0);
   console.log('[downloadFolderPDF] Notes with actual content found: ' + notesWithContentCount);
   const hasAnyContent = notesWithContentCount > 0;
-  if(!hasAnyContent) { console.warn('[downloadFolderPDF] No topic under "'+folderLabel+'" has any note content (editorRichHTML/richHTML/content all empty).'); showToast('⚠️ Is folder ke topics mein koi note content nahi hai', 'error'); return; }
+  if(!hasAnyContent) { console.warn('[downloadFolderPDF] No selected topic has note content.'); showToast('⚠️ Selected topics mein koi note content nahi hai', 'error'); return; }
 
   if(typeof html2pdf === 'undefined') { console.error('[downloadFolderPDF] html2pdf library not loaded.'); showToast('❌ PDF library load nahi hui — internet check karo', 'error'); return; }
 
-  showToast('⬇️ "' + folderLabel + '" ka poora PDF taiyar ho raha hai (' + items.length + ' topics)...', 'success');
+  showToast('⬇️ "' + folderLabel + '" ka PDF taiyar ho raha hai (' + items.length + ' topics)...', 'success');
 
   // Show the overlay FIRST (position:fixed covers the viewport immediately) so
   // the brief layout shift caused by inserting each topic's wrapper is hidden.
@@ -42516,57 +42769,6 @@ async function saveToFirebase(){
   var _saveStartTime = Date.now();
   var _topicCount = (S.subjects||[]).reduce(function(a,s){ return a+s.sections.reduce(function(b,sec){ return b+sec.topics.length; },0); },0);
   console.info('[🔥 saveToFirebase] START — uid:'+_effectiveUID+' | subjects:'+((S.subjects||[]).length)+' | topics:'+_topicCount+' | isAdmin:'+_isAdmin);
-
-  // 🛡️ SAFETY GUARD: total note-content size ko track karo (localStorage
-  // mein last-known-good size). Agar is save mein content drastically
-  // (50%+) shrink ho raha hai — jaisa localStorage-slim data ya kisi
-  // partial/failed load ke baad galti se ho sakta hai — to save ko rok
-  // ke user ko batao, taaki accidentally poora cloud data truncated
-  // version se overwrite na ho jaaye. User confirm kare to hi aage badhe.
-  function _totalNoteContentSize(){
-    var total = 0;
-    function noteLen(n){ return (n.editorRichHTML||'').length + (n.richHTML||'').length + (n.content||'').length; }
-    function walkSec(sec){
-      (sec.topics||[]).forEach(function(t){ (t.notes||[]).forEach(function(n){ total += noteLen(n); }); });
-      (sec.subSections||[]).forEach(walkSec);
-    }
-    function walkSub(sub){
-      (sub.sections||[]).forEach(walkSec);
-      (sub.subSubjects||[]).forEach(walkSub);
-    }
-    (S.subjects||[]).forEach(walkSub);
-    return total;
-  }
-  try{
-    var _curSize = _totalNoteContentSize();
-    var _lastGoodSize = 0;
-    try { _lastGoodSize = parseInt(localStorage.getItem('epp5_lastGoodContentSize')||'0', 10) || 0; } catch(e){}
-    if(_lastGoodSize > 50000 && _curSize < _lastGoodSize * 0.5){
-      var _pct = Math.round((_curSize/_lastGoodSize)*100);
-      console.error('[🔥 saveToFirebase] BLOCKED: content shrink guard — was '+_lastGoodSize+' chars, now '+_curSize+' chars ('+_pct+'%)');
-      var _proceed = confirm(
-        '⚠️ CHETAVNI: Notes ka data pehle se bahut kam (' + _pct + '%) dikh raha hai!\n\n' +
-        'Pehle: ~' + Math.round(_lastGoodSize/1000) + 'K characters\n' +
-        'Ab: ~' + Math.round(_curSize/1000) + 'K characters\n\n' +
-        'Agar aap save karte hain to cloud ka poora/sahi data is chhote data se REPLACE ho jayega — ho sakta hai data kho jaaye.\n\n' +
-        'Agar aapko lagta hai yeh galti se ho raha hai (jaise abhi restore/reload kiya hai), to CANCEL dabao aur pehle app dobara refresh karke check karo.\n\n' +
-        'Kya aap sach mein is chhote data ko save karna chahte hain?'
-      );
-      if(!_proceed){
-        _fbSaveInProgress = false;
-        setSyncStatus('error');
-        showToast('⚠️ Save rok diya gaya — data shrink detect hua', 'error');
-        return {ok:false, error:'User cancelled — content shrink guard triggered', code:'SHRINK_GUARD_CANCELLED'};
-      }
-      console.warn('[🔥 saveToFirebase] User confirmed shrink — proceeding anyway');
-    }
-    // Update last-known-good size AFTER the guard check (so this save's
-    // own size becomes the new baseline once it goes through)
-    if(_curSize > 0){
-      try { localStorage.setItem('epp5_lastGoodContentSize', String(Math.max(_curSize, _lastGoodSize))); } catch(e){}
-    }
-  }catch(e){ console.warn('[🔥 saveToFirebase] shrink guard error (non-fatal):', e && e.message); }
-
   setSyncStatus('syncing');
   try{
     var uid = _effectiveUID;
@@ -42748,22 +42950,11 @@ async function saveToFirebase(){
 async function loadFromFirebase(){
   if(!_db || !_currentUser){ console.warn('[📥 loadFromFirebase] SKIP: db='+!!_db+' user='+!!_currentUser); return; }
 
-  // 🛡️ FIX: also check the PERSISTED flag (localStorage), not just the
-  // in-memory _justRestored variable. If a restore just happened and the
-  // page reloaded/relogged-in before the upload finished, the in-memory
-  // flag would have reset to false — this persisted flag survives that
-  // reload and still forces a safe re-upload of the local (correct,
-  // just-restored) data instead of pulling the cloud's stale data down
-  // over it.
-  var _persistedJustRestored = false;
-  try { _persistedJustRestored = localStorage.getItem('epp5_justRestored') === '1'; } catch(e){}
-
-  if(_justRestored || _persistedJustRestored){
+  if(_justRestored){
     _justRestored = false;
-    console.info('[📥 loadFromFirebase] justRestored (mem='+_justRestored+', persisted='+_persistedJustRestored+') → uploading local data to Firebase');
+    console.info('[📥 loadFromFirebase] _justRestored=true → uploading local data to Firebase');
     setSyncStatus('syncing');
     await saveToFirebase();
-    try { localStorage.removeItem('epp5_justRestored'); } catch(e){}
     setSyncStatus('synced');
     showToast('Restore data cloud pe upload ho gaya! ✅☁️', 'success');
     return;
@@ -42911,37 +43102,7 @@ async function loadFromFirebase(){
     // aur naya subject/section/topic hamesha ke liye gayab ho jaata tha.
     // Fix: pehle local ka pending data poori tarah Firebase mein push karo (saveToFirebase),
     // tabhi cloud se fresh copy dubara load karo — taaki koi bhi unsynced change kho na jaaye.
-    //
-    // 🛡️ FIX #2 (content-richness check): topic COUNT alone is not enough — right
-    // after login, S.subjects is populated from the epp5 localStorage cache, which
-    // is ALWAYS content-slim (richHTML stripped, content capped at 2000 chars —
-    // see _slimSForLocalStorage). So local can easily have the SAME topic count as
-    // cloud while every note's actual text is 2000-char-truncated. The old guard
-    // saw "local topics > cloud topics" (or even local == cloud, elsewhere) and
-    // force-pushed this slim data to Firebase, permanently truncating the real
-    // cloud content. Now we also compare actual note-content size — only treat
-    // local as "ahead" if it has MORE content, not just more/equal topic slots.
-    function _localNoteContentSize(){
-      var total = 0;
-      function noteLen(n){ return (n.editorRichHTML||'').length + (n.richHTML||'').length + (n.content||'').length; }
-      function walkSec(sec){
-        (sec.topics||[]).forEach(function(t){ (t.notes||[]).forEach(function(n){ total += noteLen(n); }); });
-        (sec.subSections||[]).forEach(walkSec);
-      }
-      function walkSub(sub){
-        (sub.sections||[]).forEach(walkSec);
-        (sub.subSubjects||[]).forEach(walkSub);
-      }
-      (S.subjects||[]).forEach(walkSub);
-      return total;
-    }
-    var _localContentSize = _localNoteContentSize();
-    // A slim/truncated local cache is a strong signal that this S came from
-    // epp5 (not yet hydrated from cloud) — each real note is capped at 2000
-    // chars there, so avg content-per-topic stays suspiciously low.
-    var _looksSlim = localTopicCount > 0 && (_localContentSize / localTopicCount) < 2500;
-
-    if(_isAdmin && localTopicCount > cloudTopicCount && !_looksSlim){
+    if(_isAdmin && localTopicCount > cloudTopicCount){
       console.warn('[📥 loadFromFirebase] ⚠️ GUARD: local topics ('+localTopicCount+') > cloud topics ('+cloudTopicCount+') — pending unsynced local changes ho sakte hain. Pehle local ko Firebase push kar rahe hain, phir load karenge.');
       showToast('⏳ Local mein unsynced changes mile — pehle cloud pe save kar rahe hain...', 'info');
       var _pushResult = await saveToFirebase();
@@ -42955,11 +43116,6 @@ async function loadFromFirebase(){
         setSyncStatus('error');
         return;
       }
-    } else if(_isAdmin && localTopicCount > cloudTopicCount && _looksSlim){
-      // Local has more/equal topic slots but content looks like an
-      // un-hydrated slim cache — do NOT push. Fall through to the normal
-      // cloud-load path below instead, so real cloud content wins.
-      console.warn('[📥 loadFromFirebase] GUARD SKIPPED: local topics ('+localTopicCount+') > cloud ('+cloudTopicCount+') BUT local content looks slim (avg '+Math.round(_localContentSize/Math.max(localTopicCount,1))+' chars/topic) — treating as un-hydrated cache, NOT pushing. Loading from cloud instead.');
     }
 
     // ✅ FIX: Agar cloud mein data hai to HAMESHA cloud se lo, local count se compare mat karo
