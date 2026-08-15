@@ -42911,7 +42911,37 @@ async function loadFromFirebase(){
     // aur naya subject/section/topic hamesha ke liye gayab ho jaata tha.
     // Fix: pehle local ka pending data poori tarah Firebase mein push karo (saveToFirebase),
     // tabhi cloud se fresh copy dubara load karo — taaki koi bhi unsynced change kho na jaaye.
-    if(_isAdmin && localTopicCount > cloudTopicCount){
+    //
+    // 🛡️ FIX #2 (content-richness check): topic COUNT alone is not enough — right
+    // after login, S.subjects is populated from the epp5 localStorage cache, which
+    // is ALWAYS content-slim (richHTML stripped, content capped at 2000 chars —
+    // see _slimSForLocalStorage). So local can easily have the SAME topic count as
+    // cloud while every note's actual text is 2000-char-truncated. The old guard
+    // saw "local topics > cloud topics" (or even local == cloud, elsewhere) and
+    // force-pushed this slim data to Firebase, permanently truncating the real
+    // cloud content. Now we also compare actual note-content size — only treat
+    // local as "ahead" if it has MORE content, not just more/equal topic slots.
+    function _localNoteContentSize(){
+      var total = 0;
+      function noteLen(n){ return (n.editorRichHTML||'').length + (n.richHTML||'').length + (n.content||'').length; }
+      function walkSec(sec){
+        (sec.topics||[]).forEach(function(t){ (t.notes||[]).forEach(function(n){ total += noteLen(n); }); });
+        (sec.subSections||[]).forEach(walkSec);
+      }
+      function walkSub(sub){
+        (sub.sections||[]).forEach(walkSec);
+        (sub.subSubjects||[]).forEach(walkSub);
+      }
+      (S.subjects||[]).forEach(walkSub);
+      return total;
+    }
+    var _localContentSize = _localNoteContentSize();
+    // A slim/truncated local cache is a strong signal that this S came from
+    // epp5 (not yet hydrated from cloud) — each real note is capped at 2000
+    // chars there, so avg content-per-topic stays suspiciously low.
+    var _looksSlim = localTopicCount > 0 && (_localContentSize / localTopicCount) < 2500;
+
+    if(_isAdmin && localTopicCount > cloudTopicCount && !_looksSlim){
       console.warn('[📥 loadFromFirebase] ⚠️ GUARD: local topics ('+localTopicCount+') > cloud topics ('+cloudTopicCount+') — pending unsynced local changes ho sakte hain. Pehle local ko Firebase push kar rahe hain, phir load karenge.');
       showToast('⏳ Local mein unsynced changes mile — pehle cloud pe save kar rahe hain...', 'info');
       var _pushResult = await saveToFirebase();
@@ -42925,6 +42955,11 @@ async function loadFromFirebase(){
         setSyncStatus('error');
         return;
       }
+    } else if(_isAdmin && localTopicCount > cloudTopicCount && _looksSlim){
+      // Local has more/equal topic slots but content looks like an
+      // un-hydrated slim cache — do NOT push. Fall through to the normal
+      // cloud-load path below instead, so real cloud content wins.
+      console.warn('[📥 loadFromFirebase] GUARD SKIPPED: local topics ('+localTopicCount+') > cloud ('+cloudTopicCount+') BUT local content looks slim (avg '+Math.round(_localContentSize/Math.max(localTopicCount,1))+' chars/topic) — treating as un-hydrated cache, NOT pushing. Loading from cloud instead.');
     }
 
     // ✅ FIX: Agar cloud mein data hai to HAMESHA cloud se lo, local count se compare mat karo
