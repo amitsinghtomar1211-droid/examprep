@@ -29500,110 +29500,14 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
   console.log('[downloadFolderPDF] "'+folderLabel+'" — '+items.length+' topic(s) collected across all nested folders.');
   if(!items.length) { showToast('⚠️ Is folder mein koi topic/notes nahi hai', 'error'); return; }
 
-  // Pehle topic-select UI — user choose kare kaunse topics download hon
-  _folderShowTopicPicker(folderLabel, items);
-}
-
-/** Topic picker modal — folder PDF se pehle nested topics choose karo */
-function _folderShowTopicPicker(folderLabel, items){
-  var old = document.getElementById('_folderPdfPicker');
-  if(old) old.remove();
-
-  var ov = document.createElement('div');
-  ov.id = '_folderPdfPicker';
-  ov.style.cssText = 'position:fixed;inset:0;z-index:1000100;background:rgba(13,27,42,0.72);display:flex;align-items:flex-end;justify-content:center;padding:12px;';
-  ov.onclick = function(ev){ if(ev.target === ov) ov.remove(); };
-
-  var rows = items.map(function(it, i){
-    var t = it.topic || {};
-    var noteN = (t.notes || []).filter(function(n2){
-      return ((n2.editorRichHTML || n2.richHTML || n2.content || '') + '').trim();
-    }).length;
-    var pathStr = (it.path || []).join(' › ');
-    var empty = noteN === 0;
-    return '<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border,#e0e0e0);cursor:pointer;background:' + (empty ? 'rgba(198,40,40,0.04)' : 'transparent') + ';">' +
-      '<input type="checkbox" class="_fppChk" data-i="' + i + '" ' + (empty ? '' : 'checked') + ' style="margin-top:4px;width:18px;height:18px;flex-shrink:0;accent-color:#1565c0;">' +
-      '<span style="flex:1;min-width:0;">' +
-        '<div style="font-weight:800;font-size:0.88rem;color:var(--text,#0d1b2a);">' + _folderEsc(t.name || ('Topic '+(i+1))) + (empty ? ' <span style="font-size:0.68rem;font-weight:700;color:#c62828;">(khaali)</span>' : '') + '</div>' +
-        '<div style="font-size:0.7rem;color:var(--text2,#37526d);margin-top:2px;line-height:1.4;">📂 ' + _folderEsc(pathStr) + (noteN ? ' · ' + noteN + ' note(s)' : '') + '</div>' +
-      '</span></label>';
-  }).join('');
-
-  ov.innerHTML =
-    '<div style="width:100%;max-width:520px;max-height:88vh;background:var(--surface,#fff);border-radius:18px 18px 0 0;display:flex;flex-direction:column;box-shadow:0 -8px 40px rgba(0,0,0,0.35);" onclick="event.stopPropagation();">' +
-      '<div style="padding:14px 16px 10px;border-bottom:1.5px solid var(--border,#e0e0e0);flex-shrink:0;">' +
-        '<div style="font-weight:900;font-size:1.05rem;color:var(--text,#0d1b2a);">📥 PDF Download — topics choose karo</div>' +
-        '<div style="font-size:0.78rem;color:var(--text2,#37526d);margin-top:4px;line-height:1.45;">Folder: <b>' + _folderEsc(folderLabel) + '</b> · ' + items.length + ' nested topics. Sirf selected download honge.</div>' +
-      '</div>' +
-      '<div style="padding:8px 12px;display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--border,#eee);flex-shrink:0;">' +
-        '<button type="button" id="_fppAll" style="padding:6px 12px;border-radius:8px;border:1.5px solid #1565c0;background:#1565c0;color:#fff;font-weight:800;font-size:0.75rem;cursor:pointer;">✓ Sab select</button>' +
-        '<button type="button" id="_fppNone" style="padding:6px 12px;border-radius:8px;border:1.5px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);color:var(--text2,#37526d);font-weight:800;font-size:0.75rem;cursor:pointer;">Sab hatao</button>' +
-        '<button type="button" id="_fppOnlyFilled" style="padding:6px 12px;border-radius:8px;border:1.5px solid #2e7d32;background:rgba(46,125,50,0.1);color:#2e7d32;font-weight:800;font-size:0.75rem;cursor:pointer;">Sirf content wale</button>' +
-        '<span id="_fppCount" style="margin-left:auto;font-size:0.72rem;font-weight:700;color:var(--text2,#37526d);align-self:center;"></span>' +
-      '</div>' +
-      '<div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:120px;">' + rows + '</div>' +
-      '<div style="padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px));display:flex;gap:10px;border-top:1.5px solid var(--border,#e0e0e0);flex-shrink:0;">' +
-        '<button type="button" id="_fppCancel" style="flex:1;padding:12px;border-radius:12px;border:1.5px solid var(--border,#bdd5ea);background:var(--surface2,#f4f9fe);font-weight:800;color:var(--text,#0d1b2a);cursor:pointer;">Cancel</button>' +
-        '<button type="button" id="_fppGo" style="flex:1.4;padding:12px;border-radius:12px;border:none;background:linear-gradient(135deg,#1565c0,#0d47a1);color:#fff;font-weight:900;cursor:pointer;">⬇️ Download PDF</button>' +
-      '</div>' +
-    '</div>';
-
-  document.body.appendChild(ov);
-
-  function updateCount(){
-    var n = ov.querySelectorAll('._fppChk:checked').length;
-    var el = document.getElementById('_fppCount');
-    if(el) el.textContent = n + ' / ' + items.length + ' selected';
-    var go = document.getElementById('_fppGo');
-    if(go){ go.disabled = n === 0; go.style.opacity = n ? '1' : '0.5'; }
-  }
-  updateCount();
-  ov.querySelectorAll('._fppChk').forEach(function(c){ c.onchange = updateCount; });
-  document.getElementById('_fppAll').onclick = function(){
-    ov.querySelectorAll('._fppChk').forEach(function(c){ c.checked = true; });
-    updateCount();
-  };
-  document.getElementById('_fppNone').onclick = function(){
-    ov.querySelectorAll('._fppChk').forEach(function(c){ c.checked = false; });
-    updateCount();
-  };
-  document.getElementById('_fppOnlyFilled').onclick = function(){
-    ov.querySelectorAll('._fppChk').forEach(function(c){
-      var i = Number(c.getAttribute('data-i'));
-      var t = items[i] && items[i].topic;
-      var has = t && (t.notes || []).some(function(n2){ return ((n2.editorRichHTML || n2.richHTML || n2.content || '') + '').trim(); });
-      c.checked = !!has;
-    });
-    updateCount();
-  };
-  document.getElementById('_fppCancel').onclick = function(){ ov.remove(); };
-  document.getElementById('_fppGo').onclick = function(){
-    var selected = [];
-    ov.querySelectorAll('._fppChk:checked').forEach(function(c){
-      var i = Number(c.getAttribute('data-i'));
-      if(items[i]) selected.push(items[i]);
-    });
-    if(!selected.length){ showToast('Kam se kam 1 topic select karo', 'error'); return; }
-    ov.remove();
-    _downloadFolderPDFExecute(folderLabel, selected);
-  };
-}
-
-function _folderEsc(s){
-  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-async function _downloadFolderPDFExecute(folderLabel, items){
-  if(!items || !items.length){ showToast('Koi topic select nahi', 'error'); return; }
-
   const notesWithContentCount = items.reduce((n, it) => n + (it.topic.notes || []).filter(n2 => (n2.editorRichHTML || n2.richHTML || n2.content || '').trim()).length, 0);
   console.log('[downloadFolderPDF] Notes with actual content found: ' + notesWithContentCount);
   const hasAnyContent = notesWithContentCount > 0;
-  if(!hasAnyContent) { console.warn('[downloadFolderPDF] No selected topic has note content.'); showToast('⚠️ Selected topics mein koi note content nahi hai', 'error'); return; }
+  if(!hasAnyContent) { console.warn('[downloadFolderPDF] No topic under "'+folderLabel+'" has any note content (editorRichHTML/richHTML/content all empty).'); showToast('⚠️ Is folder ke topics mein koi note content nahi hai', 'error'); return; }
 
   if(typeof html2pdf === 'undefined') { console.error('[downloadFolderPDF] html2pdf library not loaded.'); showToast('❌ PDF library load nahi hui — internet check karo', 'error'); return; }
 
-  showToast('⬇️ "' + folderLabel + '" ka PDF taiyar ho raha hai (' + items.length + ' topics)...', 'success');
+  showToast('⬇️ "' + folderLabel + '" ka poora PDF taiyar ho raha hai (' + items.length + ' topics)...', 'success');
 
   // Show the overlay FIRST (position:fixed covers the viewport immediately) so
   // the brief layout shift caused by inserting each topic's wrapper is hidden.
