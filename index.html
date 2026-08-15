@@ -22944,12 +22944,21 @@ Restore karna hai?`)) {
         });
       });
       
-      // Save to localStorage directly (avoid Firebase loop)
-      try { localStorage.setItem('epp5', JSON.stringify(S)); } catch(e) {}
+      // Slim localStorage intentionally drops editorRichHTML — keep FULL body in IDB
+      try {
+        if(typeof _writeEpp5ToLocalStorage === 'function') _writeEpp5ToLocalStorage();
+        else localStorage.setItem('epp5', JSON.stringify(S));
+      } catch(e) {}
 
-      // Flag set karo - Firebase load se bachao
       _justRestored = true;
-      
+      try {
+        sessionStorage.setItem('epp_just_restored', '1');
+        sessionStorage.setItem('epp_just_restored_at', String(Date.now()));
+        var _rs = (typeof _totalNotesRichChars === 'function') ? _totalNotesRichChars(S.subjects) : null;
+        if(_rs) sessionStorage.setItem('epp_restored_rich_chars', String(_rs.chars||0));
+        console.info('[restore] richChars in memory=', _rs && _rs.chars, 'withRich=', _rs && _rs.withRich);
+      } catch(e){}
+
       // Close login screen if open
       const ls = document.getElementById('loginScreen');
       if(ls) ls.style.display = 'none';
@@ -22978,38 +22987,35 @@ Restore karna hai?`)) {
       updateVaultBadge();
       checkPausedQuiz();
       
-      // Persist restore flag so login/net-on cannot pull truncated cloud over good local
-      try {
-        sessionStorage.setItem('epp_just_restored', '1');
-        sessionStorage.setItem('epp_just_restored_at', String(Date.now()));
-        var _rs = (typeof _totalNotesRichChars === 'function') ? _totalNotesRichChars(S.subjects) : null;
-        if(_rs) sessionStorage.setItem('epp_restored_rich_chars', String(_rs.chars||0));
-      } catch(e){}
-      _justRestored = true;
-
-      // After UI load, PUSH local → cloud (never pull first)
-      setTimeout(() => {
-        if(_currentUser && _db) {
-          showToast('⏳ Restored data cloud pe push ho raha hai (truncated overwrite block)...', 'info');
-          saveToFirebase().then(function(res){
-            _justRestored = false;
-            try { sessionStorage.setItem('epp_just_restored', '0'); } catch(e){}
-            if(res && res.ok){
-              showToast('✅ Restore + Cloud PUSH OK! ' + subjectCount + ' subjects, ' + topicCount + ' topics', 'success');
-            } else {
+      // CRITICAL: IDB bulk + Firebase PUSH while richHTML still in memory (before refresh/slim loss)
+      setTimeout(function(){
+        var _doPush = function(){
+          if(_currentUser && _db) {
+            showToast('⏳ Full notes cloud pe PUSH (slim-safe)...', 'info');
+            saveToFirebase().then(function(res){
+              if(res && res.ok){
+                _justRestored = false;
+                try { sessionStorage.setItem('epp_just_restored', '0'); } catch(e){}
+                showToast('✅ Restore + Cloud PUSH OK! ' + subjectCount + ' subjects, ' + topicCount + ' topics', 'success');
+              } else {
+                _justRestored = true;
+                try { sessionStorage.setItem('epp_just_restored', '1'); } catch(e){}
+                showToast('✅ Local+IDB restore OK — cloud push incomplete. Net stable hone pe Sync dabao.', 'success');
+              }
+            }).catch(function(){
               _justRestored = true;
               try { sessionStorage.setItem('epp_just_restored', '1'); } catch(e){}
-              showToast('✅ Local restore OK — cloud push pending. Settings se Sync dabao.', 'success');
-            }
-          }).catch(function(){
-            _justRestored = true;
-            try { sessionStorage.setItem('epp_just_restored', '1'); } catch(e){}
-            showToast('✅ Restore local OK! Cloud push baad mein hoga.', 'success');
-          });
-        } else {
-          showToast('✅ Data restore (offline). Net on hone par cloud pe PUSH hoga, pull nahi.', 'success');
-        }
-      }, 800);
+              showToast('✅ Restore local+IDB OK. Cloud push baad mein.', 'success');
+            });
+          } else {
+            showToast('✅ Restore OK (offline). Net on → auto PUSH, pull nahi.', 'success');
+          }
+        };
+        if(typeof _bulkPersistAllNotesToIDB === 'function'){
+          showToast('💾 Notes IDB mein save ho rahe hain...', 'info');
+          Promise.resolve(_bulkPersistAllNotesToIDB()).then(_doPush).catch(_doPush);
+        } else _doPush();
+      }, 500);
       
     } catch(err) {
       showToast('File padhne mein error: ' + err.message, 'error');
@@ -33977,7 +33983,7 @@ let _syncTimeout = null;
 let _topicSyncTimers = {};    // {tid: timeoutId} — per-topic debounce
 let _justRestored = false;
 
-/** Sum of note richHTML lengths across all subjects (anti-truncate guard) */
+/** Sum of note richHTML lengths (anti-truncate / slim detect) */
 function _totalNotesRichChars(subjects){
   var total = 0, notes = 0, withRich = 0;
   function walkSec(sec){
@@ -34000,6 +34006,95 @@ function _totalNotesRichChars(subjects){
   });
   return { chars: total, notes: notes, withRich: withRich };
 }
+
+/** After restore: write every note body into IDB so slim localStorage cannot wipe it */
+async function _bulkPersistAllNotesToIDB(){
+  if(typeof _saveNoteLocalBackup !== 'function') return { ok:0, fail:0 };
+  var ok = 0, fail = 0;
+  function walkSec(sec){
+    (sec.topics||[]).forEach(function(t){
+      var tid = t && t.id;
+      (t.notes||[]).forEach(function(n, idx){
+        try {
+          if(!n) return;
+          var has = (n.editorRichHTML || n.richHTML || n.content || '');
+          if(!String(has).trim()) return;
+          _saveNoteLocalBackup(tid, n, idx);
+          ok++;
+        } catch(e){ fail++; }
+      });
+    });
+    (sec.subSections||[]).forEach(walkSec);
+  }
+  function walkSub(sub){
+    (sub.sections||[]).forEach(walkSec);
+    (sub.subSubjects||[]).forEach(walkSub);
+  }
+  (S.subjects||[]).forEach(function(s){
+    (s.sections||[]).forEach(walkSec);
+    (s.subSubjects||[]).forEach(walkSub);
+  });
+  console.info('[IDB bulk] notes persisted ok='+ok+' fail='+fail);
+  return { ok: ok, fail: fail };
+}
+
+/** Rehydrate S.notes richHTML from IDB/local backups (undo slim localStorage loss) */
+async function _rehydrateNotesFromBackups(){
+  if(typeof _loadNoteBackupAsync !== 'function' && typeof _loadNoteLocalBackup !== 'function') return { restored: 0 };
+  var restored = 0;
+  async function walkSec(sec){
+    for(var ti=0; ti<(sec.topics||[]).length; ti++){
+      var t = sec.topics[ti];
+      var tid = t && t.id;
+      for(var ni=0; ni<(t.notes||[]).length; ni++){
+        var n = t.notes[ni];
+        if(!n) continue;
+        var cur = ((n.editorRichHTML || n.richHTML) || '') + '';
+        if(cur.length > 100) continue;
+        var bak = null;
+        try {
+          if(typeof _loadNoteLocalBackup === 'function') bak = _loadNoteLocalBackup(tid, n, ni);
+        } catch(e){}
+        try {
+          if(typeof _loadNoteBackupAsync === 'function'){
+            var idb = await _loadNoteBackupAsync(tid, n, ni);
+            if(idb){
+              var ib = (idb.editorRichHTML || idb.richHTML || '') + '';
+              var bb = bak ? ((bak.editorRichHTML || bak.richHTML) || '') + '' : '';
+              if(ib.length >= bb.length) bak = idb;
+            }
+          }
+        } catch(e){}
+        if(!bak) continue;
+        var br = (bak.editorRichHTML || bak.richHTML || '') + '';
+        if(br.length > cur.length + 50){
+          n.editorRichHTML = bak.editorRichHTML || bak.richHTML;
+          n.richHTML = n.editorRichHTML;
+          if(bak.editorSavedAt) n.editorSavedAt = bak.editorSavedAt;
+          if(bak.editorHighlights) n.editorHighlights = bak.editorHighlights;
+          if(bak.content && (!n.content || String(n.content).length < String(bak.content).length))
+            n.content = bak.content;
+          restored++;
+        }
+      }
+    }
+    for(var si=0; si<(sec.subSections||[]).length; si++){
+      await walkSec(sec.subSections[si]);
+    }
+  }
+  async function walkSub(sub){
+    for(var i=0;i<(sub.sections||[]).length;i++) await walkSec(sub.sections[i]);
+    for(var j=0;j<(sub.subSubjects||[]).length;j++) await walkSub(sub.subSubjects[j]);
+  }
+  for(var s=0;s<(S.subjects||[]).length;s++){
+    var sub = S.subjects[s];
+    for(var i=0;i<(sub.sections||[]).length;i++) await walkSec(sub.sections[i]);
+    for(var j=0;j<(sub.subSubjects||[]).length;j++) await walkSub(sub.subSubjects[j]);
+  }
+  console.info('[rehydrate] restored rich bodies from backup:', restored);
+  return { restored: restored };
+}
+
 
 let _realtimeListener = null; // Meta doc listener unsubscribe
 let _topicListeners = {};     // {tid: unsubscribe} — per-topic listeners
@@ -42898,27 +42993,34 @@ async function saveToFirebase(){
 async function loadFromFirebase(){
   if(!_db || !_currentUser){ console.warn('[📥 loadFromFirebase] SKIP: db='+!!_db+' user='+!!_currentUser); return; }
 
-  // Restore / session protection: always PUSH local, never pull truncated cloud
+  // Rehydrate richHTML lost by slim localStorage (before any cloud compare)
+  try {
+    if(typeof _rehydrateNotesFromBackups === 'function'){
+      var _rh = await _rehydrateNotesFromBackups();
+      if(_rh && _rh.restored) console.info('[📥 loadFromFirebase] rehydrated', _rh.restored, 'notes from IDB');
+    }
+  } catch(e){ console.warn('[📥 loadFromFirebase] rehydrate fail', e); }
+
   try {
     if(!_justRestored && sessionStorage.getItem('epp_just_restored') === '1'){
-      var _ra = parseInt(sessionStorage.getItem('epp_just_restored_at')||'0',10) || 0;
-      // protect for 24h after restore, or until successful push clears flag
-      if(_ra && (Date.now() - _ra) < 24*60*60*1000) _justRestored = true;
+      var _ra = parseInt(sessionStorage.getItem('epp_just_restored_at')||'0',10)||0;
+      if(_ra && (Date.now()-_ra) < 24*60*60*1000) _justRestored = true;
     }
   } catch(e){}
+
   if(_justRestored){
-    console.info('[📥 loadFromFirebase] _justRestored=true → PUSH local to Firebase (skip cloud pull)');
+    console.info('[📥 loadFromFirebase] _justRestored=true → PUSH local (skip cloud pull)');
     setSyncStatus('syncing');
+    try { if(typeof _bulkPersistAllNotesToIDB === 'function') await _bulkPersistAllNotesToIDB(); } catch(e){}
     var _push = await saveToFirebase();
     if(_push && _push.ok){
       _justRestored = false;
-      try { sessionStorage.setItem('epp_just_restored', '0'); } catch(e){}
+      try { sessionStorage.setItem('epp_just_restored','0'); } catch(e){}
       setSyncStatus('synced');
-      showToast('Restore data cloud pe upload ho gaya! ✅☁️', 'success');
+      showToast('Restore data cloud pe upload! ✅☁️', 'success');
     } else {
-      // Keep protection — do NOT load cloud
       setSyncStatus('error');
-      showToast('⚠️ Cloud push fail — local full data safe. Baad mein Sync try karo.', 'error');
+      showToast('⚠️ Cloud push fail — local/IDB full data safe', 'error');
     }
     return;
   }
@@ -43048,6 +43150,29 @@ async function loadFromFirebase(){
 
     console.log('[📥 loadFromFirebase] Cloud topics counted: '+cloudTopicCount+' | local topics: '+localTopicCount);
 
+    var _localRich = (typeof _totalNotesRichChars==='function') ? _totalNotesRichChars(S.subjects) : {chars:0,withRich:0};
+    var _cloudRich = (typeof _totalNotesRichChars==='function') ? _totalNotesRichChars(loadedSubjects) : {chars:0,withRich:0};
+    console.info('[📥 loadFromFirebase] richChars local='+(_localRich.chars||0)+' cloud='+(_cloudRich.chars||0)+' localWithRich='+(_localRich.withRich||0)+' cloudWithRich='+(_cloudRich.withRich||0));
+
+    // Session restore chars: even if S was slimmed, we know restore had full data
+    var _sessRich = 0;
+    try { _sessRich = parseInt(sessionStorage.getItem('epp_restored_rich_chars')||'0',10)||0; } catch(e){}
+    if(_isAdmin && _sessRich > 50000 && (_localRich.chars||0) < _sessRich * 0.3){
+      console.warn('[📥 loadFromFirebase] session restore richChars=',_sessRich,' but local now',_localRich.chars,' — try rehydrate+PUSH');
+      try { if(typeof _rehydrateNotesFromBackups==='function') await _rehydrateNotesFromBackups(); } catch(e){}
+      _localRich = (typeof _totalNotesRichChars==='function') ? _totalNotesRichChars(S.subjects) : _localRich;
+    }
+    if(_isAdmin && ((_localRich.chars||0) > (_cloudRich.chars||0)*1.15 && (_localRich.chars||0) > (_cloudRich.chars||0)+5000)){
+      console.warn('[📥 loadFromFirebase] RICHNESS GUARD: push local, skip truncated cloud');
+      showToast('⏳ Local notes complete hain — cloud update...', 'info');
+      var _rp = await saveToFirebase();
+      if(_rp && _rp.ok){ setSyncStatus('synced'); return loadFromFirebase(); }
+      showToast('⚠️ Push fail — local full notes safe', 'error');
+      setSyncStatus('error');
+      return;
+    }
+
+
     // Cloud bilkul khaali hai (pehli baar ya delete hua) → sirf tab local upload karo
     if(!loadedSubjects || cloudTopicCount === 0){
       console.warn('[📥 loadFromFirebase] PATH: Cloud khaali → '+((_isAdmin && localTopicCount>0)?'local upload karega':'kuch nahi karega'));
@@ -43056,26 +43181,6 @@ async function loadFromFirebase(){
         showToast('Data cloud pe save ho gaya! ☁️ (' + localTopicCount + ' topics)', 'success');
       }
       setSyncStatus('synced'); return;
-    }
-
-    // ✅ CONTENT-RICHNESS GUARD — topic count same hone par bhi cloud truncated
-    // editorRichHTML se full local notes overwrite kar sakta tha (backup 14MB→6MB case).
-    // Agar local notes ka richHTML total cloud se clearly zyada hai to pehle PUSH, pull mat karo.
-    var _localRich = (typeof _totalNotesRichChars === 'function') ? _totalNotesRichChars(S.subjects) : {chars:0,withRich:0};
-    var _cloudRich = (typeof _totalNotesRichChars === 'function') ? _totalNotesRichChars(loadedSubjects) : {chars:0,withRich:0};
-    console.info('[📥 loadFromFirebase] richChars local='+(_localRich.chars||0)+' cloud='+(_cloudRich.chars||0)+' localWithRich='+(_localRich.withRich||0)+' cloudWithRich='+(_cloudRich.withRich||0));
-    if(_isAdmin && (_localRich.chars||0) > (_cloudRich.chars||0) * 1.15 && (_localRich.chars||0) > (_cloudRich.chars||0) + 5000){
-      console.warn('[📥 loadFromFirebase] ⚠️ RICHNESS GUARD: local richHTML >> cloud — pushing local, skip overwrite');
-      showToast('⏳ Local notes cloud se zyada complete hain — pehle cloud update...', 'info');
-      var _richPush = await saveToFirebase();
-      if(_richPush && _richPush.ok){
-        setSyncStatus('synced');
-        return loadFromFirebase();
-      } else {
-        showToast('⚠️ Cloud push fail — local full notes safe (truncate block)', 'error');
-        setSyncStatus('error');
-        return;
-      }
     }
 
     // ✅ FIX: RACE-CONDITION GUARD — agar admin ke local mein cloud se ZYADA topics hain
@@ -43163,17 +43268,10 @@ async function loadFromFirebase(){
         if(n.editorRichHTML===undefined) n.editorRichHTML=null;
         delete n.canvasPNG;
         var ld = localEditorData['n_'+n.id] || localEditorData['n_idx_'+t.id+'_'+nIdx];
-        var _cLen = ((n.editorRichHTML||n.richHTML||'')+'').length;
-        // Prefer local if newer OR significantly richer (blocks truncated cloud body)
-        if(ld && ld.richHTML){
-          var _lLen = (ld.richHTML||'').length;
-          var _newer = (ld.ts || 0) > (n.editorSavedAt || 0);
-          var _richer = _lLen > _cLen * 1.2 && _lLen > _cLen + 50;
-          if(_newer || _richer){
-            n.editorRichHTML=ld.richHTML; n.richHTML=ld.richHTML; n.editorHighlights=ld.highlights||[];
-            if(_newer) n.editorSavedAt=ld.ts||n.editorSavedAt;
-            console.info('[loadFromFirebase] kept richer/newer local note tid='+t.id+' localLen='+_lLen+' cloudLen='+_cLen);
-          }
+        // ✅ FIX: sirf tab local richHTML lagao jab local timestamp zyada ho (newer)
+        if(ld && ld.richHTML && (ld.ts || 0) > (n.editorSavedAt || 0)){
+          n.editorRichHTML=ld.richHTML; n.editorHighlights=ld.highlights||[];
+          n.editorSavedAt=ld.ts||n.editorSavedAt;
         }
         // Extra: dedicated localStorage backup
         try {
