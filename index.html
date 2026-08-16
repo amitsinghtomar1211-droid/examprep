@@ -24877,13 +24877,79 @@ function neMediaOnFile(input){
     var e = document.getElementById('_neMediaEnd');
     if(s){ s.max = 1000; s.value = 0; }
     if(e){ e.max = 1000; e.value = 1000; }
-    neMediaUpdateTrim();
+    neMediaSyncTextFromState();
     _neMediaState.segments = [{ start: 0, end: dur }];
     neMediaRenderSegments();
   };
 }
 
-function neMediaUpdateTrim(){
+
+function neMediaFmtTime(sec){
+  sec = Math.max(0, Number(sec) || 0);
+  var h = Math.floor(sec / 3600);
+  var m = Math.floor((sec % 3600) / 60);
+  var s = Math.floor(sec % 60);
+  var pad = function(n){ return (n < 10 ? '0' : '') + n; };
+  if(h > 0) return h + ':' + pad(m) + ':' + pad(s);
+  return m + ':' + pad(s);
+}
+function neMediaParseTime(str){
+  if(str == null) return NaN;
+  str = String(str).trim().replace(',', '.');
+  if(!str) return NaN;
+  if(/^\d+(\.\d+)?$/.test(str)) return parseFloat(str);
+  var parts = str.split(':').map(function(x){ return x.trim(); });
+  if(parts.some(function(p){ return p === '' || isNaN(Number(p)); })) return NaN;
+  var nums = parts.map(Number);
+  if(nums.length === 3) return nums[0]*3600 + nums[1]*60 + nums[2];
+  if(nums.length === 2) return nums[0]*60 + nums[1];
+  if(nums.length === 1) return nums[0];
+  return NaN;
+}
+function neMediaSyncTextFromState(){
+  var st = document.getElementById('_neMediaStartText');
+  var et = document.getElementById('_neMediaEndText');
+  if(st) st.value = neMediaFmtTime(_neMediaState.start || 0);
+  if(et) et.value = neMediaFmtTime(_neMediaState.end || 0);
+  var sl = document.getElementById('_neMediaStartLbl');
+  var el = document.getElementById('_neMediaEndLbl');
+  if(sl) sl.textContent = neMediaFmtTime(_neMediaState.start || 0);
+  if(el) el.textContent = neMediaFmtTime(_neMediaState.end || 0);
+  var dl = document.getElementById('_neMediaDurLbl');
+  if(dl){
+    var d = _neMediaState.duration || 0;
+    dl.textContent = neMediaFmtTime(d) + '  (' + Math.floor(d) + ' seconds total)';
+  }
+}
+function neMediaApplyTextTimes(){
+  var dur = _neMediaState.duration || 0;
+  var st = document.getElementById('_neMediaStartText');
+  var et = document.getElementById('_neMediaEndText');
+  var start = neMediaParseTime(st && st.value);
+  var end = neMediaParseTime(et && et.value);
+  if(isNaN(start) || isNaN(end)){
+    if(typeof showToast === 'function') showToast('Format: mm:ss — jaise 33:24', 'error');
+    neMediaSyncTextFromState();
+    return;
+  }
+  if(dur > 0){
+    start = Math.max(0, Math.min(start, dur));
+    end = Math.max(0, Math.min(end, dur));
+  }
+  if(end < start){ var t = start; start = end; end = t; }
+  _neMediaState.start = start;
+  _neMediaState.end = end;
+  var sEl = document.getElementById('_neMediaStart');
+  var eEl = document.getElementById('_neMediaEnd');
+  if(dur > 0){
+    if(sEl) sEl.value = Math.round((start / dur) * 1000);
+    if(eEl) eEl.value = Math.round((end / dur) * 1000);
+  }
+  neMediaSyncTextFromState();
+  if(_neMediaState.el){ try { _neMediaState.el.currentTime = start; } catch(e){} }
+  if(typeof showToast === 'function') showToast('Trim: ' + neMediaFmtTime(start) + ' → ' + neMediaFmtTime(end), 'success');
+}
+function neMediaUpdateTrimFromSlider(){
   var dur = _neMediaState.duration || 0;
   var sEl = document.getElementById('_neMediaStart');
   var eEl = document.getElementById('_neMediaEnd');
@@ -24894,10 +24960,35 @@ function neMediaUpdateTrim(){
   if(end < start){ end = start; if(eEl) eEl.value = s; }
   _neMediaState.start = start;
   _neMediaState.end = end;
-  var sl = document.getElementById('_neMediaStartLbl');
-  var el = document.getElementById('_neMediaEndLbl');
-  if(sl) sl.textContent = start.toFixed(1) + 's';
-  if(el) el.textContent = end.toFixed(1) + 's';
+  neMediaSyncTextFromState();
+}
+function neMediaMarkStartFromPlayhead(){
+  var el = _neMediaState.el;
+  if(!el) return;
+  _neMediaState.start = el.currentTime || 0;
+  if(_neMediaState.end < _neMediaState.start) _neMediaState.end = _neMediaState.start;
+  var dur = _neMediaState.duration || 0;
+  var sEl = document.getElementById('_neMediaStart');
+  if(dur > 0 && sEl) sEl.value = Math.round((_neMediaState.start / dur) * 1000);
+  neMediaSyncTextFromState();
+}
+function neMediaMarkEndFromPlayhead(){
+  var el = _neMediaState.el;
+  if(!el) return;
+  _neMediaState.end = el.currentTime || 0;
+  if(_neMediaState.end < _neMediaState.start) _neMediaState.start = _neMediaState.end;
+  var dur = _neMediaState.duration || 0;
+  var eEl = document.getElementById('_neMediaEnd');
+  if(dur > 0 && eEl) eEl.value = Math.round((_neMediaState.end / dur) * 1000);
+  neMediaSyncTextFromState();
+}
+function neMediaSeekToStart(){
+  if(_neMediaState.el){ try { _neMediaState.el.currentTime = _neMediaState.start || 0; } catch(e){} }
+}
+
+function neMediaUpdateTrim(){
+  // slider + text stay in sync via mm:ss helpers
+  neMediaUpdateTrimFromSlider();
 }
 function neMediaUpdateSpeed(){
   var v = Number(document.getElementById('_neMediaSpeed').value) || 100;
@@ -24924,7 +25015,7 @@ function neMediaRenderSegments(){
   (_neMediaState.segments || []).forEach(function(seg, i){
     html += '<div class="ne-media-seg" data-i="'+i+'">'
       + '<span>#'+(i+1)+'</span>'
-      + '<span>'+Number(seg.start).toFixed(1)+'s → '+Number(seg.end).toFixed(1)+'s</span>'
+      + '<span>'+neMediaFmtTime(seg.start)+' → '+neMediaFmtTime(seg.end)+'</span>'
       + '<button type="button" onclick="neMediaUseRangeAsSeg('+i+')">Set = current trim</button>'
       + '<button type="button" onclick="neMediaRemoveSeg('+i+')">X</button>'
       + '</div>';
@@ -78872,13 +78963,38 @@ function tqRenderAttemptAnalysis(subBody, att, sid, secid, tid){
     </div>
     <input type="file" id="_neMediaFile" accept="audio/*,video/*" style="width:100%;margin-bottom:10px;font-size:0.8rem;" onchange="neMediaOnFile(this)">
     <div id="_neMediaPreviewBox"><span style="color:#8b949e;font-size:0.8rem;">Preview yahan</span></div>
-    <div class="ne-media-ctrl-row">
-      <label>Start <span id="_neMediaStartLbl">0.0s</span></label>
-      <input type="range" id="_neMediaStart" min="0" max="1000" value="0" step="1" oninput="neMediaUpdateTrim()">
+    <div style="font-size:0.72rem;color:var(--text2);margin:6px 0 8px;line-height:1.5;background:var(--surface2,#f4f9fe);padding:8px 10px;border-radius:10px;">
+      <b>Time format = mm:ss</b> (minutes:seconds)<br>
+      Example: <b>33:24</b> se <b>34:15</b> (33 min 24 sec → 34 min 15 sec)<br>
+      Total duration: <b id="_neMediaDurLbl">—</b>
+    </div>
+    <div class="ne-media-ctrl-row" style="align-items:flex-end;gap:10px;">
+      <div style="flex:1;min-width:110px;">
+        <label style="display:block;margin-bottom:4px;">Start (mm:ss)</label>
+        <input type="text" id="_neMediaStartText" inputmode="numeric" placeholder="33:24" value="0:00"
+          style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);font-size:1.05rem;font-weight:800;letter-spacing:0.5px;"
+          onchange="neMediaApplyTextTimes()" onblur="neMediaApplyTextTimes()">
+      </div>
+      <div style="flex:1;min-width:110px;">
+        <label style="display:block;margin-bottom:4px;">End (mm:ss)</label>
+        <input type="text" id="_neMediaEndText" inputmode="numeric" placeholder="34:15" value="0:00"
+          style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);font-size:1.05rem;font-weight:800;letter-spacing:0.5px;"
+          onchange="neMediaApplyTextTimes()" onblur="neMediaApplyTextTimes()">
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" onclick="neMediaApplyTextTimes()" style="margin-bottom:1px;padding:10px 14px;">Set</button>
     </div>
     <div class="ne-media-ctrl-row">
-      <label>End <span id="_neMediaEndLbl">0.0s</span></label>
-      <input type="range" id="_neMediaEnd" min="0" max="1000" value="1000" step="1" oninput="neMediaUpdateTrim()">
+      <label>Start slider <span id="_neMediaStartLbl">0:00</span></label>
+      <input type="range" id="_neMediaStart" min="0" max="1000" value="0" step="1" oninput="neMediaUpdateTrimFromSlider()">
+    </div>
+    <div class="ne-media-ctrl-row">
+      <label>End slider <span id="_neMediaEndLbl">0:00</span></label>
+      <input type="range" id="_neMediaEnd" min="0" max="1000" value="1000" step="1" oninput="neMediaUpdateTrimFromSlider()">
+    </div>
+    <div class="ne-media-ctrl-row" style="gap:6px;flex-wrap:wrap;">
+      <button type="button" class="btn btn-outline btn-xs" onclick="neMediaMarkStartFromPlayhead()">Mark start = playhead</button>
+      <button type="button" class="btn btn-outline btn-xs" onclick="neMediaMarkEndFromPlayhead()">Mark end = playhead</button>
+      <button type="button" class="btn btn-outline btn-xs" onclick="neMediaSeekToStart()">Jump to start</button>
     </div>
     <div class="ne-media-ctrl-row">
       <label>Speed <span id="_neMediaSpeedLbl">1.0x</span></label>
