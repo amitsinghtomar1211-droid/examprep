@@ -20425,7 +20425,7 @@ function eftOpenFullReading(id){
   ov.classList.add('show');
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesEditor'}, '');
-  try { if(typeof neMediaBindAll === 'function') setTimeout(function(){ neMediaBindAll(document.getElementById('noteEditorArea')); }, 350); } catch(_neM){}
+  try { if(typeof neMediaBindAll === 'function') setTimeout(function(){ neMediaBindAll(document.getElementById('noteEditableArea')); }, 350); } catch(_neM){}
 
   setTimeout(function(){ neUpdateHlCanvasBtn && neUpdateHlCanvasBtn(); }, 200);
 }
@@ -21468,7 +21468,7 @@ function sgkOpenFullReading(id){
   }
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesEditor'}, '');
-  try { if(typeof neMediaBindAll === 'function') setTimeout(function(){ neMediaBindAll(document.getElementById('noteEditorArea')); }, 350); } catch(_neM){}
+  try { if(typeof neMediaBindAll === 'function') setTimeout(function(){ neMediaBindAll(document.getElementById('noteEditableArea')); }, 350); } catch(_neM){}
 
   setTimeout(function(){ if(typeof neUpdateHlCanvasBtn === 'function') neUpdateHlCanvasBtn(); }, 200);
 }
@@ -24155,7 +24155,7 @@ function openAiAnswerInEditor(text, ctx) {
   document.body.style.overflow = 'hidden';
   showFloatBack && showFloatBack('‹');
   history.pushState({type:'notesEditor'}, '');
-  try { if(typeof neMediaBindAll === 'function') setTimeout(function(){ neMediaBindAll(document.getElementById('noteEditorArea')); }, 350); } catch(_neM){}
+  try { if(typeof neMediaBindAll === 'function') setTimeout(function(){ neMediaBindAll(document.getElementById('noteEditableArea')); }, 350); } catch(_neM){}
 
   setTimeout(function(){ neUpdateHlCanvasBtn && neUpdateHlCanvasBtn(); }, 200);
 }
@@ -24402,7 +24402,7 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   _neOv.classList.add('show');
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesEditor'}, '');
-  try { if(typeof neMediaBindAll === 'function') setTimeout(function(){ neMediaBindAll(document.getElementById('noteEditorArea')); }, 350); } catch(_neM){}
+  try { if(typeof neMediaBindAll === 'function') setTimeout(function(){ neMediaBindAll(document.getElementById('noteEditableArea')); }, 350); } catch(_neM){}
 
   showFloatBack('‹');
   setTimeout(function(){
@@ -25086,7 +25086,14 @@ function _neMediaBuildWrapperHTML(mediaId, kind, meta){
 
 async function neMediaInsertAtCaret(){
   if(!_neMediaState.file){ showToast('Pehle file choose karo', 'error'); return; }
-  neMediaUpdateTrim();
+  var area = document.getElementById('noteEditableArea');
+  if(!area){
+    showToast('Pehle Notes Editor open rakho, phir Insert dabao', 'error');
+    return;
+  }
+  try { if(typeof neSetEditMode === 'function') neSetEditMode(true); } catch(e){}
+  if(typeof neMediaApplyTextTimes === 'function') neMediaApplyTextTimes();
+  else neMediaUpdateTrim();
   neMediaUpdateSpeed();
   neMediaUpdateCrop();
   if(!_neMediaState.segments.length){
@@ -25100,33 +25107,42 @@ async function neMediaInsertAtCaret(){
     duration: _neMediaState.duration,
     speed: _neMediaState.speed,
     crop: _neMediaState.crop,
-    segments: _neMediaState.segments,
+    segments: _neMediaState.segments.slice(),
     start: _neMediaState.start,
     end: _neMediaState.end
   };
-  showToast('Media save ho rahi hai...', 'info');
+  var sizeKB = Math.round(_neMediaState.file.size/1024);
+  if(sizeKB > 700){
+    showToast('File '+sizeKB+'KB — IDB me save. Firebase free ~700KB/file', 'info');
+  } else {
+    showToast('Media save ('+sizeKB+'KB)...', 'info');
+  }
   var ok = await _saveMediaToIDB(mediaId, _neMediaState.file, meta);
   if(!ok){ showToast('IDB save fail', 'error'); return; }
   _saveMediaToFirebase(mediaId, _neMediaState.file, meta).catch(function(){});
 
-  var area = document.getElementById('noteEditorArea');
-  if(!area){ showToast('Editor nahi mila', 'error'); return; }
+  area = document.getElementById('noteEditableArea');
+  if(!area){
+    showToast('Notes Editor band ho gaya — editor open rakho', 'error');
+    return;
+  }
+  try { if(typeof neSetEditMode === 'function') neSetEditMode(true); } catch(e){}
   area.focus();
-  var html = _neMediaBuildWrapperHTML(mediaId, _neMediaState.kind, meta);
+  var html2 = _neMediaBuildWrapperHTML(mediaId, _neMediaState.kind, meta);
   try {
     if(document.queryCommandSupported && document.queryCommandSupported('insertHTML')){
-      document.execCommand('insertHTML', false, html);
+      document.execCommand('insertHTML', false, html2);
     } else {
-      area.insertAdjacentHTML('beforeend', html);
+      area.insertAdjacentHTML('beforeend', html2);
     }
   } catch(e){
-    area.insertAdjacentHTML('beforeend', html);
+    area.insertAdjacentHTML('beforeend', html2);
   }
   try { if(typeof neSaveSnapshot === 'function') neSaveSnapshot(); } catch(e){}
   if(typeof _editorState !== 'undefined') _editorState.modified = true;
   neMediaBindAll(area);
   neCloseMediaInsert();
-  showToast('Media insert ho gaya (ref only)', 'success');
+  showToast('Media note me insert — ab note Save karo', 'success');
 }
 
 function neMediaDeleteWrap(btn){
@@ -25200,7 +25216,7 @@ async function neMediaHydrateWrap(wrap){
 }
 
 function neMediaBindAll(root){
-  root = root || document.getElementById('noteEditorArea');
+  root = root || document.getElementById('noteEditableArea');
   if(!root) return;
   var wraps = root.querySelectorAll('.ne-media-wrap');
   wraps.forEach(function(w){
@@ -25242,7 +25258,7 @@ function neMediaEnableDrag(wrap){
 
 document.addEventListener('click', function(){
   setTimeout(function(){
-    var area = document.getElementById('noteEditorArea');
+    var area = document.getElementById('noteEditableArea');
     if(area && area.querySelector('.ne-media-wrap')) neMediaBindAll(area);
   }, 400);
 }, true);
