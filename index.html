@@ -24480,6 +24480,15 @@ function _forceCloseEditor() {
   _editorState.modified = false;
   // ⚡ Clear active edit tracking
   typeof _clearActiveEditTid === 'function' && _clearActiveEditTid();
+  // ✅ Deferred structure sync (was blocked while editor open)
+  try {
+    if(_pendingSilentReload){
+      _pendingSilentReload = false;
+      setTimeout(function(){
+        if(typeof _silentReloadFromFirebase === 'function') _silentReloadFromFirebase();
+      }, 400);
+    }
+  } catch(e){}
   // Facts page extra button hide karo
   var fpBtn = document.getElementById('fpAddFactFooterBtn');
   if(fpBtn) fpBtn.style.display = 'none';
@@ -34629,6 +34638,64 @@ let _knownMetaWriteId = '';   // Last seen meta writeId
 let _knownTopicWriteIds = {}; // {tid: writeId} — last seen per topic
 let _syncInProgress = false;  // Full-reload guard
 let _activeEditTid = null;    // Currently editing topic (preserve its local data)
+// ✅ Anti false-"dusri device" : recent local writeIds (echo window)
+var _recentMetaWriteIds = {};   // { writeId: timestamp }
+var _recentTopicWriteIds = {};  // { tid: { writeId: ts } }
+var _pendingSilentReload = false;
+function _rememberMetaWriteId(wid){
+  if(!wid) return;
+  _myWriteId = wid;
+  _recentMetaWriteIds[String(wid)] = Date.now();
+  // prune > 30s
+  var cut = Date.now() - 30000;
+  Object.keys(_recentMetaWriteIds).forEach(function(k){
+    if(_recentMetaWriteIds[k] < cut) delete _recentMetaWriteIds[k];
+  });
+}
+function _isRecentMetaWriteId(wid){
+  if(!wid) return false;
+  if(String(wid) === String(_myWriteId||'')) return true;
+  var ts = _recentMetaWriteIds[String(wid)];
+  return !!(ts && (Date.now() - ts) < 30000);
+}
+function _rememberTopicWriteId(tid, wid){
+  if(!tid || !wid) return;
+  var k = String(tid);
+  _myTopicWriteIds[k] = wid;
+  if(!_recentTopicWriteIds[k]) _recentTopicWriteIds[k] = {};
+  _recentTopicWriteIds[k][String(wid)] = Date.now();
+  var cut = Date.now() - 30000;
+  Object.keys(_recentTopicWriteIds[k]).forEach(function(w){
+    if(_recentTopicWriteIds[k][w] < cut) delete _recentTopicWriteIds[k][w];
+  });
+}
+function _isRecentTopicWriteId(tid, wid){
+  if(!tid || !wid) return false;
+  var k = String(tid);
+  if(String(wid) === String(_myTopicWriteIds[k]||'')) return true;
+  var bag = _recentTopicWriteIds[k];
+  if(!bag) return false;
+  var ts = bag[String(wid)];
+  return !!(ts && (Date.now() - ts) < 30000);
+}
+function _isNotesUiBusy(){
+  try {
+    var ov = document.getElementById('notesEditorOverlay');
+    if(ov && (ov.classList.contains('show') || ov.style.display === 'flex' || ov.style.display === 'block')) return true;
+  } catch(e){}
+  try {
+    if(typeof _activeEditTid !== 'undefined' && _activeEditTid) return true;
+  } catch(e){}
+  try {
+    var pdf = document.getElementById('pdfExtractorModal');
+    if(pdf && pdf.style.display && pdf.style.display !== 'none') return true;
+  } catch(e){}
+  try {
+    var mm = document.getElementById('_neMediaModal');
+    if(mm && mm.classList.contains('open')) return true;
+  } catch(e){}
+  return false;
+}
 
 // Firebase config localStorage se load karo
 // ✅ Hardcoded Firebase config — naye users ko manually setup nahi karna
@@ -43009,7 +43076,7 @@ async function saveTopicToFirebase(tid, subjId, secId){
     if(!t) return { ok: false, error: 'topic not found tid='+tid, code: 'NOT_FOUND' };
 
     var wid = _genWriteId();
-    _myTopicWriteIds[String(tid)] = wid;
+    _rememberTopicWriteId(tid, wid);
 
     // ── Deep copy topic aur images extract karo IDB mein ──
     var topicData = _cleanTopic(t);
@@ -43089,7 +43156,7 @@ async function saveTopicToFirebase(tid, subjId, secId){
     // Listener echo ignore ke liye known writeId sync
     try {
       _knownTopicWriteIds[String(tid)] = wid;
-      _myTopicWriteIds[String(tid)] = wid;
+      _rememberTopicWriteId(tid, wid);
     } catch(eW){}
     setSyncStatus('synced');
     // Show size info
@@ -43135,7 +43202,7 @@ async function saveMetaToFirebase(){
   try{
     var uid = _effectiveUID;
     var wid = _genWriteId();
-    _myWriteId = wid;
+    _rememberMetaWriteId(wid);
     _lastSaveTime = Date.now();
 
     // ✅ FIX: SAFETY GUARD — this function fires automatically 500ms after
@@ -43265,7 +43332,7 @@ async function saveSubjectShellFast(subjId){
     }
 
     var wid = _genWriteId();
-    _myWriteId = wid;
+    _rememberMetaWriteId(wid);
     _lastSaveTime = Date.now();
     batch.set(_db.collection('users').doc(uid), {
       activeExamId:      S.activeExamId||'',
@@ -43380,7 +43447,7 @@ async function saveToFirebase(){
 
     // Meta
     var wid = _genWriteId();
-    _myWriteId = wid;
+    _rememberMetaWriteId(wid);
     _lastSaveTime = Date.now();
     allOps.push({
       ref: _db.collection('users').doc(uid),
@@ -43412,7 +43479,7 @@ async function saveToFirebase(){
       (subj.sections||[]).forEach(function(sec){
         (sec.topics||[]).forEach(function(t){
           var twid = _genWriteId();
-          _myTopicWriteIds[String(t.id)] = twid;
+          _rememberTopicWriteId(t.id, twid);
           var td = _cleanTopic(t);
           td.writeId = twid;
           allOps.push({
@@ -43426,7 +43493,7 @@ async function saveToFirebase(){
         function _saveSubSecTopics(ss){
           (ss.topics||[]).forEach(function(t){
             var twid = _genWriteId();
-            _myTopicWriteIds[String(t.id)] = twid;
+            _rememberTopicWriteId(t.id, twid);
             var td = _cleanTopic(t);
             td.writeId = twid;
             allOps.push({
@@ -43443,7 +43510,7 @@ async function saveToFirebase(){
         (sss.sections||[]).forEach(function(sec){
           (sec.topics||[]).forEach(function(t){
             var twid = _genWriteId();
-            _myTopicWriteIds[String(t.id)] = twid;
+            _rememberTopicWriteId(t.id, twid);
             var td = _cleanTopic(t);
             td.writeId = twid;
             allOps.push({
@@ -43456,7 +43523,7 @@ async function saveToFirebase(){
           function _saveSSSecTopics(ss){
             (ss.topics||[]).forEach(function(t){
               var twid = _genWriteId();
-              _myTopicWriteIds[String(t.id)] = twid;
+              _rememberTopicWriteId(t.id, twid);
               var td = _cleanTopic(t);
               td.writeId = twid;
               allOps.push({
@@ -44075,7 +44142,11 @@ function _attachRealtimeListener(){
       }
 
       if(!incomingWid || incomingWid === _knownMetaWriteId) return;
-      if(incomingWid === _myWriteId){ _knownMetaWriteId = incomingWid; return; }
+      // ✅ Own echo (single id OR recent window) — never treat as dusri device
+      if(_isRecentMetaWriteId(incomingWid) || incomingWid === _myWriteId){
+        _knownMetaWriteId = incomingWid;
+        return;
+      }
 
       _knownMetaWriteId = incomingWid;
 
@@ -44138,8 +44209,8 @@ function _attachTopicListeners(){
 
         if(!incomingWid || incomingWid === _knownTopicWriteIds[tid]) return;
 
-        // Hamari apni echo — ignore karo
-        if(incomingWid === (_myTopicWriteIds[tid] || '')) {
+        // Hamari apni echo — ignore karo (recent writeId window)
+        if(_isRecentTopicWriteId(tid, incomingWid) || incomingWid === (_myTopicWriteIds[tid] || '')) {
           _knownTopicWriteIds[tid] = incomingWid;
           return;
         }
@@ -44175,7 +44246,9 @@ function _attachSingleTopicListener(tid){
       var incomingWid = data.writeId || '';
       if(_firstSnap){ _firstSnap = false; _knownTopicWriteIds[String(tid)] = incomingWid; return; }
       if(!incomingWid || incomingWid === _knownTopicWriteIds[String(tid)]) return;
-      if(incomingWid === (_myTopicWriteIds[String(tid)] || '')){ _knownTopicWriteIds[String(tid)] = incomingWid; return; }
+      if(_isRecentTopicWriteId(String(tid), incomingWid) || incomingWid === (_myTopicWriteIds[String(tid)] || '')){
+        _knownTopicWriteIds[String(tid)] = incomingWid; return;
+      }
       _knownTopicWriteIds[String(tid)] = incomingWid;
       _applyTopicUpdate(String(tid), data.topic);
     },
@@ -44463,9 +44536,11 @@ function _applyTopicUpdate(tid, newTopicData){
   updateSavedBadge && updateSavedBadge();
 
   // Also refresh topic view modal if it is open for the updated topic
+  // ✅ Notes editor / file modal open ho to viewTopic mat call karo (auto-back fix)
   try{
+    var _busyUi = (typeof _isNotesUiBusy === 'function') && _isNotesUiBusy();
     var _tvModal = document.getElementById('topicViewModal');
-    if(_tvModal && _tvModal.classList.contains('show') && !isActiveEdit){
+    if(!_busyUi && _tvModal && _tvModal.classList.contains('show') && !isActiveEdit){
       var _nes = (typeof _editorState !== 'undefined') ? _editorState : null;
       if(_nes && String(_nes.tid) === String(tid) && typeof viewTopic === 'function'){
         viewTopic(_nes.sid, _nes.secid, _nes.tid);
@@ -44474,8 +44549,8 @@ function _applyTopicUpdate(tid, newTopicData){
   }catch(e2){}
 
   setSyncStatus('synced');
-  if(isActiveEdit){
-    // Receiving changes FROM another device while we are also editing — silent
+  if(isActiveEdit || ((typeof _isNotesUiBusy === 'function') && _isNotesUiBusy())){
+    // Editing / file-select in progress — silent (no toast, no navigation)
   } else {
     showToast && showToast('⚡ Live update!', 'info');
   }
@@ -44486,6 +44561,9 @@ function _applyTopicUpdate(tid, newTopicData){
 // ════════════════════���═════════════════════════════════════════════════
 function _applyMetaUpdate(meta){
   if(_syncInProgress) return;
+
+  // ✅ User notes/file add kar raha ho to UI mat hilao / back mat karo
+  var busy = (typeof _isNotesUiBusy === 'function') && _isNotesUiBusy();
 
   S.exams             = meta.exams             || S.exams || [];
   S.activeExamId      = meta.activeExamId       || S.activeExamId || '';
@@ -44499,25 +44577,38 @@ function _applyMetaUpdate(meta){
   S.hlQuizProgress    = meta.hlQuizProgress     || S.hlQuizProgress || {};
 
   // Agar naye subjects hain (dusri device pe add hua) — full reload
+  // BUT: editor/modal open ho to DEFER — warna file select / new note flow toot jata hai
   var remoteIds = (meta.subjectIds||[]).map(String).sort().join(',');
   var localIds  = (S.subjects||[]).map(function(s){ return String(s.id); }).sort().join(',');
   if(remoteIds !== localIds){
+    if(busy){
+      _pendingSilentReload = true;
+      console.info('[meta] structure change deferred — UI busy');
+      return;
+    }
     _silentReloadFromFirebase();
     return;
   }
 
-  try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+  try{
+    if(typeof _writeEpp5ToLocalStorage === 'function') _writeEpp5ToLocalStorage();
+    else localStorage.setItem('epp5', JSON.stringify(S));
+  }catch(e){}
 
-  renderExamSwitcher && renderExamSwitcher();
-  renderExamsList && renderExamsList();
-  updateQuizSelects && updateQuizSelects();
-  renderStats && renderStats();
-  updateModePill && updateModePill();
-  updateHistBadge && updateHistBadge();
-  updateSavedBadge && updateSavedBadge();
-  updateVaultBadge && updateVaultBadge();
-
-  showToast && showToast('🔄 Dusri device se update!', 'info');
+  // Busy hone par dropdowns/render mat chhedo (auto-back feel)
+  if(!busy){
+    renderExamSwitcher && renderExamSwitcher();
+    renderExamsList && renderExamsList();
+    updateQuizSelects && updateQuizSelects();
+    renderStats && renderStats();
+    updateModePill && updateModePill();
+    updateHistBadge && updateHistBadge();
+    updateSavedBadge && updateSavedBadge();
+    updateVaultBadge && updateVaultBadge();
+    showToast && showToast('🔄 Dusri device se update!', 'info');
+  } else {
+    console.info('[meta] applied silently (UI busy — no toast/rerender)');
+  }
 }
 
 // ── Full silent reload — jab structure change ho (new subject/section/topic) ──
