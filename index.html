@@ -60,6 +60,50 @@
 
 
 
+
+/* ===== Notes Editor: Audio / Video embed ===== */
+.ne-media-wrap{
+  display:block;position:relative;margin:12px 0;padding:10px;
+  border:1.5px solid rgba(21,101,192,0.28);border-radius:14px;
+  background:linear-gradient(135deg,rgba(21,101,192,0.06),rgba(106,27,154,0.05));
+  max-width:100%;box-sizing:border-box;
+  user-select:none;-webkit-user-select:none;
+}
+.ne-media-wrap.ne-media-selected{
+  outline:2px solid #1565c0;box-shadow:0 0 0 4px rgba(21,101,192,0.18);
+}
+.ne-media-wrap video,.ne-media-wrap audio{width:100%;max-height:360px;border-radius:10px;display:block;background:#000;}
+.ne-media-wrap audio{max-height:54px;background:transparent;}
+.ne-media-bar{
+  display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;
+  font-size:0.72rem;color:var(--text2);font-weight:700;
+}
+.ne-media-bar button{
+  border:1px solid var(--border);background:var(--surface);border-radius:8px;
+  padding:4px 8px;cursor:pointer;font-size:0.7rem;font-weight:700;
+}
+.ne-media-drag{
+  position:absolute;top:6px;right:6px;width:28px;height:28px;border-radius:8px;
+  background:rgba(0,0,0,0.45);color:#fff;display:flex;align-items:center;justify-content:center;
+  cursor:grab;font-size:0.85rem;z-index:2;
+}
+#_neMediaModal{display:none;position:fixed;inset:0;z-index:100050;background:rgba(0,0,0,0.55);
+  align-items:flex-end;justify-content:center;}
+#_neMediaModal.open{display:flex;}
+#_neMediaSheet{width:100%;max-width:560px;max-height:92vh;overflow:auto;background:var(--surface,#fff);
+  border-radius:18px 18px 0 0;padding:14px 14px 28px;box-sizing:border-box;
+  font-family:'Noto Sans Devanagari',system-ui,sans-serif;color:var(--text,#111);}
+#_neMediaSheet h3{margin:0 0 10px;font-size:1rem;}
+#_neMediaPreviewBox{background:#0d1117;border-radius:12px;min-height:120px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:10px;}
+#_neMediaPreviewBox video,#_neMediaPreviewBox audio{width:100%;max-height:280px;}
+.ne-media-ctrl-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0;align-items:center;}
+.ne-media-ctrl-row label{font-size:0.72rem;font-weight:700;color:var(--text2);}
+.ne-media-ctrl-row input[type=range]{flex:1;min-width:120px;}
+.ne-media-seg{
+  display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:6px 8px;
+  background:var(--surface2,#f4f9fe);border-radius:10px;margin:4px 0;font-size:0.72rem;
+}
+
 /* ===== FORGOT / CHANGE PASSWORD ===== */
 .fpw-link{display:inline-block;font-size:0.74rem;color:#64b5f6;cursor:pointer;font-weight:600;margin-bottom:10px;text-decoration:none;letter-spacing:0.1px;font-family:'Inter',system-ui,sans-serif;}
 .fpw-link:hover{color:#1976d2;text-decoration:underline;}
@@ -9281,6 +9325,13 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
           font-size:0.5rem;font-weight:900;line-height:14px;text-align:center;"></span>
       </button>
 
+      <!-- Audio / Video insert -->
+      <button type="button" onclick="neOpenMediaInsert()" title="Audio / Video insert (trim, speed, preview)"
+        style="width:36px;height:36px;border-radius:10px;border:1.5px solid rgba(106,27,154,0.4);
+        background:linear-gradient(135deg,rgba(106,27,154,0.1),rgba(21,101,192,0.1));
+        cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+        -webkit-tap-highlight-color:transparent;font-size:1rem;box-shadow:0 2px 8px rgba(0,0,0,0.07);">🎬</button>
+
       <!-- Insert Table -->
       <button onclick="neInsertTable()" title="Table insert karo"
         style="width:36px;height:36px;border-radius:10px;border:1.5px solid rgba(46,125,50,0.35);background:rgba(46,125,50,0.09);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;font-size:0.9rem;font-weight:900;color:#2e7d32;box-shadow:0 2px 8px rgba(0,0,0,0.06);">&#x22CF;</button>
@@ -11108,6 +11159,19 @@ function load(){
   try{
     const d=JSON.parse(localStorage.getItem('epp5')||'{}');
     S.apiKey=d.apiKey||''; S.serperKey=d.serperKey||''; S.subjects=d.subjects||[]; S.exams=d.exams||[];
+    // ✅ ANTI-TRUNCATE: slim localStorage load ke baad IDB se rich/content restore (async)
+    try {
+      setTimeout(function(){
+        if(typeof _rehydrateNotesFromBackups === 'function'){
+          _rehydrateNotesFromBackups().then(function(r){
+            if(r && r.restored){
+              console.info('[load] rehydrated', r.restored, 'notes from IDB after epp5 load');
+              try { if(typeof render === 'function') render(); } catch(e){}
+            }
+          }).catch(function(){});
+        }
+      }, 300);
+    } catch(e){}
     S.activeExamId=d.activeExamId||''; S.quizHistory=d.quizHistory||[];
     S.model=d.model||'meta-llama/llama-4-scout-17b-16e-instruct';
     S.stats=d.stats||{total:0,correct:0,wrong:0,topicStats:{}};
@@ -20374,6 +20438,8 @@ function eftOpenFullReading(id){
   ov.classList.add('show');
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesEditor'}, '');
+  try { if(typeof neMediaBindAll === 'function') setTimeout(function(){ neMediaBindAll(document.getElementById('noteEditorArea')); }, 350); } catch(_neM){}
+
   setTimeout(function(){ neUpdateHlCanvasBtn && neUpdateHlCanvasBtn(); }, 200);
 }
 
@@ -21415,6 +21481,8 @@ function sgkOpenFullReading(id){
   }
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesEditor'}, '');
+  try { if(typeof neMediaBindAll === 'function') setTimeout(function(){ neMediaBindAll(document.getElementById('noteEditorArea')); }, 350); } catch(_neM){}
+
   setTimeout(function(){ if(typeof neUpdateHlCanvasBtn === 'function') neUpdateHlCanvasBtn(); }, 200);
 }
 
@@ -22846,20 +22914,31 @@ function renderStats(){
 }
 
 // ==================== BACKUP & RESTORE ====================
-function backupData() {
+async function backupData() {
   if(!hasPermission('dataBackup')){ _showLockedToast(); return; }
+  try { showToast('Backup taiyar ho raha hai (IDB rehydrate)...', 'info'); } catch(e){}
+  // ✅ Full notes IDB se memory me lao — slim localStorage backup me na jaye
+  try {
+    if(typeof _rehydrateNotesFromBackups === 'function'){
+      var _rh = await _rehydrateNotesFromBackups();
+      if(_rh && _rh.restored) console.info('[backup] rehydrated', _rh.restored, 'notes before export');
+    }
+  } catch(e){ console.warn('[backup] rehydrate fail', e); }
   const backup = {
     version: '5.0',
     date: new Date().toISOString(),
     data: S
   };
-  
   const blob = new Blob([JSON.stringify(backup, null, 2)], {type: 'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `exam-prep-backup-${new Date().toISOString().slice(0,10)}.json`;
   a.click();
-  showToast('Backup download ho raha hai! 📦', 'success');
+  try {
+    var _rs = (typeof _totalNotesRichChars === 'function') ? _totalNotesRichChars(S.subjects) : null;
+    var extra = _rs ? (' | richChars=' + _rs.chars) : '';
+    showToast('Backup download ho raha hai! 📦' + extra, 'success');
+  } catch(e){ showToast('Backup download ho raha hai! 📦', 'success'); }
 }
 
 function restoreData(event) {
@@ -24100,6 +24179,8 @@ function openAiAnswerInEditor(text, ctx) {
   document.body.style.overflow = 'hidden';
   showFloatBack && showFloatBack('‹');
   history.pushState({type:'notesEditor'}, '');
+  try { if(typeof neMediaBindAll === 'function') setTimeout(function(){ neMediaBindAll(document.getElementById('noteEditorArea')); }, 350); } catch(_neM){}
+
   setTimeout(function(){ neUpdateHlCanvasBtn && neUpdateHlCanvasBtn(); }, 200);
 }
 
@@ -24345,6 +24426,8 @@ function openNotesEditor(sid, secid, tid, noteIdx) {
   _neOv.classList.add('show');
   document.body.style.overflow = 'hidden';
   history.pushState({type:'notesEditor'}, '');
+  try { if(typeof neMediaBindAll === 'function') setTimeout(function(){ neMediaBindAll(document.getElementById('noteEditorArea')); }, 350); } catch(_neM){}
+
   showFloatBack('‹');
   setTimeout(function(){
     showQmapFab && showQmapFab();
@@ -24669,6 +24752,434 @@ function _pickNewerNoteBackup(a, b){
   if(!b) return a;
   return ((a.editorSavedAt||0) >= (b.editorSavedAt||0)) ? a : b;
 }
+
+
+/* ========== Notes Editor Audio/Video media (ref-based) ========== */
+var _neMediaState = {
+  file: null, url: null, kind: null, duration: 0,
+  start: 0, end: 0, speed: 1, crop: 'none',
+  segments: [], el: null
+};
+
+function _openMediaDB(){
+  return new Promise(function(resolve, reject){
+    try {
+      var req = indexedDB.open('epp_media_v1', 1);
+      req.onupgradeneeded = function(e){
+        var db = e.target.result;
+        if(!db.objectStoreNames.contains('media')){
+          db.createObjectStore('media', { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = function(){ resolve(req.result); };
+      req.onerror = function(){ reject(req.error); };
+    } catch(e){ reject(e); }
+  });
+}
+function _saveMediaToIDB(id, blob, meta){
+  return _openMediaDB().then(function(db){
+    return new Promise(function(resolve){
+      try {
+        var tx = db.transaction('media','readwrite');
+        tx.objectStore('media').put({
+          id: id, blob: blob, mime: (blob && blob.type) || (meta && meta.mime) || '',
+          meta: meta || {}, ts: Date.now()
+        });
+        tx.oncomplete = function(){ resolve(true); };
+        tx.onerror = function(){ resolve(false); };
+      } catch(e){ resolve(false); }
+    });
+  }).catch(function(){ return false; });
+}
+function _getMediaFromIDB(id){
+  return _openMediaDB().then(function(db){
+    return new Promise(function(resolve){
+      try {
+        var tx = db.transaction('media','readonly');
+        var req = tx.objectStore('media').get(id);
+        req.onsuccess = function(){ resolve(req.result || null); };
+        req.onerror = function(){ resolve(null); };
+      } catch(e){ resolve(null); }
+    });
+  }).catch(function(){ return null; });
+}
+async function _saveMediaToFirebase(id, blob, meta){
+  try {
+    if(!_db || !_currentUser) return false;
+    var uid = _effectiveUID;
+    if(blob.size > 700 * 1024){
+      console.warn('[MEDIA-SYNC] file >700KB — IDB only');
+      await _db.collection('users').doc(uid).collection('media').doc(id).set({
+        mime: blob.type || (meta && meta.mime) || '',
+        size: blob.size,
+        meta: meta || {},
+        savedAt: Date.now(),
+        idbOnly: true
+      }, { merge: true });
+      return true;
+    }
+    var buf = await blob.arrayBuffer();
+    var bytes = new Uint8Array(buf);
+    var bin = '';
+    for(var i=0;i<bytes.length;i++) bin += String.fromCharCode(bytes[i]);
+    var b64 = btoa(bin);
+    var dataUrl = 'data:' + (blob.type||'application/octet-stream') + ';base64,' + b64;
+    await _db.collection('users').doc(uid).collection('media').doc(id).set({
+      data: dataUrl,
+      mime: blob.type || '',
+      size: blob.size,
+      meta: meta || {},
+      savedAt: Date.now()
+    });
+    console.info('[MEDIA-SYNC] ok', id, Math.round(blob.size/1024)+'KB');
+    return true;
+  } catch(e){
+    console.error('[MEDIA-SYNC] fail', e);
+    return false;
+  }
+}
+async function _getMediaFromFirebase(id){
+  try {
+    if(!_db || !_currentUser) return null;
+    var doc = await _db.collection('users').doc(_effectiveUID).collection('media').doc(id).get();
+    if(!doc.exists) return null;
+    var d = doc.data() || {};
+    if(d.data && String(d.data).indexOf('data:')===0){
+      var res = await fetch(d.data);
+      var blob = await res.blob();
+      return { id: id, blob: blob, mime: d.mime, meta: d.meta };
+    }
+    return { id: id, blob: null, mime: d.mime, meta: d.meta, idbOnly: !!d.idbOnly };
+  } catch(e){ return null; }
+}
+
+function neOpenMediaInsert(){
+  var m = document.getElementById('_neMediaModal');
+  if(!m) return;
+  m.classList.add('open');
+  _neMediaState = { file:null, url:null, kind:null, duration:0, start:0, end:0, speed:1, crop:'none', segments:[], el:null };
+  var box = document.getElementById('_neMediaPreviewBox');
+  if(box) box.innerHTML = '<span style="color:#8b949e;font-size:0.8rem;">File choose karo</span>';
+  var list = document.getElementById('_neMediaSegList');
+  if(list) list.innerHTML = '';
+  var fi = document.getElementById('_neMediaFile');
+  if(fi) fi.value = '';
+}
+function neCloseMediaInsert(){
+  var m = document.getElementById('_neMediaModal');
+  if(m) m.classList.remove('open');
+  try { if(_neMediaState.url) URL.revokeObjectURL(_neMediaState.url); } catch(e){}
+  _neMediaState.url = null;
+}
+
+function neMediaOnFile(input){
+  var f = input.files && input.files[0];
+  if(!f) return;
+  try { if(_neMediaState.url) URL.revokeObjectURL(_neMediaState.url); } catch(e){}
+  var url = URL.createObjectURL(f);
+  var kind = f.type.indexOf('video') === 0 ? 'video' : 'audio';
+  _neMediaState.file = f;
+  _neMediaState.url = url;
+  _neMediaState.kind = kind;
+  _neMediaState.speed = 1;
+  _neMediaState.crop = 'none';
+  _neMediaState.segments = [];
+  var box = document.getElementById('_neMediaPreviewBox');
+  var tag = kind === 'video' ? 'video' : 'audio';
+  box.innerHTML = '<'+tag+' id="_neMediaPreviewEl" controls playsinline src="'+url+'" style="width:100%;max-height:280px;"></'+tag+'>';
+  var cropRow = document.getElementById('_neMediaCropRow');
+  if(cropRow) cropRow.style.display = kind === 'video' ? 'flex' : 'none';
+  var el = document.getElementById('_neMediaPreviewEl');
+  _neMediaState.el = el;
+  el.onloadedmetadata = function(){
+    var dur = el.duration || 0;
+    if(!isFinite(dur) || dur <= 0) dur = 0;
+    _neMediaState.duration = dur;
+    _neMediaState.start = 0;
+    _neMediaState.end = dur;
+    var s = document.getElementById('_neMediaStart');
+    var e = document.getElementById('_neMediaEnd');
+    if(s){ s.max = 1000; s.value = 0; }
+    if(e){ e.max = 1000; e.value = 1000; }
+    neMediaUpdateTrim();
+    _neMediaState.segments = [{ start: 0, end: dur }];
+    neMediaRenderSegments();
+  };
+}
+
+function neMediaUpdateTrim(){
+  var dur = _neMediaState.duration || 0;
+  var sEl = document.getElementById('_neMediaStart');
+  var eEl = document.getElementById('_neMediaEnd');
+  var s = Number(sEl && sEl.value) || 0;
+  var e = Number(eEl && eEl.value) || 0;
+  var start = dur * (s/1000);
+  var end = dur * (e/1000);
+  if(end < start){ end = start; if(eEl) eEl.value = s; }
+  _neMediaState.start = start;
+  _neMediaState.end = end;
+  var sl = document.getElementById('_neMediaStartLbl');
+  var el = document.getElementById('_neMediaEndLbl');
+  if(sl) sl.textContent = start.toFixed(1) + 's';
+  if(el) el.textContent = end.toFixed(1) + 's';
+}
+function neMediaUpdateSpeed(){
+  var v = Number(document.getElementById('_neMediaSpeed').value) || 100;
+  _neMediaState.speed = v / 100;
+  var lbl = document.getElementById('_neMediaSpeedLbl');
+  if(lbl) lbl.textContent = _neMediaState.speed.toFixed(2) + 'x';
+  if(_neMediaState.el) _neMediaState.el.playbackRate = _neMediaState.speed;
+}
+function neMediaUpdateCrop(){
+  var sel = document.getElementById('_neMediaCrop');
+  _neMediaState.crop = (sel && sel.value) || 'none';
+  var el = _neMediaState.el;
+  if(!el || _neMediaState.kind !== 'video') return;
+  el.style.objectFit = _neMediaState.crop === 'none' ? 'contain' : 'cover';
+  if(_neMediaState.crop === 'top') el.style.objectPosition = 'center top';
+  else if(_neMediaState.crop === 'bottom') el.style.objectPosition = 'center bottom';
+  else el.style.objectPosition = 'center center';
+}
+
+function neMediaRenderSegments(){
+  var list = document.getElementById('_neMediaSegList');
+  if(!list) return;
+  var html = '';
+  (_neMediaState.segments || []).forEach(function(seg, i){
+    html += '<div class="ne-media-seg" data-i="'+i+'">'
+      + '<span>#'+(i+1)+'</span>'
+      + '<span>'+Number(seg.start).toFixed(1)+'s → '+Number(seg.end).toFixed(1)+'s</span>'
+      + '<button type="button" onclick="neMediaUseRangeAsSeg('+i+')">Set = current trim</button>'
+      + '<button type="button" onclick="neMediaRemoveSeg('+i+')">X</button>'
+      + '</div>';
+  });
+  list.innerHTML = html || '<div style="font-size:0.72rem;color:#888;">Segment add dabao</div>';
+}
+function neMediaAddSegment(){
+  neMediaUpdateTrim();
+  _neMediaState.segments.push({ start: _neMediaState.start, end: _neMediaState.end });
+  neMediaRenderSegments();
+}
+function neMediaUseRangeAsSeg(i){
+  neMediaUpdateTrim();
+  if(!_neMediaState.segments[i]) return;
+  _neMediaState.segments[i] = { start: _neMediaState.start, end: _neMediaState.end };
+  neMediaRenderSegments();
+}
+function neMediaRemoveSeg(i){
+  _neMediaState.segments.splice(i, 1);
+  neMediaRenderSegments();
+}
+
+function neMediaPreviewPlay(){
+  var el = _neMediaState.el;
+  if(!el) return;
+  neMediaUpdateTrim();
+  neMediaUpdateSpeed();
+  var segs = (_neMediaState.segments && _neMediaState.segments.length)
+    ? _neMediaState.segments.slice()
+    : [{ start: _neMediaState.start, end: _neMediaState.end }];
+  var idx = 0;
+  function playSeg(){
+    if(idx >= segs.length){ el.pause(); return; }
+    var g = segs[idx++];
+    el.playbackRate = _neMediaState.speed || 1;
+    el.currentTime = g.start || 0;
+    var onTime = function(){
+      if(el.currentTime >= (g.end || el.duration)){
+        el.removeEventListener('timeupdate', onTime);
+        playSeg();
+      }
+    };
+    el.addEventListener('timeupdate', onTime);
+    el.play().catch(function(){});
+  }
+  playSeg();
+}
+
+function _neMediaBuildWrapperHTML(mediaId, kind, meta){
+  var segs = meta.segments || [{ start: meta.start||0, end: meta.end||0 }];
+  var segAttr = encodeURIComponent(JSON.stringify(segs));
+  var crop = meta.crop || 'none';
+  var speed = meta.speed || 1;
+  var label = (kind === 'video' ? 'Video' : 'Audio') + ' · ' + segs.length + ' seg · ' + speed + 'x';
+  var vstyle = (kind==='video' && crop!=='none')
+    ? 'object-fit:cover;object-position:'+(crop==='top'?'center top':crop==='bottom'?'center bottom':'center')+';'
+    : '';
+  return ''
+    + '<div class="ne-media-wrap" contenteditable="false" draggable="true" data-mediaref="'+mediaId+'" data-kind="'+kind+'" data-speed="'+speed+'" data-crop="'+crop+'" data-segments="'+segAttr+'">'
+    +   '<div class="ne-media-drag" title="Drag to move">::</div>'
+    +   '<'+kind+' controls playsinline preload="metadata" data-mediaref="'+mediaId+'" style="'+vstyle+'"></'+kind+'>'
+    +   '<div class="ne-media-bar"><span>'+label+'</span>'
+    +     '<button type="button" onclick="neMediaRewire(this)">Reload</button>'
+    +     '<button type="button" onclick="neMediaDeleteWrap(this)">Delete</button>'
+    +   '</div>'
+    + '</div><p><br></p>';
+}
+
+async function neMediaInsertAtCaret(){
+  if(!_neMediaState.file){ showToast('Pehle file choose karo', 'error'); return; }
+  neMediaUpdateTrim();
+  neMediaUpdateSpeed();
+  neMediaUpdateCrop();
+  if(!_neMediaState.segments.length){
+    _neMediaState.segments = [{ start: _neMediaState.start, end: _neMediaState.end }];
+  }
+  var mediaId = 'med_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  var meta = {
+    kind: _neMediaState.kind,
+    name: _neMediaState.file.name,
+    mime: _neMediaState.file.type,
+    duration: _neMediaState.duration,
+    speed: _neMediaState.speed,
+    crop: _neMediaState.crop,
+    segments: _neMediaState.segments,
+    start: _neMediaState.start,
+    end: _neMediaState.end
+  };
+  showToast('Media save ho rahi hai...', 'info');
+  var ok = await _saveMediaToIDB(mediaId, _neMediaState.file, meta);
+  if(!ok){ showToast('IDB save fail', 'error'); return; }
+  _saveMediaToFirebase(mediaId, _neMediaState.file, meta).catch(function(){});
+
+  var area = document.getElementById('noteEditorArea');
+  if(!area){ showToast('Editor nahi mila', 'error'); return; }
+  area.focus();
+  var html = _neMediaBuildWrapperHTML(mediaId, _neMediaState.kind, meta);
+  try {
+    if(document.queryCommandSupported && document.queryCommandSupported('insertHTML')){
+      document.execCommand('insertHTML', false, html);
+    } else {
+      area.insertAdjacentHTML('beforeend', html);
+    }
+  } catch(e){
+    area.insertAdjacentHTML('beforeend', html);
+  }
+  try { if(typeof neSaveSnapshot === 'function') neSaveSnapshot(); } catch(e){}
+  if(typeof _editorState !== 'undefined') _editorState.modified = true;
+  neMediaBindAll(area);
+  neCloseMediaInsert();
+  showToast('Media insert ho gaya (ref only)', 'success');
+}
+
+function neMediaDeleteWrap(btn){
+  var wrap = btn && btn.closest && btn.closest('.ne-media-wrap');
+  if(wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+  if(typeof _editorState !== 'undefined') _editorState.modified = true;
+}
+function neMediaRewire(btn){
+  var wrap = btn && btn.closest && btn.closest('.ne-media-wrap');
+  if(wrap) neMediaHydrateWrap(wrap);
+}
+
+async function neMediaHydrateWrap(wrap){
+  if(!wrap) return;
+  var id = wrap.getAttribute('data-mediaref');
+  if(!id) return;
+  var mediaEl = wrap.querySelector('audio,video');
+  if(!mediaEl) return;
+  var rec = await _getMediaFromIDB(id);
+  if(!rec || !rec.blob){
+    var fb = await _getMediaFromFirebase(id);
+    if(fb && fb.blob){
+      await _saveMediaToIDB(id, fb.blob, fb.meta || {});
+      rec = fb;
+    }
+  }
+  if(!rec || !rec.blob){
+    mediaEl.removeAttribute('src');
+    wrap.setAttribute('data-missing', '1');
+    return;
+  }
+  try { if(mediaEl.src && mediaEl.src.indexOf('blob:')===0) URL.revokeObjectURL(mediaEl.src); } catch(e){}
+  var url = URL.createObjectURL(rec.blob);
+  mediaEl.src = url;
+  var speed = parseFloat(wrap.getAttribute('data-speed')||'1') || 1;
+  mediaEl.playbackRate = speed;
+  var crop = wrap.getAttribute('data-crop') || 'none';
+  if(mediaEl.tagName === 'VIDEO' && crop !== 'none'){
+    mediaEl.style.objectFit = 'cover';
+    mediaEl.style.objectPosition = crop === 'top' ? 'center top' : crop === 'bottom' ? 'center bottom' : 'center center';
+  }
+  var segs = [];
+  try { segs = JSON.parse(decodeURIComponent(wrap.getAttribute('data-segments')||'')||'[]'); } catch(e){}
+  if(segs && segs.length){
+    mediaEl.addEventListener('play', function(){
+      if(segs[0] && segs[0].start != null) {
+        try { if(Math.abs(mediaEl.currentTime - segs[0].start) > 0.35) mediaEl.currentTime = segs[0].start; } catch(e){}
+      }
+    });
+    mediaEl.addEventListener('timeupdate', function(){
+      var t = mediaEl.currentTime;
+      var hit = null;
+      for(var i=0;i<segs.length;i++){
+        var g = segs[i];
+        if(t >= (g.start||0) && t <= (g.end||mediaEl.duration)){ hit = g; break; }
+      }
+      if(!hit && segs.length){
+        var next = null;
+        for(var j=0;j<segs.length;j++){
+          if((segs[j].start||0) > t){ next = segs[j]; break; }
+        }
+        if(next) mediaEl.currentTime = next.start || 0;
+        else mediaEl.pause();
+      } else if(hit && t >= (hit.end||0) - 0.05){
+        var k = segs.indexOf(hit);
+        if(k >= 0 && k < segs.length - 1) mediaEl.currentTime = segs[k+1].start || 0;
+        else mediaEl.pause();
+      }
+    });
+  }
+}
+
+function neMediaBindAll(root){
+  root = root || document.getElementById('noteEditorArea');
+  if(!root) return;
+  var wraps = root.querySelectorAll('.ne-media-wrap');
+  wraps.forEach(function(w){
+    neMediaHydrateWrap(w);
+    neMediaEnableDrag(w);
+  });
+}
+
+function neMediaEnableDrag(wrap){
+  if(!wrap || wrap._neMediaDragBound) return;
+  wrap._neMediaDragBound = true;
+  var handle = wrap.querySelector('.ne-media-drag') || wrap;
+  handle.addEventListener('dragstart', function(e){
+    try {
+      e.dataTransfer.setData('text/plain', 'ne-media-move');
+      wrap.classList.add('ne-media-selected');
+      window._neDraggingMedia = wrap;
+    } catch(err){}
+  });
+  handle.addEventListener('touchstart', function(e){
+    if(!e.touches || e.touches.length !== 1) return;
+    wrap.classList.add('ne-media-selected');
+    window._neDraggingMedia = wrap;
+    wrap._dragY = e.touches[0].clientY;
+  }, { passive: true });
+  handle.addEventListener('touchmove', function(e){
+    if(window._neDraggingMedia !== wrap || !e.touches || !e.touches[0]) return;
+    var dy = e.touches[0].clientY - (wrap._dragY || e.touches[0].clientY);
+    wrap._dragY = e.touches[0].clientY;
+    var mt = parseFloat(wrap.style.marginTop)||0;
+    wrap.style.marginTop = Math.max(0, mt + dy) + 'px';
+  }, { passive: true });
+  handle.addEventListener('touchend', function(){
+    wrap.classList.remove('ne-media-selected');
+    window._neDraggingMedia = null;
+    if(typeof _editorState !== 'undefined') _editorState.modified = true;
+  });
+}
+
+document.addEventListener('click', function(){
+  setTimeout(function(){
+    var area = document.getElementById('noteEditorArea');
+    if(area && area.querySelector('.ne-media-wrap')) neMediaBindAll(area);
+  }, 400);
+}, true);
+
 
 function _doSaveNoteData() {
   // Extra Facts Topic (global library) — standalone content, not tied to any
@@ -34049,8 +34560,12 @@ async function _rehydrateNotesFromBackups(){
       for(var ni=0; ni<(t.notes||[]).length; ni++){
         var n = t.notes[ni];
         if(!n) continue;
-        var cur = ((n.editorRichHTML || n.richHTML) || '') + '';
-        if(cur.length > 100) continue;
+        var curRich = ((n.editorRichHTML || n.richHTML) || '') + '';
+        var curContent = (typeof n.content === 'string') ? n.content : '';
+        // Need restore if: rich missing/short OR content looks hard-truncated (legacy 2000)
+        var needsRich = curRich.length < 100;
+        var needsContent = (curContent.length === 2000) || (curContent.length > 0 && curContent.length < 80);
+        if(!needsRich && !needsContent && curRich.length > 100) continue;
         var bak = null;
         try {
           if(typeof _loadNoteLocalBackup === 'function') bak = _loadNoteLocalBackup(tid, n, ni);
@@ -34061,21 +34576,29 @@ async function _rehydrateNotesFromBackups(){
             if(idb){
               var ib = (idb.editorRichHTML || idb.richHTML || '') + '';
               var bb = bak ? ((bak.editorRichHTML || bak.richHTML) || '') + '' : '';
-              if(ib.length >= bb.length) bak = idb;
+              var ic = (idb.content || '') + '';
+              var bc = bak ? ((bak.content || '') + '') : '';
+              // Prefer backup with richer HTML, else longer content
+              if(ib.length > bb.length || (ib.length === bb.length && ic.length > bc.length)) bak = idb;
             }
           }
         } catch(e){}
         if(!bak) continue;
         var br = (bak.editorRichHTML || bak.richHTML || '') + '';
-        if(br.length > cur.length + 50){
+        var bc2 = (bak.content || '') + '';
+        var changed = false;
+        if(br.length > curRich.length + 50){
           n.editorRichHTML = bak.editorRichHTML || bak.richHTML;
           n.richHTML = n.editorRichHTML;
           if(bak.editorSavedAt) n.editorSavedAt = bak.editorSavedAt;
           if(bak.editorHighlights) n.editorHighlights = bak.editorHighlights;
-          if(bak.content && (!n.content || String(n.content).length < String(bak.content).length))
-            n.content = bak.content;
-          restored++;
+          changed = true;
         }
+        if(bc2 && bc2.length > curContent.length){
+          n.content = bak.content;
+          changed = true;
+        }
+        if(changed) restored++;
       }
     }
     for(var si=0; si<(sec.subSections||[]).length; si++){
@@ -34484,6 +35007,8 @@ async function loginWithEmail(){
   }
 }
 
+
+try { window.loginWithEmail = loginWithEmail; } catch(e){}
 // ── User Registration ──
 async function registerWithGoogle(){
   if(!_fbReady){ showToast('Firebase ready nahi!','error'); return; }
@@ -42448,6 +42973,10 @@ async function saveTopicToFirebase(tid, subjId, secId){
   if(!_db || !_currentUser) return { ok: false, error: 'no db/user', code: 'NO_AUTH' };
   try{
     var uid = _effectiveUID;
+    // ✅ ANTI-TRUNCATE: single-topic push se pehle IDB se restore (agar slim tha)
+    try {
+      if(typeof _rehydrateNotesFromBackups === 'function') await _rehydrateNotesFromBackups();
+    } catch(e){}
     // Find topic
     var t = null;
     var foundSubj = null, foundSec = null, foundSsec = null;
@@ -42813,6 +43342,13 @@ async function saveToFirebase(){
   var _topicCount = (S.subjects||[]).reduce(function(a,s){ return a+s.sections.reduce(function(b,sec){ return b+sec.topics.length; },0); },0);
   console.info('[🔥 saveToFirebase] START — uid:'+_effectiveUID+' | subjects:'+((S.subjects||[]).length)+' | topics:'+_topicCount+' | isAdmin:'+_isAdmin);
   setSyncStatus('syncing');
+  // ✅ ANTI-TRUNCATE: cloud push se pehle IDB se full note bodies memory me lao
+  try {
+    if(typeof _rehydrateNotesFromBackups === 'function'){
+      var _rhPush = await _rehydrateNotesFromBackups();
+      if(_rhPush && _rhPush.restored) console.info('[🔥 saveToFirebase] rehydrated', _rhPush.restored, 'notes before push');
+    }
+  } catch(e){ console.warn('[🔥 saveToFirebase] rehydrate fail', e); }
   try{
     var uid = _effectiveUID;
     var allOps = [];
@@ -44222,6 +44758,10 @@ function _pruneNoteBakLocalStorage(){
   } catch(e){ return 0; }
 }
 function _slimSForLocalStorage(src){
+  // ✅ ANTI-TRUNCATE (2026-08-22): localStorage shell se SIRF heavy HTML/PNG
+  // hatao. content / finalNotes KO KABHI slice mat karo — warna reload ke baad
+  // agar IDB rehydrate miss ho to data permanently 2000 chars par atak jata tha
+  // aur Firebase/backup me bhi wahi slim copy chali jaati thi.
   var s;
   try { s = JSON.parse(JSON.stringify(src)); } catch(e){ return src; }
   var HEAVY = ['editorRichHTML','richHTML','finalNotesHTML','smartNotesHTML',
@@ -44233,14 +44773,12 @@ function _slimSForLocalStorage(src){
   function stripNote(n){
     if(!n || typeof n !== 'object') return;
     HEAVY.forEach(function(k){ if(n[k] !== undefined) delete n[k]; });
-    if(typeof n.content === 'string' && n.content.length > 2000)
-      n.content = n.content.slice(0, 2000);
+    // content intentionally NOT truncated
   }
   function stripTopic(t){
     if(!t || typeof t !== 'object') return;
     HEAVY.forEach(function(k){ if(t[k] !== undefined) delete t[k]; });
-    if(typeof t.finalNotes === 'string' && t.finalNotes.length > 2000)
-      t.finalNotes = t.finalNotes.slice(0, 2000);
+    // finalNotes intentionally NOT truncated
     (t.notes||[]).forEach(stripNote);
   }
   function walkSec(sec){
@@ -44800,6 +45338,16 @@ history.replaceState({type:'page',page:'library'},'');
 // hai. initFirebase() ke andar retry-loop already hai (agar kabhi firebase undefined
 // mile) — safety ke liye window.load par bhi ek dobara call rakha hai (no-op agar
 // _fbReady pehle se true hai).
+
+document.addEventListener('DOMContentLoaded', function(){
+  try {
+    var b = document.getElementById('loginBtn');
+    if(b && typeof loginWithEmail === 'function'){
+      b.onclick = function(e){ try { e.preventDefault(); } catch(err){} loginWithEmail(); };
+    }
+  } catch(e){}
+});
+
 initFirebase();
 window.addEventListener('load', function(){ if(!_fbReady) initFirebase(); });
 </script>
@@ -78360,5 +78908,52 @@ function tqRenderAttemptAnalysis(subBody, att, sid, secid, tid){
 
 })();
 </script>
+
+<!-- Notes Editor Media Insert Modal -->
+<div id="_neMediaModal" onclick="if(event.target===this)neCloseMediaInsert()">
+  <div id="_neMediaSheet" onclick="event.stopPropagation()">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <h3>🎬 Audio / Video Insert</h3>
+      <button type="button" onclick="neCloseMediaInsert()" style="border:none;background:transparent;font-size:1.2rem;cursor:pointer;">✕</button>
+    </div>
+    <div style="font-size:0.72rem;color:var(--text2);margin-bottom:8px;line-height:1.45;">
+      File alag IDB + Firebase media collection mein save hogi — note HTML mein sirf reference rahega.
+    </div>
+    <input type="file" id="_neMediaFile" accept="audio/*,video/*" style="width:100%;margin-bottom:10px;font-size:0.8rem;" onchange="neMediaOnFile(this)">
+    <div id="_neMediaPreviewBox"><span style="color:#8b949e;font-size:0.8rem;">Preview yahan</span></div>
+    <div class="ne-media-ctrl-row">
+      <label>Start <span id="_neMediaStartLbl">0.0s</span></label>
+      <input type="range" id="_neMediaStart" min="0" max="1000" value="0" step="1" oninput="neMediaUpdateTrim()">
+    </div>
+    <div class="ne-media-ctrl-row">
+      <label>End <span id="_neMediaEndLbl">0.0s</span></label>
+      <input type="range" id="_neMediaEnd" min="0" max="1000" value="1000" step="1" oninput="neMediaUpdateTrim()">
+    </div>
+    <div class="ne-media-ctrl-row">
+      <label>Speed <span id="_neMediaSpeedLbl">1.0x</span></label>
+      <input type="range" id="_neMediaSpeed" min="50" max="200" value="100" step="5" oninput="neMediaUpdateSpeed()">
+    </div>
+    <div class="ne-media-ctrl-row" id="_neMediaCropRow" style="display:none;">
+      <label>Video crop</label>
+      <select id="_neMediaCrop" onchange="neMediaUpdateCrop()" style="padding:4px 8px;border-radius:8px;border:1px solid var(--border);">
+        <option value="none">Full frame</option>
+        <option value="center">Center square</option>
+        <option value="top">Top focus</option>
+        <option value="bottom">Bottom focus</option>
+      </select>
+    </div>
+    <div style="margin:10px 0 6px;font-size:0.75rem;font-weight:800;">Trim segments (groups)</div>
+    <div id="_neMediaSegList"></div>
+    <div class="ne-media-ctrl-row">
+      <button type="button" class="btn btn-outline btn-xs" onclick="neMediaAddSegment()">+ Segment add</button>
+      <button type="button" class="btn btn-outline btn-xs" onclick="neMediaPreviewPlay()">Preview trim</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
+      <button type="button" class="btn btn-primary" style="flex:1;" onclick="neMediaInsertAtCaret()">Insert at cursor</button>
+      <button type="button" class="btn btn-outline" onclick="neCloseMediaInsert()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
