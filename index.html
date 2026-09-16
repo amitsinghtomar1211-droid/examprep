@@ -22207,11 +22207,17 @@ var _lastResumeSyncAt = 0;
 function _resumeSyncIfNeeded(){
   try{
     if(!_currentUser || !_db) return;
-    // Note editor khula ho to abhi resync mat karo — user ka live kaam disturb ho sakta hai
-    // ✅ FIX: correct overlay id is notesEditorOverlay (not noteEditorModal)
+    // ✅ Backup restore / offline: bilkul resync mat karo
+    if(typeof _isRestoreLocked === 'function' && _isRestoreLocked()){
+      console.info('[resume-sync] skipped — restore lock');
+      return;
+    }
+    try { if(typeof navigator !== 'undefined' && navigator.onLine === false) return; } catch(e){}
+    // Note editor khula ho to abhi resync mat karo
     var editorModal = document.getElementById('notesEditorOverlay');
     if(editorModal && (editorModal.classList.contains('show') || editorModal.style.display === 'flex')) return;
-    // Also block if we just saved a note (grace window) — avoid overwriting with stale cloud
+    if(typeof _isNotesUiBusy === 'function' && _isNotesUiBusy()) return;
+    // Also block if we just saved a note (grace window)
     if(typeof _recentNoteSaves !== 'undefined' && _recentNoteSaves){
       var _grace = false;
       Object.keys(_recentNoteSaves).forEach(function(k){
@@ -22219,10 +22225,11 @@ function _resumeSyncIfNeeded(){
       });
       if(_grace) return;
     }
-    var now = Date.now();
-    if(now - _lastResumeSyncAt < 8000) return; // 8s cooldown — spam se bachao
-    _lastResumeSyncAt = now;
-    if(typeof _silentReloadFromFirebase === 'function') _silentReloadFromFirebase();
+    // ✅ Login-only policy: resume-sync DISABLED (was causing false "dusri device" mid-session)
+    // User must use Sync Now for cross-device pull.
+    console.info('[resume-sync] disabled by login-only pull policy');
+    return;
+    // (old path removed)
   }catch(e){ console.warn('[resume-sync] error', e); }
 }
 document.addEventListener('visibilitychange', function(){
@@ -23142,9 +23149,11 @@ Restore karna hai?`)) {
       } catch(e) {}
 
       _justRestored = true;
+      try { if(typeof _beginRestoreLock === 'function') _beginRestoreLock(); } catch(e){}
       try {
         sessionStorage.setItem('epp_just_restored', '1');
         sessionStorage.setItem('epp_just_restored_at', String(Date.now()));
+        sessionStorage.setItem('epp_restore_lock', '1');
         var _rs = (typeof _totalNotesRichChars === 'function') ? _totalNotesRichChars(S.subjects) : null;
         if(_rs) sessionStorage.setItem('epp_restored_rich_chars', String(_rs.chars||0));
         console.info('[restore] richChars in memory=', _rs && _rs.chars, 'withRich=', _rs && _rs.withRich);
@@ -23187,10 +23196,11 @@ Restore karna hai?`)) {
               if(res && res.ok){
                 _justRestored = false;
                 try { sessionStorage.setItem('epp_just_restored', '0'); } catch(e){}
+                try { if(typeof _endRestoreLock === 'function') _endRestoreLock(); } catch(e){}
                 showToast('✅ Restore + Cloud PUSH OK! ' + subjectCount + ' subjects, ' + topicCount + ' topics', 'success');
               } else {
                 _justRestored = true;
-                try { sessionStorage.setItem('epp_just_restored', '1'); } catch(e){}
+                try { sessionStorage.setItem('epp_just_restored', '1'); sessionStorage.setItem('epp_restore_lock', '1'); } catch(e){}
                 showToast('✅ Local+IDB restore OK — cloud push incomplete. Net stable hone pe Sync dabao.', 'success');
               }
             }).catch(function(){
@@ -34837,16 +34847,63 @@ function _isNotesUiBusy(){
 // - Content NEVER truncated on save/load/merge — longer side wins
 // ══════════════════════════════════════════════════════════════
 var _LIVE_REMOTE_APPLY = false; // false = no live pull mid-session (login-only pull)
-var _ALLOW_LIVE_APPLY_ONCE = false; // set true briefly after explicit "Sync Now" / pullFromCloud
+var _ALLOW_LIVE_APPLY_ONCE = false; // set true briefly after explicit "Sync Now" / pullFromCloud ONLY
+var _RESTORE_LOCK = false; // true while backup restore in progress — blocks ALL remote pulls/toasts
+
+function _isRestoreLocked(){
+  try {
+    if(_RESTORE_LOCK) return true;
+    if(typeof _justRestored !== 'undefined' && _justRestored) return true;
+    if(sessionStorage.getItem('epp_just_restored') === '1') return true;
+    if(sessionStorage.getItem('epp_restore_lock') === '1') return true;
+  } catch(e){}
+  return false;
+}
 
 function _canApplyRemoteNow(){
   try {
+    // Backup restore / just-restored: NEVER apply remote (even offline cache)
+    if(typeof _isRestoreLocked === 'function' && _isRestoreLocked()) return false;
+    if(typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+    // Explicit Sync Now only
     if(_ALLOW_LIVE_APPLY_ONCE) return true;
     if(!_LIVE_REMOTE_APPLY) return false;
-    if(typeof navigator !== 'undefined' && navigator.onLine === false) return false;
   } catch(e){}
-  return !!_LIVE_REMOTE_APPLY;
+  return false;
 }
+
+function _beginRestoreLock(){
+  _RESTORE_LOCK = true;
+  _ALLOW_LIVE_APPLY_ONCE = false;
+  _LIVE_REMOTE_APPLY = false;
+  try {
+    sessionStorage.setItem('epp_restore_lock', '1');
+    sessionStorage.setItem('epp_just_restored', '1');
+    sessionStorage.setItem('epp_just_restored_at', String(Date.now()));
+  } catch(e){}
+  // Detach live listeners so offline cache cannot inject "dusri device" mid-restore
+  try {
+    if(typeof _topicListeners === 'object' && _topicListeners){
+      Object.keys(_topicListeners).forEach(function(tid){
+        try { if(typeof _topicListeners[tid] === 'function') _topicListeners[tid](); } catch(e){}
+        delete _topicListeners[tid];
+      });
+    }
+    if(_realtimeListener){
+      try { if(typeof _realtimeListener === 'function') _realtimeListener(); } catch(e){}
+      _realtimeListener = null;
+    }
+  } catch(e){}
+  console.info('[restore-lock] ON — remote apply/silentReload blocked');
+}
+
+function _endRestoreLock(){
+  _RESTORE_LOCK = false;
+  _ALLOW_LIVE_APPLY_ONCE = false;
+  try { sessionStorage.setItem('epp_restore_lock', '0'); } catch(e){}
+  console.info('[restore-lock] OFF');
+}
+
 
 /** Prefer longer plain/rich content — never let a shorter remote overwrite longer local (anti-truncate). */
 function _mergeNotePreferLonger(localNote, remoteNote){
@@ -44847,7 +44904,7 @@ function _applyTopicUpdate(tid, newTopicData){
           // Highlights state update karo
           _editorState.richHTML    = remoteNote.editorRichHTML || null;
           _editorState.highlights  = (remoteNote.editorHighlights||[]).slice();
-          showToast && showToast('⚡ Notes live update ho gaye!', 'info');
+          if(typeof _canApplyRemoteNow==='function'&&_canApplyRemoteNow()){showToast&&showToast('⚡ Notes live update ho gaye!','info');}
         }
       }
     }catch(reErr){ console.warn('Editor live update err:', reErr); }
@@ -44875,7 +44932,7 @@ function _applyTopicUpdate(tid, newTopicData){
   if(isActiveEdit || ((typeof _isNotesUiBusy === 'function') && _isNotesUiBusy())){
     // Editing / file-select in progress — silent (no toast, no navigation)
   } else {
-    if(typeof _canApplyRemoteNow === 'function' && _canApplyRemoteNow()){ showToast && showToast('⚡ Live update!', 'info'); }
+    if(typeof _canApplyRemoteNow === 'function' && _canApplyRemoteNow()){ if(typeof _canApplyRemoteNow==='function'&&_canApplyRemoteNow()){showToast&&showToast('⚡ Live update!','info');} }
   }
 }
 
@@ -44883,6 +44940,8 @@ function _applyTopicUpdate(tid, newTopicData){
 // ⚡ APPLY META UPDATE — stats, quiz, exams — bina full reload ke
 // ════════════════════���═════════════════════════════════════════════════
 function _applyMetaUpdate(meta){
+  if(typeof _isRestoreLocked === 'function' && _isRestoreLocked()){ console.info('[meta] blocked restore lock'); return; }
+  if(typeof _canApplyRemoteNow === 'function' && !_canApplyRemoteNow()){ console.info('[meta] blocked policy'); return; }
   if(_syncInProgress) return;
 
   // ✅ User notes/file add kar raha ho to UI mat hilao / back mat karo
@@ -44933,7 +44992,7 @@ function _applyMetaUpdate(meta){
     updateHistBadge && updateHistBadge();
     updateSavedBadge && updateSavedBadge();
     updateVaultBadge && updateVaultBadge();
-    if(typeof _canApplyRemoteNow === 'function' && _canApplyRemoteNow()){ showToast && showToast('🔄 Dusri device se update!', 'info'); }
+    if(typeof _canApplyRemoteNow === 'function' && _canApplyRemoteNow()){ if(typeof _canApplyRemoteNow==='function'&&_canApplyRemoteNow()){showToast&&showToast('🔄 Dusri device se update!','info');}else{console.info('[toast] dusri-device suppressed');} }
     else { console.info('[meta] remote meta applied without toast (login-only policy)'); }
   } else {
     console.info('[meta] applied silently (UI busy — no toast/rerender)');
@@ -44943,7 +45002,18 @@ function _applyMetaUpdate(meta){
 // ── Full silent reload — jab structure change ho (new subject/section/topic) ──
 async function _silentReloadFromFirebase(){
   if(!_db || !_currentUser || _syncInProgress) return;
-  _ALLOW_LIVE_APPLY_ONCE = true; // explicit/structural reload path
+  // ✅ Never silent-reload during/after backup restore or offline
+  if(typeof _isRestoreLocked === 'function' && _isRestoreLocked()){
+    console.info('[silentReload] blocked — restore lock active');
+    return;
+  }
+  try { if(typeof navigator !== 'undefined' && navigator.onLine === false){ console.info('[silentReload] blocked — offline'); return; } } catch(e){}
+  // ONLY allow when explicitly requested (Sync Now / pullFromCloud sets flag first)
+  if(!_ALLOW_LIVE_APPLY_ONCE && !_LIVE_REMOTE_APPLY){
+    console.info('[silentReload] blocked — login-only / no explicit sync flag');
+    return;
+  }
+  // do NOT auto-set _ALLOW_LIVE_APPLY_ONCE here (that caused false dusri-device)
   // For non-admin users: _effectiveUID = admin's UID, so we read admin's data — correct.
   _syncInProgress = true;
 
@@ -45133,7 +45203,7 @@ async function _silentReloadFromFirebase(){
     // Re-attach topic listeners for any new topics
     _attachTopicListeners();
 
-    if(typeof _canApplyRemoteNow === 'function' && _canApplyRemoteNow()){ showToast && showToast('🔄 Dusri device se update aaya!', 'info'); }
+    if(typeof _canApplyRemoteNow === 'function' && _canApplyRemoteNow()){ if(typeof _canApplyRemoteNow==='function'&&_canApplyRemoteNow()){showToast&&showToast('🔄 Dusri device se update aaya!','info');}else{console.info('[toast] dusri-device suppressed');} }
     else { console.info('[silentReload] done without toast (login-only policy)'); }
     _ALLOW_LIVE_APPLY_ONCE = false;
   }catch(e){
@@ -62010,7 +62080,7 @@ function mmAttachRealtimeListener(){
       mmRevSave();
       mmRender();
       
-      if(typeof showToast==='function') showToast('🔄 Mind Map updated from another device!','success');
+      if(typeof showToast==='function') if(typeof _canApplyRemoteNow==='function'&&_canApplyRemoteNow()){showToast('🔄 Mind Map updated from another device!','success');}else{console.info('[toast] mm remote suppressed');}
     }, function(err){
       console.warn('Mind Map realtime listener error:', err);
     });
@@ -66467,7 +66537,7 @@ window.addEventListener('storage', function(e) {
   if(!e.key || !e.key.startsWith('scFC_')) return;
   // Another tab/device changed flashcard data
   var tid = e.key.replace('scFC_','');
-  if(typeof showToast === 'function') showToast('🔄 Flashcards updated from another source!','info');
+  if(typeof showToast === 'function') if(typeof _canApplyRemoteNow==='function'&&_canApplyRemoteNow()){showToast('🔄 Flashcards updated from another source!','info');}else{console.info('[toast] fc remote suppressed');}
 });
 
 // ═══════════════════════════════════════════════
