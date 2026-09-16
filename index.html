@@ -43742,14 +43742,15 @@ async function saveToFirebase(){
     // us commit mein save hi nahi hota tha. Ab har op ka approx JSON size measure
     // karke ek safe 8MB (buffer ke saath) tak hi ek batch mein daalte hain, aur op
     // count 499 se bhi zyada na ho — dono limits ka safe-side respect hota hai.
-    var _MAX_BATCH_BYTES = 8 * 1024 * 1024; // 8MB safety margin (Firestore hard limit ~10MB)
+    var _MAX_BATCH_BYTES = 900 * 1024; // ~0.9MB per batch — avoids write-stream exhaustion
+    var _MAX_BATCH_OPS = 25;
     var _batches = [];
     var _curBatch = [];
     var _curBytes = 0;
     allOps.forEach(function(op){
       var opBytes;
       try{ opBytes = JSON.stringify(op.data).length; }catch(e){ opBytes = 1024; }
-      if(_curBatch.length >= 499 || (_curBytes + opBytes) > _MAX_BATCH_BYTES){
+      if(_curBatch.length >= _MAX_BATCH_OPS || (_curBatch.length > 0 && (_curBytes + opBytes) > _MAX_BATCH_BYTES)){
         if(_curBatch.length){ _batches.push(_curBatch); }
         _curBatch = [];
         _curBytes = 0;
@@ -43759,28 +43760,77 @@ async function saveToFirebase(){
     });
     if(_curBatch.length){ _batches.push(_curBatch); }
 
-    console.log('[🔥 saveToFirebase] Total ops to commit: '+allOps.length+' (size-aware batches: '+_batches.length+')');
-    for(var bi=0; bi<_batches.length; bi++){
-      var chunk = _batches[bi];
-      var batch = _db.batch();
-      chunk.forEach(function(op){ batch.set(op.ref, op.data, {merge:true}); });
-      await batch.commit();
-      console.log('[🔥 saveToFirebase] Batch '+(bi+1)+'/'+_batches.length+' committed ('+chunk.length+' ops)');
+    console.log('[🔥 saveToFirebase] Total ops to commit: '+allOps.length+' (throttled batches: '+_batches.length+')');
+
+    // Pause realtime listeners during bulk write (reduces write-stream queue pressure)
+    try {
+      if(typeof _topicListeners === 'object' && _topicListeners){
+        Object.keys(_topicListeners).forEach(function(tid){
+          try { if(typeof _topicListeners[tid] === 'function') _topicListeners[tid](); } catch(e){}
+          delete _topicListeners[tid];
+        });
+        console.info('[🔥 saveToFirebase] topic listeners paused for bulk upload');
+      }
+      if(typeof _realtimeListener === 'function' || _realtimeListener){
+        try { if(typeof _realtimeListener === 'function') _realtimeListener(); } catch(e){}
+        _realtimeListener = null;
+      }
+    } catch(_plE){}
+
+    function _sleep(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+
+    async function _commitChunkWithRetry(chunk, bi, total){
+      var attempts = 0, maxAttempts = 6, delay = 800;
+      while(attempts < maxAttempts){
+        attempts++;
+        try {
+          var batch = _db.batch();
+          chunk.forEach(function(op){ batch.set(op.ref, op.data, {merge:true}); });
+          await batch.commit();
+          console.log('[🔥 saveToFirebase] Batch '+(bi+1)+'/'+total+' OK ('+chunk.length+' ops) try='+attempts);
+          return true;
+        } catch(err){
+          var code = (err && err.code) || '';
+          var msg = (err && err.message) || String(err);
+          console.warn('[🔥 saveToFirebase] Batch '+(bi+1)+' FAIL try='+attempts+' code='+code+' msg='+msg);
+          if(code === 'resource-exhausted' || /resource-exhausted|exhausted maximum|unavailable|deadline/i.test(msg)){
+            await _sleep(delay);
+            delay = Math.min(delay * 2, 20000);
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw new Error('Batch '+(bi+1)+' failed after '+maxAttempts+' retries');
     }
 
-    // After full save, re-attach topic listeners for any new topics
-    _attachTopicListeners();
+    for(var bi=0; bi<_batches.length; bi++){
+      await _commitChunkWithRetry(_batches[bi], bi, _batches.length);
+      if(bi < _batches.length - 1) await _sleep(500);
+      if(_batches.length > 8 && (bi % 10 === 9 || bi === _batches.length - 1)){
+        try { showToast('☁️ Upload '+(bi+1)+'/'+_batches.length+' batches…', 'info'); } catch(e){}
+      }
+    }
+
+    try {
+      if(typeof _attachRealtimeListener === 'function') _attachRealtimeListener();
+      else if(typeof _attachTopicListeners === 'function') _attachTopicListeners();
+    } catch(_alE){}
 
     var _elapsed = Date.now() - _saveStartTime;
-    console.info('[🔥 saveToFirebase] ✅ SUCCESS — '+allOps.length+' ops in '+_elapsed+'ms | uid:'+uid);
+    console.info('[🔥 saveToFirebase] ✅ SUCCESS — '+allOps.length+' ops / '+_batches.length+' batches / '+_elapsed+'ms | uid:'+uid);
     setSyncStatus('synced');
     _fbSaveInProgress = false;
-    return { ok: true, ops: allOps.length, ms: _elapsed };
+    return { ok: true, ops: allOps.length, batches: _batches.length, ms: _elapsed };
   }catch(e){
     console.error('[🔥 saveToFirebase] ❌ ERROR — code:'+e.code+' | msg:'+e.message+' | uid:'+_effectiveUID);
     setSyncStatus('error');
     _fbSaveInProgress = false;
-    showToast('Sync error — data local mein safe hai', 'error');
+    try {
+      if(typeof _attachRealtimeListener === 'function') _attachRealtimeListener();
+      else if(typeof _attachTopicListeners === 'function') _attachTopicListeners();
+    } catch(_alE2){}
+    showToast('Sync error — data local safe. Baad mein Sync Now try karo.', 'error');
     return { ok: false, error: e.message, code: e.code };
   }
 }
@@ -43957,12 +44007,57 @@ async function loadFromFirebase(){
       try { if(typeof _rehydrateNotesFromBackups==='function') await _rehydrateNotesFromBackups(); } catch(e){}
       _localRich = (typeof _totalNotesRichChars==='function') ? _totalNotesRichChars(S.subjects) : _localRich;
     }
-    if(_isAdmin && ((_localRich.chars||0) > (_cloudRich.chars||0)*1.15 && (_localRich.chars||0) > (_cloudRich.chars||0)+5000)){
+    // ✅ Count likely-truncated plain notes (legacy 2000-char hard cut)
+    function _countTruncPlain(subjects){
+      var n2000 = 0, plainSum = 0, nNotes = 0;
+      function walk(obj){
+        if(!obj) return;
+        (obj.topics||[]).forEach(function(t){
+          (t.notes||[]).forEach(function(note){
+            nNotes++;
+            var c = (note.content||'');
+            plainSum += c.length;
+            if(c.length === 2000 || c.length === 1999 || c.length === 1998) n2000++;
+          });
+        });
+        (obj.sections||[]).forEach(walk);
+        (obj.subSections||[]).forEach(walk);
+        (obj.subSubjects||[]).forEach(walk);
+      }
+      (subjects||[]).forEach(walk);
+      return { n2000:n2000, plainSum:plainSum, nNotes:nNotes };
+    }
+    var _localPlain = _countTruncPlain(S.subjects);
+    // Build temp subjects from cloud topic map if available for compare
+    var _cloudPlain = { n2000:0, plainSum:0, nNotes:0 };
+    try {
+      if(typeof _cloudTopicMap === 'object' && _cloudTopicMap){
+        Object.keys(_cloudTopicMap).forEach(function(tid){
+          var td = _cloudTopicMap[tid] && (_cloudTopicMap[tid].topic || _cloudTopicMap[tid]);
+          if(!td) return;
+          (td.notes||[]).forEach(function(note){
+            _cloudPlain.nNotes++;
+            var c = (note.content||'');
+            _cloudPlain.plainSum += c.length;
+            if(c.length === 2000 || c.length === 1999 || c.length === 1998) _cloudPlain.n2000++;
+          });
+        });
+      }
+    } catch(_cpE){}
+    console.info('[📥 loadFromFirebase] plainSum local='+_localPlain.plainSum+' cloud='+_cloudPlain.plainSum+' trunc2000 local='+_localPlain.n2000+' cloud='+_cloudPlain.n2000);
+
+    var _localRicher = (_isAdmin && (
+      ((_localRich.chars||0) > (_cloudRich.chars||0)*1.15 && (_localRich.chars||0) > (_cloudRich.chars||0)+5000) ||
+      (_localPlain.plainSum > _cloudPlain.plainSum + 20000 && _localPlain.n2000 < _cloudPlain.n2000) ||
+      (_localPlain.plainSum > _cloudPlain.plainSum * 1.2 && _localPlain.plainSum > _cloudPlain.plainSum + 10000) ||
+      (_sessRich > 100000 && (_localRich.chars||0) >= _sessRich * 0.5 && (_cloudRich.chars||0) < _sessRich * 0.5)
+    ));
+    if(_localRicher){
       console.warn('[📥 loadFromFirebase] RICHNESS GUARD: push local, skip truncated cloud');
-      showToast('⏳ Local notes complete hain — cloud update...', 'info');
+      showToast('⏳ Local notes complete hain — cloud pe batches mein upload…', 'info');
       var _rp = await saveToFirebase();
-      if(_rp && _rp.ok){ setSyncStatus('synced'); return loadFromFirebase(); }
-      showToast('⚠️ Push fail — local full notes safe', 'error');
+      if(_rp && _rp.ok){ setSyncStatus('synced'); showToast('✅ Cloud update ho gaya (batched)', 'success'); return; }
+      showToast('⚠️ Push fail/partial — local full notes safe. Baad mein Sync Now.', 'error');
       setSyncStatus('error');
       return;
     }
