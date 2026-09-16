@@ -7986,9 +7986,16 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
       <div class="card">
         <div class="card-title">📦 Backup & Restore</div>
         <div class="btn-row">
-          <button class="btn btn-green btn-sm" onclick="backupData()">📥 Backup Download (JSON)</button>
-          <button class="btn btn-purple btn-sm" onclick="document.getElementById('restoreFile2').click()">📤 Restore from Backup</button>
+          <button class="btn btn-green btn-sm" onclick="backupData()">📱 Mobile se Backup</button>
+          <button class="btn btn-outline btn-sm" onclick="backupFromFirebase()" style="margin-top:6px;">☁️ Firebase se Backup</button>
+          <button class="btn btn-purple btn-sm" onclick="document.getElementById('restoreFile2').click()" style="margin-top:6px;">📤 Restore from Backup</button>
           <input type="file" id="restoreFile2" accept=".json" style="display:none;" onchange="restoreData(event)" />
+          <div style="font-size:0.72rem;color:var(--text2);margin-top:8px;line-height:1.35;">
+            <b>Mobile</b> = is phone ka local+IDB data (jo screen pe dikhta hai).<br>
+            <b>Firebase</b> = cloud copy — local ko change nahi karta, sirf JSON download.<br>
+            Pehle Firebase backup leke compare karo, phir restore decide karo.
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="showLocalStorageInfo()" style="margin-top:8px;">📊 Local storage size / clean info</button>
         </div>
         <p style="font-size:0.7rem;color:var(--text2);margin-top:8px;">JSON backup mein saara data (subjects, exams, history, highlights, saved facts) safe rahega.</p>
       </div>
@@ -10576,7 +10583,8 @@ body.night-mode .topic-card-actions{border-top-color:var(--border);}
     <div style="display:flex;flex-direction:column;gap:8px;">
       <button class="btn btn-primary btn-sm" onclick="syncNow()">☁️ Save Karo (Upload)</button>
       <button class="btn btn-sm" onclick="pullFromCloud()" style="background:#2e7d32;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-weight:700;font-size:0.85rem;">📥 Latest Notes Lao (Download)</button>
-      <button class="btn btn-green btn-sm" onclick="backupData()">📦 Backup Download (JSON)</button>
+      <button class="btn btn-green btn-sm" onclick="backupData()">📱 Mobile Backup</button>
+      <button class="btn btn-outline btn-sm" onclick="backupFromFirebase()">☁️ Firebase Backup</button>
       <button class="btn btn-outline btn-sm" onclick="closeModal('userMenuModal');openFbConfig()">⚙️ Firebase Config</button>
       <button class="btn btn-danger btn-sm" onclick="logoutUser()">🚪 Logout</button>
     </div>
@@ -23058,6 +23066,170 @@ async function backupData() {
     var extra = _rs ? (' | richChars=' + _rs.chars) : '';
     showToast('Backup download ho raha hai! 📦' + extra, 'success');
   } catch(e){ showToast('Backup download ho raha hai! 📦', 'success'); }
+}
+
+/** ☁️ Download backup from Firebase ONLY — does NOT overwrite local mobile data */
+async function backupFromFirebase(){
+  if(!hasPermission('dataBackup')){ _showLockedToast(); return; }
+  if(!_db || !_currentUser){
+    showToast('Pehle login karo — Firebase backup ke liye', 'error');
+    return;
+  }
+  try {
+    showToast('☁️ Firebase se data load ho raha hai (local change nahi hoga)...', 'info');
+    var uid = _effectiveUID;
+    var metaDoc = await _db.collection('users').doc(uid).get();
+    if(!metaDoc.exists){
+      showToast('Firebase par is account ka data nahi mila', 'error');
+      return;
+    }
+    var meta = metaDoc.data() || {};
+    var subjectIds = meta.subjectIds || [];
+    if(!subjectIds.length){
+      showToast('Firebase par subjects khali hain', 'error');
+      return;
+    }
+    var shellDocs = await Promise.all(subjectIds.map(function(id){
+      return _db.collection('users').doc(uid).collection('subjects').doc(String(id)).get();
+    }));
+    var topicDocs = await _db.collection('users').doc(uid).collection('topics').get();
+    var topicMap = {};
+    var partJobs = [];
+    topicDocs.forEach(function(d){
+      var td = d.data();
+      if(td && td.topic){
+        var tid = String(td.topic.id || d.id);
+        topicMap[tid] = td.topic;
+        if(typeof _loadNotePartsIntoTopic === 'function'){
+          partJobs.push(Promise.resolve(_loadNotePartsIntoTopic(uid, tid, td.topic)).then(function(full){
+            if(full) topicMap[tid] = full;
+          }));
+        }
+      }
+    });
+    if(partJobs.length) await Promise.all(partJobs);
+
+    function rebuildSubSec(ssm){
+      ssm.topics = (ssm.topicIds||[]).map(function(tid){ return topicMap[String(tid)] || null; }).filter(Boolean);
+      delete ssm.topicIds;
+      ssm.subSections = (ssm.subSectionMeta||[]).map(function(x){ return rebuildSubSec(x); });
+      delete ssm.subSectionMeta;
+      return ssm;
+    }
+    function rebuildSec(sm){
+      sm.topics = (sm.topicIds||[]).map(function(tid){ return topicMap[String(tid)] || null; }).filter(Boolean);
+      delete sm.topicIds;
+      sm.subSections = (sm.subSectionMeta||[]).map(function(x){ return rebuildSubSec(x); });
+      delete sm.subSectionMeta;
+      return sm;
+    }
+    function rebuildSubSubj(ss){
+      ss.sections = (ss.sectionMeta||[]).map(function(sm){ return rebuildSec(sm); });
+      delete ss.sectionMeta;
+      ss.subSubjects = (ss.subSubjects||[]).map(function(x){ return rebuildSubSubj(x); });
+      return ss;
+    }
+    var subjects = shellDocs.filter(function(d){ return d.exists; }).map(function(d){
+      var shell = d.data().shell;
+      if(!shell) return null;
+      shell.sections = (shell.sectionMeta||[]).map(function(sm){ return rebuildSec(sm); });
+      delete shell.sectionMeta;
+      shell.subSubjects = (shell.subSubjects||[]).map(function(ss){ return rebuildSubSubj(ss); });
+      return shell;
+    }).filter(Boolean);
+
+    // Hub libraries from meta if present, else leave empty (often only local)
+    var extraFacts = {};
+    try {
+      if(meta.extraFactsTopics) extraFacts = meta.extraFactsTopics;
+    } catch(e){}
+    // Try dedicated hub collection if used in future — skip for now
+
+    var plainSum = 0, richSum = 0, nNotes = 0, n2000 = 0;
+    function walk(obj){
+      (obj.topics||[]).forEach(function(t){
+        (t.notes||[]).forEach(function(n){
+          nNotes++;
+          var c = n.content||'';
+          var r = n.editorRichHTML||n.richHTML||'';
+          plainSum += c.length; richSum += r.length;
+          if(c.length===2000||c.length===1999||c.length===1998) n2000++;
+        });
+      });
+      (obj.sections||[]).forEach(walk);
+      (obj.subSections||[]).forEach(walk);
+      (obj.subSubjects||[]).forEach(walk);
+    }
+    subjects.forEach(walk);
+
+    var backup = {
+      version: '5.0',
+      date: new Date().toISOString(),
+      source: 'firebase',
+      firebaseUID: uid,
+      stats: {
+        subjects: subjects.length,
+        notes: nNotes,
+        plainChars: plainSum,
+        richChars: richSum,
+        trunc2000Count: n2000
+      },
+      data: {
+        subjects: subjects,
+        exams: meta.exams || [],
+        activeExamId: meta.activeExamId || '',
+        quizHistory: meta.quizHistory || [],
+        stats: meta.stats || {},
+        extraFactsTopics: extraFacts,
+        model: meta.model || ''
+      }
+    };
+    var blob = new Blob([JSON.stringify(backup)], {type:'application/json'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'exam-prep-FIREBASE-backup-'+new Date().toISOString().slice(0,10)+'.json';
+    a.click();
+    showToast('☁️ Firebase backup download! notes='+nNotes+' plain='+plainSum+' trunc2000='+n2000+' (local untouched)', 'success');
+    console.info('[backupFromFirebase]', backup.stats);
+  } catch(e){
+    console.error('[backupFromFirebase]', e);
+    showToast('Firebase backup fail: '+(e.message||e), 'error');
+  }
+}
+
+/** Local storage / IDB size info + safe clean tips (does not auto-delete notes) */
+async function showLocalStorageInfo(){
+  var lines = [];
+  try {
+    var lsTotal = 0, epp5 = 0;
+    for(var i=0;i<localStorage.length;i++){
+      var k = localStorage.key(i);
+      var v = localStorage.getItem(k) || '';
+      lsTotal += k.length + v.length;
+      if(k === 'epp5') epp5 = v.length;
+    }
+    lines.push('localStorage total ≈ '+Math.round(lsTotal/1024)+' KB');
+    lines.push('epp5 (slim shell) ≈ '+Math.round(epp5/1024)+' KB');
+  } catch(e){ lines.push('localStorage: read fail'); }
+  try {
+    if(navigator.storage && navigator.storage.estimate){
+      var est = await navigator.storage.estimate();
+      lines.push('Browser quota used ≈ '+Math.round((est.usage||0)/1048576)+' MB / '+Math.round((est.quota||0)/1048576)+' MB');
+    }
+  } catch(e){}
+  lines.push('');
+  lines.push('Yahan kya save hota hai:');
+  lines.push('• localStorage epp5 = subjects structure + short plain text');
+  lines.push('• IndexedDB = full rich notes + images');
+  lines.push('• Firestore offline cache = pehle download hua cloud data');
+  lines.push('');
+  lines.push('Clean karna (data DELETE ho sakta hai):');
+  lines.push('1) App data clear = Chrome site settings → Clear data');
+  lines.push('2) Sirf offline cache: logout + clear site data carefully');
+  lines.push('3) Notes DELETE nahi karna chahiye — pehle Backup lo');
+  lines.push('');
+  lines.push('Cut avoid: naya code split+IDB use karta hai; Firebase 1MB/topic limit pe noteParts.');
+  alert(lines.join('\\n'));
 }
 
 function restoreData(event) {
@@ -43261,6 +43433,156 @@ function _buildSubjShell(subj){
 // ══════════════════════════════════════════
 
 // ── Topic size calculator (Firebase bytes estimate) ──
+
+// ══════════════════════════════════════════════════════════════
+// ✅ FIRESTORE 1MB DOC LIMIT — split oversized topics into noteParts
+// Main doc: topic shell + note stubs (no huge content/richHTML)
+// Subcollection: users/{uid}/topics/{tid}/noteParts/{noteId}
+// Local app memory always keeps full notes; only cloud transport is split.
+// ══════════════════════════════════════════════════════════════
+var _FS_TOPIC_SAFE_BYTES = 900 * 1024; // stay under 1,048,576
+
+function _topicPayloadBytes(topicObj){
+  try {
+    return new TextEncoder().encode(JSON.stringify({topic: topicObj})).length;
+  } catch(e){ return 0; }
+}
+
+/** Returns { topicData, notePartOps:[{noteId, data}] } — notePartOps empty if fits */
+function _packTopicForFirestore(td, uid, tid){
+  var packed = JSON.parse(JSON.stringify(td));
+  var notePartOps = [];
+  var bytes = _topicPayloadBytes(packed);
+  if(bytes <= _FS_TOPIC_SAFE_BYTES){
+    return { topicData: packed, notePartOps: notePartOps, split: false, bytes: bytes };
+  }
+  // Strip heavy fields from each note into noteParts
+  (packed.notes || []).forEach(function(n, idx){
+    if(!n) return;
+    var noteId = String(n.id || ('idx_'+idx));
+    var heavy = {
+      content: n.content || '',
+      editorRichHTML: n.editorRichHTML || null,
+      richHTML: n.richHTML || null,
+      editorHighlights: n.editorHighlights || [],
+      wordCount: n.wordCount || 0,
+      editorSavedAt: n.editorSavedAt || 0,
+      name: n.name || '',
+      id: n.id || null
+    };
+    var heavyBytes = 0;
+    try { heavyBytes = new TextEncoder().encode(JSON.stringify(heavy)).length; } catch(e){}
+    // Only externalize if this note has substantial body
+    if((heavy.content && heavy.content.length > 500) || (heavy.editorRichHTML && heavy.editorRichHTML.length > 500) || (heavy.richHTML && heavy.richHTML.length > 500)){
+      notePartOps.push({
+        noteId: noteId,
+        data: { body: heavy, updatedAt: Date.now() }
+      });
+      // Stub in main topic
+      n.content = (n.content && n.content.length > 200) ? (n.content.slice(0, 120) + '…[cloud:noteParts]') : (n.content || '');
+      n.editorRichHTML = null;
+      n.richHTML = null;
+      n._cloudSplit = true;
+      n._notePartId = noteId;
+    }
+  });
+  // If still too big, strip topic-level HTML fields
+  ['finalNotesHTML','smartNotesHTML','masterNotesHTML','perfectNotesHTML','factsHTML','finalNotes','smartNotesAI','masterNotes','perfectNotes'].forEach(function(k){
+    if(packed[k] && typeof packed[k] === 'string' && packed[k].length > 8000){
+      var partId = 'field_'+k;
+      notePartOps.push({
+        noteId: partId,
+        data: { body: { field: k, value: packed[k] }, updatedAt: Date.now() }
+      });
+      packed[k] = '[cloud:noteParts:'+k+']';
+      packed['_splitField_'+k] = true;
+    }
+  });
+  // studyCanvas can be huge — externalize if needed
+  if(packed.studyCanvas){
+    try {
+      var scBytes = new TextEncoder().encode(JSON.stringify(packed.studyCanvas)).length;
+      if(scBytes > 200*1024){
+        notePartOps.push({
+          noteId: 'field_studyCanvas',
+          data: { body: { field: 'studyCanvas', value: packed.studyCanvas }, updatedAt: Date.now() }
+        });
+        packed.studyCanvas = { v:2, savedAt: (packed.studyCanvas.savedAt||0), slides: [], _cloudSplit: true };
+        packed._splitField_studyCanvas = true;
+      }
+    } catch(e){}
+  }
+  bytes = _topicPayloadBytes(packed);
+  // Last resort: if still over, clear remaining long content
+  if(bytes > _FS_TOPIC_SAFE_BYTES){
+    (packed.notes || []).forEach(function(n){
+      if(n.content && n.content.length > 200) n.content = n.content.slice(0, 100) + '…[cloud:noteParts]';
+      n.editorRichHTML = null;
+      n.richHTML = null;
+    });
+    bytes = _topicPayloadBytes(packed);
+  }
+  console.info('[packTopic] tid='+tid+' split notes='+notePartOps.length+' mainBytes='+bytes);
+  return { topicData: packed, notePartOps: notePartOps, split: notePartOps.length > 0, bytes: bytes };
+}
+
+async function _writeNoteParts(uid, tid, notePartOps){
+  if(!notePartOps || !notePartOps.length) return;
+  for(var i=0; i<notePartOps.length; i++){
+    var p = notePartOps[i];
+    await _db.collection('users').doc(uid).collection('topics').doc(String(tid))
+      .collection('noteParts').doc(String(p.noteId)).set(p.data, {merge:true});
+  }
+}
+
+async function _loadNotePartsIntoTopic(uid, tid, topicData){
+  if(!topicData) return topicData;
+  var needs = false;
+  (topicData.notes||[]).forEach(function(n){
+    if(n && (n._cloudSplit || (typeof n.content==='string' && n.content.indexOf('[cloud:noteParts]')>=0))) needs = true;
+  });
+  Object.keys(topicData).forEach(function(k){
+    if(k.indexOf('_splitField_')===0 && topicData[k]) needs = true;
+  });
+  if(!needs && !(topicData.studyCanvas && topicData.studyCanvas._cloudSplit)) {
+    // also try if main is small but we might still have parts from previous saves
+    return topicData;
+  }
+  try {
+    var snap = await _db.collection('users').doc(uid).collection('topics').doc(String(tid)).collection('noteParts').get();
+    if(snap.empty) return topicData;
+    var byId = {};
+    snap.forEach(function(doc){ byId[doc.id] = doc.data(); });
+    (topicData.notes||[]).forEach(function(n, idx){
+      var nid = String(n._notePartId || n.id || ('idx_'+idx));
+      var part = byId[nid];
+      if(part && part.body){
+        var b = part.body;
+        if(b.content != null) n.content = b.content;
+        if(b.editorRichHTML != null) n.editorRichHTML = b.editorRichHTML;
+        if(b.richHTML != null) n.richHTML = b.richHTML;
+        if(b.editorHighlights) n.editorHighlights = b.editorHighlights;
+        if(b.wordCount) n.wordCount = b.wordCount;
+        if(b.editorSavedAt) n.editorSavedAt = b.editorSavedAt;
+        delete n._cloudSplit;
+      }
+    });
+    Object.keys(byId).forEach(function(pid){
+      if(pid.indexOf('field_')===0){
+        var body = byId[pid].body || {};
+        if(body.field && body.value != null){
+          topicData[body.field] = body.value;
+          delete topicData['_splitField_'+body.field];
+        }
+      }
+    });
+    console.info('[loadNoteParts] tid='+tid+' parts='+snap.size);
+  } catch(e){
+    console.warn('[loadNoteParts] fail tid='+tid, e && e.message);
+  }
+  return topicData;
+}
+
 function _calcTopicSize(t) {
   try {
     var snap = JSON.stringify({
@@ -43386,13 +43708,20 @@ async function saveTopicToFirebase(tid, subjId, secId){
       if(n && (n.editorRichHTML || n.richHTML) && !n.editorSavedAt) n.editorSavedAt = Date.now();
     });
 
+    var _pack = (typeof _packTopicForFirestore === 'function')
+      ? _packTopicForFirestore(topicData, uid, tid)
+      : { topicData: topicData, notePartOps: [], split: false };
     await _db.collection('users').doc(uid).collection('topics').doc(String(tid)).set({
-      topic:    topicData,
+      topic:    _pack.topicData,
       subjId:   subjId || (foundSubj ? foundSubj.id : ''),
       secId:    secId  || (foundSec  ? foundSec.id  : ''),
       updatedAt: Date.now(),
-      writeId:  wid
+      writeId:  wid,
+      splitNotes: !!_pack.split
     }, {merge:true});
+    if(_pack.notePartOps && _pack.notePartOps.length){
+      await _writeNoteParts(uid, tid, _pack.notePartOps);
+    }
 
     // Also update subject shell (in case structure changed)
     if(foundSubj){
@@ -43731,9 +44060,16 @@ async function saveToFirebase(){
           _rememberTopicWriteId(t.id, twid);
           var td = _cleanTopic(t);
           td.writeId = twid;
+          var _pk = (typeof _packTopicForFirestore==='function') ? _packTopicForFirestore(td, uid, t.id) : {topicData:td, notePartOps:[], split:false};
           allOps.push({
             ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)),
-            data: { topic: td, subjId: subj.id, secId: sec.id, updatedAt: Date.now(), writeId: twid }
+            data: { topic: _pk.topicData, subjId: subj.id, secId: sec.id, updatedAt: Date.now(), writeId: twid , splitNotes: !!_pk.split }
+          });
+          (_pk.notePartOps||[]).forEach(function(np){
+            allOps.push({
+              ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)).collection('noteParts').doc(String(np.noteId)),
+              data: np.data
+            });
           });
         });
         // ✅ FIX: subSection ke topics bhi Firebase mein save karo — ab FULLY
@@ -43744,11 +44080,18 @@ async function saveToFirebase(){
             var twid = _genWriteId();
             _rememberTopicWriteId(t.id, twid);
             var td = _cleanTopic(t);
-            td.writeId = twid;
+          td.writeId = twid;
+          var _pk = (typeof _packTopicForFirestore==='function') ? _packTopicForFirestore(td, uid, t.id) : {topicData:td, notePartOps:[], split:false};
+          allOps.push({
+            ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)),
+            data: { topic: _pk.topicData, subjId: subj.id, secId: sec.id, ssecId: ss.id, updatedAt: Date.now(), writeId: twid , splitNotes: !!_pk.split }
+          });
+          (_pk.notePartOps||[]).forEach(function(np){
             allOps.push({
-              ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)),
-              data: { topic: td, subjId: subj.id, secId: sec.id, ssecId: ss.id, updatedAt: Date.now(), writeId: twid }
+              ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)).collection('noteParts').doc(String(np.noteId)),
+              data: np.data
             });
+          });
           });
           (ss.subSections||[]).forEach(_saveSubSecTopics);
         }
@@ -43761,11 +44104,18 @@ async function saveToFirebase(){
             var twid = _genWriteId();
             _rememberTopicWriteId(t.id, twid);
             var td = _cleanTopic(t);
-            td.writeId = twid;
+          td.writeId = twid;
+          var _pk = (typeof _packTopicForFirestore==='function') ? _packTopicForFirestore(td, uid, t.id) : {topicData:td, notePartOps:[], split:false};
+          allOps.push({
+            ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)),
+            data: { topic: _pk.topicData, subjId: subjId, ssId: sss.id, secId: sec.id, updatedAt: Date.now(), writeId: twid , splitNotes: !!_pk.split }
+          });
+          (_pk.notePartOps||[]).forEach(function(np){
             allOps.push({
-              ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)),
-              data: { topic: td, subjId: subjId, ssId: sss.id, secId: sec.id, updatedAt: Date.now(), writeId: twid }
+              ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)).collection('noteParts').doc(String(np.noteId)),
+              data: np.data
             });
+          });
           });
           // ✅ FIX: fully recursive — pehle sirf 1-level-deep tak jaata tha,
           // ab kitni bhi depth tak nested sub-sections ke topics save honge.
@@ -43774,11 +44124,18 @@ async function saveToFirebase(){
               var twid = _genWriteId();
               _rememberTopicWriteId(t.id, twid);
               var td = _cleanTopic(t);
-              td.writeId = twid;
-              allOps.push({
-                ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)),
-                data: { topic: td, subjId: subjId, ssId: sss.id, secId: sec.id, ssecId: ss.id, updatedAt: Date.now(), writeId: twid }
-              });
+          td.writeId = twid;
+          var _pk = (typeof _packTopicForFirestore==='function') ? _packTopicForFirestore(td, uid, t.id) : {topicData:td, notePartOps:[], split:false};
+          allOps.push({
+            ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)),
+            data: { topic: _pk.topicData, subjId: subjId, ssId: sss.id, secId: sec.id, ssecId: ss.id, updatedAt: Date.now(), writeId: twid , splitNotes: !!_pk.split }
+          });
+          (_pk.notePartOps||[]).forEach(function(np){
+            allOps.push({
+              ref: _db.collection('users').doc(uid).collection('topics').doc(String(t.id)).collection('noteParts').doc(String(np.noteId)),
+              data: np.data
+            });
+          });
             });
             (ss.subSections||[]).forEach(_saveSSSecTopics);
           }
@@ -43854,6 +44211,12 @@ async function saveToFirebase(){
             await _sleep(delay);
             delay = Math.min(delay * 2, 20000);
             continue;
+          }
+          // Size limit: don't kill whole upload — skip this batch's failing docs if possible
+          if(code === 'invalid-argument' && /exceeds the maximum allowed size/i.test(msg)){
+            console.error('[🔥 saveToFirebase] DOC TOO LARGE — skip this batch and continue:', msg);
+            showToast && showToast('⚠️ 1 topic Firebase 1MB limit se bada — split/skip, baaki upload chalega', 'warning');
+            return false; // continue other batches
           }
           throw err;
         }
@@ -43983,10 +44346,22 @@ async function loadFromFirebase(){
       // Load all topics
       const topicDocs = await _db.collection('users').doc(uid).collection('topics').get();
       var topicMap = {};
+      var _partJobs = [];
       topicDocs.forEach(function(d){
         var td = d.data();
-        if(td && td.topic) topicMap[String(td.topic.id)] = { topic: td.topic, subjId: td.subjId, secId: td.secId };
+        if(td && td.topic){
+          var _tid = String(td.topic.id || d.id);
+          topicMap[_tid] = { topic: td.topic, subjId: td.subjId, secId: td.secId, splitNotes: !!td.splitNotes };
+          if(td.splitNotes || (typeof _loadNotePartsIntoTopic === 'function')){
+            _partJobs.push(
+              Promise.resolve(_loadNotePartsIntoTopic(uid, _tid, td.topic)).then(function(full){
+                if(full) topicMap[_tid].topic = full;
+              })
+            );
+          }
+        }
       });
+      if(_partJobs.length) await Promise.all(_partJobs);
 
       // Reassemble subjects from shells + topics
       // ✅ FIX: RECURSIVE rebuild — matches recursive _subSecMeta() in _buildSubjShell().
@@ -44336,10 +44711,22 @@ async function pullFromCloud(){
     );
     var topicDocs = await _db.collection('users').doc(uid).collection('topics').get();
     var topicMap = {};
+    var _partJobs2 = [];
     topicDocs.forEach(function(d){
       var td = d.data();
-      if(td && td.topic) topicMap[String(td.topic.id)] = td.topic;
+      if(td && td.topic){
+        var _tid = String(td.topic.id || d.id);
+        topicMap[_tid] = td.topic;
+        if(td.splitNotes || typeof _loadNotePartsIntoTopic === 'function'){
+          _partJobs2.push(
+            Promise.resolve(_loadNotePartsIntoTopic(uid, _tid, td.topic)).then(function(full){
+              if(full) topicMap[_tid] = full;
+            })
+          );
+        }
+      }
     });
+    if(_partJobs2.length) await Promise.all(_partJobs2);
     // ✅ FIX: shared helper — section rebuild with subSections, FULLY RECURSIVE.
     // PEHLE: sirf 1-level-deep tak jaata tha — nested subSectionMeta (2nd level+)
     // kabhi rebuild nahi hota tha, isliye "Latest Laao" click karne par deep-nested
@@ -45034,10 +45421,22 @@ async function _silentReloadFromFirebase(){
 
     var topicDocs = await _db.collection('users').doc(uid).collection('topics').get();
     var topicMap = {};
+    var _partJobs2 = [];
     topicDocs.forEach(function(d){
       var td = d.data();
-      if(td && td.topic) topicMap[String(td.topic.id)] = td.topic;
+      if(td && td.topic){
+        var _tid = String(td.topic.id || d.id);
+        topicMap[_tid] = td.topic;
+        if(td.splitNotes || typeof _loadNotePartsIntoTopic === 'function'){
+          _partJobs2.push(
+            Promise.resolve(_loadNotePartsIntoTopic(uid, _tid, td.topic)).then(function(full){
+              if(full) topicMap[_tid] = full;
+            })
+          );
+        }
+      }
     });
+    if(_partJobs2.length) await Promise.all(_partJobs2);
 
     var newSubjects = shellDocs
       .filter(function(d){ return d.exists; })
