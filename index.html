@@ -34826,6 +34826,69 @@ function _isNotesUiBusy(){
   return false;
 }
 
+
+// ══════════════════════════════════════════════════════════════
+// ✅ SYNC POLICY (2026-09-16 fix)
+// - Auto PULL / "dusri device" toast: ONLY at login (loadFromFirebase)
+// - Realtime listeners: still track writeIds but DO NOT apply remote
+//   topic/meta during reading / adding content (stops false offline toasts
+//   + auto-back while inserting files)
+// - Local EDIT / HIGHLIGHT still PUSHes to Firebase immediately
+// - Content NEVER truncated on save/load/merge — longer side wins
+// ══════════════════════════════════════════════════════════════
+var _LIVE_REMOTE_APPLY = false; // false = no live pull mid-session (login-only pull)
+var _ALLOW_LIVE_APPLY_ONCE = false; // set true briefly after explicit "Sync Now" / pullFromCloud
+
+function _canApplyRemoteNow(){
+  try {
+    if(_ALLOW_LIVE_APPLY_ONCE) return true;
+    if(!_LIVE_REMOTE_APPLY) return false;
+    if(typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+  } catch(e){}
+  return !!_LIVE_REMOTE_APPLY;
+}
+
+/** Prefer longer plain/rich content — never let a shorter remote overwrite longer local (anti-truncate). */
+function _mergeNotePreferLonger(localNote, remoteNote){
+  if(!localNote || !remoteNote) return remoteNote || localNote;
+  var out = Object.assign({}, remoteNote);
+  var lc = (localNote.content || '');
+  var rc = (remoteNote.content || '');
+  var lr = (localNote.editorRichHTML || localNote.richHTML || '');
+  var rr = (remoteNote.editorRichHTML || remoteNote.richHTML || '');
+  var localAt = localNote.editorSavedAt || 0;
+  var remoteAt = remoteNote.editorSavedAt || 0;
+
+  // Always keep the longer plain text (truncation guard)
+  if(lc.length > rc.length){
+    out.content = lc;
+    if(localNote.wordCount) out.wordCount = localNote.wordCount;
+  }
+  // Rich HTML: longer wins; if equal length prefer newer
+  if(lr.length > rr.length){
+    out.editorRichHTML = lr;
+    out.richHTML = lr;
+    if(localAt >= remoteAt) out.editorSavedAt = localAt;
+  } else if(lr.length === rr.length && localAt > remoteAt && lr.length){
+    out.editorRichHTML = lr;
+    out.richHTML = lr;
+    out.editorSavedAt = localAt;
+  }
+  // Highlights: union / prefer local if remote empty
+  var lh = localNote.editorHighlights;
+  var rh = remoteNote.editorHighlights;
+  if(lh && lh.length && (!rh || !rh.length)) out.editorHighlights = lh;
+  else if(lh && rh && lh.length >= rh.length && localAt >= remoteAt) out.editorHighlights = lh;
+
+  // Preserve hub refs
+  if(localNote.hubTopicId && !out.hubTopicId){
+    out.hubType = localNote.hubType;
+    out.hubTopicId = localNote.hubTopicId;
+  }
+  return out;
+}
+
+
 // Firebase config localStorage se load karo
 // ✅ Hardcoded Firebase config — naye users ko manually setup nahi karna
 var _HARDCODED_FB_CONFIG = {
@@ -44097,6 +44160,9 @@ async function syncNow(){
 
 // ✅ PULL FROM CLOUD — dusri device ke latest notes force-fetch karo
 async function pullFromCloud(){
+  _ALLOW_LIVE_APPLY_ONCE = true;
+  _LIVE_REMOTE_APPLY = false; // still login-policy; this flag only unlocks this pull
+
   if(!_db || !_currentUser){ console.warn('[⬇️ pullFromCloud] SKIP: db='+!!_db+' user='+!!_currentUser); showToast('Pehle login karo!','error'); return; }
   closeModal('userMenuModal');
   var _pullStart = Date.now();
@@ -44346,7 +44412,14 @@ function _attachTopicListeners(){
 
         _knownTopicWriteIds[tid] = incomingWid;
 
-        // Dusri device ne yeh topic update kiya — silently apply!
+        // ✅ Offline / mid-session: do not treat as dusri-device update
+        try {
+          if(typeof navigator !== 'undefined' && navigator.onLine === false){
+            console.info('[topicListener] offline — ignore remote tid='+tid);
+            return;
+          }
+        } catch(_oe){}
+        // Dusri device ne yeh topic update kiya — apply only if policy allows
         _applyTopicUpdate(tid, data.topic);
       },
       function(err){
@@ -44379,6 +44452,7 @@ function _attachSingleTopicListener(tid){
         _knownTopicWriteIds[String(tid)] = incomingWid; return;
       }
       _knownTopicWriteIds[String(tid)] = incomingWid;
+      try { if(typeof navigator !== 'undefined' && navigator.onLine === false) return; } catch(_oe){}
       _applyTopicUpdate(String(tid), data.topic);
     },
     function(){ delete _topicListeners[String(tid)]; }
@@ -44392,6 +44466,11 @@ function _attachSingleTopicListener(tid){
 function _applyTopicUpdate(tid, newTopicData){
   if(!newTopicData) return;
   if(_syncInProgress) return;
+  // ✅ Login-only remote apply (unless explicit Sync Now)
+  if(typeof _canApplyRemoteNow === 'function' && !_canApplyRemoteNow()){
+    console.info('[⚡ _applyTopicUpdate] skipped mid-session remote apply tid='+tid);
+    return;
+  }
 
   var isActiveEdit = (String(tid) === String(_activeEditTid));
 
@@ -44493,7 +44572,7 @@ function _applyTopicUpdate(tid, newTopicData){
                 if(savedContent != null) local.notes[j].content = savedContent;
               }
             } else {
-              local.notes[j] = remoteNote;
+              local.notes[j] = (typeof _mergeNotePreferLonger === 'function') ? _mergeNotePreferLonger(local.notes[j], remoteNote) : remoteNote;
               if(!local.notes[j].editorHighlights) local.notes[j].editorHighlights = [];
             }
             break;
@@ -44514,7 +44593,22 @@ function _applyTopicUpdate(tid, newTopicData){
                              window._sc.slides && window._sc.slides.length;
     var _localScData = ref.topic.studyCanvas;
     var _oldNotes = (ref.topic.notes || []).slice();
-    ref.arr[ref.index] = newTopicData;
+    (function(){
+    var _prev = ref.topic || ref.arr[ref.index];
+    var _next = newTopicData;
+    if(_prev && _prev.notes && _next && _next.notes && typeof _mergeNotePreferLonger === 'function'){
+      _next = Object.assign({}, _next);
+      _next.notes = (_next.notes||[]).map(function(rn, i){
+        var ln = null;
+        for(var j=0;j<(_prev.notes||[]).length;j++){
+          if(rn.id && _prev.notes[j].id && String(rn.id)===String(_prev.notes[j].id)){ ln=_prev.notes[j]; break; }
+        }
+        if(!ln && _prev.notes[i]) ln = _prev.notes[i];
+        return ln ? _mergeNotePreferLonger(ln, rn) : rn;
+      });
+    }
+    ref.arr[ref.index] = _next;
+  })();
     try {
       if(_oldNotes.length && ref.arr[ref.index].notes){
         ref.arr[ref.index].notes.forEach(function(rn, ri){
@@ -44530,6 +44624,11 @@ function _applyTopicUpdate(tid, newTopicData){
               // ✅ FIX: Prefer local when local is newer OR equal with richer content
               // (same-device save can race with slightly-stale cloud snapshot)
               var preferLocal = false;
+              var lContent = on.content || '';
+              var rContent = rn.content || '';
+              // ✅ ANTI-TRUNCATE: kabhi bhi shorter remote (e.g. 2000 cut) longer local ko overwrite na kare
+              if(lContent.length > rContent.length + 100) preferLocal = true;
+              if(lRich && lRich.length > (rRich||'').length + 100) preferLocal = true;
               if(lat > rat && lRich) preferLocal = true;
               else if(lat >= rat && lRich && lRich.length > (rRich||'').length + 20) preferLocal = true;
               else if(typeof _recentNoteSaves !== 'undefined'){
@@ -44681,7 +44780,7 @@ function _applyTopicUpdate(tid, newTopicData){
   if(isActiveEdit || ((typeof _isNotesUiBusy === 'function') && _isNotesUiBusy())){
     // Editing / file-select in progress — silent (no toast, no navigation)
   } else {
-    showToast && showToast('⚡ Live update!', 'info');
+    if(typeof _canApplyRemoteNow === 'function' && _canApplyRemoteNow()){ showToast && showToast('⚡ Live update!', 'info'); }
   }
 }
 
@@ -44710,6 +44809,11 @@ function _applyMetaUpdate(meta){
   var remoteIds = (meta.subjectIds||[]).map(String).sort().join(',');
   var localIds  = (S.subjects||[]).map(function(s){ return String(s.id); }).sort().join(',');
   if(remoteIds !== localIds){
+    // ✅ Mid-session structure pull OFF — only at login / explicit sync
+    if(typeof _canApplyRemoteNow === 'function' && !_canApplyRemoteNow()){
+      console.info('[meta] structure change ignored mid-session (login-only pull policy)');
+      return;
+    }
     if(busy){
       _pendingSilentReload = true;
       console.info('[meta] structure change deferred — UI busy');
@@ -44734,7 +44838,8 @@ function _applyMetaUpdate(meta){
     updateHistBadge && updateHistBadge();
     updateSavedBadge && updateSavedBadge();
     updateVaultBadge && updateVaultBadge();
-    showToast && showToast('🔄 Dusri device se update!', 'info');
+    if(typeof _canApplyRemoteNow === 'function' && _canApplyRemoteNow()){ showToast && showToast('🔄 Dusri device se update!', 'info'); }
+    else { console.info('[meta] remote meta applied without toast (login-only policy)'); }
   } else {
     console.info('[meta] applied silently (UI busy — no toast/rerender)');
   }
@@ -44743,6 +44848,7 @@ function _applyMetaUpdate(meta){
 // ── Full silent reload — jab structure change ho (new subject/section/topic) ──
 async function _silentReloadFromFirebase(){
   if(!_db || !_currentUser || _syncInProgress) return;
+  _ALLOW_LIVE_APPLY_ONCE = true; // explicit/structural reload path
   // For non-admin users: _effectiveUID = admin's UID, so we read admin's data — correct.
   _syncInProgress = true;
 
@@ -44932,7 +45038,9 @@ async function _silentReloadFromFirebase(){
     // Re-attach topic listeners for any new topics
     _attachTopicListeners();
 
-    showToast && showToast('🔄 Dusri device se update aaya!', 'info');
+    if(typeof _canApplyRemoteNow === 'function' && _canApplyRemoteNow()){ showToast && showToast('🔄 Dusri device se update aaya!', 'info'); }
+    else { console.info('[silentReload] done without toast (login-only policy)'); }
+    _ALLOW_LIVE_APPLY_ONCE = false;
   }catch(e){
     console.log('Silent reload error:', e.message);
     if(e.code === 'unavailable' || (e.message && e.message.includes('transport'))){
