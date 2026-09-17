@@ -30287,11 +30287,22 @@ async function _folderBuildTopicContent(it, isFirst) {
 
   const styleTag = document.createElement('style');
   styleTag.textContent = `
-    mark.user-hl{background:#fff176;color:inherit;padding:0 2px;border-radius:3px;}
-    mark.user-hl-pink{background:#fce4ec;color:inherit;padding:0 2px;border-radius:3px;}
-    mark.user-hl-green{background:#CCFF90;color:inherit;padding:0 2px;border-radius:3px;}
-    mark.user-hl-blue{background:#F3E5F5;color:inherit;padding:0 2px;border-radius:3px;}
-    mark.user-hl-red{background:#F6D9D9;color:inherit;padding:0 2px;border-radius:3px;}
+    mark.user-hl{background:rgba(255,236,140,0.72)!important;color:inherit;padding:0 2px;border-radius:2px;}
+    mark.user-hl-pink{background:rgba(255,182,193,0.55)!important;color:inherit;padding:0 2px;border-radius:2px;}
+    mark.user-hl-green{background:rgba(165,230,180,0.55)!important;color:inherit;padding:0 2px;border-radius:2px;}
+    mark.user-hl-blue{background:rgba(160,200,255,0.5)!important;color:inherit;padding:0 2px;border-radius:2px;}
+    mark.user-hl-red{background:rgba(200,50,50,0.35)!important;color:inherit;padding:0 2px;border-radius:2px;}
+    mark.user-hl-darkred{background:#8B0000!important;color:#fff!important;padding:0 2px;border-radius:2px;}
+    mark.user-hl-mint{background:rgba(140,220,210,0.55)!important;color:inherit;padding:0 2px;border-radius:2px;}
+    mark.user-hl-lavender{background:rgba(200,185,235,0.58)!important;color:inherit;padding:0 2px;border-radius:2px;}
+    mark.user-hl-peach{background:rgba(255,200,160,0.55)!important;color:inherit;padding:0 2px;border-radius:2px;}
+    mark.user-hl-custom{border-radius:2px;}
+    mark.hl-y{background:rgba(255,224,0,0.55)!important;color:inherit;padding:0 2px;border-radius:2px;}
+    mark.hl-p{background:rgba(255,128,171,0.5)!important;color:inherit;padding:0 2px;border-radius:2px;}
+    mark.hl-g{background:rgba(100,220,130,0.45)!important;color:inherit;padding:0 2px;border-radius:2px;}
+    mark.hl-b{background:rgba(100,160,255,0.45)!important;color:inherit;padding:0 2px;border-radius:2px;}
+    mark.hl-dr{background:#8B0000!important;color:#fff!important;padding:0 2px;border-radius:2px;}
+    mark{background:rgba(255,236,140,0.72);padding:0 2px;border-radius:2px;}
     b, strong { font-weight:800; color:#1565c0; }
     i, em { font-style:italic; }
     u { text-decoration:underline; }
@@ -30300,8 +30311,36 @@ async function _folderBuildTopicContent(it, isFirst) {
     table { border-collapse:collapse; width:100%; margin:10px 0; font-size:0.9rem; }
     td, th { border:1.2px solid #999; padding:6px 8px; text-align:left; }
     img { max-width:100%; border-radius:6px; }
+    p { margin:0 0 8px 0; }
+    div { max-width:100%; }
   `;
   topicWrap.appendChild(styleTag);
+
+  // Bake highlight backgrounds as INLINE styles so html2canvas never
+  // drops them (class-only styles are sometimes missed under scale).
+  topicWrap.querySelectorAll('mark').forEach(function(m) {
+    try {
+      var cs = window.getComputedStyle(m);
+      var bg = cs.backgroundColor;
+      if(bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+        m.style.backgroundColor = bg;
+      } else {
+        // fallback from class name
+        var cls = m.className || '';
+        if(cls.indexOf('pink') >= 0 || cls.indexOf('hl-p') >= 0) m.style.backgroundColor = 'rgba(255,182,193,0.55)';
+        else if(cls.indexOf('green') >= 0 || cls.indexOf('hl-g') >= 0) m.style.backgroundColor = 'rgba(165,230,180,0.55)';
+        else if(cls.indexOf('blue') >= 0 || cls.indexOf('hl-b') >= 0) m.style.backgroundColor = 'rgba(160,200,255,0.5)';
+        else if(cls.indexOf('darkred') >= 0 || cls.indexOf('hl-dr') >= 0) { m.style.backgroundColor = '#8B0000'; m.style.color = '#fff'; }
+        else if(cls.indexOf('red') >= 0) m.style.backgroundColor = 'rgba(200,50,50,0.35)';
+        else if(cls.indexOf('mint') >= 0) m.style.backgroundColor = 'rgba(140,220,210,0.55)';
+        else if(cls.indexOf('lavender') >= 0) m.style.backgroundColor = 'rgba(200,185,235,0.58)';
+        else if(cls.indexOf('peach') >= 0) m.style.backgroundColor = 'rgba(255,200,160,0.55)';
+        else m.style.backgroundColor = 'rgba(255,236,140,0.72)';
+      }
+      m.style.padding = m.style.padding || '0 2px';
+      m.style.borderRadius = m.style.borderRadius || '2px';
+    } catch(e) {}
+  });
 
   return { wrapper: topicWrap, exportWidth: exportWidth, hasContent: anyNoteContent };
 }
@@ -30627,20 +30666,17 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
     }));
   };
 
-  // Capture width matches comfortable Notes Editor reading width
-  const CAPTURE_W = 640;
-  // Target slide height in CSS px (before scale) so 3 fit in A4 column
-  // A4 usable ~281mm tall, margins+gaps → ~88mm per slide ≈ 88*96/25.4 ≈ 333 CSS px
-  const SLIDE_H = 340;
-  // Scale for sharp print
+  // IMPORTANT: same width as _folderBuildTopicContent (NE_PRINT_WIDTH)
+  // so text/highlights do NOT reflow differently from the builder.
+  const CAPTURE_W = (typeof NE_PRINT_WIDTH === 'number' ? NE_PRINT_WIDTH : 700);
+  // Taller slides → fewer cuts → less chance of mid-line / mid-highlight cuts
+  const SLIDE_H = 420;
   const SCALE = 2;
 
-  // Smart slice: try not to cut through a line of text by scanning for
-  // a mostly-white horizontal band near the ideal cut.
   function smartSliceYs(canvasH, slideH) {
     const ys = [0];
     let y = slideH;
-    while(y < canvasH - 8) {
+    while(y < canvasH - 12) {
       ys.push(y);
       y += slideH;
     }
@@ -30648,33 +30684,33 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
     return ys;
   }
 
-  // Refine cut positions using canvas pixel data (look for quiet rows)
+  // Prefer cutting on mostly-white rows; also avoid bright highlight rows
   function refineCuts(canvas, idealYs) {
     try {
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
       const w = canvas.width;
       const refined = [0];
       for(let i = 1; i < idealYs.length - 1; i++) {
         const ideal = idealYs[i];
-        const search = Math.min(40 * SCALE, Math.floor(SLIDE_H * SCALE * 0.12));
+        const search = Math.min(60 * SCALE, Math.floor(SLIDE_H * SCALE * 0.18));
         let bestY = ideal, bestScore = Infinity;
         for(let dy = -search; dy <= search; dy += 2) {
           const row = ideal + dy;
-          if(row < 10 || row >= canvas.height - 10) continue;
+          if(row < 12 || row >= canvas.height - 12) continue;
           const data = ctx.getImageData(0, row, w, 1).data;
           let ink = 0;
-          for(let x = 0; x < w; x += 4) {
-            // non-near-white pixels count as ink
-            if(data[x*4] < 245 || data[x*4+1] < 245 || data[x*4+2] < 245) ink++;
+          for(let x = 0; x < w; x += 3) {
+            const r = data[x * 4], g = data[x * 4 + 1], b = data[x * 4 + 2];
+            // count non-near-white as ink (text + highlight fill)
+            if(r < 248 || g < 248 || b < 248) ink++;
           }
           if(ink < bestScore) { bestScore = ink; bestY = row; }
         }
         refined.push(bestY);
       }
       refined.push(canvas.height);
-      // ensure strictly increasing
       for(let i = 1; i < refined.length; i++) {
-        if(refined[i] <= refined[i-1]) refined[i] = refined[i-1] + Math.floor(SLIDE_H * SCALE * 0.5);
+        if(refined[i] <= refined[i - 1] + 20) refined[i] = refined[i - 1] + Math.floor(SLIDE_H * SCALE * 0.6);
       }
       if(refined[refined.length - 1] < canvas.height) refined[refined.length - 1] = canvas.height;
       return refined;
@@ -30683,7 +30719,36 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
     }
   }
 
-  const allSlides = []; // {dataUrl, w, h, label}
+  // Force every <mark> to have solid inline background BEFORE capture
+  function bakeMarks(root) {
+    root.querySelectorAll('mark').forEach(function(m) {
+      try {
+        var cs = window.getComputedStyle(m);
+        var bg = cs.backgroundColor;
+        if(bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+          m.style.setProperty('background-color', bg, 'important');
+        } else {
+          var cls = (m.className || '') + '';
+          var color = 'rgba(255,236,140,0.85)';
+          if(cls.indexOf('pink') >= 0 || cls.indexOf('hl-p') >= 0) color = 'rgba(255,182,193,0.7)';
+          else if(cls.indexOf('green') >= 0 || cls.indexOf('hl-g') >= 0) color = 'rgba(165,230,180,0.7)';
+          else if(cls.indexOf('blue') >= 0 || cls.indexOf('hl-b') >= 0) color = 'rgba(160,200,255,0.65)';
+          else if(cls.indexOf('darkred') >= 0 || cls.indexOf('hl-dr') >= 0) { color = '#8B0000'; m.style.setProperty('color', '#fff', 'important'); }
+          else if(cls.indexOf('red') >= 0) color = 'rgba(200,50,50,0.4)';
+          else if(cls.indexOf('mint') >= 0) color = 'rgba(140,220,210,0.7)';
+          else if(cls.indexOf('lavender') >= 0) color = 'rgba(200,185,235,0.7)';
+          else if(cls.indexOf('peach') >= 0) color = 'rgba(255,200,160,0.7)';
+          m.style.setProperty('background-color', color, 'important');
+        }
+        m.style.setProperty('padding', '0 2px', 'important');
+        m.style.setProperty('border-radius', '2px', 'important');
+        m.style.setProperty('-webkit-box-decoration-break', 'clone', 'important');
+        m.style.setProperty('box-decoration-break', 'clone', 'important');
+      } catch(e) {}
+    });
+  }
+
+  const allSlides = [];
 
   try {
     for(let i = 0; i < items.length; i++) {
@@ -30694,23 +30759,26 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
       if(!built.hasContent) continue;
 
       const topicWrapper = built.wrapper;
-      // Force editor-like typography (Devanagari stack + highlight CSS already in builder)
-      topicWrapper.style.cssText = 'font-family:"Noto Sans Devanagari","Tiro Devanagari Hindi","Baloo 2",Arial,sans-serif;' +
-        'padding:14px 16px 28px;color:#111;line-height:1.85;font-size:15px;width:' + CAPTURE_W + 'px;' +
-        'background:#ffffff;box-sizing:border-box;';
-      // Extra bottom padding so last line is never flush against slice edge
+      // Keep EXACT same width as builder — no reflow of highlights/text
+      topicWrapper.style.width = CAPTURE_W + 'px';
+      topicWrapper.style.maxWidth = CAPTURE_W + 'px';
+      topicWrapper.style.boxSizing = 'border-box';
+      topicWrapper.style.background = '#ffffff';
+      topicWrapper.style.position = 'static';
+      // Comfortable bottom padding so last line never sits on the slice edge
       const pad = document.createElement('div');
-      pad.style.cssText = 'height:24px;';
+      pad.style.cssText = 'height:36px;width:100%;';
       topicWrapper.appendChild(pad);
 
-      topicWrapper.style.position = 'static';
       document.body.appendChild(topicWrapper);
       _curWrap = topicWrapper;
 
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       await waitImgs(topicWrapper);
+      // Bake after layout so getComputedStyle sees the stylesheet rules
+      bakeMarks(topicWrapper);
+      await new Promise(r => requestAnimationFrame(r));
 
-      // Use html2pdf's html2canvas pipeline for reliability
       const topicOpt = {
         margin: 0,
         image: { type: 'jpeg', quality: 0.95 },
@@ -30722,7 +30790,9 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
           windowWidth: CAPTURE_W,
           logging: false,
           scrollX: 0,
-          scrollY: 0
+          scrollY: 0,
+          // letterRendering helps Devanagari + highlight boxes stay crisp
+          letterRendering: true
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
       };
@@ -30758,7 +30828,7 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
         sctx.fillRect(0, 0, slice.width, slice.height);
         sctx.drawImage(canvas, 0, y0, canvas.width, h, 0, 0, canvas.width, h);
         allSlides.push({
-          dataUrl: slice.toDataURL('image/jpeg', 0.92),
+          dataUrl: slice.toDataURL('image/jpeg', 0.93),
           w: slice.width,
           h: slice.height,
           label: (it.topic.name || 'Topic') + ' · ' + (s + 1)
@@ -30774,8 +30844,6 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
 
     overlay.textContent = '📄 A4 par 2×3 slides arrange ho rahe hain (' + allSlides.length + ' slides)...';
 
-    // Build PDF via html2pdf's internal jsPDF
-    // Dummy tiny element to bootstrap jsPDF instance
     const bootstrap = document.createElement('div');
     bootstrap.style.cssText = 'width:40px;height:20px;padding:2px;font-size:8px;';
     bootstrap.textContent = '.';
@@ -30788,17 +30856,9 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
     let pdf = await html2pdf().set(bootOpt).from(bootstrap).toPdf().get('pdf');
     if(bootstrap.parentNode) bootstrap.parentNode.removeChild(bootstrap);
 
-    // Remove the bootstrap blank page if present
-    try {
-      if(pdf.internal.getNumberOfPages() > 0) {
-        // we'll overwrite by adding pages; delete first page later if empty
-      }
-    } catch(e) {}
-
-    // A4 layout constants (mm)
     const PAGE_W = 210, PAGE_H = 297;
-    const MARGIN = 7;
-    const GAP_X = 3.5, GAP_Y = 3.5;
+    const MARGIN = 6;
+    const GAP_X = 3, GAP_Y = 3;
     const COLS = 2, ROWS = 3;
     const usableW = PAGE_W - 2 * MARGIN - GAP_X;
     const usableH = PAGE_H - 2 * MARGIN - (ROWS - 1) * GAP_Y;
@@ -30808,7 +30868,6 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
     let pageIndex = 0;
     for(let i = 0; i < allSlides.length; i += COLS * ROWS) {
       if(pageIndex > 0) pdf.addPage();
-      // On first page, content goes on the bootstrap page
       const batch = allSlides.slice(i, i + COLS * ROWS);
       for(let b = 0; b < batch.length; b++) {
         const col = b % COLS;
@@ -30816,7 +30875,6 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
         const x = MARGIN + col * (cellW + GAP_X);
         const y = MARGIN + row * (cellH + GAP_Y);
         const slide = batch[b];
-        // Fit image inside cell preserving aspect ratio, top-aligned
         const imgAspect = slide.w / slide.h;
         const cellAspect = cellW / cellH;
         let drawW, drawH;
@@ -30827,22 +30885,16 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
           drawH = cellH;
           drawW = cellH * imgAspect;
         }
-        // subtle cell border
         try {
-          pdf.setDrawColor(200, 210, 220);
-          pdf.setLineWidth(0.2);
+          pdf.setDrawColor(210, 220, 230);
+          pdf.setLineWidth(0.15);
           pdf.rect(x, y, cellW, cellH);
         } catch(e) {}
+        // Top-align inside cell so text starts consistently
         pdf.addImage(slide.dataUrl, 'JPEG', x + (cellW - drawW) / 2, y, drawW, drawH);
       }
       pageIndex++;
     }
-
-    // If bootstrap left an extra blank first page with only a dot, remove it
-    try {
-      const nPages = pdf.internal.getNumberOfPages();
-      // We used page 1 for first batch, so OK
-    } catch(e) {}
 
     const safeName = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g, '').trim() || 'folder';
     pdf.save(safeName + '_ExactSlides.pdf');
