@@ -30225,7 +30225,7 @@ async function _folderBuildTopicContent(it, isFirst) {
   const exportWidth = NE_PRINT_WIDTH;
 
   const topicWrap = document.createElement('div');
-  topicWrap.style.cssText = 'font-family:"Noto Sans Devanagari","Tiro Devanagari Hindi","Noto Sans",Arial,sans-serif;padding:10px 24px 10px 14px;color:#111;line-height:1.85;font-size:15px;width:' + exportWidth + 'px;box-sizing:border-box;overflow:hidden;word-wrap:break-word;overflow-wrap:anywhere;word-break:normal;letter-spacing:normal;';
+  topicWrap.style.cssText = 'font-family:"Noto Sans Devanagari","Tiro Devanagari Hindi","Noto Sans",Arial,sans-serif;padding:10px 24px 10px 14px;color:#111;line-height:1.85;font-size:15px;width:' + exportWidth + 'px;box-sizing:border-box;overflow:hidden;word-wrap:normal;overflow-wrap:break-word;word-break:normal;font-kerning:normal;text-rendering:optimizeLegibility;';
 
   const crumb = document.createElement('div');
   crumb.style.cssText = 'font-size:0.72rem;color:#888;font-weight:700;margin-bottom:4px;letter-spacing:0.2px;';
@@ -30666,6 +30666,28 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
     }));
   };
 
+  // The live Notes Editor waits for the Google Devanagari faces through the
+  // browser's font system. html2canvas must capture only after those faces
+  // are ready; otherwise its canvas can fall back to a different font for
+  // one frame and render matras/conjuncts with broken spacing.
+  const waitForEditorFonts = async () => {
+    try {
+      if(document.fonts && document.fonts.ready) await document.fonts.ready;
+      if(document.fonts && document.fonts.load) {
+        await Promise.all([
+          document.fonts.load('400 15px "Noto Sans Devanagari"'),
+          document.fonts.load('600 15px "Noto Sans Devanagari"'),
+          document.fonts.load('700 15px "Noto Sans Devanagari"'),
+          document.fonts.load('400 15px "Tiro Devanagari Hindi"')
+        ].map(function(p){ return Promise.resolve(p).catch(function(){ return []; }); }));
+      }
+    } catch(e) {
+      console.warn('[ExactSlides] editor font wait skipped:', e);
+    }
+  };
+
+  await waitForEditorFonts();
+
   // IMPORTANT: same width as _folderBuildTopicContent (NE_PRINT_WIDTH)
   // so text/highlights do NOT reflow differently from the builder.
   const CAPTURE_W = (typeof NE_PRINT_WIDTH === 'number' ? NE_PRINT_WIDTH : 700);
@@ -30772,16 +30794,18 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
       topicWrapper.style.paddingRight = '28px'; // extra right gutter
       topicWrapper.style.paddingTop = '10px';
       topicWrapper.style.paddingBottom = '8px';
-      topicWrapper.style.wordWrap = 'break-word';
-      topicWrapper.style.overflowWrap = 'anywhere';
-      topicWrapper.style.wordBreak = 'normal'; // keep Devanagari clusters intact
-      topicWrapper.style.letterSpacing = 'normal';
-      // Only clamp media/tables — do NOT touch every span (breaks marks/fonts)
-      topicWrapper.querySelectorAll('img, table, pre, video, iframe').forEach(function(el) {
+       topicWrapper.style.wordWrap = 'normal';
+      topicWrapper.style.overflowWrap = 'break-word';
+       // Keep Devanagari grapheme clusters together. `break-word` here can
+       // split conjuncts/matras while html2canvas lays out the clone.
+       topicWrapper.style.wordBreak = 'normal';
+       topicWrapper.style.fontKerning = 'normal';
+       topicWrapper.style.textRendering = 'optimizeLegibility';
+      // Clamp wide children so nothing paints past the right padding
+      topicWrapper.querySelectorAll('*').forEach(function(el) {
         try {
           el.style.maxWidth = '100%';
           el.style.boxSizing = 'border-box';
-          el.style.height = 'auto';
         } catch(e) {}
       });
       topicWrapper.querySelectorAll('img, table, pre, video').forEach(function(el) {
@@ -30817,9 +30841,11 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
           scrollY: -0,
           x: 0,
           y: 0,
-          // letterRendering MUST stay false — true breaks Devanagari into
-          // spaced single characters (श ि क ् ष ण). Default false is correct.
-          letterRendering: false,
+           // Do NOT enable html2canvas letterRendering here. It paints
+           // Devanagari character-by-character, which breaks conjuncts and
+           // matras into visibly separated pieces. The default text renderer
+           // lets the browser shape each script run exactly like the editor.
+           letterRendering: false,
           removeContainer: true
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
