@@ -30220,7 +30220,7 @@ function _folderCollectTopics(node, kind, pathSoFar) {
 // a 40,000-50,000px wrapper if built as one giant div, so instead we now
 // build + capture + add-to-pdf ONE topic at a time, each safely under
 // that height ceiling, and merge the results into a single PDF file.
-async function _folderBuildTopicContent(it, isFirst) {
+async function _folderBuildTopicContent(it, isFirst, exactLook) {
   const t = it.topic;
   const exportWidth = NE_PRINT_WIDTH;
 
@@ -30265,7 +30265,14 @@ async function _folderBuildTopicContent(it, isFirst) {
     }
 
     const body = document.createElement('div');
-    body.style.cssText = 'width:100%;max-width:100%;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;';
+    // Exact Look slides use the same typography context as the live editor.
+    // Keep the normal text-PDF path unchanged.
+    if(exactLook) {
+      body.className = 'ne-editable ne-rich-mode';
+      body.style.cssText = 'width:100%;max-width:100%;box-sizing:border-box;word-wrap:normal;overflow-wrap:break-word;word-break:normal;';
+    } else {
+      body.style.cssText = 'width:100%;max-width:100%;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;';
+    }
     body.innerHTML = resolvedHtml;
     body.querySelectorAll('[contenteditable]').forEach(function(el) { el.removeAttribute('contenteditable'); });
 
@@ -30778,7 +30785,7 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
       const it = items[i];
       overlay.textContent = '🖼 Exact Look — topic ' + (i + 1) + '/' + items.length + ' capture...';
 
-      const built = await _folderBuildTopicContent(it, i === 0);
+      const built = await _folderBuildTopicContent(it, i === 0, true);
       if(!built.hasContent) continue;
 
       const topicWrapper = built.wrapper;
@@ -30836,6 +30843,10 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
           backgroundColor: '#ffffff',
           windowWidth: CAPTURE_W + 40,
           width: CAPTURE_W,
+          // Let Chromium paint the cloned DOM through its native layout and
+          // Indic text shaper before rasterising it. This keeps conjuncts and
+          // vowel marks together like the live Notes Editor.
+          foreignObjectRendering: true,
           logging: false,
           scrollX: -0,
           scrollY: -0,
