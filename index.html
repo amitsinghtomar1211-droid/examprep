@@ -30669,8 +30669,9 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
   // IMPORTANT: same width as _folderBuildTopicContent (NE_PRINT_WIDTH)
   // so text/highlights do NOT reflow differently from the builder.
   const CAPTURE_W = (typeof NE_PRINT_WIDTH === 'number' ? NE_PRINT_WIDTH : 700);
-  // Taller slides → fewer cuts → less chance of mid-line / mid-highlight cuts
-  const SLIDE_H = 420;
+  // Slide height tuned to A4 2×3 cell aspect (~100mm × 96mm → ~1.05 ratio).
+  // CAPTURE_W/1.05 ≈ portrait-ish tiles that FILL each cell with almost no blank.
+  const SLIDE_H = Math.round(CAPTURE_W / 1.05);
   const SCALE = 2;
 
   function smartSliceYs(canvasH, slideH) {
@@ -30880,9 +30881,11 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
     let pdf = await html2pdf().set(bootOpt).from(bootstrap).toPdf().get('pdf');
     if(bootstrap.parentNode) bootstrap.parentNode.removeChild(bootstrap);
 
+    // Full-page 2×3 — minimal margin/gap, NO borders. "Slide" = content chunk only.
     const PAGE_W = 210, PAGE_H = 297;
-    const MARGIN = 6;
-    const GAP_X = 3, GAP_Y = 3;
+    const MARGIN = 3.5;
+    const GAP_X = 1.2;
+    const GAP_Y = 1.0;
     const COLS = 2, ROWS = 3;
     const usableW = PAGE_W - 2 * MARGIN - GAP_X;
     const usableH = PAGE_H - 2 * MARGIN - (ROWS - 1) * GAP_Y;
@@ -30894,34 +30897,25 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
       if(pageIndex > 0) pdf.addPage();
       const batch = allSlides.slice(i, i + COLS * ROWS);
       for(let b = 0; b < batch.length; b++) {
-        // Column-major: slides 0,1,2 → LEFT col (top→bottom); 3,4,5 → RIGHT col
+        // Column-major: 0,1,2 LEFT top→bottom; 3,4,5 RIGHT top→bottom
         const col = Math.floor(b / ROWS);
         const row = b % ROWS;
         const x = MARGIN + col * (cellW + GAP_X);
         const y = MARGIN + row * (cellH + GAP_Y);
         const slide = batch[b];
-        // Fit FULL width of cell (slight inset) so right edge is never clipped.
-        // Scale uniformly; if image is taller than cell, it will be letterboxed
-        // vertically rather than cropped horizontally.
-        // Extra horizontal safety: draw at most 92% of cell width so
-        // any residual canvas-edge crop is not visible at the cell border.
-        const inset = 2.0; // mm padding inside cell
-        const maxW = (cellW - inset * 2) * 0.96;
-        const maxH = cellH - inset * 2;
         const imgAspect = slide.w / Math.max(slide.h, 1);
-        let drawW = maxW;
+        // Fill cell as much as possible without stretching (no text squash/overlap)
+        let drawW = cellW;
         let drawH = drawW / imgAspect;
-        if(drawH > maxH) {
-          drawH = maxH;
+        if(drawH > cellH) {
+          drawH = cellH;
           drawW = drawH * imgAspect;
         }
+        const safe = 0.35;
+        if(drawW > cellW - safe * 2) { drawW = cellW - safe * 2; drawH = drawW / imgAspect; }
+        if(drawH > cellH - safe * 2) { drawH = cellH - safe * 2; drawW = drawH * imgAspect; }
         const drawX = x + (cellW - drawW) / 2;
-        const drawY = y + inset; // top-align
-        try {
-          pdf.setDrawColor(210, 220, 230);
-          pdf.setLineWidth(0.15);
-          pdf.rect(x, y, cellW, cellH);
-        } catch(e) {}
+        const drawY = y + (cellH - drawH) / 2;
         pdf.addImage(slide.dataUrl, 'JPEG', drawX, drawY, drawW, drawH);
       }
       pageIndex++;
