@@ -30765,6 +30765,17 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
       topicWrapper.style.boxSizing = 'border-box';
       topicWrapper.style.background = '#ffffff';
       topicWrapper.style.position = 'static';
+      topicWrapper.style.overflow = 'hidden'; // prevent any child bleeding past right edge
+      topicWrapper.style.paddingRight = '12px';
+      topicWrapper.style.paddingLeft = (topicWrapper.style.paddingLeft || '14px');
+      // Clamp wide children (tables/images) so they don't get cut on the right
+      topicWrapper.querySelectorAll('img, table, pre, video').forEach(function(el) {
+        el.style.maxWidth = '100%';
+        el.style.boxSizing = 'border-box';
+      });
+      topicWrapper.querySelectorAll('div, p, span, li').forEach(function(el) {
+        if(el.style) el.style.maxWidth = '100%';
+      });
       // Comfortable bottom padding so last line never sits on the slice edge
       const pad = document.createElement('div');
       pad.style.cssText = 'height:36px;width:100%;';
@@ -30870,28 +30881,33 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
       if(pageIndex > 0) pdf.addPage();
       const batch = allSlides.slice(i, i + COLS * ROWS);
       for(let b = 0; b < batch.length; b++) {
-        const col = b % COLS;
-        const row = Math.floor(b / COLS);
+        // Column-major: slides 0,1,2 → LEFT col (top→bottom); 3,4,5 → RIGHT col
+        const col = Math.floor(b / ROWS);
+        const row = b % ROWS;
         const x = MARGIN + col * (cellW + GAP_X);
         const y = MARGIN + row * (cellH + GAP_Y);
         const slide = batch[b];
-        const imgAspect = slide.w / slide.h;
-        const cellAspect = cellW / cellH;
-        let drawW, drawH;
-        if(imgAspect > cellAspect) {
-          drawW = cellW;
-          drawH = cellW / imgAspect;
-        } else {
-          drawH = cellH;
-          drawW = cellH * imgAspect;
+        // Fit FULL width of cell (slight inset) so right edge is never clipped.
+        // Scale uniformly; if image is taller than cell, it will be letterboxed
+        // vertically rather than cropped horizontally.
+        const inset = 1.2; // mm padding inside cell — prevents right/left cut
+        const maxW = cellW - inset * 2;
+        const maxH = cellH - inset * 2;
+        const imgAspect = slide.w / Math.max(slide.h, 1);
+        let drawW = maxW;
+        let drawH = drawW / imgAspect;
+        if(drawH > maxH) {
+          drawH = maxH;
+          drawW = drawH * imgAspect;
         }
+        const drawX = x + inset + (maxW - drawW) / 2;
+        const drawY = y + inset; // top-align
         try {
           pdf.setDrawColor(210, 220, 230);
           pdf.setLineWidth(0.15);
           pdf.rect(x, y, cellW, cellH);
         } catch(e) {}
-        // Top-align inside cell so text starts consistently
-        pdf.addImage(slide.dataUrl, 'JPEG', x + (cellW - drawW) / 2, y, drawW, drawH);
+        pdf.addImage(slide.dataUrl, 'JPEG', drawX, drawY, drawW, drawH);
       }
       pageIndex++;
     }
