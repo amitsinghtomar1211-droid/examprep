@@ -30225,7 +30225,7 @@ async function _folderBuildTopicContent(it, isFirst) {
   const exportWidth = NE_PRINT_WIDTH;
 
   const topicWrap = document.createElement('div');
-  topicWrap.style.cssText = 'font-family:"Noto Sans Devanagari","Tiro Devanagari Hindi","Noto Sans",Arial,sans-serif;padding:6px;color:#111;line-height:1.85;font-size:15px;width:' + exportWidth + 'px;';
+  topicWrap.style.cssText = 'font-family:"Noto Sans Devanagari","Tiro Devanagari Hindi","Noto Sans",Arial,sans-serif;padding:10px 24px 10px 14px;color:#111;line-height:1.85;font-size:15px;width:' + exportWidth + 'px;box-sizing:border-box;overflow:hidden;word-wrap:break-word;overflow-wrap:break-word;';
 
   const crumb = document.createElement('div');
   crumb.style.cssText = 'font-size:0.72rem;color:#888;font-weight:700;margin-bottom:4px;letter-spacing:0.2px;';
@@ -30265,7 +30265,7 @@ async function _folderBuildTopicContent(it, isFirst) {
     }
 
     const body = document.createElement('div');
-    body.style.cssText = 'width:' + exportWidth + 'px;max-width:100%;';
+    body.style.cssText = 'width:100%;max-width:100%;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;';
     body.innerHTML = resolvedHtml;
     body.querySelectorAll('[contenteditable]').forEach(function(el) { el.removeAttribute('contenteditable'); });
 
@@ -30759,22 +30759,31 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
       if(!built.hasContent) continue;
 
       const topicWrapper = built.wrapper;
-      // Keep EXACT same width as builder — no reflow of highlights/text
+      // Wider safe margins so rightmost 1–2 words are never clipped by
+      // html2canvas (it often eats ~8–16px on the right under scale:2).
       topicWrapper.style.width = CAPTURE_W + 'px';
       topicWrapper.style.maxWidth = CAPTURE_W + 'px';
       topicWrapper.style.boxSizing = 'border-box';
       topicWrapper.style.background = '#ffffff';
       topicWrapper.style.position = 'static';
-      topicWrapper.style.overflow = 'hidden'; // prevent any child bleeding past right edge
-      topicWrapper.style.paddingRight = '12px';
-      topicWrapper.style.paddingLeft = (topicWrapper.style.paddingLeft || '14px');
-      // Clamp wide children (tables/images) so they don't get cut on the right
+      topicWrapper.style.overflow = 'hidden';
+      topicWrapper.style.paddingLeft = '18px';
+      topicWrapper.style.paddingRight = '28px'; // extra right gutter
+      topicWrapper.style.paddingTop = '10px';
+      topicWrapper.style.paddingBottom = '8px';
+      topicWrapper.style.wordWrap = 'break-word';
+      topicWrapper.style.overflowWrap = 'break-word';
+      topicWrapper.style.wordBreak = 'break-word';
+      // Clamp wide children so nothing paints past the right padding
+      topicWrapper.querySelectorAll('*').forEach(function(el) {
+        try {
+          el.style.maxWidth = '100%';
+          el.style.boxSizing = 'border-box';
+        } catch(e) {}
+      });
       topicWrapper.querySelectorAll('img, table, pre, video').forEach(function(el) {
         el.style.maxWidth = '100%';
-        el.style.boxSizing = 'border-box';
-      });
-      topicWrapper.querySelectorAll('div, p, span, li').forEach(function(el) {
-        if(el.style) el.style.maxWidth = '100%';
+        el.style.height = 'auto';
       });
       // Comfortable bottom padding so last line never sits on the slice edge
       const pad = document.createElement('div');
@@ -30798,12 +30807,16 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
           useCORS: true,
           allowTaint: true,
           backgroundColor: '#ffffff',
-          windowWidth: CAPTURE_W,
+          windowWidth: CAPTURE_W + 40,
+          width: CAPTURE_W,
           logging: false,
-          scrollX: 0,
-          scrollY: 0,
+          scrollX: -0,
+          scrollY: -0,
+          x: 0,
+          y: 0,
           // letterRendering helps Devanagari + highlight boxes stay crisp
-          letterRendering: true
+          letterRendering: true,
+          removeContainer: true
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
       };
@@ -30890,8 +30903,10 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
         // Fit FULL width of cell (slight inset) so right edge is never clipped.
         // Scale uniformly; if image is taller than cell, it will be letterboxed
         // vertically rather than cropped horizontally.
-        const inset = 1.2; // mm padding inside cell — prevents right/left cut
-        const maxW = cellW - inset * 2;
+        // Extra horizontal safety: draw at most 92% of cell width so
+        // any residual canvas-edge crop is not visible at the cell border.
+        const inset = 2.0; // mm padding inside cell
+        const maxW = (cellW - inset * 2) * 0.96;
         const maxH = cellH - inset * 2;
         const imgAspect = slide.w / Math.max(slide.h, 1);
         let drawW = maxW;
@@ -30900,7 +30915,7 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
           drawH = maxH;
           drawW = drawH * imgAspect;
         }
-        const drawX = x + inset + (maxW - drawW) / 2;
+        const drawX = x + (cellW - drawW) / 2;
         const drawY = y + inset; // top-align
         try {
           pdf.setDrawColor(210, 220, 230);
