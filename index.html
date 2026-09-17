@@ -30225,7 +30225,7 @@ async function _folderBuildTopicContent(it, isFirst) {
   const exportWidth = NE_PRINT_WIDTH;
 
   const topicWrap = document.createElement('div');
-  topicWrap.style.cssText = 'font-family:"Noto Sans",Arial,sans-serif;padding:6px;color:#111;line-height:1.85;font-size:15px;width:' + exportWidth + 'px;';
+  topicWrap.style.cssText = 'font-family:"Noto Sans Devanagari","Tiro Devanagari Hindi","Noto Sans",Arial,sans-serif;padding:6px;color:#111;line-height:1.85;font-size:15px;width:' + exportWidth + 'px;';
 
   const crumb = document.createElement('div');
   crumb.style.cssText = 'font-size:0.72rem;color:#888;font-weight:700;margin-bottom:4px;letter-spacing:0.2px;';
@@ -30310,7 +30310,34 @@ async function _folderBuildTopicContent(it, isFirst) {
 // (subject / sub-subject / section / sub-section), regardless of depth.
 async function downloadFolderPDF(kind, sid, secid, ssid, e) {
   if(e) e.stopPropagation();
+  // Choice: Normal text PDF vs Exact-look Slides PDF (editor fonts + highlights)
+  return new Promise(function(resolve) {
+    var old = document.getElementById('_folderPdfChoiceOverlay');
+    if(old) old.remove();
+    var ov = document.createElement('div');
+    ov.id = '_folderPdfChoiceOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:1000100;background:rgba(13,27,42,0.72);display:flex;align-items:center;justify-content:center;padding:16px;';
+    ov.innerHTML = '<div style="background:var(--surface,#fff);color:var(--text,#111);border-radius:18px;padding:20px 18px;width:100%;max-width:380px;box-shadow:0 16px 48px rgba(0,0,0,0.35);font-family:\'Noto Sans Devanagari\',system-ui,sans-serif;">' +
+      '<div style="font-weight:900;font-size:1.05rem;margin-bottom:6px;color:#1565c0;">📥 PDF Download Mode</div>' +
+      '<div style="font-size:0.78rem;color:var(--text2,#37526d);line-height:1.55;margin-bottom:14px;">Kaunsa format chahiye?</div>' +
+      '<button type="button" id="_fpdfNormal" style="width:100%;text-align:left;padding:14px;border-radius:14px;border:1.5px solid rgba(21,101,192,0.35);background:rgba(21,101,192,0.08);margin-bottom:10px;cursor:pointer;">' +
+        '<div style="font-weight:800;color:#1565c0;font-size:0.92rem;">📄 Normal PDF</div>' +
+        '<div style="font-size:0.72rem;color:#37526d;margin-top:4px;line-height:1.45;">Text-based · search/select possible · thoda reflow ho sakta hai</div>' +
+      '</button>' +
+      '<button type="button" id="_fpdfSlides" style="width:100%;text-align:left;padding:14px;border-radius:14px;border:1.5px solid rgba(46,125,50,0.4);background:rgba(46,125,50,0.09);margin-bottom:10px;cursor:pointer;">' +
+        '<div style="font-weight:800;color:#2e7d32;font-size:0.92rem;">🖼 Exact Look Slides PDF</div>' +
+        '<div style="font-size:0.72rem;color:#37526d;margin-top:4px;line-height:1.45;">Notes Editor jaisa font + highlights · screenshot slides · A4 par 2 columns × 3 slides</div>' +
+      '</button>' +
+      '<button type="button" id="_fpdfCancel" style="width:100%;padding:10px;border-radius:12px;border:1.5px solid #bdd5ea;background:#f4f9fe;font-weight:700;color:#37526d;cursor:pointer;">Cancel</button>' +
+    '</div>';
+    document.body.appendChild(ov);
+    document.getElementById('_fpdfCancel').onclick = function(){ ov.remove(); resolve(); };
+    document.getElementById('_fpdfNormal').onclick = function(){ ov.remove(); downloadFolderPDF_Normal(kind, sid, secid, ssid).then(resolve); };
+    document.getElementById('_fpdfSlides').onclick = function(){ ov.remove(); downloadFolderPDF_ExactSlides(kind, sid, secid, ssid).then(resolve); };
+  });
+}
 
+async function downloadFolderPDF_Normal(kind, sid, secid, ssid) {
   let node = null, folderLabel = '';
   if(kind === 'subject') {
     node = getSubj(sid);
@@ -30531,6 +30558,303 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
   console.log('[downloadFolderPDF] "'+folderLabel+'" PDF saved successfully — ' + topicsRendered + ' topics rendered ('+topicsSkippedEmpty+' had no note content).');
   showToast('✅ "' + folderLabel + '" ka PDF download ho gaya!', 'success');
 }
+
+
+/* ================================================================
+   EXACT-LOOK SLIDES PDF — folder download
+   - Renders notes with Notes-Editor fonts + highlight marks
+   - Captures via html2canvas (screenshot style)
+   - Smart vertical slices (avoids cutting last line when possible)
+   - Packs on A4: 2 columns × 3 slides per page, sequential
+   ================================================================ */
+async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
+  let node = null, folderLabel = '';
+  if(kind === 'subject') {
+    node = getSubj(sid);
+    folderLabel = node ? node.name : 'Subject';
+  } else if(kind === 'subsubject') {
+    node = getSubSubjDeep(sid, ssid);
+    folderLabel = node ? node.name : 'Sub-Subject';
+  } else if(kind === 'section') {
+    node = getSec(sid, secid);
+    folderLabel = node ? node.name : 'Section';
+  } else if(kind === 'subsection') {
+    const sec = getSec(sid, secid);
+    function _findSS(n, id) {
+      if(!n) return null;
+      if(String(n.id) === String(id)) return n;
+      for(const x of (n.subSections || [])) { const r = _findSS(x, id); if(r) return r; }
+      return null;
+    }
+    node = sec ? _findSS(sec, ssid) : null;
+    folderLabel = node ? node.name : 'Sub-Section';
+  }
+  if(!node) { showToast('❌ Folder nahi mila', 'error'); return; }
+
+  const items = _folderCollectTopics(node, kind, [folderLabel]);
+  if(!items.length) { showToast('⚠️ Is folder mein koi topic/notes nahi hai', 'error'); return; }
+
+  const notesWithContentCount = items.reduce((n, it) => n + (it.topic.notes || []).filter(n2 => (n2.editorRichHTML || n2.richHTML || n2.content || '').trim()).length, 0);
+  if(notesWithContentCount === 0) { showToast('⚠️ Is folder ke topics mein koi note content nahi hai', 'error'); return; }
+  if(typeof html2pdf === 'undefined') { showToast('❌ PDF library load nahi hui — internet check karo', 'error'); return; }
+
+  showToast('⬇️ Exact Look Slides PDF taiyar ho raha hai (' + items.length + ' topics)...', 'success');
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#0d1b2aee;display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Noto Sans Devanagari",Arial,sans-serif;font-size:0.95rem;font-weight:600;text-align:center;padding:20px;';
+  overlay.textContent = '🖼 Exact Look — slides capture 1/' + items.length + '...';
+  document.body.appendChild(overlay);
+
+  const _prevX = window.scrollX || 0, _prevY = window.scrollY || 0;
+  window.scrollTo(0, 0);
+  let _curWrap = null;
+  const cleanup = () => {
+    if(_curWrap && _curWrap.parentNode) _curWrap.parentNode.removeChild(_curWrap);
+    _curWrap = null;
+    if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    window.scrollTo(_prevX, _prevY);
+  };
+
+  const waitImgs = (root) => {
+    const imgs = Array.from(root.querySelectorAll('img'));
+    return Promise.all(imgs.map((img) => {
+      if(img.complete && img.naturalWidth > 0) return Promise.resolve();
+      if(typeof img.decode === 'function') return img.decode().catch(() => {});
+      return new Promise((resolve) => {
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+      });
+    }));
+  };
+
+  // Capture width matches comfortable Notes Editor reading width
+  const CAPTURE_W = 640;
+  // Target slide height in CSS px (before scale) so 3 fit in A4 column
+  // A4 usable ~281mm tall, margins+gaps → ~88mm per slide ≈ 88*96/25.4 ≈ 333 CSS px
+  const SLIDE_H = 340;
+  // Scale for sharp print
+  const SCALE = 2;
+
+  // Smart slice: try not to cut through a line of text by scanning for
+  // a mostly-white horizontal band near the ideal cut.
+  function smartSliceYs(canvasH, slideH) {
+    const ys = [0];
+    let y = slideH;
+    while(y < canvasH - 8) {
+      ys.push(y);
+      y += slideH;
+    }
+    if(ys[ys.length - 1] < canvasH) ys.push(canvasH);
+    return ys;
+  }
+
+  // Refine cut positions using canvas pixel data (look for quiet rows)
+  function refineCuts(canvas, idealYs) {
+    try {
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const refined = [0];
+      for(let i = 1; i < idealYs.length - 1; i++) {
+        const ideal = idealYs[i];
+        const search = Math.min(40 * SCALE, Math.floor(SLIDE_H * SCALE * 0.12));
+        let bestY = ideal, bestScore = Infinity;
+        for(let dy = -search; dy <= search; dy += 2) {
+          const row = ideal + dy;
+          if(row < 10 || row >= canvas.height - 10) continue;
+          const data = ctx.getImageData(0, row, w, 1).data;
+          let ink = 0;
+          for(let x = 0; x < w; x += 4) {
+            // non-near-white pixels count as ink
+            if(data[x*4] < 245 || data[x*4+1] < 245 || data[x*4+2] < 245) ink++;
+          }
+          if(ink < bestScore) { bestScore = ink; bestY = row; }
+        }
+        refined.push(bestY);
+      }
+      refined.push(canvas.height);
+      // ensure strictly increasing
+      for(let i = 1; i < refined.length; i++) {
+        if(refined[i] <= refined[i-1]) refined[i] = refined[i-1] + Math.floor(SLIDE_H * SCALE * 0.5);
+      }
+      if(refined[refined.length - 1] < canvas.height) refined[refined.length - 1] = canvas.height;
+      return refined;
+    } catch(e) {
+      return idealYs;
+    }
+  }
+
+  const allSlides = []; // {dataUrl, w, h, label}
+
+  try {
+    for(let i = 0; i < items.length; i++) {
+      const it = items[i];
+      overlay.textContent = '🖼 Exact Look — topic ' + (i + 1) + '/' + items.length + ' capture...';
+
+      const built = await _folderBuildTopicContent(it, i === 0);
+      if(!built.hasContent) continue;
+
+      const topicWrapper = built.wrapper;
+      // Force editor-like typography (Devanagari stack + highlight CSS already in builder)
+      topicWrapper.style.cssText = 'font-family:"Noto Sans Devanagari","Tiro Devanagari Hindi","Baloo 2",Arial,sans-serif;' +
+        'padding:14px 16px 28px;color:#111;line-height:1.85;font-size:15px;width:' + CAPTURE_W + 'px;' +
+        'background:#ffffff;box-sizing:border-box;';
+      // Extra bottom padding so last line is never flush against slice edge
+      const pad = document.createElement('div');
+      pad.style.cssText = 'height:24px;';
+      topicWrapper.appendChild(pad);
+
+      topicWrapper.style.position = 'static';
+      document.body.appendChild(topicWrapper);
+      _curWrap = topicWrapper;
+
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await waitImgs(topicWrapper);
+
+      // Use html2pdf's html2canvas pipeline for reliability
+      const topicOpt = {
+        margin: 0,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: {
+          scale: SCALE,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: '#ffffff',
+          windowWidth: CAPTURE_W,
+          logging: false,
+          scrollX: 0,
+          scrollY: 0
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      let canvas;
+      try {
+        canvas = await html2pdf().set(topicOpt).from(topicWrapper).toCanvas().get('canvas');
+      } catch(err) {
+        console.warn('[ExactSlides] canvas fail topic', i, err);
+        if(topicWrapper.parentNode) topicWrapper.parentNode.removeChild(topicWrapper);
+        _curWrap = null;
+        continue;
+      }
+
+      if(topicWrapper.parentNode) topicWrapper.parentNode.removeChild(topicWrapper);
+      _curWrap = null;
+
+      if(!canvas || canvas.width < 10 || canvas.height < 10) continue;
+
+      const idealYs = smartSliceYs(canvas.height, Math.round(SLIDE_H * SCALE));
+      const cutYs = refineCuts(canvas, idealYs);
+
+      for(let s = 0; s < cutYs.length - 1; s++) {
+        const y0 = cutYs[s];
+        const y1 = cutYs[s + 1];
+        const h = y1 - y0;
+        if(h < 8) continue;
+        const slice = document.createElement('canvas');
+        slice.width = canvas.width;
+        slice.height = h;
+        const sctx = slice.getContext('2d');
+        sctx.fillStyle = '#ffffff';
+        sctx.fillRect(0, 0, slice.width, slice.height);
+        sctx.drawImage(canvas, 0, y0, canvas.width, h, 0, 0, canvas.width, h);
+        allSlides.push({
+          dataUrl: slice.toDataURL('image/jpeg', 0.92),
+          w: slice.width,
+          h: slice.height,
+          label: (it.topic.name || 'Topic') + ' · ' + (s + 1)
+        });
+      }
+    }
+
+    if(!allSlides.length) {
+      cleanup();
+      showToast('❌ Koi slide capture nahi hui', 'error');
+      return;
+    }
+
+    overlay.textContent = '📄 A4 par 2×3 slides arrange ho rahe hain (' + allSlides.length + ' slides)...';
+
+    // Build PDF via html2pdf's internal jsPDF
+    // Dummy tiny element to bootstrap jsPDF instance
+    const bootstrap = document.createElement('div');
+    bootstrap.style.cssText = 'width:40px;height:20px;padding:2px;font-size:8px;';
+    bootstrap.textContent = '.';
+    document.body.appendChild(bootstrap);
+    const bootOpt = {
+      margin: 0,
+      html2canvas: { scale: 1, backgroundColor: '#ffffff' },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+    let pdf = await html2pdf().set(bootOpt).from(bootstrap).toPdf().get('pdf');
+    if(bootstrap.parentNode) bootstrap.parentNode.removeChild(bootstrap);
+
+    // Remove the bootstrap blank page if present
+    try {
+      if(pdf.internal.getNumberOfPages() > 0) {
+        // we'll overwrite by adding pages; delete first page later if empty
+      }
+    } catch(e) {}
+
+    // A4 layout constants (mm)
+    const PAGE_W = 210, PAGE_H = 297;
+    const MARGIN = 7;
+    const GAP_X = 3.5, GAP_Y = 3.5;
+    const COLS = 2, ROWS = 3;
+    const usableW = PAGE_W - 2 * MARGIN - GAP_X;
+    const usableH = PAGE_H - 2 * MARGIN - (ROWS - 1) * GAP_Y;
+    const cellW = usableW / COLS;
+    const cellH = usableH / ROWS;
+
+    let pageIndex = 0;
+    for(let i = 0; i < allSlides.length; i += COLS * ROWS) {
+      if(pageIndex > 0) pdf.addPage();
+      // On first page, content goes on the bootstrap page
+      const batch = allSlides.slice(i, i + COLS * ROWS);
+      for(let b = 0; b < batch.length; b++) {
+        const col = b % COLS;
+        const row = Math.floor(b / COLS);
+        const x = MARGIN + col * (cellW + GAP_X);
+        const y = MARGIN + row * (cellH + GAP_Y);
+        const slide = batch[b];
+        // Fit image inside cell preserving aspect ratio, top-aligned
+        const imgAspect = slide.w / slide.h;
+        const cellAspect = cellW / cellH;
+        let drawW, drawH;
+        if(imgAspect > cellAspect) {
+          drawW = cellW;
+          drawH = cellW / imgAspect;
+        } else {
+          drawH = cellH;
+          drawW = cellH * imgAspect;
+        }
+        // subtle cell border
+        try {
+          pdf.setDrawColor(200, 210, 220);
+          pdf.setLineWidth(0.2);
+          pdf.rect(x, y, cellW, cellH);
+        } catch(e) {}
+        pdf.addImage(slide.dataUrl, 'JPEG', x + (cellW - drawW) / 2, y, drawW, drawH);
+      }
+      pageIndex++;
+    }
+
+    // If bootstrap left an extra blank first page with only a dot, remove it
+    try {
+      const nPages = pdf.internal.getNumberOfPages();
+      // We used page 1 for first batch, so OK
+    } catch(e) {}
+
+    const safeName = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g, '').trim() || 'folder';
+    pdf.save(safeName + '_ExactSlides.pdf');
+    cleanup();
+    showToast('✅ Exact Look Slides PDF download! (' + allSlides.length + ' slides)', 'success');
+  } catch(err) {
+    cleanup();
+    console.error('[ExactSlides] error', err);
+    showToast('❌ Slides PDF fail: ' + (err && err.message ? err.message : 'unknown'), 'error');
+  }
+}
+
 
 function downloadEditorContent() {
   // Rich, highlight-preserving PDF download. Falls back to .txt if html2pdf
