@@ -30298,10 +30298,13 @@ function _folderCollectTopics(node, kind, pathSoFar) {
 // that height ceiling, and merge the results into a single PDF file.
 async function _folderBuildTopicContent(it, isFirst, exactLook) {
   const t = it.topic;
-  const exportWidth = NE_PRINT_WIDTH;
+  // Exact-look export is rendered at the width of one A4 landscape column.
+  // At this width a 16.67px CSS base is approximately 12.5pt on paper,
+  // instead of being shrunk into the old portrait 2×3 tiles.
+  const exportWidth = exactLook ? 520 : NE_PRINT_WIDTH;
 
   const topicWrap = document.createElement('div');
-  topicWrap.style.cssText = 'font-family:"Noto Sans Devanagari","Tiro Devanagari Hindi","Noto Sans",Arial,sans-serif;padding:10px 24px 10px 14px;color:#111;line-height:1.85;font-size:15px;width:' + exportWidth + 'px;box-sizing:border-box;overflow:hidden;word-wrap:normal;overflow-wrap:break-word;word-break:normal;font-kerning:normal;text-rendering:optimizeLegibility;';
+  topicWrap.style.cssText = 'font-family:"Noto Sans Devanagari","Tiro Devanagari Hindi","Noto Sans",Arial,sans-serif;padding:10px 18px 10px 14px;color:#111;line-height:' + (exactLook ? '1.55' : '1.85') + ';font-size:' + (exactLook ? '16.67px' : '15px') + ';width:' + exportWidth + 'px;box-sizing:border-box;overflow:hidden;word-wrap:normal;overflow-wrap:break-word;word-break:normal;font-kerning:normal;text-rendering:optimizeLegibility;';
 
   const crumb = document.createElement('div');
   crumb.style.cssText = 'font-size:0.72rem;color:#888;font-weight:700;margin-bottom:4px;letter-spacing:0.2px;';
@@ -30345,7 +30348,7 @@ async function _folderBuildTopicContent(it, isFirst, exactLook) {
     // Keep the normal text-PDF path unchanged.
     if(exactLook) {
       body.className = 'ne-editable ne-rich-mode';
-      body.style.cssText = 'width:100%;max-width:100%;box-sizing:border-box;word-wrap:normal;overflow-wrap:break-word;word-break:normal;';
+      body.style.cssText = 'width:100%;max-width:100%;box-sizing:border-box;word-wrap:normal;overflow-wrap:break-word;word-break:normal;font-family:"Noto Sans Devanagari","Tiro Devanagari Hindi","Noto Sans",Arial,sans-serif;font-size:16.67px !important;line-height:1.55 !important;';
     } else {
       body.style.cssText = 'width:100%;max-width:100%;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;';
     }
@@ -30396,6 +30399,21 @@ async function _folderBuildTopicContent(it, isFirst, exactLook) {
     img { max-width:100%; border-radius:6px; }
     p { margin:0 0 8px 0; }
     div { max-width:100%; }
+     ${exactLook ? `
+     /* Readable A4 landscape column typography: 12.5pt base. */
+     .ne-rich-mode, .ne-rich-mode *, .ne-rich-mode p, .ne-rich-mode li,
+     .ne-rich-mode td, .ne-rich-mode th, .ne-rich-mode blockquote {
+       font-family:"Noto Sans Devanagari","Tiro Devanagari Hindi","Noto Sans",Arial,sans-serif !important;
+     }
+     .ne-rich-mode, .ne-rich-mode p, .ne-rich-mode li, .ne-rich-mode span,
+     .ne-rich-mode a, .ne-rich-mode td, .ne-rich-mode th, .ne-rich-mode blockquote {
+       font-size:16.67px !important;
+       line-height:1.55 !important;
+     }
+     .ne-rich-mode b, .ne-rich-mode strong { font-weight:800 !important; }
+     .ne-rich-mode i, .ne-rich-mode em { font-style:italic !important; }
+     .ne-rich-mode u { text-decoration:underline !important; }
+     ` : ''}
   `;
   topicWrap.appendChild(styleTag);
 
@@ -30432,7 +30450,7 @@ async function _folderBuildTopicContent(it, isFirst, exactLook) {
 // (subject / sub-subject / section / sub-section), regardless of depth.
 async function downloadFolderPDF(kind, sid, secid, ssid, e) {
   if(e) e.stopPropagation();
-  // Choice: Normal text PDF vs Exact-look Slides PDF (editor fonts + highlights)
+  // Choice: Normal text PDF vs Exact-look landscape columns PDF
   return new Promise(function(resolve) {
     var old = document.getElementById('_folderPdfChoiceOverlay');
     if(old) old.remove();
@@ -30447,8 +30465,8 @@ async function downloadFolderPDF(kind, sid, secid, ssid, e) {
         '<div style="font-size:0.72rem;color:#37526d;margin-top:4px;line-height:1.45;">Text-based · search/select possible · thoda reflow ho sakta hai</div>' +
       '</button>' +
       '<button type="button" id="_fpdfSlides" style="width:100%;text-align:left;padding:14px;border-radius:14px;border:1.5px solid rgba(46,125,50,0.4);background:rgba(46,125,50,0.09);margin-bottom:10px;cursor:pointer;">' +
-        '<div style="font-weight:800;color:#2e7d32;font-size:0.92rem;">🖼 Exact Look Slides PDF</div>' +
-        '<div style="font-size:0.72rem;color:#37526d;margin-top:4px;line-height:1.45;">Notes Editor jaisa font + highlights · screenshot slides · A4 par 2 columns × 3 slides</div>' +
+        '<div style="font-weight:800;color:#2e7d32;font-size:0.92rem;">🖼 Exact Look PDF — Landscape 2 Columns</div>' +
+        '<div style="font-size:0.72rem;color:#37526d;margin-top:4px;line-height:1.45;">Notes Editor jaisa rich font + highlights · readable 12.5pt base · A4 landscape par 2 columns</div>' +
       '</button>' +
       '<button type="button" id="_fpdfCancel" style="width:100%;padding:10px;border-radius:12px;border:1.5px solid #bdd5ea;background:#f4f9fe;font-weight:700;color:#37526d;cursor:pointer;">Cancel</button>' +
     '</div>';
@@ -30683,11 +30701,11 @@ async function downloadFolderPDF_Normal(kind, sid, secid, ssid) {
 
 
 /* ================================================================
-   EXACT-LOOK SLIDES PDF — folder download
+   EXACT-LOOK LANDSCAPE COLUMNS PDF — folder download
    - Renders notes with Notes-Editor fonts + highlight marks
    - Captures via html2canvas (screenshot style)
    - Smart vertical slices (avoids cutting last line when possible)
-   - Packs on A4: 2 columns × 3 slides per page, sequential
+    - Packs on A4 landscape: 2 readable columns per page, sequential
    ================================================================ */
 async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
   let node = null, folderLabel = '';
@@ -30720,11 +30738,11 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
   if(notesWithContentCount === 0) { showToast('⚠️ Is folder ke topics mein koi note content nahi hai', 'error'); return; }
   if(typeof html2pdf === 'undefined') { showToast('❌ PDF library load nahi hui — internet check karo', 'error'); return; }
 
-  showToast('⬇️ Exact Look Slides PDF taiyar ho raha hai (' + items.length + ' topics)...', 'success');
+  showToast('⬇️ Exact Look landscape PDF taiyar ho raha hai (' + items.length + ' topics)...', 'success');
 
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:#0d1b2aee;display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Noto Sans Devanagari",Arial,sans-serif;font-size:0.95rem;font-weight:600;text-align:center;padding:20px;';
-  overlay.textContent = '🖼 Exact Look — slides capture 1/' + items.length + '...';
+  overlay.textContent = '🖼 Exact Look — readable landscape columns 1/' + items.length + '...';
   document.body.appendChild(overlay);
 
   const _prevX = window.scrollX || 0, _prevY = window.scrollY || 0;
@@ -30773,10 +30791,12 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
 
   // IMPORTANT: same width as _folderBuildTopicContent (NE_PRINT_WIDTH)
   // so text/highlights do NOT reflow differently from the builder.
-  const CAPTURE_W = (typeof NE_PRINT_WIDTH === 'number' ? NE_PRINT_WIDTH : 700);
-  // Slide height tuned to A4 2×3 cell aspect (~100mm × 96mm → ~1.05 ratio).
-  // CAPTURE_W/1.05 ≈ portrait-ish tiles that FILL each cell with almost no blank.
-  const SLIDE_H = Math.round(CAPTURE_W / 1.05);
+  // One readable column on A4 landscape is about 135mm wide × 190mm high.
+  // Capture at 520 CSS px so the 16.67px base is approximately 12.5pt
+  // after placement, rather than shrinking into portrait 2×3 tiles.
+  const CAPTURE_W = 520;
+  const LANDSCAPE_COL_RATIO = 190 / 135;
+  const SLIDE_H = Math.round(CAPTURE_W * LANDSCAPE_COL_RATIO);
   const SCALE = 2;
 
   function smartSliceYs(canvasH, slideH) {
@@ -30935,7 +30955,7 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
            letterRendering: false,
           removeContainer: true
         },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
       };
 
       let canvas;
@@ -30983,7 +31003,7 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
       return;
     }
 
-    overlay.textContent = '📄 A4 par 2×3 slides arrange ho rahe hain (' + allSlides.length + ' slides)...';
+    overlay.textContent = '📄 A4 landscape par 2 readable columns arrange ho rahe hain (' + allSlides.length + ' sections)...';
 
     const bootstrap = document.createElement('div');
     bootstrap.style.cssText = 'width:40px;height:20px;padding:2px;font-size:8px;';
@@ -30992,17 +31012,17 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
     const bootOpt = {
       margin: 0,
       html2canvas: { scale: 1, backgroundColor: '#ffffff' },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
     };
     let pdf = await html2pdf().set(bootOpt).from(bootstrap).toPdf().get('pdf');
     if(bootstrap.parentNode) bootstrap.parentNode.removeChild(bootstrap);
 
-    // Full-page 2×3 — minimal margin/gap, NO borders. "Slide" = content chunk only.
-    const PAGE_W = 210, PAGE_H = 297;
-    const MARGIN = 3.5;
-    const GAP_X = 1.2;
-    const GAP_Y = 1.0;
-    const COLS = 2, ROWS = 3;
+    // Full-page A4 landscape, two readable columns — no tiny 2×3 tiles.
+    const PAGE_W = 297, PAGE_H = 210;
+    const MARGIN = 10;
+    const GAP_X = 7;
+    const GAP_Y = 0;
+    const COLS = 2, ROWS = 1;
     const usableW = PAGE_W - 2 * MARGIN - GAP_X;
     const usableH = PAGE_H - 2 * MARGIN - (ROWS - 1) * GAP_Y;
     const cellW = usableW / COLS;
@@ -31013,7 +31033,7 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
       if(pageIndex > 0) pdf.addPage();
       const batch = allSlides.slice(i, i + COLS * ROWS);
       for(let b = 0; b < batch.length; b++) {
-        // Column-major: 0,1,2 LEFT top→bottom; 3,4,5 RIGHT top→bottom
+        // Column-major: 0 LEFT; 1 RIGHT.
         const col = Math.floor(b / ROWS);
         const row = b % ROWS;
         const x = MARGIN + col * (cellW + GAP_X);
@@ -31038,9 +31058,9 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
     }
 
     const safeName = (folderLabel || 'folder').replace(/[^a-zA-Z0-9ऀ-ॿ\s]/g, '').trim() || 'folder';
-    pdf.save(safeName + '_ExactSlides.pdf');
+    pdf.save(safeName + '_ExactLandscape2Columns.pdf');
     cleanup();
-    showToast('✅ Exact Look Slides PDF download! (' + allSlides.length + ' slides)', 'success');
+    showToast('✅ Exact Look landscape PDF download! (' + allSlides.length + ' readable sections)', 'success');
   } catch(err) {
     cleanup();
     console.error('[ExactSlides] error', err);
