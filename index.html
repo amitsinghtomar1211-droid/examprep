@@ -30643,6 +30643,48 @@ function _folderResolveNoteHtml(html) {
   }
 }
 
+// Resolve the actual content for one library note before folder export.
+// Hub-reference notes intentionally keep only a lightweight placeholder in
+// the subject topic. Their real HTML lives in the shared Current Affairs /
+// Static GK library, keyed by hubTopicId. The Notes Editor already resolves
+// this path when a single note is opened; folder downloads must do the same.
+function _folderGetNoteHtml(n) {
+  if(!n) return '';
+
+  if(n.type === 'hubRef' && n.hubTopicId){
+    var hubMap = n.hubType === 'static'
+      ? (S.staticGkTopics || {})
+      : (S.extraFactsTopics || {});
+    var hubTopic = hubMap[String(n.hubTopicId)] || hubMap[n.hubTopicId];
+    var hubHtml = hubTopic && (
+      hubTopic.html ||
+      hubTopic.editorRichHTML ||
+      hubTopic.richHTML ||
+      hubTopic.content ||
+      ''
+    );
+    if(!hubHtml || !String(hubHtml).trim()) return '';
+    try {
+      return typeof _fcfpCleanStoredHtml === 'function'
+        ? _fcfpCleanStoredHtml(hubHtml)
+        : String(hubHtml);
+    } catch(e) {
+      return String(hubHtml);
+    }
+  }
+
+  var richHtml = n.editorRichHTML || n.richHTML || '';
+  if(String(richHtml).trim()) return String(richHtml);
+  if(String(n.content || '').trim()){
+    var plain = String(n.content);
+    return '<div style="white-space:pre-wrap;">' +
+      plain.replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;') +
+      '</div>';
+  }
+  return '';
+}
+
 // Recursively walk a folder node (subject / sub-subject / section /
 // sub-section) and collect EVERY topic underneath it — including topics
 // inside any number of nested sub-subjects / sub-sections / sub-topics —
@@ -30734,11 +30776,9 @@ async function _folderBuildTopicContent(it, isFirst, exactLook) {
 
   for(let ni = 0; ni < notes.length; ni++) {
     const n = notes[ni];
-    const richSrc = n.editorRichHTML || n.richHTML || '';
-    let rawHtml = richSrc;
-    if(!rawHtml.trim() && (n.content || '').trim()) {
-      rawHtml = '<div style="white-space:pre-wrap;">' + _escHtml(n.content) + '</div>';
-    }
+    // Hub references have no body in the subject note itself. Resolve their
+    // live Current Affairs / Static GK HTML before checking or rendering.
+    const rawHtml = _folderGetNoteHtml(n);
     if(!rawHtml.trim()) { console.warn('[downloadFolderPDF] Topic "'+(t.name||'?')+'" note "'+(n.name||ni)+'" has no content — skipped.'); continue; }
     anyNoteContent = true;
     const resolvedHtml = await _folderResolveNoteHtml(rawHtml);
@@ -30913,7 +30953,7 @@ async function downloadFolderPDF_Normal(kind, sid, secid, ssid) {
   console.log('[downloadFolderPDF] "'+folderLabel+'" — '+items.length+' topic(s) collected across all nested folders.');
   if(!items.length) { showToast('⚠️ Is folder mein koi topic/notes nahi hai', 'error'); return; }
 
-  const notesWithContentCount = items.reduce((n, it) => n + (it.topic.notes || []).filter(n2 => (n2.editorRichHTML || n2.richHTML || n2.content || '').trim()).length, 0);
+  const notesWithContentCount = items.reduce((n, it) => n + (it.topic.notes || []).filter(n2 => _folderGetNoteHtml(n2).trim()).length, 0);
   console.log('[downloadFolderPDF] Notes with actual content found: ' + notesWithContentCount);
   const hasAnyContent = notesWithContentCount > 0;
   if(!hasAnyContent) { console.warn('[downloadFolderPDF] No topic under "'+folderLabel+'" has any note content (editorRichHTML/richHTML/content all empty).'); showToast('⚠️ Is folder ke topics mein koi note content nahi hai', 'error'); return; }
@@ -31141,7 +31181,7 @@ async function downloadFolderPDF_ExactSlides(kind, sid, secid, ssid) {
   const items = _folderCollectTopics(node, kind, [folderLabel]);
   if(!items.length) { showToast('⚠️ Is folder mein koi topic/notes nahi hai', 'error'); return; }
 
-  const notesWithContentCount = items.reduce((n, it) => n + (it.topic.notes || []).filter(n2 => (n2.editorRichHTML || n2.richHTML || n2.content || '').trim()).length, 0);
+  const notesWithContentCount = items.reduce((n, it) => n + (it.topic.notes || []).filter(n2 => _folderGetNoteHtml(n2).trim()).length, 0);
   if(notesWithContentCount === 0) { showToast('⚠️ Is folder ke topics mein koi note content nahi hai', 'error'); return; }
   if(typeof html2pdf === 'undefined') { showToast('❌ PDF library load nahi hui — internet check karo', 'error'); return; }
 
