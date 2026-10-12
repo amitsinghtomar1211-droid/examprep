@@ -25391,7 +25391,7 @@ function _forceCloseEditor() {
     if(_pendingSilentReload){
       _pendingSilentReload = false;
       setTimeout(function(){
-        if(typeof _silentReloadFromFirebase === 'function') _silentReloadFromFirebase();
+        if(typeof _refreshLibraryStructureFromCloud === 'function') _refreshLibraryStructureFromCloud();
       }, 400);
     }
   } catch(e){}
@@ -36506,17 +36506,50 @@ function _isNotesUiBusy(){
 
 
 // ══════════════════════════════════════════════════════════════
-// ✅ SYNC POLICY (2026-09-16 fix)
-// - Auto PULL / "dusri device" toast: ONLY at login (loadFromFirebase)
-// - Realtime listeners: still track writeIds but DO NOT apply remote
-//   topic/meta during reading / adding content (stops false offline toasts
-//   + auto-back while inserting files)
-// - Local EDIT / HIGHLIGHT still PUSHes to Firebase immediately
-// - Content NEVER truncated on save/load/merge — longer side wins
+// ✅ SYNC POLICY
+// - Login always pulls from Firebase before the realtime listeners attach.
+// - Admin applies remote topic edits live; other accounts are notified and
+//   choose when to refresh, so their current reading/editing is not interrupted.
+// - Backup restore and offline sessions still block remote application.
 // ══════════════════════════════════════════════════════════════
-var _LIVE_REMOTE_APPLY = false; // false = no live pull mid-session (login-only pull)
+var _LIVE_REMOTE_APPLY = false; // enabled only after login pull completes
 var _ALLOW_LIVE_APPLY_ONCE = false; // set true briefly after explicit "Sync Now" / pullFromCloud ONLY
 var _RESTORE_LOCK = false; // true while backup restore in progress — blocks ALL remote pulls/toasts
+var _remoteUpdateNoticeAt = 0;
+var _knownLibraryRevision = null;
+
+function _notifyRemoteRefreshRequired(){
+  if(_isAdmin || _ALLOW_LIVE_APPLY_ONCE) return;
+  var now = Date.now();
+  if(now - _remoteUpdateNoticeAt < 8000) return;
+  _remoteUpdateNoticeAt = now;
+  var id = 'eppRemoteUpdateNotice';
+  var existing = document.getElementById(id);
+  if(existing) return;
+  var box = document.createElement('div');
+  box.id = id;
+  box.style.cssText = 'position:fixed;left:14px;right:14px;bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:100000;background:#17365d;color:#fff;padding:14px 16px;border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.28);font:600 14px/1.45 system-ui,sans-serif;display:flex;gap:12px;align-items:center;justify-content:space-between;';
+  var text = document.createElement('div');
+  text.textContent = '🔄 Dusri device par naya update aaya hai. Latest data ke liye app refresh karein.';
+  var actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;gap:8px;flex-shrink:0;';
+  var refresh = document.createElement('button');
+  refresh.type = 'button';
+  refresh.textContent = 'Refresh';
+  refresh.style.cssText = 'border:0;border-radius:9px;background:#fff;color:#17365d;font-weight:800;padding:9px 12px;cursor:pointer;';
+  refresh.onclick = function(){ location.reload(); };
+  var close = document.createElement('button');
+  close.type = 'button';
+  close.textContent = '×';
+  close.setAttribute('aria-label','Dismiss update notice');
+  close.style.cssText = 'border:0;border-radius:9px;background:rgba(255,255,255,.16);color:#fff;font-size:20px;line-height:1;padding:6px 10px;cursor:pointer;';
+  close.onclick = function(){ box.remove(); };
+  actions.appendChild(refresh);
+  actions.appendChild(close);
+  box.appendChild(text);
+  box.appendChild(actions);
+  document.body.appendChild(box);
+}
 
 function _isRestoreLocked(){
   try {
@@ -36533,12 +36566,22 @@ function _canApplyRemoteNow(){
     // Backup restore / just-restored: NEVER apply remote (even offline cache)
     if(typeof _isRestoreLocked === 'function' && _isRestoreLocked()) return false;
     if(typeof navigator !== 'undefined' && navigator.onLine === false) return false;
-    // Explicit Sync Now only
+    // A user-triggered pull can apply once for either account role.
     if(_ALLOW_LIVE_APPLY_ONCE) return true;
     if(!_LIVE_REMOTE_APPLY) return false;
+    // Non-admin accounts get a refresh prompt instead of a mid-session overwrite.
+    if(!_isAdmin) return false;
+    return true;
   } catch(e){}
   return false;
 }
+
+window.addEventListener('online', function(){
+  if(_currentUser && !_isRestoreLocked()){
+    _LIVE_REMOTE_APPLY = true;
+    if(typeof _flushPendingTopicSync === 'function') _flushPendingTopicSync();
+  }
+});
 
 function _beginRestoreLock(){
   _RESTORE_LOCK = true;
@@ -36756,6 +36799,8 @@ function initFirebase(){
         console.info('[🔐 AUTH] Login successful — email:'+user.email+' | isAdmin:'+_isAdmin+' | effectiveUID:'+_effectiveUID);
         loadFromFirebase().then(function(){
           console.info('[🔐 AUTH] loadFromFirebase complete — ab listeners attach ho rahe hain');
+          // Login pull ko complete hone do; uske baad hi realtime changes apply/notify hon.
+          _LIVE_REMOTE_APPLY = !_isRestoreLocked() && navigator.onLine !== false;
           _attachRealtimeListener(); _initUpdatesListener();
           if(_isAdmin){ _startAdminSessionWatch(); setTimeout(_adminLoadRecentUpdates, 1500); }
           if(!_isAdmin && _currentUser) loadUserPermissions(_currentUser.uid);
@@ -45221,10 +45266,35 @@ async function saveTopicToFirebase(tid, subjId, secId){
 
     // Also update subject shell (in case structure changed)
     if(foundSubj){
-      await _db.collection('users').doc(uid).collection('subjects').doc(String(foundSubj.id)).set({
-        shell:     _buildSubjShell(foundSubj),
+      var _shellRef = _db.collection('users').doc(uid).collection('subjects').doc(String(foundSubj.id));
+      var _nextShell = _buildSubjShell(foundSubj);
+      var _shellChanged = false;
+      try{
+        var _oldShellDoc = await _shellRef.get();
+        _shellChanged = !_oldShellDoc.exists ||
+          JSON.stringify((_oldShellDoc.data()||{}).shell||null) !== JSON.stringify(_nextShell);
+      }catch(_shellReadErr){
+        // Still save the shell; conservatively announce a structural change
+        // so connected devices refresh their tree instead of missing a new item.
+        _shellChanged = true;
+      }
+      var _shellPayload = {
+        shell:     _nextShell,
         updatedAt: Date.now()
-      }, {merge:true});
+      };
+      if(_shellChanged){
+        var _metaWid = _genWriteId();
+        _rememberMetaWriteId(_metaWid);
+        var _structureBatch = _db.batch();
+        _structureBatch.set(_shellRef, _shellPayload, {merge:true});
+        _structureBatch.set(_db.collection('users').doc(uid), {
+          libraryRevision: firebase.firestore.FieldValue.increment(1),
+          lastSync: firebase.firestore.FieldValue.serverTimestamp(),
+          writeId: _metaWid
+        }, {merge:true});
+        await _structureBatch.commit();
+        _knownLibraryRevision = Number(_knownLibraryRevision || 0) + 1;
+      } else await _shellRef.set(_shellPayload, {merge:true});
     }
 
     // Listener echo ignore ke liye known writeId sync
@@ -45413,6 +45483,7 @@ async function saveSubjectShellFast(subjId){
       model:             S.model||'meta-llama/llama-4-scout-17b-16e-instruct',
       subjectIds:        mergedSubjIds,
       topicFormat:       'v2',
+      libraryRevision:   firebase.firestore.FieldValue.increment(1),
       lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
       writeId:           wid
     }, {merge:true});
@@ -45437,6 +45508,7 @@ async function saveSubjectShellFast(subjId){
     }
 
     await batch.commit();
+    _knownLibraryRevision = Number(_knownLibraryRevision || 0) + 1;
     var _elapsed = Date.now() - _t0;
     console.info('[⚡ saveSubjectShellFast] ✅ SUCCESS — '+opsCount+' ops in '+_elapsed+'ms | subjId:'+subjId);
     setSyncStatus('synced');
@@ -45539,6 +45611,7 @@ async function saveToFirebase(){
         hlQuizProgress:    _fsClean(S.hlQuizProgress||{}),
         subjectIds:        mergedSubjIds,
         topicFormat:       'v2',
+        libraryRevision:   firebase.firestore.FieldValue.increment(1),
         lastSync:          firebase.firestore.FieldValue.serverTimestamp(),
         writeId:           wid
       }
@@ -45736,6 +45809,8 @@ async function saveToFirebase(){
     var _elapsed = Date.now() - _saveStartTime;
     console.info('[🔥 saveToFirebase] ✅ SUCCESS — '+allOps.length+' ops / '+_batches.length+' batches / '+_elapsed+'ms | uid:'+uid);
     setSyncStatus('synced');
+    try{ localStorage.removeItem(_pendingTopicSyncKey); }catch(_queueClearError){}
+    _knownLibraryRevision = Number(_knownLibraryRevision || 0) + 1;
     _fbSaveInProgress = false;
     return { ok: true, ops: allOps.length, batches: _batches.length, ms: _elapsed };
   }catch(e){
@@ -45785,6 +45860,10 @@ async function loadFromFirebase(){
     }
     return;
   }
+
+  // Upload queued admin edits before a cloud pull can replace this device's copy.
+  // The retry queue contains only topics that changed locally.
+  if(_isAdmin) await _flushPendingTopicSync();
 
   var _loadStart = Date.now();
   setSyncStatus('syncing');
@@ -45926,6 +46005,12 @@ async function loadFromFirebase(){
     var _localRich = (typeof _totalNotesRichChars==='function') ? _totalNotesRichChars(S.subjects) : {chars:0,withRich:0};
     var _cloudRich = (typeof _totalNotesRichChars==='function') ? _totalNotesRichChars(loadedSubjects) : {chars:0,withRich:0};
     console.info('[📥 loadFromFirebase] richChars local='+(_localRich.chars||0)+' cloud='+(_cloudRich.chars||0)+' localWithRich='+(_localRich.withRich||0)+' cloudWithRich='+(_cloudRich.withRich||0));
+    var _localLibraryBytes = 0, _cloudLibraryBytes = 0;
+    try{
+      _localLibraryBytes = new TextEncoder().encode(JSON.stringify(S.subjects||[])).length;
+      _cloudLibraryBytes = new TextEncoder().encode(JSON.stringify(loadedSubjects||[])).length;
+    }catch(_sizeCompareError){}
+    console.info('[📥 loadFromFirebase] library bytes local='+_localLibraryBytes+' cloud='+_cloudLibraryBytes);
 
     // Session restore chars: even if S was slimmed, we know restore had full data
     var _sessRich = 0;
@@ -45976,6 +46061,7 @@ async function loadFromFirebase(){
 
     var _localRicher = (_isAdmin && (
       ((_localRich.chars||0) > (_cloudRich.chars||0)*1.15 && (_localRich.chars||0) > (_cloudRich.chars||0)+5000) ||
+      (_localLibraryBytes > _cloudLibraryBytes * 1.15 && _localLibraryBytes > _cloudLibraryBytes + 10000) ||
       (_localPlain.plainSum > _cloudPlain.plainSum + 20000 && _localPlain.n2000 < _cloudPlain.n2000) ||
       (_localPlain.plainSum > _cloudPlain.plainSum * 1.2 && _localPlain.plainSum > _cloudPlain.plainSum + 10000) ||
       (_sessRich > 100000 && (_localRich.chars||0) >= _sessRich * 0.5 && (_cloudRich.chars||0) < _sessRich * 0.5)
@@ -46183,8 +46269,9 @@ async function syncNow(){
 
 // ✅ PULL FROM CLOUD — dusri device ke latest notes force-fetch karo
 async function pullFromCloud(){
-  _ALLOW_LIVE_APPLY_ONCE = true;
-  _LIVE_REMOTE_APPLY = false; // still login-policy; this flag only unlocks this pull
+  // This function applies its fetched snapshot directly below; it does not
+  // need to unlock realtime listeners for non-admin accounts.
+  _ALLOW_LIVE_APPLY_ONCE = false;
 
   if(!_db || !_currentUser){ console.warn('[⬇️ pullFromCloud] SKIP: db='+!!_db+' user='+!!_currentUser); showToast('Pehle login karo!','error'); return; }
   closeModal('userMenuModal');
@@ -46366,6 +46453,7 @@ function _attachRealtimeListener(){
       if(_firstMeta){
         _firstMeta = false;
         _knownMetaWriteId = incomingWid;
+        _knownLibraryRevision = Number(data.libraryRevision || 0);
         // Attach per-topic listeners after meta loads
         _attachTopicListeners();
         return;
@@ -46380,8 +46468,15 @@ function _attachRealtimeListener(){
 
       _knownMetaWriteId = incomingWid;
 
-      // Meta changed from another device — silently update meta fields only
-      _applyMetaUpdate(data);
+      var incomingLibraryRevision = Number(data.libraryRevision || 0);
+      var libraryStructureChanged = _knownLibraryRevision !== null &&
+        incomingLibraryRevision !== _knownLibraryRevision;
+      _knownLibraryRevision = incomingLibraryRevision;
+
+      // Meta changed from another device. Admins apply it live; other accounts
+      // keep their current screen and get a manual refresh prompt.
+      _applyMetaUpdate(data, libraryStructureChanged);
+      if(!_isAdmin) _notifyRemoteRefreshRequired();
     },
     function(err){
       console.log('Meta listener dropped, reconnecting in 3s:', err.code || err.message);
@@ -46454,6 +46549,10 @@ function _attachTopicListeners(){
             return;
           }
         } catch(_oe){}
+        if(!_isAdmin && !_ALLOW_LIVE_APPLY_ONCE){
+          _notifyRemoteRefreshRequired();
+          return;
+        }
         // Dusri device ne yeh topic update kiya — apply only if policy allows
         _applyTopicUpdate(tid, data.topic);
       },
@@ -46488,6 +46587,10 @@ function _attachSingleTopicListener(tid){
       }
       _knownTopicWriteIds[String(tid)] = incomingWid;
       try { if(typeof navigator !== 'undefined' && navigator.onLine === false) return; } catch(_oe){}
+      if(!_isAdmin && !_ALLOW_LIVE_APPLY_ONCE){
+        _notifyRemoteRefreshRequired();
+        return;
+      }
       _applyTopicUpdate(String(tid), data.topic);
     },
     function(){ delete _topicListeners[String(tid)]; }
@@ -46720,8 +46823,11 @@ function _applyTopicUpdate(tid, newTopicData){
 
   if(!updated) return;
 
-  // localStorage update
-  try{ localStorage.setItem('epp5', JSON.stringify(S)); }catch(e){}
+  // Persist the remote edit without pushing heavy HTML into mobile localStorage.
+  try{
+    if(typeof _writeEpp5ToLocalStorage === 'function') _writeEpp5ToLocalStorage();
+    else localStorage.setItem('epp5', JSON.stringify(S));
+  }catch(e){}
 
   // ── Agar receiving device pe notes editor is tid ke liye KHULA HAI — UI refresh karo ──
   if(!isActiveEdit && typeof _editorState !== 'undefined' && _editorState &&
@@ -46822,7 +46928,7 @@ function _applyTopicUpdate(tid, newTopicData){
 // ═══════════��══════════════════════════════════════════════════════════
 // ⚡ APPLY META UPDATE — stats, quiz, exams — bina full reload ke
 // ════════════════════���═════════════════════════════════════════════════
-function _applyMetaUpdate(meta){
+function _applyMetaUpdate(meta, libraryStructureChanged){
   if(typeof _isRestoreLocked === 'function' && _isRestoreLocked()){ console.info('[meta] blocked restore lock'); return; }
   if(typeof _canApplyRemoteNow === 'function' && !_canApplyRemoteNow()){ console.info('[meta] blocked policy'); return; }
   if(_syncInProgress) return;
@@ -46846,17 +46952,21 @@ function _applyMetaUpdate(meta){
   var remoteIds = (meta.subjectIds||[]).map(String).sort().join(',');
   var localIds  = (S.subjects||[]).map(function(s){ return String(s.id); }).sort().join(',');
   if(remoteIds !== localIds){
-    // ✅ Mid-session structure pull OFF — only at login / explicit sync
-    if(typeof _canApplyRemoteNow === 'function' && !_canApplyRemoteNow()){
-      console.info('[meta] structure change ignored mid-session (login-only pull policy)');
-      return;
-    }
     if(busy){
       _pendingSilentReload = true;
       console.info('[meta] structure change deferred — UI busy');
       return;
     }
-    _silentReloadFromFirebase();
+    _refreshLibraryStructureFromCloud();
+    return;
+  }
+  if(libraryStructureChanged){
+    if(busy){
+      _pendingSilentReload = true;
+      console.info('[meta] library shell update deferred — UI busy');
+      return;
+    }
+    _refreshLibraryStructureFromCloud();
     return;
   }
 
@@ -46882,7 +46992,122 @@ function _applyMetaUpdate(meta){
   }
 }
 
-// ── Full silent reload — jab structure change ho (new subject/section/topic) ──
+// ── Targeted realtime library refresh: shells + only new topic documents ──
+async function _refreshLibraryStructureFromCloud(){
+  if(!_db || !_currentUser || !_isAdmin || !_canApplyRemoteNow() || _syncInProgress) return;
+  if(typeof _isNotesUiBusy === 'function' && _isNotesUiBusy()){
+    _pendingSilentReload = true;
+    return;
+  }
+  _syncInProgress = true;
+  try{
+    var uid = _effectiveUID;
+    var metaSnap = await _db.collection('users').doc(uid).get();
+    if(!metaSnap.exists) return;
+    var ids = (metaSnap.data() || {}).subjectIds || [];
+    var shellDocs = await Promise.all(ids.map(function(id){
+      return _db.collection('users').doc(uid).collection('subjects').doc(String(id)).get();
+    }));
+
+    var localTopics = {};
+    function rememberTopic(t){ if(t && t.id != null) localTopics[String(t.id)] = t; }
+    function walkLocalSection(sec){
+      (sec.topics||[]).forEach(rememberTopic);
+      (sec.subSections||[]).forEach(walkLocalSection);
+    }
+    function walkLocalSubject(sub){
+      (sub.sections||[]).forEach(walkLocalSection);
+      (sub.subSubjects||[]).forEach(walkLocalSubject);
+    }
+    (S.subjects||[]).forEach(walkLocalSubject);
+
+    var cloudTopicIds = {};
+    function collectSectionIds(section){
+      (section.topicIds||[]).forEach(function(tid){ cloudTopicIds[String(tid)] = true; });
+      (section.subSectionMeta||[]).forEach(collectSectionIds);
+    }
+    function collectSubjectIds(shell){
+      (shell.sectionMeta||[]).forEach(collectSectionIds);
+      (shell.subSubjects||[]).forEach(collectSubjectIds);
+    }
+    shellDocs.forEach(function(doc){
+      if(doc.exists && doc.data().shell) collectSubjectIds(doc.data().shell);
+    });
+
+    // Existing topic bodies are already in memory/listened to; download only new IDs.
+    var newIds = Object.keys(cloudTopicIds).filter(function(tid){ return !localTopics[tid]; });
+    var newDocs = await Promise.all(newIds.map(function(tid){
+      return _db.collection('users').doc(uid).collection('topics').doc(tid).get();
+    }));
+    var topicMap = {};
+    Object.keys(cloudTopicIds).forEach(function(tid){
+      if(localTopics[tid]) topicMap[tid] = localTopics[tid];
+    });
+    var partJobs = [];
+    newDocs.forEach(function(doc){
+      if(!doc.exists) return;
+      var data = doc.data() || {};
+      if(!data.topic) return;
+      var tid = String(data.topic.id || doc.id);
+      topicMap[tid] = data.topic;
+      if(data.splitNotes){
+        partJobs.push(Promise.resolve(_loadNotePartsIntoTopic(uid, tid, topicMap[tid])).then(function(full){
+          if(full) topicMap[tid] = full;
+        }));
+      }
+    });
+    if(partJobs.length) await Promise.all(partJobs);
+
+    function rebuildSection(section){
+      var out = Object.assign({}, section);
+      out.topics = (section.topicIds||[]).map(function(tid){ return topicMap[String(tid)] || null; }).filter(Boolean);
+      out.subSections = (section.subSectionMeta||[]).map(rebuildSection);
+      delete out.topicIds;
+      delete out.subSectionMeta;
+      return out;
+    }
+    function rebuildSubSubject(sub){
+      var out = Object.assign({}, sub);
+      out.sections = (sub.sectionMeta||[]).map(rebuildSection);
+      out.subSubjects = (sub.subSubjects||[]).map(rebuildSubSubject);
+      delete out.sectionMeta;
+      return out;
+    }
+    var refreshedSubjects = shellDocs.filter(function(doc){ return doc.exists; }).map(function(doc){
+      var shell = doc.data().shell;
+      if(!shell) return null;
+      var out = Object.assign({}, shell);
+      out.sections = (shell.sectionMeta||[]).map(rebuildSection);
+      out.subSubjects = (shell.subSubjects||[]).map(rebuildSubSubject);
+      delete out.sectionMeta;
+      return out;
+    }).filter(Boolean);
+    if(!refreshedSubjects.length && (S.subjects||[]).length) return;
+
+    S.subjects = refreshedSubjects;
+    Object.keys(topicMap).forEach(function(tid){
+      if(typeof _cleanTopic === 'function') _lastSavedSnapshot[String(tid)] = JSON.stringify(_cleanTopic(topicMap[tid]));
+    });
+    if(typeof _writeEpp5ToLocalStorage === 'function') _writeEpp5ToLocalStorage();
+    else save();
+    renderExamSwitcher && renderExamSwitcher();
+    renderLibrarySelects && renderLibrarySelects();
+    renderLibraryTree && renderLibraryTree();
+    renderExamsList && renderExamsList();
+    updateQuizSelects && updateQuizSelects();
+    updateHistBadge && updateHistBadge();
+    updateSavedBadge && updateSavedBadge();
+    _attachTopicListeners();
+    showToast('🔄 Naya topic/library update live aa gaya!', 'info');
+  }catch(e){
+    console.warn('[libraryStructure] refresh failed:', e && e.message);
+    setSyncStatus('error');
+  }finally{
+    _syncInProgress = false;
+  }
+}
+
+// ── Full silent reload — retained for explicit/manual fallback ──
 async function _silentReloadFromFirebase(){
   if(!_db || !_currentUser || _syncInProgress) return;
   // ✅ Never silent-reload during/after backup restore or offline
@@ -47125,6 +47350,41 @@ async function _silentReloadFromFirebase(){
 // ══════════════════════════════════════════════════════════════════════
 var _lastSavedSnapshot = {}; // {tid: JSON string} — change detection ke liye
 var _metaSyncTimer = null;
+var _pendingTopicSyncKey = 'epp_pending_topic_sync_v1';
+
+function _readPendingTopicSync(){
+  try{ return JSON.parse(localStorage.getItem(_pendingTopicSyncKey)||'{}') || {}; }
+  catch(e){ return {}; }
+}
+function _queuePendingTopicSync(info){
+  if(!info || info.tid == null) return;
+  try{
+    var pending = _readPendingTopicSync();
+    pending[String(info.tid)] = { tid:String(info.tid), subjId:info.subjId||'', secId:info.secId||'' };
+    localStorage.setItem(_pendingTopicSyncKey, JSON.stringify(pending));
+  }catch(e){ console.warn('[syncQueue] unable to persist pending topic', e && e.message); }
+}
+function _removePendingTopicSync(tid){
+  try{
+    var pending = _readPendingTopicSync();
+    delete pending[String(tid)];
+    if(Object.keys(pending).length) localStorage.setItem(_pendingTopicSyncKey, JSON.stringify(pending));
+    else localStorage.removeItem(_pendingTopicSyncKey);
+  }catch(e){}
+}
+async function _flushPendingTopicSync(){
+  if(!_db || !_currentUser || !_isAdmin || _adminSessionLocked ||
+     (typeof _isRestoreLocked === 'function' && _isRestoreLocked())) return;
+  var pending = _readPendingTopicSync();
+  var items = Object.keys(pending).map(function(k){ return pending[k]; });
+  if(!items.length) return;
+  for(var i=0;i<items.length;i++){
+    var info = items[i];
+    var result = await saveTopicToFirebase(info.tid, info.subjId, info.secId);
+    if(result && result.ok) _removePendingTopicSync(info.tid);
+    else break;
+  }
+}
 
 
 function _pruneNoteBakLocalStorage(){
@@ -47214,12 +47474,6 @@ function save(){
   var _lsOk = false;
   try { _lsOk = !!_writeEpp5ToLocalStorage(); } catch(e){ console.error('[save]', e); }
 
-  // 🔒 Non-admin users: sirf local save, Firestore sync nahi
-  if(typeof _isAdmin !== 'undefined' && !_isAdmin) { return _lsOk; }
-
-  if(!_currentUser || !_db) return _lsOk;
-  setSyncStatus('syncing');
-
   // Step 2: Find which topics changed — RECURSIVE (nested sections)
   var changedTopics = [];
   function _walkSecForSave(sec, sub){
@@ -47239,13 +47493,22 @@ function save(){
   }
   (S.subjects||[]).forEach(function(sub){ _walkSubForSave(sub); });
 
+  // Keep a durable, per-topic retry list so mobile/network interruption does
+  // not turn a local save into a silently lost cloud write.
+  if(_isAdmin) changedTopics.forEach(_queuePendingTopicSync);
+  // Non-admin accounts are intentionally read-only in Firestore.
+  if(!_isAdmin) return _lsOk;
+  if(!_currentUser || !_db) return _lsOk;
+  setSyncStatus('syncing');
+
   // Step 3: Per-topic debounced granular save (300ms)
   changedTopics.forEach(function(info){
     var key = String(info.tid);
     if(_topicSyncTimers[key]) clearTimeout(_topicSyncTimers[key]);
     _topicSyncTimers[key] = setTimeout(function(){
       delete _topicSyncTimers[key];
-      saveTopicToFirebase(info.tid, info.subjId, info.secId).then(function(){
+      saveTopicToFirebase(info.tid, info.subjId, info.secId).then(function(result){
+        if(result && result.ok) _removePendingTopicSync(info.tid);
         // After topic save, attach listener if not already attached
         if(!_topicListeners[String(info.tid)]){
           _attachSingleTopicListener(info.tid);
