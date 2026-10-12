@@ -12677,13 +12677,26 @@ function _neInstallPdfTextLayerStyles() {
   style.id = 'nePdfTextLayerStyles';
   style.textContent = [
     '.ne-pdf-page{display:block;width:100%;max-width:900px;margin:12px auto 18px;text-align:center;page-break-after:always;position:relative;}',
-    '.ne-pdf-viewport{position:relative;display:block;width:100%;overflow:hidden;border:1px solid #d8e3ee;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.10);background:#fff;}',
+    '.ne-pdf-viewport{position:relative;display:block;width:100%;overflow:hidden;border:0;border-radius:4px;box-shadow:0 0 0 1px #d8e3ee,0 2px 8px rgba(0,0,0,.10);background:#fff;}',
     '.ne-pdf-page-img{display:block!important;width:100%!important;height:auto!important;max-width:100%!important;border:0!important;border-radius:0!important;box-shadow:none!important;margin:0!important;user-select:none;-webkit-user-select:none;}',
     '.ne-pdf-text-layer{position:absolute!important;left:0!important;top:0!important;overflow:hidden!important;line-height:1!important;text-align:initial!important;transform-origin:top left!important;user-select:text!important;-webkit-user-select:text!important;touch-action:pan-y!important;z-index:2;}',
     '.ne-pdf-text-layer span,.ne-pdf-text-layer br{position:absolute!important;color:transparent!important;white-space:pre!important;cursor:text!important;transform-origin:0 0!important;}',
     '.ne-pdf-text-layer ::selection{background:rgba(255,213,0,.48);color:transparent;}',
     '.ne-pdf-text-layer mark{color:transparent!important;}',
-    '.ne-pdf-text-layer mark.user-hl,.ne-pdf-text-layer mark.user-hl-pink,.ne-pdf-text-layer mark.user-hl-green,.ne-pdf-text-layer mark.user-hl-blue,.ne-pdf-text-layer mark.user-hl-red,.ne-pdf-text-layer mark.user-hl-darkred,.ne-pdf-text-layer mark.user-hl-mint,.ne-pdf-text-layer mark.user-hl-lavender,.ne-pdf-text-layer mark.user-hl-peach,.ne-pdf-text-layer mark.user-hl-custom{color:transparent!important;}'
+    '.ne-pdf-text-layer mark.user-hl,.ne-pdf-text-layer mark.user-hl-pink,.ne-pdf-text-layer mark.user-hl-green,.ne-pdf-text-layer mark.user-hl-blue,.ne-pdf-text-layer mark.user-hl-red,.ne-pdf-text-layer mark.user-hl-darkred,.ne-pdf-text-layer mark.user-hl-mint,.ne-pdf-text-layer mark.user-hl-lavender,.ne-pdf-text-layer mark.user-hl-peach,.ne-pdf-text-layer mark.user-hl-custom{color:transparent!important;}',
+    '.ne-pdf-annotations{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden;}',
+    '.ne-pdf-highlight{position:absolute;display:block;box-sizing:border-box;border-radius:2px;pointer-events:none;mix-blend-mode:multiply;}',
+    '.ne-pdf-highlight[data-color="yellow"]{background:rgba(255,236,140,.72);}',
+    '.ne-pdf-highlight[data-color="pink"]{background:rgba(255,182,193,.55);}',
+    '.ne-pdf-highlight[data-color="green"]{background:rgba(165,230,180,.55);}',
+    '.ne-pdf-highlight[data-color="blue"]{background:rgba(160,200,255,.5);}',
+    '.ne-pdf-highlight[data-color="red"]{background:rgba(200,50,50,.35);}',
+    '.ne-pdf-highlight[data-color="darkred"]{background:rgba(139,0,0,.48);}',
+    '.ne-pdf-highlight[data-color="mint"]{background:rgba(140,220,210,.55);}',
+    '.ne-pdf-highlight[data-color="lavender"]{background:rgba(200,185,235,.58);}',
+    '.ne-pdf-highlight[data-color="peach"]{background:rgba(255,200,160,.55);}',
+    '.ne-pdf-annotations[data-eraser="1"]{z-index:3;pointer-events:auto;}',
+    '.ne-pdf-annotations[data-eraser="1"] .ne-pdf-highlight{pointer-events:auto;cursor:cell;}'
   ].join('');
   document.head.appendChild(style);
 }
@@ -12717,11 +12730,106 @@ function _nePdfBindTextLayers(root) {
   root.querySelectorAll('.ne-pdf-page-img').forEach(function(img) {
     if(!img.complete) img.addEventListener('load', function() { _nePdfFitTextLayers(root); }, {once:true});
   });
+  root.querySelectorAll('.ne-pdf-viewport').forEach(function(wrap) {
+    var layer = wrap.querySelector('.ne-pdf-text-layer');
+    var annotations = wrap.querySelector('.ne-pdf-annotations');
+    if(!annotations) {
+      annotations = document.createElement('div');
+      annotations.className = 'ne-pdf-annotations';
+      annotations.setAttribute('aria-hidden', 'true');
+      if(layer) wrap.insertBefore(annotations, layer);
+      else wrap.appendChild(annotations);
+    }
+  });
+  if(!root._nePdfEraserBound) {
+    root._nePdfEraserBound = true;
+    root.addEventListener('pointerdown', function(e) {
+      if(typeof _hlCurrentMode === 'undefined' || _hlCurrentMode !== 'eraser') return;
+      var mark = e.target && e.target.closest ? e.target.closest('.ne-pdf-highlight') : null;
+      if(!mark || !root.contains(mark)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var id = mark.getAttribute('data-pdf-hlid');
+      if(typeof neSaveSnapshot === 'function') neSaveSnapshot();
+      Array.from(root.querySelectorAll('.ne-pdf-highlight')).forEach(function(item) {
+        if(item.getAttribute('data-pdf-hlid') === id) item.remove();
+      });
+      if(typeof markModified === 'function') markModified();
+      if(typeof showToast === 'function') showToast('PDF highlight hata diya 🧹', 'success');
+    });
+  }
+  _nePdfUpdateAnnotationMode(root);
   root.querySelectorAll('.ne-pdf-page').forEach(function(page) {
     page.setAttribute('contenteditable', 'false');
     page.setAttribute('spellcheck', 'false');
   });
   requestAnimationFrame(function() { _nePdfFitTextLayers(root); });
+}
+function _nePdfUpdateAnnotationMode(root) {
+  root = root || document.getElementById('noteEditableArea');
+  if(!root || !root.querySelectorAll) return;
+  var eraser = (typeof _hlCurrentMode !== 'undefined' && _hlCurrentMode === 'eraser');
+  root.querySelectorAll('.ne-pdf-annotations').forEach(function(layer) {
+    layer.setAttribute('data-eraser', eraser ? '1' : '0');
+  });
+}
+function _nePdfTextLayerForNode(node) {
+  var el = node && node.nodeType === 1 ? node : (node && node.parentElement);
+  return el && el.closest ? el.closest('.ne-pdf-text-layer') : null;
+}
+function _nePdfAddHighlight(range, text, color, root) {
+  var textLayer = _nePdfTextLayerForNode(range.startContainer);
+  if(!textLayer) return false;
+  var boxes = Array.from(range.getClientRects()).filter(function(r) {
+    return r.width > 0.5 && r.height > 0.5;
+  });
+  if(!boxes.length) return false;
+  root = root || document.getElementById('noteEditableArea');
+  var viewports = Array.from(root.querySelectorAll('.ne-pdf-viewport'));
+  if(!viewports.length) return false;
+  var colorName = typeof color === 'string' ? color : 'yellow';
+  var uid = 'pdfhl_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+  var made = 0;
+  boxes.forEach(function(r) {
+    viewports.forEach(function(viewport) {
+      var pageViewport = viewport.getBoundingClientRect();
+      var left = Math.max(r.left, pageViewport.left);
+      var top = Math.max(r.top, pageViewport.top);
+      var right = Math.min(r.right, pageViewport.right);
+      var bottom = Math.min(r.bottom, pageViewport.bottom);
+      if(right <= left || bottom <= top || !pageViewport.width || !pageViewport.height) return;
+      var layer = viewport.querySelector('.ne-pdf-text-layer');
+      var box = viewport.querySelector('.ne-pdf-annotations');
+      if(!box) {
+        box = document.createElement('div');
+        box.className = 'ne-pdf-annotations';
+        box.setAttribute('aria-hidden', 'true');
+        if(layer) viewport.insertBefore(box, layer);
+        else viewport.appendChild(box);
+      }
+      var marker = document.createElement('div');
+      marker.className = 'ne-pdf-highlight';
+      marker.setAttribute('data-pdf-hlid', uid);
+      marker.setAttribute('data-color', colorName);
+      marker.setAttribute('data-pdf-text', String(text || '').slice(0,500));
+      marker.setAttribute('aria-label', 'PDF highlight: ' + String(text || '').slice(0,120));
+      marker.style.left = ((left - pageViewport.left) / pageViewport.width * 100) + '%';
+      marker.style.top = ((top - pageViewport.top) / pageViewport.height * 100) + '%';
+      marker.style.width = ((right - left) / pageViewport.width * 100) + '%';
+      marker.style.height = ((bottom - top) / pageViewport.height * 100) + '%';
+      if(/^#[0-9a-f]{3,8}$/i.test(colorName)) {
+        marker.style.backgroundColor = colorName;
+        marker.style.opacity = '0.48';
+      }
+      box.appendChild(marker);
+      made++;
+    });
+  });
+  if(!made) return false;
+  if(typeof markModified === 'function') markModified();
+  if(typeof showToast === 'function') showToast('PDF ke text par highlight ho gaya!', 'success');
+  if(typeof trackActivity === 'function') trackActivity('highlight', {name:String(text||'').substring(0,40),tid:_editorState.tid});
+  return true;
 }
 async function _nePdfBuildTextLayer(textContent, viewport) {
   if(!textContent || !textContent.items || !textContent.items.length ||
@@ -12814,6 +12922,7 @@ function handleNoteFileUpload(input) {
             + '<div style="font-weight:700;color:#37526d;font-size:0.78rem;margin:0 0 6px;">— Page ' + i + ' —</div>'
             + '<div class="ne-pdf-viewport">'
             + '<img class="ne-pdf-page-img" data-pdf-page="1" src="' + pageImage + '" alt="PDF page ' + i + '" draggable="false">'
+            + '<div class="ne-pdf-annotations" aria-hidden="true"></div>'
             + (pdfTextLayerHtml ? '<div class="ne-pdf-text-layer" data-pdf-width="' + viewport.width + '" data-pdf-height="' + viewport.height + '" style="width:' + viewport.width + 'px;height:' + viewport.height + 'px;">' + pdfTextLayerHtml + '</div>' : '')
             + '</div>'
             + '</div>';
@@ -29727,6 +29836,7 @@ function neUndo() {
   const prev = _htmlUndoStack.pop();
   area.innerHTML = prev.html;
   _editorState.highlights = prev.highlights;
+  if(typeof _nePdfBindTextLayers === 'function') _nePdfBindTextLayers(area);
   neAttachEraserToMarks();
   // Re-render canvas from object list
   if(prev.ncoList) _neRestoreCanvas(prev.ncoList);
@@ -29751,6 +29861,7 @@ function neRedo() {
   const next = _htmlRedoStack.pop();
   area.innerHTML = next.html;
   _editorState.highlights = next.highlights;
+  if(typeof _nePdfBindTextLayers === 'function') _nePdfBindTextLayers(area);
   neAttachEraserToMarks();
   // Re-render canvas from object list
   if(next.ncoList) _neRestoreCanvas(next.ncoList);
@@ -29770,6 +29881,9 @@ function setHlMode(mode) {
   // 🔒 Non-admin users: highlight mode disable hai
   if(typeof _isAdmin !== 'undefined' && !hasPermission('highlight') && mode !== 'off') { return; }
   _hlCurrentMode = mode;
+  if(typeof _nePdfUpdateAnnotationMode === 'function') {
+    _nePdfUpdateAnnotationMode(document.getElementById('noteEditableArea'));
+  }
 
   // Both hidden refs (kept for JS compat)
   const hlBtn   = document.getElementById('hlToggleBtn');
@@ -30377,6 +30491,11 @@ function applyHighlightFromRange(range, text) {
   if(!area || !area.contains(range.commonAncestorContainer)) return;
   // Reading overlay: save to its own undo stack before modifying
   if(_inRdMode) { _rdHlSaveSnapshot(); }
+  // PDF text is visually rendered from the source page image. Store highlights
+  // as page-relative rectangles so they sit on the printed glyphs, rather than
+  // wrapping the invisible selectable text in HTML <mark> elements.
+  if(!_inRdMode && _nePdfTextLayerForNode(range.startContainer) &&
+     _nePdfAddHighlight(range, text, color, area)) return;
 
   // Re-highlight: offsets save → split-unwrap sirf overlap wale hisse ka →
   // range rebuild (ek pass mein naya colour). Non-overlapping purana
